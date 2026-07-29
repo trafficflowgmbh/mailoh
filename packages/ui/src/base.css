@@ -1,0 +1,38 @@
+/* @mailoh/ui — base layer.
+   Ported from the Blanc prototype. Element-level pieces of the design
+   system (keycaps, icons, focus ring, selection) plus the `.mo-canvas`
+   app container. Wrap your app (or any showcase panel) in `.mo-canvas`
+   to get the Blanc ground: canvas background, system stack, resets. */
+
+*, *::before, *::after { box-sizing: border-box }
+
+kbd{
+  font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10.5px;color:var(--ink3);
+  border:1px solid var(--hair);border-radius:6px;padding:1px 5px; /* keycap edge — legibility hairline, kept */
+  min-width:18px;display:inline-block;text-align:center;background:var(--panel);
+}
+svg.ic{width:15px;height:15px;flex:none;stroke:currentColor;fill:none;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.num{font-variant-numeric:tabular-nums}
+:focus-visible{outline:1.5px solid var(--accent);outline-offset:3px;border-radius:8px}
+::selection{background:var(--accent-soft)}
+
+.mo-canvas{
+  font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  font-size:14px; line-height:1.5; color:var(--ink); background:var(--canvas);
+  -webkit-font-smoothing:antialiased;
+}
+/* :where() keeps these resets at zero specificity so component classes
+   (.btn, .ritem, …) always win regardless of import order. */
+:where(.mo-canvas) :where(h1,h2,h3){text-wrap:balance;margin:0}
+:where(.mo-canvas) :where(p,ul){margin:0;padding:0}
+:where(.mo-canvas) :where(button){font:inherit;color:inherit;background:none;border:0;cursor:pointer;margin:0;padding:0;text-align:inherit}
+:where(.mo-canvas) :where(input,textarea){font:inherit;color:inherit}
+
+@keyframes rise{from{transform:translateY(8px) scale(.985);opacity:0}to{transform:none;opacity:1}}
+
+/* Reduced motion is not optional: state changes become instant, nothing
+   is merely slowed down. Verbatim policy from the prototype. */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;
+    transition-duration:.01ms !important}
+}

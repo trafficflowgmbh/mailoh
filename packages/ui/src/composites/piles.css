@@ -1,0 +1,25 @@
+/* triage piles — stacked sheets, raised on hover */
+.piles{display:flex;gap:26px;padding:16px 34px 26px;flex-wrap:wrap;align-items:flex-start} /* top room for the stacked-sheet layers, sides for shadow bleed */
+.pile{position:relative;flex:1;min-width:230px;max-width:330px}
+.pile-stack{position:relative;border-radius:20px;background:var(--float);
+  box-shadow:var(--lift-2);padding:18px 20px;
+  transition:transform .3s var(--spring), box-shadow .3s var(--swift)}
+.pile-stack::before,.pile-stack::after{content:"";position:absolute;left:10px;right:10px;height:12px;
+  border-radius:14px 14px 0 0;background:var(--panel);box-shadow:0 -2px 8px -4px oklch(0.35 0.05 52/.10)}
+.pile-stack::before{top:-6px;z-index:-1}
+.pile-stack::after{top:-11px;left:20px;right:20px;z-index:-2;opacity:.55}
+.pile:hover .pile-stack{transform:translateY(-5px);box-shadow:var(--lift-3)}
+.pile h3{font-size:13.5px;font-weight:650;display:flex;align-items:center;gap:8px;letter-spacing:-.01em;margin:0}
+.pile h3 .cnt{margin-left:auto;font-size:12px;color:var(--ink3);font-variant-numeric:tabular-nums}
+.pile h3 svg{color:var(--accent-ink)}
+.pile-item{padding:11px 0 2px;font-size:12.5px}
+.pile-item + .pile-item{margin-top:9px;padding-top:13px}
+.pile-item b{font-weight:600;display:block}
+.pile-item span{color:var(--ink2)}
+.pile-item .when{display:inline-flex;gap:5px;align-items:center;margin-top:5px;font-size:11px;color:var(--accent-ink);
+  font-variant-numeric:tabular-nums;font-weight:600}
+.pile-hint{font-size:11px;color:var(--ink3);margin:12px 0 0;line-height:1.5}
+@media (max-width: 900px){
+  .piles{flex-direction:column;padding:8px 14px 22px}
+  .pile{max-width:none;width:100%}
+}

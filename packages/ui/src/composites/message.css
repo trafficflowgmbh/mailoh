@@ -1,0 +1,25 @@
+/* reading column + message anatomy */
+.read-col{
+  min-width:0;min-height:0;overflow-y:auto;padding-bottom:132px;
+  background:var(--panel);border-radius:20px;box-shadow:var(--lift-1);
+}
+.msg{max-width:640px;width:100%;margin:0 auto;padding:26px 34px 48px}
+.msg-from{display:flex;align-items:baseline;gap:9px;font-size:12.5px}
+.msg-from b{font-weight:600}
+.msg-from small{color:var(--ink3);font-size:12px}
+.msg-from .t{margin-left:auto;font-size:11.5px;color:var(--ink3);font-variant-numeric:tabular-nums;flex:none;display:flex;gap:10px;align-items:center}
+.msg h2{font-size:24px;font-weight:600;letter-spacing:-.025em;margin:14px 0 14px;line-height:1.25}
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 22px;align-items:center}
+.msg-body{font-size:14.5px;line-height:1.72;color:var(--ink);white-space:pre-line;max-width:60ch;margin:0}
+.attach{display:inline-flex;align-items:center;gap:8px;margin-top:20px;padding:9px 15px;border:0;cursor:pointer;
+  border-radius:99px;font-size:12.5px;color:var(--ink);background:var(--panel);box-shadow:var(--lift-0);
+  font-family:inherit;line-height:1.5;
+  transition:transform .15s var(--swift), box-shadow .2s var(--swift)}
+.attach:hover{transform:translateY(-1px);box-shadow:var(--lift-2)}
+.attach small{color:var(--ink3)}
+.msg-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:34px}
+/* the small open-reader affordance in the from-line */
+.msg-open{width:26px;height:26px;display:grid;place-items:center;border-radius:99px;color:var(--ink2);
+  border:0;cursor:pointer;background:none;
+  transition:background .15s,color .15s}
+.msg-open:hover{background:var(--tint);color:var(--ink)}

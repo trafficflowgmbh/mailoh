@@ -1,0 +1,15 @@
+/* protected OTP — a tinted pool of light, no frame */
+.protected{border-radius:20px;padding:22px 24px;margin:4px 0 8px;
+  background:var(--accent-soft);max-width:460px}
+.lock-anim{color:var(--accent-ink)}
+.lock-anim .body-d{stroke-dasharray:60;stroke-dashoffset:60;animation:draw .8s .1s var(--spring) forwards}
+.lock-anim .shackle{transform:translateY(-2.5px);animation:shut .45s .8s var(--spring) forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+@keyframes shut{to{transform:none}}
+.protected .code{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:16px;letter-spacing:.18em;
+  color:var(--ink);margin:12px 0 12px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.protected .code .dots i{font-style:normal;opacity:0;animation:dotIn .3s var(--spring) forwards}
+@keyframes dotIn{from{opacity:0;translate:0 3px}to{opacity:1;translate:0 0}}
+.protected .code small{font-size:11px;color:var(--ink3);letter-spacing:0;font-family:inherit}
+.protected p{font-size:12px;color:var(--ink2);line-height:1.55;margin:0}
+.protected p b{color:var(--ink)}

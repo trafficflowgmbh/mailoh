@@ -1,0 +1,10 @@
+/* cards — surfaces sculpted out of the page by light falloff, no borders */
+.card{background:var(--panel);border-radius:20px}
+.card.float{background:var(--float)}
+.card.r-card{border-radius:22px}
+.card.r-overlay{border-radius:24px}
+.card.r-reader{border-radius:28px}
+.card.lift-0{box-shadow:var(--lift-0)}
+.card.lift-1{box-shadow:var(--lift-1)}
+.card.lift-2{box-shadow:var(--lift-2)}
+.card.lift-3{box-shadow:var(--lift-3)}

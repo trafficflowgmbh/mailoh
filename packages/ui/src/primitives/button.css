@@ -1,0 +1,14 @@
+/* buttons — capsules held up by light */
+.btn{display:inline-flex;align-items:center;gap:7px;padding:7px 15px;border:0;cursor:pointer;
+  border-radius:99px;font-size:12.5px;font-weight:550;color:var(--ink);background:var(--panel);
+  font-family:inherit;line-height:1.5;
+  box-shadow:var(--lift-0);
+  transition:box-shadow .2s var(--swift), transform .15s var(--swift), background .15s}
+.btn:hover{transform:translateY(-1px);box-shadow:var(--lift-2)}
+.btn:active{transform:scale(.965)}
+.btn.primary{background:var(--accent);color:var(--on-accent)}
+.btn.primary:hover{filter:brightness(1.07);background:var(--accent)}
+.btn.ghost{background:transparent;box-shadow:none;color:var(--ink2)}
+.btn.ghost:hover{background:var(--tint);color:var(--ink);transform:none;box-shadow:none}
+.btn kbd{background:transparent;border-color:var(--hair-soft)}
+.btn.primary kbd{border-color:oklch(1 0 0/.32);color:inherit}

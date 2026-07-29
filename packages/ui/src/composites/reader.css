@@ -1,0 +1,25 @@
+/* READING — the exhale. The message floats free on lift-3; everything
+   else recedes. If the app marks its chrome with .shell / .dock, the
+   body.reading rules below dim it (opt-in by class use). */
+.reader{position:fixed;inset:0;z-index:var(--z-read);overflow-y:auto;overscroll-behavior:contain;
+  padding:8vh 24px 12vh}
+.reader .msg{
+  max-width:660px;padding:46px 52px 40px;animation:exhale .5s var(--spring);
+  background:var(--float);border-radius:28px;box-shadow:var(--lift-3);
+}
+@keyframes exhale{from{opacity:0;transform:translateY(18px) scale(.99)}to{opacity:1;transform:none}}
+.reader .msg h2{font-size:29px;margin:18px 0 16px}
+.reader .msg-body{font-size:15.5px;line-height:1.78}
+.reader .msg-actions{opacity:.35;transition:opacity .3s var(--swift)}
+.reader .msg:hover .msg-actions, .reader .msg:focus-within .msg-actions{opacity:1}
+.reader-hint{position:fixed;top:18px;left:50%;translate:-50%;font-size:11px;color:var(--ink3);
+  display:flex;gap:8px;align-items:center;pointer-events:none;z-index:var(--z-read);
+  animation:hint 3.6s var(--swift) .2s both}
+@keyframes hint{0%{opacity:0}10%{opacity:1}82%{opacity:1}100%{opacity:0}}
+body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
+body.reading .dock{opacity:0;pointer-events:none;translate:-50% 10px}
+@media (max-width: 900px){
+  .reader{padding:4vh 12px 10vh}
+  .reader .msg{padding:30px 22px 26px}
+  .reader .msg h2{font-size:24px}
+}

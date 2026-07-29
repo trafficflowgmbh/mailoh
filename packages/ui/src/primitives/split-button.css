@@ -1,0 +1,17 @@
+/* split button — one capsule, two decisions: file, or file + mark read.
+   The attached ✓ half is its own button with its own handler. */
+.dbtn{display:inline-flex;background:var(--float);border-radius:99px;box-shadow:var(--lift-0);overflow:hidden;
+  transition:box-shadow .2s var(--swift), transform .15s var(--swift)}
+.dbtn:hover{transform:translateY(-1px);box-shadow:var(--lift-2)}
+.dbtn button{padding:6.5px 13px;font-size:12px;font-weight:550;color:var(--ink);border:0;cursor:pointer;
+  background:none;font-family:inherit;line-height:1.5;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:6px;transition:background .15s,color .15s}
+.dbtn button:hover{background:var(--tint)}
+.dbtn .d-read{padding:6.5px 11px;border-left:1px solid var(--hair-soft);color:var(--ink3)} /* split divider — functional */
+.dbtn .d-read:hover{color:var(--accent-ink);background:var(--accent-soft)}
+.dbtn .d-read svg{width:12px;height:12px}
+.dbtn.quiet button{color:var(--ink2);font-weight:500}
+.dbtn.ai{box-shadow:0 0 0 1.5px var(--accent-hair), var(--lift-0)} /* the AI-preselected destination */
+.dbtn.ai:hover{box-shadow:0 0 0 1.5px var(--accent-hair), var(--lift-2)}
+.dbtn.ai .d-main{background:var(--accent-soft);color:var(--accent-ink);font-weight:650}
+.dbtn kbd{border:0;background:transparent;padding:0 1px;min-width:0;color:inherit;opacity:.7}

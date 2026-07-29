@@ -1,0 +1,55 @@
+/* rail — white panel sculpted by light, no border */
+.rail{
+  padding:18px 12px 18px 16px;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:1px;
+  background:var(--panel);border-radius:20px;box-shadow:var(--lift-1);
+}
+.rail > *{flex:none}
+.wordmark{font-size:15px;letter-spacing:-.02em;padding:2px 8px 14px;user-select:none}
+.wordmark b{font-weight:650}
+.wordmark b em{font-style:normal;color:var(--accent-ink)}
+.compose-cta{
+  display:flex;align-items:center;gap:8px;margin:0 4px 16px 0;padding:8px 14px;border-radius:99px;border:0;cursor:pointer;
+  font-size:12.5px;font-weight:600;color:var(--ink);background:var(--float);box-shadow:var(--lift-0);
+  font-family:inherit;line-height:1.5;text-align:left;
+  transition:box-shadow .2s var(--swift), transform .15s var(--swift);
+}
+.compose-cta:hover{transform:translateY(-1px);box-shadow:var(--lift-2)}
+.compose-cta:active{transform:scale(.97)}
+.compose-cta svg{color:var(--accent-ink)}
+.compose-cta kbd{margin-left:auto;background:transparent;border-color:var(--hair-soft)}
+.compose-cta.on{box-shadow:0 0 0 1.5px var(--accent-hair), var(--lift-0)}
+.rgroup{margin:0 0 14px}
+.rlabel{font-size:11px;font-weight:600;color:var(--ink3);padding:4px 8px 4px}
+.rlabel-toggle{display:flex;align-items:center;gap:5px;width:100%;text-align:left;border:0;background:none;cursor:pointer;
+  font-size:11px;font-weight:600;color:var(--ink3);padding:4px 8px;border-radius:8px;font-family:inherit;
+  transition:color .15s}
+.rlabel-toggle:hover{color:var(--ink)}
+.rlabel-toggle .chev{width:11px;height:11px;transition:transform .25s var(--spring);transform:rotate(90deg)}
+.rgroup.closed .rlabel-toggle .chev{transform:none}
+.rgroup.closed .rgroup-body{display:none}
+/* tags — subordinate group nested under Triage: indented, one size down */
+.rgroup .rgroup.rsub{margin:3px 0 0 10px}
+.rsub .rlabel-toggle{padding:3px 8px}
+.rsub .ritem{font-size:12.5px;padding:5px 8px}
+.rsub .ritem .cnt{font-size:11px}
+.ritem{
+  display:flex;align-items:center;gap:9px;width:100%;padding:6px 8px;border-radius:10px;border:0;cursor:pointer;
+  background:none;font-family:inherit;line-height:1.5;
+  font-size:13px;font-weight:450;color:var(--ink2);text-align:left;position:relative;
+  transition:color .15s, background .15s;
+}
+.ritem:hover{color:var(--ink);background:var(--tint)}
+.ritem.on{color:var(--ink);font-weight:600}
+.ritem.on::before{content:"";position:absolute;left:-10px;top:50%;translate:0 -50%;
+  width:4px;height:4px;border-radius:50%;background:var(--accent)}
+.ritem .cnt{margin-left:auto;font-size:11.5px;font-weight:550;color:var(--ink3);
+  font-variant-numeric:tabular-nums;min-width:17px;text-align:right;overflow:hidden}
+.ritem .cnt.hot{color:var(--accent-ink)}
+.cnt span{display:inline-block}
+.cnt span.tick{animation:tick .32s var(--spring)}
+@keyframes tick{from{transform:translateY(70%);opacity:0}to{transform:none;opacity:1}}
+.mbx{padding:3.5px 8px;display:flex;align-items:baseline;gap:7px;font-size:11.5px;color:var(--ink2);min-width:0}
+.mbx i{width:4px;height:4px;border-radius:50%;background:var(--ink3);flex:none;font-style:normal;align-self:center;opacity:.7}
+.mbx .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mbx small{color:var(--ink3);font-size:10.5px;margin-left:auto;padding-left:6px;flex:none}
+.rail-mail{margin-top:auto;padding:14px 8px 0;font-size:10.5px;color:var(--ink3)}
