@@ -57,7 +57,7 @@ export interface ColorScheme {
   readonly scrim: string;
   /** Tag hues — muted, warm-adjacent, never candy. */
   readonly tag: {
-    /** moss — "Projekt Steiner" (green, hue 150) */
+    /** moss — "Projekt Pottery" (green, hue 150) */
     readonly moss: TagHue;
     /** ochre — "Buchhaltung" (yellow-brown, hue ~78) */
     readonly ochre: TagHue;

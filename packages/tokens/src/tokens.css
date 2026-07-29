@@ -34,8 +34,8 @@
   --accent-hair: oklch(0.55 0.13 45 / .38);
   --on-accent:   oklch(0.995 0.004 85);
   /* tag hues — muted, warm-adjacent, never candy */
-  --tg-steiner-ink: oklch(0.43 0.07 150);
-  --tg-steiner-bg:  oklch(0.55 0.08 150 / .11);
+  --tg-pottery-ink: oklch(0.43 0.07 150);
+  --tg-pottery-bg:  oklch(0.55 0.08 150 / .11);
   --tg-buch-ink:    oklch(0.45 0.09 78);
   --tg-buch-bg:     oklch(0.60 0.10 78 / .14);
   --tg-privat-ink:  oklch(0.45 0.10 25);
@@ -87,8 +87,8 @@
   --accent-soft: oklch(0.75 0.115 55 / .12);
   --accent-hair: oklch(0.75 0.115 55 / .42);
   --on-accent:   oklch(0.19 0.035 50);
-  --tg-steiner-ink: oklch(0.80 0.07 150);
-  --tg-steiner-bg:  oklch(0.75 0.08 150 / .14);
+  --tg-pottery-ink: oklch(0.80 0.07 150);
+  --tg-pottery-bg:  oklch(0.75 0.08 150 / .14);
   --tg-buch-ink:    oklch(0.82 0.09 80);
   --tg-buch-bg:     oklch(0.78 0.10 80 / .15);
   --tg-privat-ink:  oklch(0.80 0.08 25);
@@ -133,8 +133,8 @@
     --accent-soft: oklch(0.75 0.115 55 / .12);
     --accent-hair: oklch(0.75 0.115 55 / .42);
     --on-accent:   oklch(0.19 0.035 50);
-    --tg-steiner-ink: oklch(0.80 0.07 150);
-    --tg-steiner-bg:  oklch(0.75 0.08 150 / .14);
+    --tg-pottery-ink: oklch(0.80 0.07 150);
+    --tg-pottery-bg:  oklch(0.75 0.08 150 / .14);
     --tg-buch-ink:    oklch(0.82 0.09 80);
     --tg-buch-bg:     oklch(0.78 0.10 80 / .15);
     --tg-privat-ink:  oklch(0.80 0.08 25);

@@ -13,11 +13,11 @@
 /* tag chips — hue names map onto the token tag families */
 .tagchip{font-size:10.5px;font-weight:600;border-radius:99px;padding:1px 8px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .tagchip.big{font-size:11px;padding:4px 11px}
-.tagchip.hue-moss{color:var(--tg-steiner-ink);background:var(--tg-steiner-bg)}
+.tagchip.hue-moss{color:var(--tg-pottery-ink);background:var(--tg-pottery-bg)}
 .tagchip.hue-ochre{color:var(--tg-buch-ink);background:var(--tg-buch-bg)}
 .tagchip.hue-rosewood{color:var(--tg-privat-ink);background:var(--tg-privat-bg)}
 .tdot{width:8px;height:8px;border-radius:3px;flex:none}
-.tdot.hue-moss{background:var(--tg-steiner-ink);opacity:.75}
+.tdot.hue-moss{background:var(--tg-pottery-ink);opacity:.75}
 .tdot.hue-ochre{background:var(--tg-buch-ink);opacity:.75}
 .tdot.hue-rosewood{background:var(--tg-privat-ink);opacity:.75}
 
