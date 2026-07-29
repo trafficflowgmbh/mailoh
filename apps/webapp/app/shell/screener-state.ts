@@ -19,6 +19,7 @@
 import { useMemo, useReducer, useRef } from "react";
 import { useTranslations } from "next-intl";
 import {
+  FOLDER_OF_VIEW,
   screenerSegments,
   type EngineMessage,
   type MailohView,
@@ -272,7 +273,7 @@ export function useScreenerState(
         .list<EngineMessage>("message")
         .filter(
           (m) =>
-            m.folder === "TrafficFlow/Quarantine" &&
+            m.folder === FOLDER_OF_VIEW.spam &&
             m.from.address === row.sender.from.address,
         );
       for (const m of quarantined) {

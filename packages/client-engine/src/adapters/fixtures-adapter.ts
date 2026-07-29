@@ -25,8 +25,8 @@ import {
 } from "../types.js";
 import type { EngineAdapter, MutationOutcome, SyncParams } from "./adapter.js";
 
-/** The demo world's fixed "now" — a Tuesday; "Mon" fixtures land the day before. */
-export const DEMO_NOW = new Date("2026-07-28T12:00:00.000Z");
+/** The demo world's fixed "now" — a Wednesday; "Tue" fixtures land the day before. */
+export const DEMO_NOW = new Date("2026-07-29T12:00:00.000Z");
 
 const FIXTURE_FOLDER: Record<MessageFixture["folder"], Folder> = {
   ohbox: "INBOX",
@@ -148,7 +148,7 @@ export class FixturesAdapter implements EngineAdapter {
     return {
       id: f.id,
       accountId: "demo",
-      mailboxId: "trafficflow",
+      mailboxId: "northlight",
       threadId: null,
       messageIdHeader: null,
       subject: f.subject,
@@ -279,9 +279,9 @@ export class FixturesAdapter implements EngineAdapter {
 
     const draft: EngineDraft = {
       id: "draft-compose",
-      mailboxId: "trafficflow",
+      mailboxId: "northlight",
       threadId: null,
-      inReplyToMessageId: "marco",
+      inReplyToMessageId: "giulia",
       subject: fx.composeDraft.subject,
       body: fx.composeDraft.body,
       to: [fx.composeDraft.to],

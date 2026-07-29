@@ -33,7 +33,7 @@ export interface MailboxFixture {
 
 /* ---------------------------------------------------------------- tags */
 
-export type TagId = "steiner" | "buch" | "privat";
+export type TagId = "pottery" | "buch" | "privat";
 export type TagHueName = "moss" | "ochre" | "rosewood";
 
 export interface TagFixture {
@@ -41,7 +41,7 @@ export interface TagFixture {
   name: string;
   /** Token hue family — maps to --tg-*-ink / --tg-*-bg. */
   hue: TagHueName;
-  /** The prototype's theme class (th-steiner, th-buch, th-privat). */
+  /** The prototype's theme class (th-pottery, th-buch, th-privat). */
   className: string;
   /** Message ids carrying this tag. */
   assignedTo: string[];

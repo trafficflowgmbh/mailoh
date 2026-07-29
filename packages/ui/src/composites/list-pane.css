@@ -10,9 +10,8 @@
 .scroller{overflow-y:auto;flex:1;min-height:0;padding-bottom:132px} /* room for the dock + full shadow falloff */
 .grouplabel{font-size:12px;font-weight:600;color:var(--ink3);padding:16px 30px 6px}
 .rows{padding:0 16px} /* wide enough that a raised row's shadow isn't sheared at the pane edge */
-.more-row{width:100%;text-align:left;padding:10px 30px;font-size:12px;color:var(--ink3);border:0;background:none;cursor:pointer;font-family:inherit}
-.more-row:hover{color:var(--ink2)}
-.more-note{padding:6px 30px 18px;font-size:12px;color:var(--ink3);max-width:38ch;line-height:1.55}
+/* No-collapse rule: mail is never hidden behind a "+n more" affordance, so
+   there is no collapse row to style. The tail-row only points at the server. */
 .list-hints{padding:10px 30px 14px;font-size:11px;color:var(--ink3);display:flex;gap:14px;align-items:center;flex:none;flex-wrap:wrap}
 .tail-row{padding:14px 30px 20px;font-size:12px;color:var(--ink3)}
 /* receipts trail day rules — table scanability, kept */

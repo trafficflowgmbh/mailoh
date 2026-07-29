@@ -792,8 +792,6 @@ body.reading .shell {
   .view .grouplabel {
     padding-left: 20px;
   }
-  .view .more-row,
-  .view .more-note,
   .view .list-hints,
   .view .tail-row {
     padding-left: 20px;

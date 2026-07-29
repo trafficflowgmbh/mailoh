@@ -55,8 +55,7 @@
     "meta": "{unread} unread of {total}",
     "newForYou": "New for you",
     "previouslySeen": "Previously seen",
-    "moreCollapsed": "{count} more collapsed ›",
-    "moreNote": "Older mail stays on your server and loads on demand — the demo mirror stops here.",
+    "tail": "Older mail stays on your server — find it in Search.",
     "hintMove": "move",
     "hintRead": "read",
     "hintTag": "tag",
@@ -97,7 +96,7 @@
   "receipts": {
     "title": "Receipts",
     "meta": "{count} new",
-    "tail": "{count} more in the archive.",
+    "tail": "Older receipts live in Search.",
     "streamAria": "Reading stream"
   },
   "screener": {

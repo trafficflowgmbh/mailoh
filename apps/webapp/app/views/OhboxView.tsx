@@ -6,7 +6,7 @@
  * doorbell, and the reading column. j/k moves, ↵ opens the reader,
  * t opens the tag picker.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage, TagDTO } from "@mailoh/client-engine";
 import {
@@ -20,9 +20,6 @@ import {
 } from "@mailoh/ui";
 import { displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
-
-/** Older mail beyond the demo mirror — the prototype's "3 more collapsed". */
-export const OHBOX_COLLAPSED_OLDER = 3;
 
 export function OhboxView({
   newForYou,
@@ -56,7 +53,6 @@ export function OhboxView({
   typingGuard: (e: KeyboardEvent) => boolean;
 }) {
   const t = useTranslations("ohbox");
-  const [moreOpen, setMoreOpen] = useState(false);
 
   const all = useMemo(
     () => [...newForYou, ...previouslySeen],
@@ -122,7 +118,7 @@ export function OhboxView({
         title={t("title")}
         meta={t("meta", {
           unread: newForYou.length,
-          total: all.length + OHBOX_COLLAPSED_OLDER,
+          total: all.length,
         })}
         header={
           <Doorbell
@@ -157,13 +153,9 @@ export function OhboxView({
         <ListRows>{newForYou.map(row)}</ListRows>
         <ListGroupLabel>{t("previouslySeen")}</ListGroupLabel>
         <ListRows>{previouslySeen.map(row)}</ListRows>
-        {moreOpen ? (
-          <div className="more-note">{t("moreNote")}</div>
-        ) : (
-          <button type="button" className="more-row" onClick={() => setMoreOpen(true)}>
-            {t("moreCollapsed", { count: OHBOX_COLLAPSED_OLDER })}
-          </button>
-        )}
+        {/* No-collapse rule: every mail in the demo world is a real row above —
+            the tail only points at the server for anything older. */}
+        <div className="tail-row">{t("tail")}</div>
       </ListPane>
       <ReadColumn>
         {selected ? (

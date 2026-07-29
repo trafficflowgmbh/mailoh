@@ -125,7 +125,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           const msg: EngineMessage = {
             id: ctx.uuid(),
             accountId: "demo",
-            mailboxId: "trafficflow",
+            mailboxId: "northlight",
             threadId: null,
             messageIdHeader: null,
             subject: held.subject,

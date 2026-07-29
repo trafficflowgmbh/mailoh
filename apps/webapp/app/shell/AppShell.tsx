@@ -43,9 +43,9 @@ import { MessagePane, type MessageAction } from "./MessagePane";
 import { useScreenerState } from "./screener-state";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { go, goScreener, goTag, useHashRoute, type ScreenerSegmentId } from "./routing";
-import { OhboxView, OHBOX_COLLAPSED_OLDER } from "../views/OhboxView";
+import { OhboxView } from "../views/OhboxView";
 import { ReadsView, type ReadsChipState } from "../views/ReadsView";
-import { ReceiptsView, RECEIPTS_ARCHIVED } from "../views/ReceiptsView";
+import { ReceiptsView } from "../views/ReceiptsView";
 import { ScreenerView } from "../views/ScreenerView";
 import { SearchView } from "../views/SearchView";
 import { SettingsView, type MailboxEntity } from "../views/SettingsView";
@@ -152,8 +152,7 @@ function ShellInner({ demo }: { demo: boolean }) {
     [receiptsSeen],
   );
   const receiptsUnread =
-    receiptGroups.flatMap((g) => g.items).filter(receiptsIsUnread).length +
-    RECEIPTS_ARCHIVED;
+    receiptGroups.flatMap((g) => g.items).filter(receiptsIsUnread).length;
   const readsUnread = [...partition.fresh, ...partition.seen].filter((m) => m.unread).length;
 
   /* ── route transitions: overlays close, pending screener work lands ── */
@@ -358,7 +357,7 @@ function ShellInner({ demo }: { demo: boolean }) {
             hot: true,
             title: t("rail.ohboxTitle", {
               unread: ohbox.newForYou.length,
-              total: allOhbox.length + OHBOX_COLLAPSED_OLDER,
+              total: allOhbox.length,
             }),
           },
           {

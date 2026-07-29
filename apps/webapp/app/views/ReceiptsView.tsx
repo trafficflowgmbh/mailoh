@@ -14,9 +14,6 @@ import { Kbd, ListGroupLabel, ListPane, ListRows, MessageRow, StreamCard } from 
 import { displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { StreamShell, type StreamHandle } from "../shell/StreamShell";
 
-/** Older receipts beyond the demo mirror — the prototype's archive tail. */
-export const RECEIPTS_ARCHIVED = 4;
-
 export function ReceiptsView({
   groups,
   tags,
@@ -35,7 +32,7 @@ export function ReceiptsView({
   now: Date;
   cur: string | null;
   onCur: (id: string) => void;
-  /** Engine unread minus the overlay, plus the archive constant. */
+  /** Engine unread minus the client seen-overlay. */
   unreadCount: number;
   isUnread: (m: EngineMessage) => boolean;
   markSeen: (id: string) => void;
@@ -151,7 +148,8 @@ export function ReceiptsView({
             </ListRows>
           </Fragment>
         ))}
-        <div className="tail-row">{t("tail", { count: RECEIPTS_ARCHIVED })}</div>
+        {/* No-collapse rule: every receipt is a real row above. */}
+        <div className="tail-row">{t("tail")}</div>
       </ListPane>
 
       <StreamShell
@@ -190,7 +188,7 @@ export function ReceiptsView({
             onSelect={(id) => onCur(id)}
           />
         ))}
-        <div className="tail-row">{t("tail", { count: RECEIPTS_ARCHIVED })}</div>
+        <div className="tail-row">{t("tail")}</div>
       </StreamShell>
     </section>
   );

@@ -110,7 +110,7 @@ export const StreamShell = forwardRef<
   );
 });
 
-/** The IKEA newsletter's inline product illustration, verbatim. */
+/** The Hejmo Living newsletter's inline product illustration (FALTO), verbatim. */
 export function FoldTableArt() {
   return (
     <svg

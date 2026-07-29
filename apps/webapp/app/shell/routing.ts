@@ -4,7 +4,7 @@
  * Hash routing, verbatim from the prototype's contract:
  *   #/ohbox … #/settings   the eight views
  *   #/screener/screened    screener segment deep-links
- *   #/tag/steiner          one tag across everything
+ *   #/tag/pottery          one tag across everything
  * The query string (?demo=1) is untouched by navigation.
  */
 import { useCallback, useMemo, useSyncExternalStore } from "react";
