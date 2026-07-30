@@ -46,7 +46,10 @@ describe("tauri.conf.json", () => {
         assetProtocol: { enable: boolean; scope: string[] };
       };
     };
-    bundle: { icon: string[] };
+    bundle: {
+      icon: string[];
+      windows: { webviewInstallMode: { type: string }; nsis: { installMode: string } };
+    };
   };
 
   it("is MailOh, at the preview version, under its own identifier", () => {
@@ -103,6 +106,21 @@ describe("tauri.conf.json", () => {
     expect(conf.app.windows).toHaveLength(1);
     expect(conf.app.windows[0]!.label).toBe("main");
     expect(conf.app.windows[0]!.minWidth).toBe(390);
+  });
+
+  it("builds Windows installers that never download the WebView2 runtime", () => {
+    // Tauri's DEFAULT is downloadBootstrapper: a WiX custom action running
+    // `powershell … Invoke-WebRequest https://go.microsoft.com/fwlink/…` in the
+    // .msi, and NSISdl::download in the -setup.exe. Both fire at install time
+    // on a machine without WebView2 — which would make "it cannot reach the
+    // network" false of the thing a stranger actually downloads. The key is
+    // easy to lose in a config merge and impossible to see in a diff of the
+    // built installer, so it is asserted here as well as in the mirror's CI.
+    expect(conf.bundle.windows.webviewInstallMode).toEqual({ type: "skip" });
+    // The one bundled mode that also does not download is offlineInstaller,
+    // and it costs 127 MB. If someone ever wants it, this line is the
+    // conversation.
+    expect(conf.bundle.windows.nsis.installMode).toBe("currentUser");
   });
 
   it("ships the oh. icon family", () => {

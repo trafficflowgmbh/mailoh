@@ -153,8 +153,19 @@ Requires macOS 15 (Sequoia) or newer.
 > per-user, so it needs no administrator; the `.msi` is there for anyone who
 > deploys that way.
 
-Requires Windows 10 or newer with WebView2 (already present on Windows 11 and
-up-to-date Windows 10).
+> [!IMPORTANT]
+> **The installers do not download WebView2 — and that is deliberate.** Tauri's
+> default is to compile a downloader into the `.msi` and the `.exe` that fetches
+> the runtime from `go.microsoft.com` during installation. We set
+> `webviewInstallMode: skip` and took it out, because an installer that opens a
+> connection makes "it cannot reach the network" a footnote instead of a fact.
+> The trade is that **you must already have WebView2.** Windows 11 has it;
+> so does any Windows 10 that has taken updates since 2021, because Edge
+> installs it. If yours does not, MailOh will not start and will tell you so —
+> install the Evergreen runtime once, from Microsoft:
+> <https://developer.microsoft.com/microsoft-edge/webview2/>
+
+Requires Windows 10 or newer, plus the WebView2 runtime as described above.
 
 ### Linux
 
@@ -171,18 +182,37 @@ The `.deb` installs with `sudo apt install ./MailOh_0.1.0_amd64.deb` and pulls i
 WebKitGTK. It is **not** in any repository, so it will never auto-update — and
 there is no update checker in this build at all.
 
+> [!NOTE]
+> **To uninstall it: `sudo apt remove mail-oh`.** With a hyphen. The binary, the
+> icon and the launcher entry are all `mailoh`, but Tauri derives the Debian
+> package name by kebab-casing the product name — `MailOh` → `mail-oh` — and
+> offers no way to override it. `apt remove mailoh` will tell you no such
+> package is installed, and it will be right.
+
 ### Verify it yourself
 
 On Windows and Linux the interface is embedded **uncompressed** on purpose, so
 you can check what a downloaded binary does without running it:
 
 ```bash
-strings -a mailoh.exe | grep -oE 'https?://[^ ]+' | sort -u   # W3C + React + Tauri docs, nothing else
-strings -a mailoh.exe | grep -c Ohbox                         # the interface really is in there
+strings -a mailoh.exe | grep -oE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' | sort -u
+strings -a mailoh.exe | grep -c Ohbox      # the interface really is in there
 ```
 
-CI runs exactly these greps on every build and **fails the run** if any URL in
-the binary points at MailOh or TrafficFlow infrastructure.
+The first command prints **13 strings on Linux, 14 on Windows**, and every one
+of them is one of four things: an XML namespace constant React compares against,
+a documentation link inside a panic or error message, Microsoft's own WebView2
+download page (see the Windows note above), or — three of them — an artifact of
+grepping a Rust binary, where `"http://"` is a string literal that sits in
+read-only data with no terminator between it and whatever was placed next to it.
+`apps/desktop/README.md` lists all fourteen, one by one, with the full
+surrounding line for the three that are not URLs at all.
+
+CI runs exactly these greps on every build, prints the complete list in the job
+log, **asserts the count** so that "13 and 14" cannot quietly stop being true,
+and **fails the run** if any URL in the binary points at MailOh or TrafficFlow
+infrastructure. It also fails the Windows job if the `.msi` or the `-setup.exe`
+contains a WebView2 downloader.
 
 ## Build it yourself
 
@@ -259,6 +289,15 @@ bundle at build time — it is not compiled in, and its source is not in this
 repository at all. The Tauri capability list is literally empty
 (`"permissions": []`): the interface can call no Tauri command, touch no file and
 spawn no process.
+
+**The installers do not either**, which is a separate claim and worth stating
+separately, because it was not true of the first build we made. Tauri ships a
+`downloadBootstrapper` by default: a WiX custom action in the `.msi` and an
+NSISdl step in the `-setup.exe` that fetch the WebView2 runtime from
+`go.microsoft.com` if the machine lacks it. Both are gone —
+`webviewInstallMode: skip`, asserted by CI against the built installers rather
+than trusted from the config — and the cost is that you supply WebView2
+yourself. See the Windows note above.
 
 ## Desktop or Cloud
 

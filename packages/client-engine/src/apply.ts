@@ -2,7 +2,9 @@ import type { SyncChange, SyncResponse } from "./types.js";
 
 /**
  * The idempotent apply core (contract §3.3) — a direct port of the convergence
- * semantics the backend proves in packages/services/test/_apply-harness.ts:
+ * semantics the Cloud service proves against its own apply harness. The five
+ * rules below are the whole of that contract, restated here in full so this
+ * file stands on its own:
  *
  *   1. sort the merged buckets by ascending `seq` (the order of record);
  *   2. apply keyed on (type,id) as an idempotent upsert;

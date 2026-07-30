@@ -1,11 +1,21 @@
 /**
  * @mailoh/client-engine — wire vocabulary.
  *
- * These shapes MIRROR the backend contract (docs/superpowers/api-contract.md §1–§5
- * and packages/services/src/dto/types.ts) without importing any backend package:
- * the engine consumes the wire contract only, exactly as the native SwiftData
- * mirror will. Clients must tolerate unknown fields and unknown entity types
- * (contract §8 forward-compatible parsing) — hence the open unions below.
+ * These shapes MIRROR the MailOh Cloud API contract without importing any
+ * backend package: the engine consumes the wire contract only, exactly as the
+ * native SwiftData mirror will. Clients must tolerate unknown fields and
+ * unknown entity types (forward-compatible parsing) — hence the open unions
+ * below.
+ *
+ * ABOUT THE `§` REFERENCES in this package. They cite the Cloud API contract
+ * document, which is **not public** — MailOh Desktop is the free, GPL-3.0 half
+ * of the product and the Cloud service is the other half. The citations are
+ * left in rather than stripped because they are load-bearing where the file is
+ * authored, and because pretending the other half does not exist would be its
+ * own kind of dishonesty. Nothing here depends on being able to read that
+ * document: this file IS the public statement of the wire vocabulary, and in
+ * the Desktop build the client that would speak it is aliased out of the bundle
+ * entirely (`adapters/http-adapter.ts` is a stub whose constructor throws).
  */
 
 export type ISODateTime = string;
@@ -26,8 +36,8 @@ export interface EmailAddress {
  * union is not a string constant: it is the wire contract shared with core,
  * services, api, the worker and the Hey migration scanner — and these folders
  * already exist inside live customer mailboxes. Renaming them to `MailOh/…`
- * is an IMAP folder-rename migration with reconciliation, tracked in
- * `docs/mailoh/STAGE2-ARCH.md` under "Folder namespace rebrand".
+ * is an IMAP folder-rename migration with reconciliation, scheduled under
+ * "Folder namespace rebrand" in the Cloud architecture plan.
  *
  * Until that lands, the rule for every view is: NEVER render a raw folder
  * string. Map it through `VIEW_OF_FOLDER`; when a server sends a folder this

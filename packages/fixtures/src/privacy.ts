@@ -292,12 +292,12 @@ export const bannedTerms: string[] = [
  * worse, is created inside real customer mailboxes. It contains a banned term.
  *
  * It is exempt TODAY, not forever, because the namespace is not a string: it
- * is the wire contract (`docs/superpowers/api-contract.md` §1.2) shared by
- * core, services, api, the worker and the migration scanner, and the folders
- * already exist in live mailboxes. Renaming it to `MailOh/…` is an IMAP
- * folder-rename migration with reconciliation, which is an
- * architecture-reviewed change, not a find-and-replace — tracked in
- * `docs/mailoh/STAGE2-ARCH.md` under "Folder namespace rebrand".
+ * is part of the Cloud API's wire contract, shared by the sync core, the
+ * service layer, the HTTP API, the worker and the migration scanner, and the
+ * folders already exist in live mailboxes. Renaming it to `MailOh/…` is an
+ * IMAP folder-rename migration with reconciliation, which is an
+ * architecture-reviewed change, not a find-and-replace — scheduled under
+ * "Folder namespace rebrand" in the Cloud architecture plan.
  *
  * Until then the rule for UI code is narrow and enforceable: never render a
  * raw folder string. Map it through `VIEW_OF_FOLDER`, and fall back to the
@@ -307,6 +307,6 @@ export const NAMESPACE_EXEMPTION = {
   term: "trafficflow",
   where: "packages/client-engine IMAP folder namespace (Folder union + FOLDER_OF_VIEW)",
   why: "wire contract shared with the backend; live mailboxes already hold these folders",
-  until: "docs/mailoh/STAGE2-ARCH.md — Folder namespace rebrand (MailOh/… + folder-rename migration)",
+  until: "Cloud architecture plan — Folder namespace rebrand (MailOh/… + folder-rename migration)",
   uiRule: "never render a raw folder string; map via VIEW_OF_FOLDER, fall back to folderLeaf()",
 } as const;

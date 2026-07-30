@@ -180,6 +180,48 @@ jobs:
           EXE="$(ls "$B"/nsis/*-setup.exe | head -1)"
           test -s "$MSI"
           test -s "$EXE"
+
+          # ── The installers must not fetch the WebView2 runtime ────────────
+          # tauri.conf.json sets bundle.windows.webviewInstallMode to "skip".
+          # Tauri's DEFAULT is downloadBootstrapper, which compiles a WiX custom
+          # action into the .msi (`DownloadAndInvokeBootstrapper` — a hidden
+          # powershell.exe running Invoke-WebRequest against go.microsoft.com,
+          # sequenced under NOT(REMOVE OR INSTALLED_WEBVIEW2_VERSION)) and an
+          # `NSISdl::download` step into the -setup.exe. A product that says it
+          # cannot reach the network must not ship an installer that does, so
+          # this is asserted against the built artifacts rather than trusted
+          # from the config. Every one of these greps matched a real 0.1.0
+          # installer built before the config key was set.
+          #
+          # NOT asserted: the INSTALLED_WEBVIEW2_VERSION property and its three
+          # RegistrySearch rows. Those are outside the {{#if}} in Tauri's WiX
+          # template and survive under `skip` — they only READ the registry.
+          echo "--- .msi: no WebView2 downloader ---"
+          # MSI string pools are uncompressed, so grep -a sees them directly.
+          ! grep -aq 'DownloadAndInvokeBootstrapper' "$MSI"
+          ! grep -aqi 'fwlink' "$MSI"
+          ! grep -aqi 'MicrosoftEdgeWebview2Setup' "$MSI"
+          ! grep -aqi 'Invoke-WebRequest' "$MSI"
+
+          echo "--- nsis: no WebView2 install step ---"
+          # The NSIS payload is LZMA-compressed, so unpack it and look at what
+          # the installer would actually drop on disk. Two checks, one per
+          # failure mode: NSIS packs a plugin DLL only when a call to it is
+          # compiled, and `NSISdl::download` lives inside
+          # `!if INSTALLWEBVIEW2MODE == "downloadBootstrapper"`, so NSISdl.dll
+          # present ⇒ the downloader is back; and embedBootstrapper /
+          # offlineInstaller would `File` a MicrosoftEdgeWebview2Setup.exe into
+          # the payload, so any file carrying that name is the other regression.
+          # Verified against a real pre-fix installer: NSISdl.dll was there.
+          # A relative path on purpose: 7z is a Windows binary and find/grep are
+          # MSYS, and they disagree about D:\-style paths.
+          rm -rf nsis-unpacked
+          7z x -y -onsis-unpacked "$EXE" > /dev/null
+          find nsis-unpacked
+          ! find nsis-unpacked -iname 'NSISdl.dll' | grep -q .
+          ! grep -rlai 'MicrosoftEdgeWebview2Setup' nsis-unpacked | grep -q .
+          rm -rf nsis-unpacked
+
           BIN=src-tauri/target/release/mailoh.exe
           test -s "$BIN"
           # The UI is embedded uncompressed on purpose (see src-tauri/Cargo.toml),
@@ -190,6 +232,13 @@ jobs:
           grep -aq "connect-src 'none'" "$BIN"
           echo "URLs in the binary:"
           grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u
+          # Both READMEs list these strings ONE BY ONE and say there are 14.
+          # A claim that specific has to be enforced or it rots: if a Rust,
+          # wry or React bump changes the set, this line goes red and whoever
+          # bumps it updates the list. That is the intended cost.
+          URLS=$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u | wc -l)
+          echo "unique URL strings: $URLS (expected 14)"
+          test "$URLS" -eq 14
           # Nothing may point at MailOh infrastructure.
           ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'mailoh|trafficflow'
 
@@ -307,6 +356,12 @@ jobs:
           dpkg-deb -c "$DEB" | grep -qE ' usr/bin/mailoh$'
           dpkg-deb -c "$DEB" | grep -qiE ' usr/share/applications/.+\.desktop$'
           dpkg-deb -c "$DEB" | grep -qiE ' usr/share/icons/hicolor/128x128/apps/.+\.png$'
+          # The package name is `mail-oh`, not `mailoh`: the bundler kebab-cases
+          # productName and Tauri v2 exposes no override. Everything else on
+          # Linux is `mailoh`, so `apt remove mailoh` does NOT work and both
+          # READMEs say so. Pinned here so the documentation goes red rather
+          # than stale if a future Tauri changes the slug.
+          test "$(dpkg-deb -f "$DEB" Package)" = "mail-oh"
 
           BIN=src-tauri/target/release/mailoh
           test -s "$BIN"
@@ -315,6 +370,11 @@ jobs:
           grep -aq "connect-src 'none'" "$BIN"
           echo "URLs in the binary:"
           grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u
+          # See the Windows job: the READMEs enumerate these, so the count is
+          # pinned and a toolchain bump that changes it must update the list.
+          URLS=$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u | wc -l)
+          echo "unique URL strings: $URLS (expected 13)"
+          test "$URLS" -eq 13
           # Nothing may point at MailOh infrastructure.
           ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'mailoh|trafficflow'
 

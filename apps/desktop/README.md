@@ -49,7 +49,10 @@ The Vite config aliases exactly three seams, and nothing else:
    for a bare `react` to resolve into. An absolute alias resolves identically in
    the monorepo and in the mirror, and guarantees a single React instance.
 
-## Zero network, three locks
+## Zero network, four locks
+
+Three of them are about the running app. The fourth is about the installer,
+because an installer that phones home makes the other three beside the point.
 
 **1 · The Cloud sync client is not in the module graph.**
 `@mailoh/client-engine`'s barrel re-exports `HttpAdapter`, the `/sync` protocol
@@ -86,6 +89,31 @@ This is not belt-and-braces for its own sake — it is what makes the promise
 bundle loads, and fails if any of them is called or if the guard leaves one
 alone.
 
+**4 · The Windows installers do not fetch the WebView2 runtime.**
+`bundle.windows.webviewInstallMode` is `{ "type": "skip" }`. Tauri's default is
+`downloadBootstrapper`, which compiles a WiX custom action into the `.msi` —
+`DownloadAndInvokeBootstrapper`, a hidden `powershell.exe` running
+`Invoke-WebRequest` against `go.microsoft.com/fwlink/p/?LinkId=2124703` whenever
+`INSTALLED_WEBVIEW2_VERSION` is empty — and the equivalent NSISdl step into the
+`-setup.exe`. Standard, and Microsoft, but still an outbound connection made by a
+product whose claim is *cannot*, not *does not*. `skip` removes both.
+
+The cost is real and it is stated on the download page: **the installers do not
+provide WebView2.** Windows 11 and any Windows 10 that has taken updates since
+2021 already have the Evergreen runtime, because Edge installs it. On a machine
+that does not, the app will not start, and Tauri's own dialog says so with a link
+to Microsoft's installer page — that link, and only that link, is why
+`developer.microsoft.com` appears in the Windows binary's string table. Install
+it once, from Microsoft, deliberately:
+<https://developer.microsoft.com/microsoft-edge/webview2/>
+
+CI asserts the absence rather than trusting the config: the Windows job greps the
+`.msi` for `DownloadAndInvokeBootstrapper`, `fwlink` and
+`MicrosoftEdgeWebview2Setup` and fails if any of them is present, then unpacks
+the NSIS `$PLUGINSDIR` and fails if `NSISdl.dll` is in it. `desktop-shell.test.ts`
+asserts the config key itself, so a future edit that restores the default is red
+in the monorepo suite too.
+
 ## Capabilities: none
 
 ```json
@@ -103,15 +131,40 @@ Rust side there is no `invoke_handler`, no plugin, no `std::fs`, no `std::net`.
 That costs about a quarter of a megabyte and buys the audit:
 
 ```bash
-strings -a src-tauri/target/release/mailoh | grep -oE 'https?://[^ ]+' | sort -u
+strings -a src-tauri/target/release/mailoh \
+  | grep -oE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' | sort -u
 ```
 
-returns the W3C namespace constants, React's error-decoder link, and four Tauri
-source-comment URLs. Nothing else — and `strings … | grep Ohbox` finds the
-interface, so you can see that the binary contains the app you were promised
-without running it. With brotli on, all of that is an opaque blob.
+That is the exact command CI runs, and on Linux it returns **thirteen** strings.
+Here are all thirteen, with nothing withheld:
 
-## Identifier and version
+| string | what it is |
+|---|---|
+| `http://www.w3.org/1999/xhtml`, `…/2000/svg`, `…/1998/Math/MathML`, `…/1999/xlink`, `…/XML/1998/namespace` | the five XML namespace **constants** React's DOM code compares against. Identifiers, not addresses — nothing dials a namespace. |
+| `https://reactjs.org/docs/error-decoder.html?invariant=` | React's minified-error link, printed in a thrown message. |
+| `https://github.com/tauri-apps/muda`, `…/tauri/issues/2549#issuecomment-1250036908`, `…/tauri/issues/8306)`, `…/wry/blob/a0403b9…/src/lib.rs#L1130)`, `https://github.com/whatwg/html/issues/7428` | five source-comment and panic-message URLs from wry, muda and Tauri. Note the trailing `)` on two of them: they are prose, caught mid-sentence. |
+| `http://invalid` | **not a URL.** Rust `&str` literals carry their length in the pointer and get packed into rodata with no separator, so `strings` cannot see where one ends. This is the `http` crate's `"http://"` literal immediately followed by its error table; the full line reads `http://invalid uri characterinvalid schemeinvalid authorityinvalid port…`. |
+| `https://AllocErrKatakanaDeadlock` | the same artifact: `"https://"` followed by the interned symbols `AllocErr`, `Katakana`, `Deadlock`. The full line reads `…XCloseOMoverflowhttps://AllocErrKatakanaDeadlock`. |
+
+Windows returns **fourteen**. The eleven real ones above are identical; neither
+rodata join survives (different linker, different neighbours) and three others
+take their place: `http://https://invalid` (the `"http://"` and `"https://"`
+literals adjacent, then the same `http`-crate error table), `http://I` (a third
+join), and `developer.microsoft.com/en-us/microsoft-edge/webview2` — the link
+inside Tauri's "WebView2 not found" dialog, which is the *only* reason that
+domain is in the binary and which exists precisely because the installer does
+not fetch the runtime for you.
+
+Drop the `| sort -u` and read the whole lines if you want to check the three
+adjacency claims yourself — that is the point of shipping uncompressed. CI
+prints the list on every run, **asserts the count** (13 and 14; a toolchain bump
+that changes it turns the job red, which is the only way a number in a README
+stays true), and **fails** if any URL in the binary matches `mailoh` or
+`trafficflow`. And `strings … | grep Ohbox` finds the interface, so you can see
+that the binary contains the app you were promised without running it. With
+brotli on, all of that is an opaque blob.
+
+## Identifiers, names and version
 
 **`io.mailoh.desktop.tauri`**, not `io.mailoh.desktop`. The SwiftUI client
 already claims the latter (`Resources/Info.plist`), and this configuration also
@@ -124,6 +177,16 @@ The bundle version is **`0.1.0`**, and the release is called **0.1.0-preview**
 in `package.json`, the README and the run summaries. Not a slip: the MSI
 bundler rejects a semver pre-release identifier, and a red Windows job to carry
 a suffix already stated in three other places is a bad trade.
+
+**The `.deb`'s Debian package name is `mail-oh`, with a hyphen** — everything
+else on Linux is `mailoh`: the binary at `/usr/bin/mailoh`, the icon, the
+`.desktop` entry's `Icon=` and `StartupWMClass`. The bundler derives the control
+file's `Package:` field by kebab-casing `productName` (`MailOh` → `mail-oh`) and
+Tauri v2's `bundle.linux.deb` exposes no override, so this is documented rather
+than fixed: the practical consequence is that **`apt remove mailoh` does not
+work — it is `apt remove mail-oh`**. The Linux CI job asserts `Package: mail-oh`
+against the built artifact, so if a future Tauri changes the slug this
+paragraph goes red instead of quietly going stale.
 
 ## Verify it
 

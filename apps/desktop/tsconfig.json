@@ -1,5 +1,5 @@
 {
-  /* Deliberately the same strictness as apps/webapp/tsconfig.json: this project
+  /* Deliberately the same strictness as the web client's own tsconfig: this project
      compiles that app's shell and views unchanged, so a stricter setting here
      would report "errors" in code that is correct under the config it is
      written against — and the only fix available would be to edit the web

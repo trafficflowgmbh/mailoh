@@ -186,18 +186,19 @@ public enum Fixtures {
     /// The product's IMAP folder namespace is still `TrafficFlow/…` — the
     /// pre-rebrand company name, which contains a banned term and is created
     /// inside real customer mailboxes. It is exempt TODAY, not forever: the
-    /// namespace is the wire contract shared by core, services, api, the worker
-    /// and the migration scanner, and the folders already exist in live
-    /// mailboxes, so renaming it to `MailOh/…` is a folder-rename migration with
-    /// reconciliation — tracked in `docs/mailoh/STAGE2-ARCH.md` under "Folder
-    /// namespace rebrand". Mirrors `NAMESPACE_EXEMPTION` in `privacy.ts`.
+    /// namespace is part of the Cloud API's wire contract, shared by the sync
+    /// core, the service layer, the HTTP API, the worker and the migration
+    /// scanner, and the folders already exist in live mailboxes, so renaming it
+    /// to `MailOh/…` is a folder-rename migration with reconciliation —
+    /// scheduled under "Folder namespace rebrand" in the Cloud architecture
+    /// plan. Mirrors `NAMESPACE_EXEMPTION` in `privacy.ts`.
     ///
     /// Until then the rule for view code is narrow: never render a raw folder
     /// string; map it, and fall back to the leaf segment, never the full path.
     public static let namespaceExemption = (
         term: "trafficflow",
         site: "the IMAP folder namespace shared with the backend wire contract",
-        until: "docs/mailoh/STAGE2-ARCH.md — Folder namespace rebrand"
+        until: "Cloud architecture plan — Folder namespace rebrand"
     )
 
     // MARK: Tags (cross-cutting)
