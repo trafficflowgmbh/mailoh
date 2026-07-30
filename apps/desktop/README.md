@@ -107,12 +107,17 @@ to Microsoft's installer page — that link, and only that link, is why
 it once, from Microsoft, deliberately:
 <https://developer.microsoft.com/microsoft-edge/webview2/>
 
-CI asserts the absence rather than trusting the config: the Windows job greps the
-`.msi` for `DownloadAndInvokeBootstrapper`, `fwlink` and
-`MicrosoftEdgeWebview2Setup` and fails if any of them is present, then unpacks
-the NSIS `$PLUGINSDIR` and fails if `NSISdl.dll` is in it. `desktop-shell.test.ts`
-asserts the config key itself, so a future edit that restores the default is red
-in the monorepo suite too.
+`skip` drops Tauri's whole `install_webview` section, not just the download step,
+so the shipped `.msi` has no `INSTALLED_WEBVIEW2_VERSION` property and no
+registry probe either — it does not even look. CI asserts that rather than
+trusting the config: six greps over the built `.msi`
+(`DownloadAndInvokeBootstrapper`, `fwlink`, `go.microsoft.com`,
+`MicrosoftEdgeWebview2Setup`, `Invoke-WebRequest`, `INSTALLED_WEBVIEW2_VERSION`),
+then `7z` over the `-setup.exe` to check that `NSISdl.dll` is not in
+`$PLUGINSDIR` and that no embedded WebView2 installer was `File`d into the
+payload. All eight were run against the last pre-fix installers and all eight
+fired. `desktop-shell.test.ts` asserts the config key itself, so a future edit
+that restores the default is red in the monorepo suite too.
 
 ## Capabilities: none
 

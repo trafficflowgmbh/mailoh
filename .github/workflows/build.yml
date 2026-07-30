@@ -191,17 +191,22 @@ jobs:
           # cannot reach the network must not ship an installer that does, so
           # this is asserted against the built artifacts rather than trusted
           # from the config. Every one of these greps matched a real 0.1.0
-          # installer built before the config key was set.
+          # installer built before the config key was set, and none of them
+          # matches one built after — checked by hand on both, not assumed.
           #
-          # NOT asserted: the INSTALLED_WEBVIEW2_VERSION property and its three
-          # RegistrySearch rows. Those are outside the {{#if}} in Tauri's WiX
-          # template and survive under `skip` — they only READ the registry.
+          # `skip` drops the whole `{{#if install_webview}}` section, so the
+          # INSTALLED_WEBVIEW2_VERSION property and its three RegistrySearch
+          # rows go with it. That makes its absence the broadest single check
+          # available here: it fails if any WebView2 install mode comes back,
+          # not only the downloading ones.
           echo "--- .msi: no WebView2 downloader ---"
           # MSI string pools are uncompressed, so grep -a sees them directly.
           ! grep -aq 'DownloadAndInvokeBootstrapper' "$MSI"
           ! grep -aqi 'fwlink' "$MSI"
+          ! grep -aqi 'go.microsoft.com' "$MSI"
           ! grep -aqi 'MicrosoftEdgeWebview2Setup' "$MSI"
           ! grep -aqi 'Invoke-WebRequest' "$MSI"
+          ! grep -aq 'INSTALLED_WEBVIEW2_VERSION' "$MSI"
 
           echo "--- nsis: no WebView2 install step ---"
           # The NSIS payload is LZMA-compressed, so unpack it and look at what
