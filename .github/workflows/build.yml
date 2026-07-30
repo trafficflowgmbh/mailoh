@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Select the newest Xcode on the runner
         run: |
@@ -73,7 +73,7 @@ jobs:
         run: swift run --package-path apps/macos -c release MailOh --shot shots
 
       - name: Upload MailOh.dmg
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: MailOh-dmg-${{ github.run_number }}
           path: build/MailOh.dmg
@@ -81,18 +81,39 @@ jobs:
 
       - name: Upload MailOh.app (zipped, ad-hoc signature preserved)
         run: ditto -c -k --keepParent build/MailOh.app build/MailOh.app.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: MailOh-app-${{ github.run_number }}
           path: build/MailOh.app.zip
           if-no-files-found: error
 
       - name: Upload screenshots
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: screenshots-${{ github.run_number }}
           path: shots
           if-no-files-found: error
+
+      # So a downloader can check what they got against what this run made.
+      - name: Run summary
+        if: always()
+        run: |
+          {
+            echo '### MailOh — unsigned preview build'
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`${GITHUB_SHA:0:9}\` |"
+            echo "| toolchain | $(xcodebuild -version | tr '\n' ' ') · $(swift --version 2>&1 | head -1) |"
+            echo "| runner | macOS $(sw_vers -productVersion) $(uname -m) |"
+            [ -f build/MailOh.dmg ] && {
+              echo "| architectures | $(lipo -archs build/MailOh.app/Contents/MacOS/MailOh) |"
+              echo "| DMG sha256 | \`$(shasum -a 256 build/MailOh.dmg | cut -d' ' -f1)\` |"
+              echo "| DMG size | $(du -h build/MailOh.dmg | cut -f1) |"
+            }
+            echo
+            echo 'Ad-hoc signed, **not** notarized: first launch needs right-click → Open.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
 # ---------------------------------------------------------------------------
 # Windows and Linux are NOT built here yet.

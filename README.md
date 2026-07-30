@@ -94,10 +94,14 @@ brands, no scraped inboxes.
 
 ## Build it yourself
 
-**Requirements:** macOS 15 (Sequoia) or newer, and Xcode 26 or newer for the
-Swift 6 toolchain (`xcode-select --install` alone is not enough — the app needs
-the macOS SDK). No dependencies, nothing to install: the package has zero
-third-party packages.
+**Requirements:** macOS 15 (Sequoia) or newer, and Xcode for the Swift 6
+toolchain and the macOS SDK (`xcode-select --install` on its own is not enough).
+Built and tested on every push with **Xcode 26.3 / Swift 6.2.4** on macOS 15 —
+that is the combination we can vouch for; Swift 6.0 (Xcode 16) is the language
+mode the package declares and should work, but is not covered by CI.
+
+No dependencies: `Package.swift` declares zero third-party packages, so there is
+nothing to resolve, install or trust.
 
 ```bash
 git clone https://github.com/trafficflowgmbh/mailoh-desktop
@@ -132,7 +136,9 @@ Every push to `main` builds on a GitHub-hosted macOS runner and attaches
 **MailOh.dmg** (universal, arm64 + x86_64) to the run:
 [latest builds →](https://github.com/trafficflowgmbh/mailoh-desktop/actions/workflows/build.yml)
 (the artifact list is at the bottom of a run; GitHub requires you to be signed
-in to download artifacts).
+in to download artifacts). Each run's summary page prints the DMG's SHA-256, the
+architectures in the binary and the exact toolchain, so you can check what you
+downloaded against what the run produced.
 
 > [!IMPORTANT]
 > **These builds are unsigned and un-notarized.** They carry an ad-hoc signature
@@ -157,6 +163,11 @@ pretending otherwise.
 | `MailOhKit` | library | `Theme/` (the design tokens), `Models/`, `Fixtures/`, `State/`, `Views/`, `App/` |
 | `MailOh` | executable | `main.swift` — dispatches `--smoke`, `--shot`, or the app |
 | `MailOhKitTests` | tests | 99 tests: counts and seen-semantics, lossless Screener moves, undo, triage, tags, search, numeric design-token fidelity, source audits, and the no-collapse audit |
+
+One of those 99 reports as *skipped* here, and says why when it does: it compares
+the triage pile's sheet-edge shadow against the original design prototype, which
+is not published. It runs in the monorepo, where it once caught a shadow that had
+drifted from `.10` to `.16` alpha.
 
 Worth knowing if you plan to read the code:
 
