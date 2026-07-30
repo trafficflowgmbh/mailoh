@@ -224,28 +224,21 @@ export const fictionalNames: FictionalName[] = [
  * review — including the nine this registry once certified as coined.
  *
  * SCOPE — stated precisely, because an overstated scope is how the last grep
- * got waved through. This list governs the DEMO WORLD: `getFixtures()` at
- * every depth, and the review notes above (audited as corpus, so a note may
- * never name a brand it bans). A repo-wide grep is NOT clean, and the three
- * reasons are all deliberate:
+ * got waved through. This list governs the DEMO WORLD and nothing else:
+ * `getFixtures()` at every depth, and the review notes above (audited as
+ * corpus, so a note may never name a brand it bans). It is deliberately not a
+ * repo-wide grep, and there are two reasons a wider one would not come back
+ * clean:
  *
  *  1. `NAMESPACE_EXEMPTION` below — the product's IMAP folder namespace still
  *     carries the pre-rebrand company name. Documented, with a tracked fix.
- *  2. `apps/landing` names real mail providers and competitors on purpose
- *     (Gmail, iCloud, Fastmail, HEY, Superhuman). That is nominative use in
- *     marketing copy — "MailOh works on the mailbox you already have" needs
- *     the mailbox named — and `packages/core`'s tracker blocklist has to name
- *     the tracking vendors it blocks. Neither is a leak; both would be
- *     nonsense anonymised.
- *  3. PRE-EXISTING, NOT CLEAN: backend test suites (`packages/api|core|db|
- *     services`, `apps/worker`) hardcode the owner's real address as the test
- *     mailbox in ~26 places, and `design/proposals/{aero,aero-blanc,
- *     calm-paper}` plus `BRIEF.md` are the frozen pre-rebrand design round,
- *     built from the owner's real mailbox before this invariant existed. Both
- *     are test/archive-only and neither ships, but neither is clean either —
- *     tracked in `docs/mailoh/STAGE2-ARCH.md` under "Owner identity in
- *     backend test fixtures". Do not read a green fixtures suite as a green
- *     repository.
+ *  2. Product code outside the fixtures names real vendors on purpose: the
+ *     marketing copy has to name the mail providers MailOh works with, and the
+ *     tracker blocklist has to name the trackers it blocks. That is nominative
+ *     use, not a leak, and both would be nonsense anonymised.
+ *
+ * So read a green run of this guard as what it is — a certified demo world —
+ * and not as a claim about every file that happens to sit next to it.
  */
 export const bannedTerms: string[] = [
   // real personal / company identity

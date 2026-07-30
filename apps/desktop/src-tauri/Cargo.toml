@@ -1,5 +1,5 @@
 [package]
-name = "mailoh-desktop"
+name = "mailoh"
 version = "0.1.0"
 description = "MailOh — consent-first email. Windows/Linux preview shell."
 authors = ["TrafficFlow GmbH <support@mailoh.io>"]

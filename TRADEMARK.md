@@ -20,8 +20,12 @@ These are trademarks of **TrafficFlow GmbH**, Staubstrasse 1, 8038 Zürich,
 Switzerland. They are *included* in this repository because the project builds
 with them — not offered under GPL-3.0.
 
-The image files above are the only binary artwork in the mirror. Everything
-else here is source, and all of that source is GPL-3.0-or-later.
+The image files above are the only binary artwork excluded from the GPL grant.
+The other four binaries in this tree — the screenshots in `docs/`
+(`ohbox-light.png`, `ohbox-dark.png`, `screener-light.png`, `screener-dark.png`)
+— are renders of this source tree and are GPL-covered along with it; see
+[COPYRIGHT](COPYRIGHT). Everything else here is source, and all of that source
+is GPL-3.0-or-later.
 
 ## What you may do — no permission needed
 
@@ -50,7 +54,7 @@ Concretely, if you distribute a **modified** build to other people:
 - Do not ship the **"oh." icon or wordmark** as your application's identity.
   Replace `Resources/MailOh.icns` and `apps/desktop/src-tauri/icons/` with your
   own artwork, and change the product name in `apps/macos/Package.swift`,
-  `public/…/Resources/Info.plist` and `apps/desktop/src-tauri/tauri.conf.json`.
+  `Resources/Info.plist` and `apps/desktop/src-tauri/tauri.conf.json`.
 - Do not use the marks to imply endorsement, affiliation, or that TrafficFlow
   supports your build.
 
