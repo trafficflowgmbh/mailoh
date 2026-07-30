@@ -37,7 +37,7 @@ import {
   type Command,
   type RailGroup,
 } from "@mailoh/ui";
-import { EngineProvider, useEngine, useEngineVersion } from "./engine";
+import { EngineProvider, useDemoMode, useEngine, useEngineVersion } from "./engine";
 import { firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
 import { MessagePane, type MessageAction } from "./MessagePane";
 import { useScreenerState } from "./screener-state";
@@ -63,15 +63,22 @@ interface ReadsAiChipEntity {
 const typingGuard = (e: KeyboardEvent): boolean =>
   /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement)?.tagName ?? "");
 
+/**
+ * `demo` here is the SERVER's answer, and it is only a floor — `EngineProvider` re-derives
+ * the mode from the real URL on the client and publishes what the engine was actually built
+ * in. The chrome below reads THAT (`useDemoMode`), so the ribbon and the frozen demo clock
+ * can never disagree with the adapter the data is coming from.
+ */
 export function AppShell({ demo }: { demo: boolean }) {
   return (
     <EngineProvider demo={demo}>
-      <ShellInner demo={demo} />
+      <ShellInner />
     </EngineProvider>
   );
 }
 
-function ShellInner({ demo }: { demo: boolean }) {
+function ShellInner() {
+  const demo = useDemoMode();
   const t = useTranslations();
   const engine = useEngine();
   const version = useEngineVersion();
