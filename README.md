@@ -422,7 +422,8 @@ they came from; pull requests land in the monorepo and come back out here.
    your own API key or a local Ollama. Proposed, never applied; sensitive mail
    structurally excluded.
 
-Dates are not promised. The order is.
+Dates are not promised. The order is. Each of these is an open issue with the
+detail in it, and [CHANGELOG.md](CHANGELOG.md) records what has actually shipped.
 
 ## Licence
 
