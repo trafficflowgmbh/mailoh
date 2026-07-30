@@ -302,9 +302,11 @@ jobs:
           dpkg-deb -I "$DEB"
           echo "--- .deb contents ---"
           dpkg-deb -c "$DEB"
-          dpkg-deb -c "$DEB" | grep -qi '/usr/bin/mailoh$'
-          dpkg-deb -c "$DEB" | grep -qi '\.desktop$'
-          dpkg-deb -c "$DEB" | grep -qiE 'icons/hicolor/128x128/apps/.*\.png$'
+          # dpkg-deb lists paths with no leading slash, so anchor on the space
+          # that ends the tar columns instead.
+          dpkg-deb -c "$DEB" | grep -qE ' usr/bin/mailoh$'
+          dpkg-deb -c "$DEB" | grep -qiE ' usr/share/applications/.+\.desktop$'
+          dpkg-deb -c "$DEB" | grep -qiE ' usr/share/icons/hicolor/128x128/apps/.+\.png$'
 
           BIN=src-tauri/target/release/mailoh
           test -s "$BIN"
