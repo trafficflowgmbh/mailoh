@@ -1,4 +1,4 @@
-MailOh for macOS — the free MailOh desktop client
+MailOh for the desktop — the free MailOh client for macOS, Windows and Linux
 Copyright (C) 2026 TrafficFlow GmbH, Staubstrasse 1, 8038 Zürich, Switzerland
 
 This program is free software: you can redistribute it and/or modify it under
@@ -13,23 +13,148 @@ PARTICULAR PURPOSE. See the GNU General Public License for more details.
 You should have received a copy of the GNU General Public License along with
 this program. If not, see <https://www.gnu.org/licenses/>.
 
-The full licence text is in ./LICENSE, verbatim.
+The full licence text is in ./LICENSE, byte-for-byte the Free Software
+Foundation's published GPL-3.0 (sha256
+3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986). It is a
+verbatim copy on purpose: the licence document itself may not be modified, so
+the applied copyright notice lives in this file rather than being edited into
+the licence's "How to Apply These Terms" appendix.
+
+
+What is under GPL-3.0
+---------------------
+All source in this repository:
+
+  apps/macos/**            the SwiftUI client for macOS
+  apps/desktop/**          the Tauri shell for Windows and Linux (Rust + TS)
+  apps/webapp/app/**       the shared client shell and its views
+  packages/**              design tokens, UI components, fixtures, client engine
+  scripts/**, .github/**   packaging and CI
+
+…together with this file, LICENSE, TRADEMARK.md, CONTRIBUTING.md, SECURITY.md
+and README.md.
+
+The four screenshots in docs/ (ohbox-*.png, screener-*.png) are renders of this
+source tree and are covered by the same grant.
+
+
+What is NOT under GPL-3.0
+-------------------------
+The MailOh brand. The name "MailOh", the "oh." wordmark, and the icon artwork:
+
+  Resources/MailOh.icns
+  docs/mailoh-icon.png
+  apps/desktop/src-tauri/icons/{icon.icns, icon.ico, icon.png, 32x32.png,
+                                64x64.png, 128x128.png, 128x128@2x.png}
+
+These are trademarks of TrafficFlow GmbH, included here because the project
+builds with them, and reserved rather than licensed. You may build, run, modify
+and redistribute the source; a fork you distribute publicly must carry its own
+name and its own icon. This is the ordinary free-software arrangement — the
+same line Mozilla drew with Firefox/Iceweasel — and GPL-3.0 section 7(e)
+expressly contemplates a licence that declines to grant trademark rights.
+
+TRADEMARK.md is the policy, including the many cases where using the name is
+fine and needs no permission from anyone.
+
+
+Third parties
+-------------
+Every dependency carries its own licence, granted by its own authors, and
+nothing in this file changes any of them.
+
+  macOS client    None. apps/macos/Package.swift declares zero third-party
+                  packages — the only "dependencies:" entries are its own
+                  internal targets. Nothing is resolved, downloaded or trusted
+                  in order to build it.
+
+  Windows/Linux   Rust: the Tauri 2 crate tree pinned in
+                  apps/desktop/src-tauri/Cargo.lock. Tauri is MIT OR
+                  Apache-2.0, and its transitive tree is predominantly the
+                  same two.
+                  npm: react, react-dom and use-intl at runtime (MIT);
+                  typescript (Apache-2.0), vite, @vitejs/plugin-react, jsdom,
+                  @tauri-apps/cli and the @types packages to build and test
+                  (MIT). apps/desktop/package.json is the exact set; Cargo.lock
+                  is committed so an installer you download is reproducible
+                  from the tree it was built from.
+
+  Fonts           None are distributed here. See below — it is the one
+                  third-party question that deserves a real answer rather than
+                  a pointer.
+
+
+The "oh." mark and Inter
+------------------------
+The letterforms in the MailOh icon were drawn as outlined paths from Inter Bold
+(Inter 4.1, copyright (c) 2016 The Inter Project Authors,
+https://github.com/rsms/inter), licensed under the SIL Open Font License 1.1.
+
+No font binary is distributed in this repository. The .ttf used to draw the
+mark is a design-time tool that lives in the private monorepo alongside its OFL
+text, and it is not part of what is published here. The publishing script's
+allow-list contains no font extension at all, so a font file cannot ride along
+into this tree by accident — the run aborts instead of shipping it.
+
+That distinction is the whole answer. The OFL's conditions — its copyleft, its
+requirement that the licence travel with the font, and its Reserved Font Name
+rules — attach to redistribution of the Font Software. This repository
+redistributes none, so none of them are triggered here. The icon files are
+artwork whose curves were derived from Inter's outlines; our reading,
+consistent with how the OFL and SIL's own FAQ treat work produced *with* a font
+rather than copies *of* the font software, is that such artwork is not itself
+Font Software and is not encumbered by the OFL. That is our position, stated
+plainly, not a court's ruling.
+
+If a font binary is ever shipped from this repository, this section becomes
+wrong the moment it happens, and stays wrong until the OFL text ships beside it
+and the Reserved Font Name "Inter" is honoured. Credit is given here either
+way, because Inter is excellent and the mark would not look the way it does
+without it.
+
+
+Per-file licence headers: deliberately absent
+---------------------------------------------
+There is no GPL header at the top of each source file. That is a decision, not
+an oversight, and there are two reasons.
+
+The ordinary one: a single LICENSE plus this file is the normal and sufficient
+arrangement for an application repository. The FSF recommends per-file notices
+so a file separated from its project still carries its terms — a real risk for
+a library whose files get vendored into other projects, a small one for an
+application nobody copies a single file out of.
+
+The one specific to MailOh: this repository is a generated mirror. Several of
+the trees published here — packages/tokens, packages/ui, packages/fixtures,
+packages/client-engine and apps/webapp/app — are the *same files* the
+closed-source MailOh Cloud web client is built from. TrafficFlow GmbH holds the
+copyright on all of it and licenses it both ways: GPL-3.0 in this repository,
+proprietary in the Cloud product. Stamping a GPL header into each of those
+files upstream would assert, inside the Cloud client's own sources, a licence
+that does not describe them. Declaring the licence once, at the root, for the
+repository as published, states exactly the thing that is true: *this tree, as
+published here, is GPL-3.0-or-later.*
+
+If you extract a file from this repository, it came from here and it is
+GPL-3.0-or-later. Please carry that with you.
+
 
 Why GPL-3.0
 -----------
 The desktop client is free and is meant to stay free. GPL-3.0 keeps it that
 way: anyone may use, study, change and redistribute it, and any redistributed
-change comes back under the same licence — so a closed-source re-skin of
-MailOh is not possible.
+change comes back under the same licence — so a closed-source re-skin of MailOh
+is not possible.
 
 TrafficFlow GmbH holds the copyright on this codebase and can therefore also
-license it differently for its own products (the MailOh Cloud tier, which is a
-separate, paid, not-published product). Contributions are accepted under
-GPL-3.0 with no copyright assignment and no CLA; see CONTRIBUTING.md.
+license it differently for its own products — the MailOh Cloud tier, which is a
+separate, paid, unpublished product. Contributions are accepted under GPL-3.0
+with a DCO sign-off, with no copyright assignment and no CLA. CONTRIBUTING.md
+explains what that means in practice, including the one part of the tree where
+it genuinely constrains what we can accept.
 
-Trademarks
-----------
-The name "MailOh", the "oh." wordmark and the app icon are trademarks of
-TrafficFlow GmbH and are not licensed under the GPL. You may build, run and
-redistribute this source; please rename and re-brand a fork you distribute
-publicly so users are not misled about who supports it.
+
+Contact
+-------
+TrafficFlow GmbH, Staubstrasse 1, 8038 Zürich, Switzerland
+support@mailoh.io · https://mailoh.io · https://trafficflow.ch

@@ -56,12 +56,114 @@ route in both colour schemes at both verified widths.
   there is no excuse.
 - Match the surrounding style. There is no formatter config to fight with.
 
-## No CLA
+## Sign your commits (DCO) — and no CLA
 
-There is no contributor licence agreement and no copyright assignment. You keep
-your copyright; your contribution is licensed under GPL-3.0, the same licence as
-the rest of the repository. By opening a PR you confirm you have the right to
-contribute the code under that licence.
+**There is no contributor licence agreement and no copyright assignment.** You
+keep your copyright. We will never ask you to sign your rights over to a Swiss
+company in exchange for having a patch merged.
+
+What we do ask for is the [Developer Certificate of Origin][dco] 1.1 — the same
+lightweight sign-off the Linux kernel uses. It is one line per commit, and it
+says you wrote the patch or otherwise have the right to send it:
+
+```bash
+git commit -s -m "fix: the Screener's compact drawer keeps focus"
+```
+
+`-s` appends the trailer, using your `user.name` and `user.email` from git:
+
+```
+Signed-off-by: Jane Hacker <jane@example.com>
+```
+
+Use a real name and a real address you read. Forgot on a commit you already
+made? `git commit -s --amend` for the last one, or
+`git rebase --signoff main` for a whole branch, then force-push.
+
+### The DCO, in full
+
+```
+Developer Certificate of Origin
+Version 1.1
+
+Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
+
+Everyone is permitted to copy and distribute verbatim copies of this
+license document, but changing it is not allowed.
+
+Developer's Certificate of Origin 1.1
+
+By making a contribution to this project, I certify that:
+
+(a) The contribution was created in whole or in part by me and I
+    have the right to submit it under the open source license
+    indicated in the file; or
+
+(b) The contribution is based upon previous work that, to the best
+    of my knowledge, is covered under an appropriate open source
+    license and I have the right under that license to submit that
+    work with modifications, whether created in whole or in part
+    by me, under the same license (unless I am permitted to submit
+    under a different license), as indicated in the file; or
+
+(c) The contribution was provided directly to me by some other
+    person who certified (a), (b) or (c) and I have not modified
+    it.
+
+(d) I understand and agree that this project and the contribution
+    are public and that a record of the contribution (including all
+    personal information I submit with it, including my sign-off) is
+    maintained indefinitely and may be redistributed consistent with
+    this project or the open source license(s) involved.
+```
+
+Sign-off is checked by a human at review time, not by a bot. We deliberately did
+not add a CI gate for it: the commits on `main` are machine-generated syncs from
+the private monorepo and carry no trailer, so a check that ran on pushes would
+sit permanently red and teach everyone to ignore a red build. If that ever
+changes, the safe shape is a job scoped to `pull_request` only. Until then, if
+you forget, we will just ask.
+
+### What your contribution is licensed as, and what that means for us
+
+Your contribution is licensed under **GPL-3.0-or-later**, the same as the rest
+of this repository. Nothing more is asked, and nothing more is taken.
+
+The honest consequence, which most projects leave you to work out yourself:
+because you keep your copyright and grant only the GPL, **TrafficFlow cannot
+move your code into MailOh Cloud**, which is closed-source. For almost
+everything here that is a non-issue — `apps/macos` and `apps/desktop` are the
+desktop clients and exist nowhere else.
+
+There is one real exception, and you should know about it before you spend a
+weekend on a patch. These trees are **shared with the Cloud web client**:
+
+- `packages/tokens`, `packages/ui`, `packages/fixtures`
+- `packages/client-engine`
+- `apps/webapp/app/{shell,views}`
+
+They are published here under GPL-3.0 and used in the proprietary Cloud client,
+which TrafficFlow can do because it holds the copyright on all of it
+([COPYRIGHT](COPYRIGHT)). A contribution from you into one of those files would
+break that arrangement — we would be unable to ship it on the Cloud side without
+your separate permission.
+
+So, for a PR touching those paths, one of three things happens, and we will tell
+you which at review time rather than sitting on it:
+
+1. **It is a bug fix or a small change** — we merge it and live with it. This is
+   the usual outcome.
+2. **We ask** whether you are willing to also license that specific patch to
+   TrafficFlow for the Cloud client. You may say no, and "no" is a complete
+   answer that costs you nothing.
+3. **We reimplement it** if neither of the above works. You get the credit for
+   the report and the design; we write the code.
+
+If you want to avoid the question entirely, contribute to `apps/macos` or
+`apps/desktop`. And if a large change is forming in your head, open an issue
+first — that is true for the whole repository, and doubly so here.
+
+[dco]: https://developercertificate.org/
 
 ## Conduct
 

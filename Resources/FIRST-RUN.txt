@@ -19,7 +19,7 @@ MailOh for macOS — first run
         xattr -dr com.apple.quarantine /Applications/MailOh.app
     Run that only if you trust where this DMG came from. The honest
     alternative is to build it yourself:
-        git clone https://github.com/trafficflowgmbh/mailoh-desktop
+        git clone https://github.com/trafficflowgmbh/mailoh
         swift build -c release --package-path apps/macos
         swift run  -c release --package-path apps/macos MailOh
 
@@ -36,6 +36,6 @@ Requires macOS 15 (Sequoia) or newer.
 
 MailOh is free software: GPL-3.0-or-later.
 Copyright (C) 2026 TrafficFlow GmbH, Zürich, Switzerland.
-Source, issues, roadmap:  https://github.com/trafficflowgmbh/mailoh-desktop
+Source, issues, roadmap:  https://github.com/trafficflowgmbh/mailoh
 About MailOh:             https://mailoh.io
 Questions:                support@mailoh.io

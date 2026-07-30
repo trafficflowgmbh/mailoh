@@ -853,7 +853,7 @@ final class MailOhKitTests: XCTestCase {
     /// The one token that had drifted: the triage pile's stacked-sheet edge, authored
     /// at alpha .10 in the prototype and duplicated by hand at .16.
     ///
-    /// The Blanc prototype is *not* part of the public `mailoh-desktop` mirror (it is
+    /// The Blanc prototype is *not* part of the public `mailoh` mirror (it is
     /// an unreleased design source, and `scripts/publish-desktop.mjs` refuses to copy
     /// it), so in a public checkout this check has nothing to compare against and
     /// skips loudly rather than pretending to pass. In the monorepo the file is always

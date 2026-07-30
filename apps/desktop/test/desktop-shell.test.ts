@@ -60,7 +60,7 @@ describe("tauri.conf.json", () => {
     // macOS bundle (it is how this shell is verified locally), and two apps
     // sharing a CFBundleIdentifier are indistinguishable to LaunchServices.
     const plist = fs.readFileSync(
-      path.resolve(APP, "../../public/mailoh-desktop/Resources/Info.plist"),
+      path.resolve(APP, "../../public/mailoh/Resources/Info.plist"),
       "utf8",
     );
     const macOsId = /<key>CFBundleIdentifier<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
