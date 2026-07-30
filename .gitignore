@@ -9,6 +9,14 @@ build/
 # Screenshots from `MailOh --shot`
 shots/
 
+# Tauri shell (apps/desktop): npm deps, the UI bundle, Rust output, and the ACL
+# schemas tauri-build regenerates on every compile.
+node_modules/
+apps/desktop/dist/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+package-lock.json
+
 # Xcode
 *.xcuserdata
 *.xcuserdatad

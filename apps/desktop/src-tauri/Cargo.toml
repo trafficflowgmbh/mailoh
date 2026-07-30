@@ -1,0 +1,49 @@
+[package]
+name = "mailoh-desktop"
+version = "0.1.0"
+description = "MailOh — consent-first email. Windows/Linux preview shell."
+authors = ["TrafficFlow GmbH <support@mailoh.io>"]
+license = "GPL-3.0-or-later"
+edition = "2021"
+rust-version = "1.82"
+
+# The binary the installers ship. Named for the product, lower-cased, because it
+# is also the Linux command and the .deb's package name.
+[[bin]]
+name = "mailoh"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri 2's default feature set MINUS `compression`, and nothing added.
+#
+# Dropping brotli costs about a quarter of a megabyte in the installer and buys
+# the thing this product is actually selling: a binary anyone can audit without
+# running it. With compression on, the embedded UI is an opaque blob — you
+# cannot grep a downloaded .msi for the URLs it contains, so "it talks to
+# nobody" would be a claim rather than a check. Uncompressed, it is a check:
+#
+#     strings mailoh.exe | grep -E 'https?://'
+#
+# returns the W3C namespace constants and React's error-decoder link, and
+# nothing else. See the README's "Verify it yourself".
+#
+# Nothing here opens a socket, reads the filesystem or spawns a process:
+# src/main.rs is eleven lines and capabilities/main.json grants the webview
+# nothing at all.
+tauri = { version = "2", default-features = false, features = [
+    "wry",
+    "common-controls-v6",
+    "dynamic-acl",
+    "x11",
+    "dbus",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

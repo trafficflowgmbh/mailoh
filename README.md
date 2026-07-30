@@ -2,17 +2,18 @@
 
 <img src="docs/mailoh-icon.png" width="88" height="88" alt="MailOh">
 
-# MailOh for macOS
+# MailOh for the desktop
 
 **Consent-first email, on the mailboxes you already have.**
 
-A native SwiftUI client for MailOh. Free, GPL-3.0, no account, no subscription —
-this repository is the whole thing.
+A native SwiftUI client for macOS and a Tauri shell for Windows and Linux. Free,
+GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowgmbh/mailoh-desktop/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowgmbh/mailoh-desktop/actions/workflows/build.yml)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
-[![platform: macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#build-it-yourself)
-[![Swift 6](https://img.shields.io/badge/Swift-6-f05138)](apps/macos/Package.swift)
+[![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#build-it-yourself)
+[![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows-and-linux)
+[![Linux](https://img.shields.io/badge/Linux-AppImage%20%C2%B7%20deb-111111)](#windows-and-linux)
 [![mailoh.io](https://img.shields.io/badge/mailoh.io-website-666666)](https://mailoh.io)
 
 </div>
@@ -26,9 +27,9 @@ a small fictional mailbox that ships inside the app.
 
 | | |
 |---|---|
-| ✅ Runs, and is worth looking at | Every surface is real SwiftUI on the real design system: Ohbox, Screener, Reads, Receipts, triage piles, tags, search, compose, settings — light and dark, down to a 390 pt window, keyboard-first. |
-| ✅ Tested | 99 tests over the model, the rules and the design tokens, plus a render check (`--smoke`) that hosts every route offscreen, rasterises it, and fails if anything draws nothing or quietly collapses a list. |
-| ❌ Does not talk to your mailbox | There is **no IMAP client, no HTTP client, no telemetry and no update check** in this build. `import` lines across the whole app: AppKit, Foundation, SwiftUI, Observation. Nothing else. |
+| ✅ Runs, and is worth looking at | Every surface is real: Ohbox, Screener, Reads, Receipts, triage piles, tags, search, compose, settings — light and dark, down to a 390 pt window, keyboard-first. Native SwiftUI on macOS; the same interface in a locked-down webview on Windows and Linux. |
+| ✅ Tested | 99 tests over the model, the rules and the design tokens, plus a render check (`--smoke`) that hosts every route offscreen, rasterises it, and fails if anything draws nothing or quietly collapses a list. The Tauri shell has its own 31-check render + offline audit over the built bundle, and 14 assertions on its security configuration. |
+| ❌ Does not talk to your mailbox | There is **no IMAP client, no HTTP client, no telemetry and no update check** in either build. `import` lines across the whole macOS app: AppKit, Foundation, SwiftUI, Observation. Nothing else. The Windows/Linux shell forbids connections at the webview level (`connect-src 'none'`) and replaces the page's network APIs with functions that throw. |
 | ❌ No accounts, no credentials | Nothing to sign into, nothing stored in the keychain. |
 | 🔜 Next | The local engine slice — IMAP with IDLE and delta fetch, an on-device store, the rules pipeline, then AI with your own key or a local Ollama. See [Roadmap](#roadmap). |
 
@@ -94,7 +95,7 @@ model — see [Status](#status--read-this-first).)
 All of it is fictional mail from a fictional persona. No real people, no real
 brands, no scraped inboxes.
 
-## Build it yourself
+## Build it yourself — macOS
 
 **Requirements:** macOS 15 (Sequoia) or newer, and Xcode for the Swift 6
 toolchain and the macOS SDK (`xcode-select --install` on its own is not enough).
@@ -132,7 +133,83 @@ And an installable bundle, which SwiftPM cannot make on its own:
 ./scripts/package-app.sh     # → build/MailOh.app and build/MailOh.dmg
 ```
 
-## Download a build
+## Windows and Linux
+
+The same interface, in a Tauri v2 shell: a native Rust window around a
+**locked-down webview** rendering a static bundle that ships inside the binary.
+It is the same preview as the macOS app and the same fixture mailbox — see
+[Status](#status--read-this-first) before you download anything.
+
+**It cannot reach the network.** Not "does not" — cannot, in three independent
+ways. The webview's Content-Security-Policy is `connect-src 'none'`, so `fetch`,
+XHR, WebSocket and EventSource are refused before they are attempted. The page
+then replaces those five APIs with functions that throw. And the Cloud sync
+client is aliased out of the bundle at build time — it is not compiled in, and
+its source is not even in this repository. The Tauri capability list is
+literally empty (`"permissions": []`): the interface can call no Tauri command,
+touch no file and spawn no process.
+
+Because the interface is embedded **uncompressed**, you can check all of that on
+a binary you downloaded, without running it:
+
+```bash
+strings -a mailoh.exe | grep -oE 'https?://[^ ]+' | sort -u   # W3C + React + Tauri docs, nothing else
+strings -a mailoh.exe | grep -c Ohbox                         # the interface really is in there
+```
+
+### Build it yourself
+
+**Requirements:** [Rust](https://rustup.rs) (stable) and Node 22. On Linux also
+the Tauri prerequisites — on Ubuntu 24.04:
+
+```bash
+sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+  libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev \
+  libssl-dev build-essential curl wget file patchelf desktop-file-utils
+```
+
+On Windows, the MSVC build tools and WebView2 (already on Windows 11 and
+up-to-date Windows 10).
+
+```bash
+cd apps/desktop
+npm install
+npm run ui:build      # → dist/, the bundle the app embeds
+npm run smoke         # → SMOKE OK (31 checks) — renders, and proves it is offline
+npx tauri build       # → src-tauri/target/release/bundle/…
+```
+
+`apps/desktop/README.md` is the long version: why the UI is bundled with Vite
+rather than exported from Next, what each of the three aliases does, and the
+complete capability and CSP set.
+
+### Download a build
+
+Every push to `main` also builds on GitHub-hosted `windows-latest` and
+`ubuntu-latest` runners and attaches **MailOh_0.1.0_x64_en-US.msi**,
+**MailOh_0.1.0_x64-setup.exe** (NSIS), **MailOh_0.1.0_amd64.AppImage** and
+**MailOh_0.1.0_amd64.deb**. Each run's summary prints every artifact's SHA-256.
+
+> [!IMPORTANT]
+> **Windows: these builds have no Authenticode signature.** SmartScreen will
+> show "Windows protected your PC" on first run. **More info → Run anyway.** The
+> NSIS installer installs per-user, so it needs no administrator. Code-signing
+> certificates cost money MailOh has not spent yet; building from source is the
+> option that requires trusting nobody.
+
+> [!IMPORTANT]
+> **Linux: the AppImage needs the executable bit**, which GitHub's artifact zip
+> does not preserve:
+> ```bash
+> chmod +x MailOh_0.1.0_amd64.AppImage && ./MailOh_0.1.0_amd64.AppImage
+> ```
+> If it exits immediately on a distribution that has not enabled unprivileged
+> user namespaces, run it with `--appimage-extract-and-run`. The `.deb` installs
+> with `sudo apt install ./MailOh_0.1.0_amd64.deb` and pulls in WebKitGTK; it is
+> **not** in any repository, so it will never auto-update. There is no update
+> checker in this build at all.
+
+## Download a macOS build
 
 Every push to `main` builds on a GitHub-hosted macOS runner and attaches
 **MailOh.dmg** (universal, arm64 + x86_64) to the run:
@@ -152,11 +229,15 @@ downloaded against what the run produced.
 > developer account; until then, building from source is the option that requires
 > trusting nobody.
 
-There are no Windows or Linux builds yet — those are a Tauri shell that does not
-exist in this repository yet. The CI workflow deliberately has no green job
-pretending otherwise.
-
 ## How it is put together
+
+Two clients, one interface. The macOS app is native SwiftUI; the Windows/Linux
+app is a Rust window around the React implementation of the same design system.
+Neither is a port of the other — they are two renderings of one specification,
+and the parts that could drift (colours, radii, spacing, shadows) are compared
+numerically against the same token file by the Swift test suite.
+
+### macOS — `apps/macos`
 
 7,600 lines of Swift across 30 files plus 1,400 lines of tests, one SwiftPM
 package, no dependencies.
@@ -166,6 +247,22 @@ package, no dependencies.
 | `MailOhKit` | library | `Theme/` (the design tokens), `Models/`, `Fixtures/`, `State/`, `Views/`, `App/` |
 | `MailOh` | executable | `main.swift` — dispatches `--smoke`, `--shot`, or the app |
 | `MailOhKitTests` | tests | 99 tests: counts and seen-semantics, lossless Screener moves, undo, triage, tags, search, numeric design-token fidelity, source audits, and the no-collapse audit |
+
+### Windows and Linux — `apps/desktop`
+
+Eleven lines of Rust, and a 330 KB bundle.
+
+| Piece | What is in it |
+|---|---|
+| `src-tauri/src/main.rs` | the whole Rust side: create the window, run. No commands, no plugins, no `std::fs`, no `std::net`. |
+| `src-tauri/tauri.conf.json` | window geometry (clean to 390 px), the CSP, the bundle targets, the `oh.` icon family |
+| `src-tauri/capabilities/main.json` | one file, `"permissions": []` |
+| `src/` | the desktop-specific layer: providers, the pre-paint theme stamp, the offline guard, and the stub that stands in for the Cloud sync client |
+| `packages/{tokens,ui,fixtures,client-engine}` + `apps/webapp/app/{shell,views}` | the interface itself — the same sources the web client renders, compiled by Vite into the bundle Tauri embeds |
+
+`apps/webapp/app/` here is **only** the client shell and its views. The Cloud web
+app's sign-in, its API topology and its server-side plumbing are not in this
+repository, and neither is the `/sync` protocol client.
 
 One of those 99 reports as *skipped* here, and says why when it does: it compares
 the triage pile's sheet-edge shadow against the original design prototype, which
@@ -205,11 +302,11 @@ they came from; pull requests land in the monorepo and come back out here.
    on-device store, and the rules pipeline behind today's `AppState`. Real
    folders, moved in place, with the desired-state model that makes a half-moved
    mailbox impossible.
-2. **Signed, notarized DMG** with a real Developer ID, and automatic updates.
+2. **Signed installers** — a notarized DMG with a real Apple Developer ID, an
+   Authenticode-signed .msi and .exe, and automatic updates.
 3. **AI, locally or with your key** — Screener suggestions and draft replies via
    your own API key or a local Ollama. Proposed, never applied; sensitive mail
    structurally excluded.
-4. **Windows and Linux** — a Tauri shell over the same engine, built in CI here.
 
 Dates are not promised. The order is.
 

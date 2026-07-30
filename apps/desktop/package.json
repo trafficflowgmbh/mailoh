@@ -1,0 +1,30 @@
+{
+  "name": "@mailoh/desktop",
+  "version": "0.1.0-preview",
+  "private": true,
+  "type": "module",
+  "description": "MailOh for Windows and Linux — a Tauri v2 shell around the MailOh client UI, fixtures-only, zero network.",
+  "//": "Ranges, not exact pins, and the same ones the rest of the monorepo uses: an exact pin here puts a SECOND copy of @types/react in the workspace, and two React type identities break apps/webapp's typecheck. In the published mirror npm resolves these fresh; every CI run prints what it got.",
+  "scripts": {
+    "ui:dev": "vite",
+    "ui:build": "vite build",
+    "ui:typecheck": "tsc --noEmit",
+    "smoke": "node scripts/smoke.mjs",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "use-intl": "^3.26.5"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.2",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

@@ -20,8 +20,10 @@ run a bug bounty. We will not threaten you for reporting in good faith.
 
 ## Scope
 
-In scope: this repository — the macOS client, its build and packaging scripts,
-and the CI workflow.
+In scope: this repository — the macOS client, the Windows/Linux Tauri shell
+(`apps/desktop`, including its CSP, its capability set and the offline guard),
+the shared client UI they render, the build and packaging scripts, and the CI
+workflow.
 
 Out of scope here, but still worth reporting to the same address:
 mailoh.io, mailoh.app, and the MailOh Cloud backend. None of that code lives in
@@ -32,15 +34,25 @@ this repository.
 Worth knowing before you go looking, because the current state rules out whole
 classes of issues:
 
-- The app **makes no network connections at all**. It runs on a bundled fixture
-  mailbox; there is no IMAP client, no HTTP client, no telemetry, no update
-  check. It reads and writes nothing outside the process except the PNGs that
-  `--shot` is explicitly asked to write.
+- Both apps **make no network connections at all**. They run on a bundled
+  fixture mailbox; there is no IMAP client, no HTTP client, no telemetry, no
+  update check. The macOS app reads and writes nothing outside the process
+  except the PNGs that `--shot` is explicitly asked to write.
+- On Windows and Linux this is enforced three times over, and each is worth
+  attacking separately: the webview's CSP is `connect-src 'none'`; the page
+  replaces `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` and
+  `navigator.sendBeacon` with functions that throw; and the Cloud sync client is
+  aliased out of the bundle at build time and is not in this repository at all.
+  The Tauri capability list is empty, so the interface can invoke no command,
+  read no file and spawn no process. A way around any of that is exactly the
+  kind of report we want.
+- Because the interface is embedded **uncompressed**, you can audit a downloaded
+  binary directly: `strings -a mailoh | grep -oE 'https?://[^ ]+' | sort -u`.
 - There are **no credentials**, no keychain use, and no account.
-- The CI-built app is **unsigned and un-notarized** (ad-hoc signature only).
-  That is a distribution weakness we name openly in the README rather than a
-  vulnerability to report: verify the artifact came from the CI run you expect,
-  or build from source.
+- The CI-built artifacts are **unsigned**: ad-hoc signature only on macOS, no
+  Authenticode signature on Windows, nothing on Linux. That is a distribution
+  weakness we name openly in the README rather than a vulnerability to report:
+  verify the artifact came from the CI run you expect, or build from source.
 
 When the IMAP engine lands, this section will change and the threat model will be
 published with it: credential storage, TLS/certificate handling, HTML rendering

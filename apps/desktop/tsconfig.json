@@ -1,0 +1,40 @@
+{
+  /* Deliberately the same strictness as apps/webapp/tsconfig.json: this project
+     compiles that app's shell and views unchanged, so a stricter setting here
+     would report "errors" in code that is correct under the config it is
+     written against — and the only fix available would be to edit the web
+     client to please the desktop build. Same rules, one source. */
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "types": ["vite/client", "node"],
+    /* `paths` is global to the program, which is the point: this project also
+       compiles files under packages/ and apps/webapp/, and in the published
+       mirror there is no node_modules next to them for a bare "react" to
+       resolve into. Pinning the module names here makes `tsc` agree with the
+       aliases in vite.config.ts, in both trees. */
+    "paths": {
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
+      "react/jsx-dev-runtime": ["./node_modules/@types/react/jsx-dev-runtime"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/client": ["./node_modules/@types/react-dom/client"],
+      "next-intl": ["./node_modules/use-intl"],
+      "@mailoh/tokens": ["../../packages/tokens/src/index.ts"],
+      "@mailoh/fixtures": ["../../packages/fixtures/src/index.ts"],
+      "@mailoh/client-engine": ["../../packages/client-engine/src/index.ts"],
+      "@mailoh/ui": ["../../packages/ui/src/index.ts"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}

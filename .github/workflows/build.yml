@@ -1,9 +1,16 @@
 name: build
 
-# Everything the macOS client can honestly prove on a public runner: it compiles
-# in release, its tests pass, it actually renders (--smoke), and it packages into
-# an installable DMG. Nothing here is signed by Apple — see the "unsigned" note
-# in the README; the artifact is ad-hoc signed only.
+# Everything the two clients can honestly prove on a public runner.
+#
+#   macOS   — the SwiftUI app: compiles in release, tests pass, it actually
+#             renders (--smoke), and it packages into an installable DMG.
+#   windows — the Tauri shell: the UI bundle builds, the embedded-bundle smoke
+#             passes, and it packages into an .msi and an NSIS .exe.
+#   linux   — the same shell into an .AppImage and a .deb.
+#
+# Nothing here is signed: no Apple Developer ID, no Authenticode certificate.
+# See the per-platform "unsigned" notes in the README; the macOS artifact is
+# ad-hoc signed only, the Windows and Linux ones are not signed at all.
 
 on:
   push:
@@ -115,12 +122,229 @@ jobs:
             echo 'Ad-hoc signed, **not** notarized: first launch needs right-click → Open.'
           } >> "$GITHUB_STEP_SUMMARY"
 
-# ---------------------------------------------------------------------------
-# Windows and Linux are NOT built here yet.
-#
-# The cross-platform shells are a Tauri app that does not exist in this
-# repository yet (planned; the Rust/webview side is being built separately).
-# There is deliberately no windows/ubuntu job below — a job that installs a
-# toolchain and builds nothing would be a green check that means nothing.
-# When the Tauri shell lands, the jobs appear here and this comment goes away.
-# ---------------------------------------------------------------------------
+  # ==========================================================================
+  # The Tauri shell (apps/desktop). Windows and Linux run the same five steps
+  # in the same order — install, typecheck, build the UI bundle, smoke the
+  # built bundle, then package — because the only thing that differs between
+  # them is the packaging toolchain. The UI is built BEFORE tauri so a broken
+  # interface fails in its own red step instead of inside a Rust build log.
+  # ==========================================================================
+
+  windows:
+    name: Windows · ui · smoke · msi + nsis
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Toolchain
+        run: |
+          rustup update stable
+          rustup default stable
+          rustc --version
+          cargo --version
+          node --version
+
+      - name: npm install
+        run: npm install --no-audit --no-fund
+
+      - name: tsc --noEmit
+        run: npm run ui:typecheck
+
+      - name: Build the UI bundle
+        run: npm run ui:build
+
+      # The render check: the built bundle, executed, audited for content, for
+      # collapsed mail, and for so much as an attempt to open a connection.
+      - name: Smoke the embedded bundle
+        run: npm run smoke
+
+      - name: tauri build (msi + nsis)
+        run: npx tauri build --bundles msi,nsis
+
+      - name: Inspect what was produced
+        run: |
+          set -euo pipefail
+          B=src-tauri/target/release/bundle
+          ls -la "$B/msi" "$B/nsis"
+          MSI="$(ls "$B"/msi/*.msi | head -1)"
+          EXE="$(ls "$B"/nsis/*-setup.exe | head -1)"
+          test -s "$MSI"
+          test -s "$EXE"
+          BIN=src-tauri/target/release/mailoh.exe
+          test -s "$BIN"
+          # The UI is embedded uncompressed on purpose (see src-tauri/Cargo.toml),
+          # so the shipped binary can be audited without being run. `grep -a`
+          # rather than `strings`, which Git Bash does not ship.
+          grep -aq 'Ohbox' "$BIN"
+          grep -aq 'Giulia Ferrari' "$BIN"
+          grep -aq "connect-src 'none'" "$BIN"
+          echo "URLs in the binary:"
+          grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u
+          # Nothing may point at MailOh infrastructure.
+          ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'mailoh|trafficflow'
+
+      - name: Upload MailOh.msi
+        uses: actions/upload-artifact@v7
+        with:
+          name: MailOh-msi-${{ github.run_number }}
+          path: apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+      - name: Upload MailOh setup .exe (NSIS)
+        uses: actions/upload-artifact@v7
+        with:
+          name: MailOh-nsis-${{ github.run_number }}
+          path: apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+      - name: Run summary
+        if: always()
+        run: |
+          {
+            echo '### MailOh for Windows — unsigned preview build'
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`${GITHUB_SHA:0:9}\` |"
+            echo "| toolchain | $(rustc --version) · node $(node --version) |"
+            for f in src-tauri/target/release/bundle/msi/*.msi src-tauri/target/release/bundle/nsis/*-setup.exe; do
+              [ -f "$f" ] || continue
+              echo "| $(basename "$f") | \`$(sha256sum "$f" | cut -d' ' -f1)\` · $(du -h "$f" | cut -f1) |"
+            done
+            echo
+            echo 'Not signed with an Authenticode certificate: SmartScreen will warn on first run.'
+            echo 'Choose **More info → Run anyway**.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  linux:
+    name: Linux · ui · smoke · appimage + deb
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # Tauri's Linux prerequisites: the WebKitGTK webview it renders in, the
+      # GTK/soup stack under it, and the tools its bundlers shell out to.
+      - name: Install the Tauri prerequisites
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev \
+            libssl-dev \
+            build-essential curl wget file patchelf desktop-file-utils
+
+      - name: Toolchain
+        run: |
+          rustup update stable
+          rustup default stable
+          rustc --version
+          cargo --version
+          node --version
+
+      - name: npm install
+        run: npm install --no-audit --no-fund
+
+      - name: tsc --noEmit
+        run: npm run ui:typecheck
+
+      - name: Build the UI bundle
+        run: npm run ui:build
+
+      - name: Smoke the embedded bundle
+        run: npm run smoke
+
+      - name: tauri build (appimage + deb)
+        # NO_STRIP: linuxdeploy strips the binary again while assembling the
+        # AppImage, and on recent glibc that step is a known failure. The Rust
+        # release profile already strips (src-tauri/Cargo.toml), so nothing is
+        # lost — and the embedded UI stays readable either way, which is the
+        # property the audit below depends on.
+        env:
+          NO_STRIP: "true"
+        run: npx tauri build --bundles appimage,deb
+
+      - name: Inspect what was produced
+        run: |
+          set -euo pipefail
+          B=src-tauri/target/release/bundle
+          ls -la "$B/appimage" "$B/deb"
+          APP="$(ls "$B"/appimage/*.AppImage | head -1)"
+          DEB="$(ls "$B"/deb/*.deb | head -1)"
+          test -s "$APP"
+          test -x "$APP"
+          test -s "$DEB"
+
+          echo "--- .deb control ---"
+          dpkg-deb -I "$DEB"
+          echo "--- .deb contents ---"
+          dpkg-deb -c "$DEB"
+          dpkg-deb -c "$DEB" | grep -qi '/usr/bin/mailoh$'
+          dpkg-deb -c "$DEB" | grep -qi '\.desktop$'
+          dpkg-deb -c "$DEB" | grep -qiE 'icons/hicolor/128x128/apps/.*\.png$'
+
+          BIN=src-tauri/target/release/mailoh
+          test -s "$BIN"
+          grep -aq 'Ohbox' "$BIN"
+          grep -aq 'Giulia Ferrari' "$BIN"
+          grep -aq "connect-src 'none'" "$BIN"
+          echo "URLs in the binary:"
+          grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u
+          # Nothing may point at MailOh infrastructure.
+          ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'mailoh|trafficflow'
+
+      - name: Upload MailOh.AppImage
+        uses: actions/upload-artifact@v7
+        with:
+          name: MailOh-appimage-${{ github.run_number }}
+          path: apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+      - name: Upload MailOh .deb
+        uses: actions/upload-artifact@v7
+        with:
+          name: MailOh-deb-${{ github.run_number }}
+          path: apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+
+      - name: Run summary
+        if: always()
+        run: |
+          {
+            echo '### MailOh for Linux — unsigned preview build'
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`${GITHUB_SHA:0:9}\` |"
+            echo "| toolchain | $(rustc --version) · node $(node --version) |"
+            echo "| runner | $(. /etc/os-release; echo "$PRETTY_NAME") $(uname -m) |"
+            for f in src-tauri/target/release/bundle/appimage/*.AppImage src-tauri/target/release/bundle/deb/*.deb; do
+              [ -f "$f" ] || continue
+              echo "| $(basename "$f") | \`$(sha256sum "$f" | cut -d' ' -f1)\` · $(du -h "$f" | cut -f1) |"
+            done
+            echo
+            echo 'Unsigned and without a repository: `chmod +x` the AppImage before running it.'
+          } >> "$GITHUB_STEP_SUMMARY"

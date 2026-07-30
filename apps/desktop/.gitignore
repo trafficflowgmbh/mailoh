@@ -1,0 +1,9 @@
+# Rust build output and the ACL/schema files tauri-build regenerates on every
+# compile. Cargo.lock is NOT here on purpose: this crate produces a binary, and
+# a shipped installer should be reproducible from the tree it was built from.
+src-tauri/target/
+src-tauri/gen/
+
+# The UI bundle. Built by `npm run ui:build`; never committed, never published —
+# the mirror carries the source that produces it.
+dist/

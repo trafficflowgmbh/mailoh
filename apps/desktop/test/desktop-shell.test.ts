@@ -1,0 +1,189 @@
+import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+/**
+ * The Tauri shell's security posture, asserted.
+ *
+ * Everything MailOh Desktop promises — no network, no filesystem, no commands,
+ * no remote origin — lives in four declarative files that nothing else in the
+ * repository reads. A silent edit to any of them would keep every other test
+ * green while the app quietly grew a capability, so they are checked here in
+ * the suite that runs on every push.
+ *
+ * These are content assertions on config, not behaviour tests: the behaviour is
+ * `apps/desktop/scripts/smoke.mjs`, which runs the built bundle.
+ */
+
+const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const read = (rel: string) => fs.readFileSync(path.join(APP, rel), "utf8");
+const readJson = (rel: string) => JSON.parse(read(rel)) as Record<string, never>;
+
+/** "a b; c d" → { a: ["b"], c: ["d"] } */
+function directives(csp: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const part of csp.split(";")) {
+    const [name, ...values] = part.trim().split(/\s+/);
+    if (name) out[name] = values;
+  }
+  return out;
+}
+
+describe("tauri.conf.json", () => {
+  const conf = readJson("src-tauri/tauri.conf.json") as never as {
+    productName: string;
+    version: string;
+    identifier: string;
+    build: { frontendDist: string };
+    app: {
+      withGlobalTauri: boolean;
+      windows: { label: string; minWidth: number }[];
+      security: {
+        csp: string;
+        freezePrototype: boolean;
+        dangerousDisableAssetCspModification: boolean;
+        assetProtocol: { enable: boolean; scope: string[] };
+      };
+    };
+    bundle: { icon: string[] };
+  };
+
+  it("is MailOh, at the preview version, under its own identifier", () => {
+    expect(conf.productName).toBe("MailOh");
+    expect(conf.version).toBe("0.1.0");
+    expect(conf.identifier).toBe("io.mailoh.desktop.tauri");
+  });
+
+  it("does not collide with the SwiftUI client's bundle id", () => {
+    // apps/macos ships io.mailoh.desktop. The Tauri config can also produce a
+    // macOS bundle (it is how this shell is verified locally), and two apps
+    // sharing a CFBundleIdentifier are indistinguishable to LaunchServices.
+    const plist = fs.readFileSync(
+      path.resolve(APP, "../../public/mailoh-desktop/Resources/Info.plist"),
+      "utf8",
+    );
+    const macOsId = /<key>CFBundleIdentifier<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
+    expect(macOsId).toBe("io.mailoh.desktop");
+    expect(conf.identifier).not.toBe(macOsId);
+    expect(conf.identifier.startsWith(`${macOsId}.`)).toBe(true);
+  });
+
+  it("embeds a local bundle — never a URL", () => {
+    expect(conf.build.frontendDist).toBe("../dist");
+    expect(JSON.stringify(conf.build)).not.toMatch(/https?:\/\/(?!localhost)/);
+  });
+
+  it("locks the CSP down to the bundle, with no connections at all", () => {
+    const d = directives(conf.app.security.csp);
+    expect(d["default-src"]).toEqual(["'self'"]);
+    expect(d["script-src"]).toEqual(["'self'"]);
+    expect(d["connect-src"]).toEqual(["'none'"]);
+    expect(d["object-src"]).toEqual(["'none'"]);
+    expect(d["frame-src"]).toEqual(["'none'"]);
+    expect(d["worker-src"]).toEqual(["'none'"]);
+    expect(d["base-uri"]).toEqual(["'none'"]);
+    expect(d["form-action"]).toEqual(["'none'"]);
+    expect(d["frame-ancestors"]).toEqual(["'none'"]);
+    // img-src allows data: for the inline SVG/avatar art; nothing remote.
+    expect(d["img-src"]).toEqual(["'self'", "data:"]);
+    expect(conf.app.security.csp).not.toMatch(/https?:/);
+    expect(conf.app.security.csp).not.toMatch(/\*/);
+  });
+
+  it("keeps the escape hatches shut", () => {
+    expect(conf.app.withGlobalTauri).toBe(false);
+    expect(conf.app.security.freezePrototype).toBe(true);
+    expect(conf.app.security.dangerousDisableAssetCspModification).toBe(false);
+    expect(conf.app.security.assetProtocol.enable).toBe(false);
+    expect(conf.app.security.assetProtocol.scope).toEqual([]);
+  });
+
+  it("declares one window that stays clean to 390px", () => {
+    expect(conf.app.windows).toHaveLength(1);
+    expect(conf.app.windows[0]!.label).toBe("main");
+    expect(conf.app.windows[0]!.minWidth).toBe(390);
+  });
+
+  it("ships the oh. icon family", () => {
+    expect(conf.bundle.icon).toContain("icons/icon.ico");
+    expect(conf.bundle.icon).toContain("icons/icon.icns");
+    for (const rel of conf.bundle.icon) {
+      expect(fs.existsSync(path.join(APP, "src-tauri", rel))).toBe(true);
+    }
+  });
+});
+
+describe("capabilities", () => {
+  it("grant the webview nothing", () => {
+    const files = fs.readdirSync(path.join(APP, "src-tauri/capabilities"));
+    expect(files).toEqual(["main.json"]);
+    const cap = readJson("src-tauri/capabilities/main.json") as never as {
+      windows: string[];
+      permissions: unknown[];
+    };
+    expect(cap.windows).toEqual(["main"]);
+    expect(cap.permissions).toEqual([]);
+  });
+});
+
+describe("the Rust side", () => {
+  const main = read("src-tauri/src/main.rs");
+
+  it("registers no commands and opens nothing", () => {
+    expect(main).not.toMatch(/invoke_handler/);
+    expect(main).not.toMatch(/std::(fs|net|process)/);
+    expect(main).not.toMatch(/reqwest|hyper|tokio::net/);
+  });
+
+  it("depends on tauri alone, with the defaults minus compression", () => {
+    const cargo = read("src-tauri/Cargo.toml");
+    expect(cargo).toMatch(/^tauri = \{ version = "2", default-features = false, features = \[$/m);
+    // Uncompressed embedding is what makes `strings <installer> | grep http`
+    // a real audit rather than a look at a brotli blob.
+    expect(cargo).not.toMatch(/"compression"/);
+    expect(cargo).not.toMatch(/tauri-plugin-/);
+    expect(cargo).not.toMatch(/reqwest|hyper|ureq|curl/);
+  });
+});
+
+describe("the UI bundle's build config", () => {
+  const vite = read("vite.config.ts");
+
+  it("aliases the Cloud sync client out of the module graph", () => {
+    expect(vite).toMatch(/adapters\\\/http-adapter\\\.js\$\/,\s*replacement: r\("\.\/src\/no-http-adapter\.ts"\)/);
+    // …and the stub it points at refuses rather than degrades.
+    expect(read("src/no-http-adapter.ts")).toMatch(/throw new Error\(REFUSAL\)/);
+  });
+
+  it("emits origin-agnostic relative URLs", () => {
+    expect(vite).toMatch(/base: "\.\/"/);
+  });
+
+  it("renders the same shell the web client does — no desktop fork", () => {
+    const main = read("src/main.tsx");
+    expect(main).toMatch(/from "\.\.\/\.\.\/webapp\/app\/shell\/AppShell"/);
+    expect(main).toMatch(/<AppShell demo \/>/);
+  });
+
+  it("keeps the document CSP in step with the webview CSP", () => {
+    const conf = readJson("src-tauri/tauri.conf.json") as never as {
+      app: { security: { csp: string } };
+    };
+    const meta = /content="([^"]+)"/.exec(
+      /<meta http-equiv="Content-Security-Policy"[^>]*>/.exec(read("index.html"))![0],
+    )![1]!;
+    const inDoc = directives(meta);
+    const inApp = directives(conf.app.security.csp);
+
+    // Every directive the document declares must say exactly what the header
+    // says — a drifted copy is worse than no copy.
+    for (const [key, value] of Object.entries(inDoc)) {
+      expect([key, value]).toEqual([key, inApp[key]]);
+    }
+    // …and the header must be at least as strict: `frame-ancestors` is ignored
+    // in <meta> by spec, so it lives only there.
+    expect(inDoc["frame-ancestors"]).toBeUndefined();
+    expect(inApp["frame-ancestors"]).toEqual(["'none'"]);
+  });
+});
