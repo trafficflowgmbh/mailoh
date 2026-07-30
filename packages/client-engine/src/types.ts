@@ -1,14 +1,14 @@
 /**
  * @mailoh/client-engine — wire vocabulary.
  *
- * These shapes MIRROR the MailOh Cloud API contract without importing any
+ * These shapes MIRROR the mailoh Cloud API contract without importing any
  * backend package: the engine consumes the wire contract only, exactly as the
  * native SwiftData mirror will. Clients must tolerate unknown fields and
  * unknown entity types (forward-compatible parsing) — hence the open unions
  * below.
  *
  * ABOUT THE `§` REFERENCES in this package. They cite the Cloud API contract
- * document, which is **not public** — MailOh Desktop is the free, GPL-3.0 half
+ * document, which is **not public** — mailoh Desktop is the free, GPL-3.0 half
  * of the product and the Cloud service is the other half. The citations are
  * left in rather than stripped because they are load-bearing where the file is
  * authored, and because pretending the other half does not exist would be its
@@ -29,29 +29,26 @@ export interface EmailAddress {
 /**
  * Real IMAP folders — identical to core `Destination` (contract §1.2).
  *
- * NAMING DEBT, DOCUMENTED ON PURPOSE. The `TrafficFlow/` prefix is the
- * pre-rebrand company name. It is a banned term in the fixture privacy list
- * (`packages/fixtures/src/privacy.ts` → `NAMESPACE_EXEMPTION`), and it is
- * exempt here rather than silently contradicting that list, because this
- * union is not a string constant: it is the wire contract shared with core,
- * services, api, the worker and the Hey migration scanner — and these folders
- * already exist inside live customer mailboxes. Renaming them to `MailOh/…`
- * is an IMAP folder-rename migration with reconciliation, scheduled under
- * "Folder namespace rebrand" in the Cloud architecture plan.
+ * These five strings are the most durable copy the product writes: they are
+ * created inside the customer's own mailbox and render in Apple Mail, Outlook
+ * and every other client, forever — including after the customer leaves. The
+ * namespace was renamed from the pre-rebrand company name to `mailoh/…` on
+ * 2026-07-31, while zero real mailboxes were connected, precisely so that no
+ * folder-rename migration would ever be needed. Changing them again is an
+ * IMAP data migration, not an edit.
  *
- * Until that lands, the rule for every view is: NEVER render a raw folder
- * string. Map it through `VIEW_OF_FOLDER`; when a server sends a folder this
- * client does not know (contract §8 forward-compatible parsing), fall back to
- * `folderLeaf()`, which yields the last path segment and so can never put the
- * old company name on screen.
+ * The narrow UI rule stands regardless: NEVER render a raw folder string. Map
+ * it through `VIEW_OF_FOLDER`; when a server sends a folder this client does
+ * not know (contract §8 forward-compatible parsing), fall back to
+ * `folderLeaf()`, which yields the last path segment.
  */
 export type Folder =
   | "INBOX"
-  | "TrafficFlow/Screener"
-  | "TrafficFlow/Feed"
-  | "TrafficFlow/Paper Trail"
-  | "TrafficFlow/Screened"
-  | "TrafficFlow/Quarantine";
+  | "mailoh/Screener"
+  | "mailoh/Reads"
+  | "mailoh/Receipts"
+  | "mailoh/Screened"
+  | "mailoh/Quarantine";
 
 export type ChangeOp = "create" | "update" | "move" | "delete";
 
@@ -258,23 +255,22 @@ export type MailohView = "ohbox" | "reads" | "receipts" | "screener" | "screened
 
 export const FOLDER_OF_VIEW: Record<MailohView, Folder> = {
   ohbox: "INBOX",
-  reads: "TrafficFlow/Feed",
-  receipts: "TrafficFlow/Paper Trail",
-  screener: "TrafficFlow/Screener",
-  screened: "TrafficFlow/Screened",
-  spam: "TrafficFlow/Quarantine",
+  reads: "mailoh/Reads",
+  receipts: "mailoh/Receipts",
+  screener: "mailoh/Screener",
+  screened: "mailoh/Screened",
+  spam: "mailoh/Quarantine",
 };
 
 /**
  * The last path segment of a folder name — the only safe way to show a folder
  * this client has no view for.
  *
- * Two reasons it exists rather than views falling back to the raw string:
- * unknown folders are expected (the server may add folders a shipped client
- * has never heard of, contract §8), and the current namespace still carries
- * the pre-rebrand company name, which must never reach a user's screen. The
- * leaf of `TrafficFlow/Paper Trail` is `Paper Trail`; the leaf of a customer's
- * own `Archive/2026/Q1` is `Q1`. Both read correctly; neither leaks a prefix.
+ * It exists rather than views falling back to the raw string because unknown
+ * folders are expected: the server may add folders a shipped client has never
+ * heard of (contract §8), and customers nest their own. The leaf of
+ * `mailoh/Receipts` is `Receipts`; the leaf of a customer's own
+ * `Archive/2026/Q1` is `Q1`. Both read correctly; neither shows a path.
  */
 export function folderLeaf(folder: string): string {
   const leaf = folder.split("/").filter(Boolean).pop() ?? folder;
@@ -283,11 +279,11 @@ export function folderLeaf(folder: string): string {
 
 export const VIEW_OF_FOLDER: Record<Folder, MailohView> = {
   "INBOX": "ohbox",
-  "TrafficFlow/Feed": "reads",
-  "TrafficFlow/Paper Trail": "receipts",
-  "TrafficFlow/Screener": "screener",
-  "TrafficFlow/Screened": "screened",
-  "TrafficFlow/Quarantine": "spam",
+  "mailoh/Reads": "reads",
+  "mailoh/Receipts": "receipts",
+  "mailoh/Screener": "screener",
+  "mailoh/Screened": "screened",
+  "mailoh/Quarantine": "spam",
 };
 
 // ── mutations ──────────────────────────────────────────────────────────────

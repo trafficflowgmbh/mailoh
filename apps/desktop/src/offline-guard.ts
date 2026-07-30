@@ -1,7 +1,7 @@
 /**
  * The network, removed from the page.
  *
- * MailOh Desktop is standalone: the Tauri CSP already forbids every connection
+ * mailoh Desktop is standalone: the Tauri CSP already forbids every connection
  * (`connect-src 'none'`), and there is no code in the bundle that would open
  * one. This is the third lock, and the only one that is observable from inside
  * the app: every browser API capable of leaving the process is replaced with a
@@ -19,7 +19,7 @@
  */
 
 const REFUSAL =
-  "MailOh Desktop is offline by construction — this build has no network layer. " +
+  "mailoh Desktop is offline by construction — this build has no network layer. " +
   "See apps/desktop/src/offline-guard.ts.";
 
 type Guarded = { __mailohOfflineGuard?: true };

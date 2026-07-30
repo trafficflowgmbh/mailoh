@@ -36,12 +36,12 @@ export interface EffectContext {
 }
 
 const SEG_FOLDER: Record<string, Folder> = {
-  screened: "TrafficFlow/Screened",
-  spam: "TrafficFlow/Quarantine",
+  screened: "mailoh/Screened",
+  spam: "mailoh/Quarantine",
 };
 
 function destFolderOf(m: Extract<EngineMutation, { kind: "screener_decide" }>, sender: ScreenerSenderDTO): Folder {
-  if (m.decision === "no") return "TrafficFlow/Screened";
+  if (m.decision === "no") return "mailoh/Screened";
   const dest = m.dest ?? sender.ai?.dest ?? "ohbox";
   return SEG_FOLDER[dest] ?? FOLDER_OF_VIEW[dest as keyof typeof FOLDER_OF_VIEW] ?? "INBOX";
 }
@@ -184,7 +184,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     case "feed_mark_seen": {
       const feed = reader
         .list<EngineMessage>("message")
-        .filter((msg) => msg.folder === "TrafficFlow/Feed");
+        .filter((msg) => msg.folder === "mailoh/Reads");
       const targets = m.messageIds
         ? feed.filter((msg) => m.messageIds!.includes(msg.id))
         : feed.filter((msg) => msg.unread);

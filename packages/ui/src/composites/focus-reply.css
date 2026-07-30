@@ -1,4 +1,5 @@
-/* Focus & Reply — one message per screen over the scrim */
+/* Reply Run — one message per screen over the scrim.
+   The file keeps its historical name; the product copy says "Reply Run". */
 .fr-overlay{position:fixed;inset:0;z-index:var(--z-fr);display:grid;place-items:center;background:var(--scrim);padding:16px}
 .fr-card{width:min(560px,100%);border-radius:24px;background:var(--float);
   box-shadow:var(--lift-3);padding:26px 30px;animation:rise .32s var(--spring)}

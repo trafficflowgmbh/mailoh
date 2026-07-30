@@ -26,8 +26,26 @@ the shared client UI they render, the build and packaging scripts, and the CI
 workflow.
 
 Out of scope here, but still worth reporting to the same address:
-mailoh.io, mailoh.app, and the MailOh Cloud backend. None of that code lives in
+mailoh.io, mailoh.app, and the mailoh Cloud backend. None of that code lives in
 this repository.
+
+## mailoh Cloud
+
+The same address, the same commitments, and the same 5-working-day
+acknowledgement cover **mailoh.io, mailoh.app and the Cloud backend** — the code
+is not published, but the disclosure policy is, and reports about it are as
+welcome as reports about this repository. Two limits, stated so nobody has to
+guess: please do not test against another person's account or mailbox, and
+please do not run load or denial-of-service tests against the hosted service.
+Cloud mail is encrypted in transit and at rest but is **not** end-to-end
+encrypted — the service has to read mail to file and search it. The subprocessor
+list and the retention table are published at
+<https://mailoh.io/subprocessors>; the conditions under which a human at
+TrafficFlow can reach production data are written down in the product privacy
+policy, which publishes before the first real mailbox connects.
+If personal data is ever breached we notify the competent
+authority within 72 hours of becoming aware, and affected people directly where
+the risk to them is high.
 
 ## What this build does and does not do
 

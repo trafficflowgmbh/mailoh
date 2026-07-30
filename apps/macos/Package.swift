@@ -1,7 +1,7 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-// MailOh — the FREE flagship native macOS app (Tier 1). Fixtures-only Tier-1
+// mailoh — the FREE flagship native macOS app (Tier 1). Fixtures-only Tier-1
 // preview: the real IMAP/sync engine wires in later. Structured as SPM because
 // this machine has CommandLineTools only (no xcodebuild / Xcode project):
 //   swift build  --package-path apps/macos

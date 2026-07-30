@@ -54,7 +54,7 @@ jobs:
       - name: MailOh --smoke
         run: swift run --package-path apps/macos -c release MailOh --smoke
 
-      - name: Package MailOh.app + MailOh.dmg
+      - name: Package mailoh.app + mailoh.dmg
         env:
           MAILOH_BUILD_VERSION: ${{ github.run_number }}
         run: ./scripts/package-app.sh
@@ -65,33 +65,33 @@ jobs:
         run: |
           set -euo pipefail
           MNT="$(mktemp -d)"
-          hdiutil attach build/MailOh.dmg -nobrowse -readonly -mountpoint "$MNT"
+          hdiutil attach build/mailoh.dmg -nobrowse -readonly -mountpoint "$MNT"
           ls -la "$MNT"
-          test -d "$MNT/MailOh.app"
-          test -x "$MNT/MailOh.app/Contents/MacOS/MailOh"
-          test -s "$MNT/MailOh.app/Contents/Resources/MailOh.icns"
+          test -d "$MNT/mailoh.app"
+          test -x "$MNT/mailoh.app/Contents/MacOS/MailOh"
+          test -s "$MNT/mailoh.app/Contents/Resources/MailOh.icns"
           test -f "$MNT/Read me first.txt"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$MNT/MailOh.app/Contents/Info.plist"
-          codesign --verify --verbose=2 "$MNT/MailOh.app"
-          lipo -archs "$MNT/MailOh.app/Contents/MacOS/MailOh"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$MNT/mailoh.app/Contents/Info.plist"
+          codesign --verify --verbose=2 "$MNT/mailoh.app"
+          lipo -archs "$MNT/mailoh.app/Contents/MacOS/MailOh"
           hdiutil detach "$MNT"
 
       - name: Screenshots (every route, light + dark, both widths)
         run: swift run --package-path apps/macos -c release MailOh --shot shots
 
-      - name: Upload MailOh.dmg
+      - name: Upload mailoh.dmg
         uses: actions/upload-artifact@v7
         with:
-          name: MailOh-dmg-${{ github.run_number }}
-          path: build/MailOh.dmg
+          name: mailoh-dmg-${{ github.run_number }}
+          path: build/mailoh.dmg
           if-no-files-found: error
 
-      - name: Upload MailOh.app (zipped, ad-hoc signature preserved)
-        run: ditto -c -k --keepParent build/MailOh.app build/MailOh.app.zip
+      - name: Upload mailoh.app (zipped, ad-hoc signature preserved)
+        run: ditto -c -k --keepParent build/mailoh.app build/mailoh.app.zip
       - uses: actions/upload-artifact@v7
         with:
-          name: MailOh-app-${{ github.run_number }}
-          path: build/MailOh.app.zip
+          name: mailoh-app-${{ github.run_number }}
+          path: build/mailoh.app.zip
           if-no-files-found: error
 
       - name: Upload screenshots
@@ -106,17 +106,17 @@ jobs:
         if: always()
         run: |
           {
-            echo '### MailOh — unsigned preview build'
+            echo '### mailoh — unsigned preview build'
             echo
             echo "| | |"
             echo "|---|---|"
             echo "| commit | \`${GITHUB_SHA:0:9}\` |"
             echo "| toolchain | $(xcodebuild -version | tr '\n' ' ') · $(swift --version 2>&1 | head -1) |"
             echo "| runner | macOS $(sw_vers -productVersion) $(uname -m) |"
-            [ -f build/MailOh.dmg ] && {
-              echo "| architectures | $(lipo -archs build/MailOh.app/Contents/MacOS/MailOh) |"
-              echo "| DMG sha256 | \`$(shasum -a 256 build/MailOh.dmg | cut -d' ' -f1)\` |"
-              echo "| DMG size | $(du -h build/MailOh.dmg | cut -f1) |"
+            [ -f build/mailoh.dmg ] && {
+              echo "| architectures | $(lipo -archs build/mailoh.app/Contents/MacOS/MailOh) |"
+              echo "| DMG sha256 | \`$(shasum -a 256 build/mailoh.dmg | cut -d' ' -f1)\` |"
+              echo "| DMG size | $(du -h build/mailoh.dmg | cut -f1) |"
             }
             echo
             echo 'Ad-hoc signed, **not** notarized: first launch needs right-click → Open.'
@@ -244,20 +244,20 @@ jobs:
           URLS=$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u | wc -l)
           echo "unique URL strings: $URLS (expected 14)"
           test "$URLS" -eq 14
-          # Nothing may point at MailOh infrastructure.
+          # Nothing may point at mailoh infrastructure.
           ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'mailoh|trafficflow'
 
-      - name: Upload MailOh.msi
+      - name: Upload the .msi
         uses: actions/upload-artifact@v7
         with:
-          name: MailOh-msi-${{ github.run_number }}
+          name: mailoh-msi-${{ github.run_number }}
           path: apps/desktop/src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
-      - name: Upload MailOh setup .exe (NSIS)
+      - name: Upload the setup .exe (NSIS)
         uses: actions/upload-artifact@v7
         with:
-          name: MailOh-nsis-${{ github.run_number }}
+          name: mailoh-nsis-${{ github.run_number }}
           path: apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
 
@@ -265,7 +265,7 @@ jobs:
         if: always()
         run: |
           {
-            echo '### MailOh for Windows — unsigned preview build'
+            echo '### mailoh for Windows — unsigned preview build'
             echo
             echo "| | |"
             echo "|---|---|"
@@ -361,12 +361,11 @@ jobs:
           dpkg-deb -c "$DEB" | grep -qE ' usr/bin/mailoh$'
           dpkg-deb -c "$DEB" | grep -qiE ' usr/share/applications/.+\.desktop$'
           dpkg-deb -c "$DEB" | grep -qiE ' usr/share/icons/hicolor/128x128/apps/.+\.png$'
-          # The package name is `mail-oh`, not `mailoh`: the bundler kebab-cases
-          # productName and Tauri v2 exposes no override. Everything else on
-          # Linux is `mailoh`, so `apt remove mailoh` does NOT work and both
-          # READMEs say so. Pinned here so the documentation goes red rather
-          # than stale if a future Tauri changes the slug.
-          test "$(dpkg-deb -f "$DEB" Package)" = "mail-oh"
+          # The bundler kebab-cases productName to get the package name. Since
+          # productName is `mailoh`, so is the package — `apt remove mailoh`
+          # works, and it matches /usr/bin/mailoh and the AppImage. Pinned so a
+          # future Tauri that changes the slug goes red rather than stale.
+          test "$(dpkg-deb -f "$DEB" Package)" = "mailoh"
 
           BIN=src-tauri/target/release/mailoh
           test -s "$BIN"
@@ -380,20 +379,20 @@ jobs:
           URLS=$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u | wc -l)
           echo "unique URL strings: $URLS (expected 13)"
           test "$URLS" -eq 13
-          # Nothing may point at MailOh infrastructure.
+          # Nothing may point at mailoh infrastructure.
           ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'mailoh|trafficflow'
 
-      - name: Upload MailOh.AppImage
+      - name: Upload the AppImage
         uses: actions/upload-artifact@v7
         with:
-          name: MailOh-appimage-${{ github.run_number }}
+          name: mailoh-appimage-${{ github.run_number }}
           path: apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
-      - name: Upload MailOh .deb
+      - name: Upload the .deb
         uses: actions/upload-artifact@v7
         with:
-          name: MailOh-deb-${{ github.run_number }}
+          name: mailoh-deb-${{ github.run_number }}
           path: apps/desktop/src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
 
@@ -401,7 +400,7 @@ jobs:
         if: always()
         run: |
           {
-            echo '### MailOh for Linux — unsigned preview build'
+            echo '### mailoh for Linux — unsigned preview build'
             echo
             echo "| | |"
             echo "|---|---|"

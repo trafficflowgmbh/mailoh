@@ -1,4 +1,4 @@
-/* MailOh webapp — app-level layer over @mailoh/ui.
+/* mailoh webapp — app-level layer over @mailoh/ui.
    Component styles (rows, panes, bars, chips, dock, reader…) ship with
    the design system; this file carries only what the SHELL owns:
    viewport frame, deck grid, view containers, screener/search/compose/

@@ -233,7 +233,7 @@ export const fictionalNames: FictionalName[] = [
  *  1. `NAMESPACE_EXEMPTION` below — the product's IMAP folder namespace still
  *     carries the pre-rebrand company name. Documented, with a tracked fix.
  *  2. Product code outside the fixtures names real vendors on purpose: the
- *     marketing copy has to name the mail providers MailOh works with, and the
+ *     marketing copy has to name the mail providers mailoh works with, and the
  *     tracker blocklist has to name the trackers it blocks. That is nominative
  *     use, not a leak, and both would be nonsense anonymised.
  *
@@ -286,27 +286,30 @@ export const bannedTerms: string[] = [
 /**
  * The one documented contradiction of `bannedTerms`, kept honest on purpose.
  *
- * `packages/client-engine` declares the product's IMAP folder namespace as
- * `TrafficFlow/…` (Feed, Paper Trail, Screener, Screened, Quarantine) — the
- * pre-rebrand company name, which therefore ships in the webapp bundle and,
- * worse, is created inside real customer mailboxes. It contains a banned term.
+ * The IMAP folder namespace used to be the contradiction: the product created
+ * `TrafficFlow/…` folders inside real customer mailboxes. That is **fixed** —
+ * on 2026-07-31, while zero real mailboxes were connected, the five strings
+ * became `mailoh/Screener`, `mailoh/Reads`, `mailoh/Receipts`,
+ * `mailoh/Screened`, `mailoh/Quarantine`. Nothing a user can see carries the
+ * pre-rebrand name any more.
  *
- * It is exempt TODAY, not forever, because the namespace is not a string: it
- * is part of the Cloud API's wire contract, shared by the sync core, the
- * service layer, the HTTP API, the worker and the migration scanner, and the
- * folders already exist in live mailboxes. Renaming it to `MailOh/…` is an
- * IMAP folder-rename migration with reconciliation, which is an
- * architecture-reviewed change, not a find-and-replace — scheduled under
- * "Folder namespace rebrand" in the Cloud architecture plan.
+ * What survives is the backend workspace scope — `@trafficflow/{api,core,db,
+ * services}` and `@trafficflow/worker`. Nothing is published to npm and the
+ * specifiers are resolved away at build time, so the term appears in no
+ * shipped bundle, no HTTP payload and no mailbox: it is cosmetic
+ * inconsistency inside the repository, not a leak. It stays on the ban list so
+ * fixture copy can never reintroduce it, and it stays exempt here so the list
+ * is not silently self-contradicting.
  *
- * Until then the rule for UI code is narrow and enforceable: never render a
- * raw folder string. Map it through `VIEW_OF_FOLDER`, and fall back to the
- * leaf segment (`folderLeaf()`), never the namespaced path.
+ * The UI rule that guarded the old namespace is kept because it is good
+ * regardless: never render a raw folder string. Map it through
+ * `VIEW_OF_FOLDER`, and fall back to the leaf segment (`folderLeaf()`), never
+ * the namespaced path.
  */
 export const NAMESPACE_EXEMPTION = {
   term: "trafficflow",
-  where: "packages/client-engine IMAP folder namespace (Folder union + FOLDER_OF_VIEW)",
-  why: "wire contract shared with the backend; live mailboxes already hold these folders",
-  until: "Cloud architecture plan — Folder namespace rebrand (MailOh/… + folder-rename migration)",
+  where: "backend workspace package scope @trafficflow/{api,core,db,services,worker}",
+  why: "never published, resolved away at build time — absent from every bundle, payload and mailbox",
+  until: "folded into a future workspace-scope rename; the user-visible folder namespace is already mailoh/…",
   uiRule: "never render a raw folder string; map via VIEW_OF_FOLDER, fall back to folderLeaf()",
 } as const;

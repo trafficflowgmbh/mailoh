@@ -2,7 +2,7 @@
  * The Cloud sync client, absent.
  *
  * `@mailoh/client-engine`'s barrel re-exports `HttpAdapter` — the `/sync`
- * protocol client for MailOh Cloud. The desktop tier has no account, no server
+ * protocol client for mailoh Cloud. The desktop tier has no account, no server
  * and no network, so `vite.config.ts` aliases the real module to this file. The
  * consequences are the point:
  *
@@ -42,7 +42,7 @@ export interface HttpAdapterOptions {
 }
 
 const REFUSAL =
-  "MailOh Desktop is standalone: there is no Cloud sync client in this build. " +
+  "mailoh Desktop is standalone: there is no Cloud sync client in this build. " +
   "The HTTP adapter is aliased away at bundle time (apps/desktop/vite.config.ts).";
 
 export class HttpAdapter {

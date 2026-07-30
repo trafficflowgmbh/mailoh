@@ -1,7 +1,7 @@
-# MailOh for Windows and Linux
+# mailoh for Windows and Linux
 
 The **Tauri v2 shell** — Tier 1 on the two platforms SwiftUI does not reach. Same
-tier as `apps/macos`, same honest maturity: it renders the complete MailOh
+tier as `apps/macos`, same honest maturity: it renders the complete mailoh
 interface on Mila's fixture world, with **no network at all**.
 
 A native Rust window, a locked-down webview, and a static bundle of the *same*
@@ -183,15 +183,15 @@ in `package.json`, the README and the run summaries. Not a slip: the MSI
 bundler rejects a semver pre-release identifier, and a red Windows job to carry
 a suffix already stated in three other places is a bad trade.
 
-**The `.deb`'s Debian package name is `mail-oh`, with a hyphen** — everything
-else on Linux is `mailoh`: the binary at `/usr/bin/mailoh`, the icon, the
-`.desktop` entry's `Icon=` and `StartupWMClass`. The bundler derives the control
-file's `Package:` field by kebab-casing `productName` (`MailOh` → `mail-oh`) and
-Tauri v2's `bundle.linux.deb` exposes no override, so this is documented rather
-than fixed: the practical consequence is that **`apt remove mailoh` does not
-work — it is `apt remove mail-oh`**. The Linux CI job asserts `Package: mail-oh`
-against the built artifact, so if a future Tauri changes the slug this
-paragraph goes red instead of quietly going stale.
+**One word on Linux, everywhere.** The bundler derives the `.deb`'s `Package:`
+field by kebab-casing `productName`, and `productName` is `mailoh`, so the
+package name, the binary at `/usr/bin/mailoh`, the icon and the `.desktop`
+entry's `Icon=` and `StartupWMClass` are all the same string: `apt remove
+mailoh` works. This was not always true — `productName` used to be `MailOh`,
+which kebab-cased to `mail-oh` and made the package the one thing on the system
+spelled differently from everything else. The Linux CI job asserts
+`Package: mailoh` against the built artifact, so if a future Tauri changes the
+slug this paragraph goes red instead of quietly going stale.
 
 ## Verify it
 

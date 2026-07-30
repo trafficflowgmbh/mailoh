@@ -287,7 +287,7 @@ public extension AppState {
             PaletteCommand("Open Screener", ["g", "s"], .route(.screener(.waiting))),
             PaletteCommand("Screener: Screened out", [], .route(.screener(.screened))),
             PaletteCommand("Screener: Spam", [], .route(.screener(.spam))),
-            PaletteCommand("Start Focus & Reply", ["f"], .focusReply),
+            PaletteCommand("Start Reply Run", ["f"], .focusReply),
             PaletteCommand("Search everything", ["/"], .route(.search)),
             PaletteCommand("New message", ["c"], .route(.compose)),
             PaletteCommand("Open Settings", [], .route(.settings)),

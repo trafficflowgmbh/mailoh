@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * The MailOh client shell: rail + views over ONE engine, the reader
- * exhale, Focus & Reply, the ⌘K palette, the tag picker, the dock and
+ * The mailoh client shell: rail + views over ONE engine, the reader
+ * exhale, the Reply Run, the ⌘K palette, the tag picker, the dock and
  * the demo ribbon. Every list, count and mutation runs through
  * @mailoh/client-engine — the shell only owns view state.
  */
@@ -658,7 +658,7 @@ function ShellInner() {
         )}
       </Reader>
 
-      {/* Focus & Reply */}
+      {/* Reply Run */}
       <FocusReplyOverlay
         open={fr != null}
         step={fr?.step ?? 0}

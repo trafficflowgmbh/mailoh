@@ -130,7 +130,7 @@ public struct Message: Identifiable, Sendable {
     /// derived from this array, so it can never claim mail the app does not show.
     public var earlier: [HeldMail]
     public var unread: Bool          // shows the accent dot + counts as "new"
-    public var seen: Bool            // placement: below the waterline / "Previously seen"
+    public var seen: Bool            // placement: below the waterline / "Earlier"
     public var rationale: String?    // the filing reason chip
     public var tracker: String?      // spy-pixel chip
     public var attach: String?       // "Name.pdf (1.2 MB)"

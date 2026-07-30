@@ -1,6 +1,12 @@
 # Trademark policy
 
-MailOh is free software. The MailOh **marks** are not part of that grant.
+mailoh is free software. The mailoh **marks** are not part of that grant.
+
+The product is written **mailoh** — lower-case, and in rendered artwork with a
+terracotta period after it: *mailoh.* That is how the name is used and how it is
+claimed. Casing is presentation, not identity: the assertions below cover the
+word however it is capitalised, so "MailOh", "Mailoh" and "MAILOH" are the same
+mark and are equally not licensed here.
 
 Copyright, patent and trademark are three different things, and the GPL is
 explicit about the difference: section 7(e) of GPL-3.0 permits a licence to
@@ -11,7 +17,7 @@ and nothing more — it takes away no freedom the GPL gives you over the *code*.
 
 | Mark | Where it appears in this tree |
 |---|---|
-| the name **MailOh** | throughout — the product name, `MailOh.app`, `mailoh.exe`, `/usr/bin/mailoh` |
+| the name **mailoh**, in any casing | throughout — the product name, the macOS bundle `mailoh.app`, `mailoh.exe`, `/usr/bin/mailoh`, the Debian package `mailoh` |
 | the **"oh." wordmark** | drawn into the icon artwork below |
 | the **app icon** — the "oh." squircle tile | `Resources/MailOh.icns`, `docs/mailoh-icon.png`, `apps/desktop/src-tauri/icons/` (`icon.icns`, `icon.ico`, `icon.png`, `32x32.png`, `64x64.png`, `128x128.png`, `128x128@2x.png`) |
 | the domains **mailoh.io** and **mailoh.app** | links in the README and in `Resources/FIRST-RUN.txt` |
@@ -31,16 +37,16 @@ is GPL-3.0-or-later.
 
 Everything the GPL grants, unreduced:
 
-- **Use** MailOh, privately or commercially, for anything.
+- **Use** mailoh, privately or commercially, for anything.
 - **Study and modify** every line, for any purpose.
 - **Build** your own binaries from this tree, patched or not, and run them.
 - **Redistribute** the source and your changes under GPL-3.0.
-- **Package** MailOh for a distribution and ship it under the MailOh name, *if
+- **Package** mailoh for a distribution and ship it under the mailoh name, *if
   you ship it substantially as we release it* — the ordinary distro-packaging
   case. Patches for build, path and dependency conventions are expected and
   fine; see "Distribution packagers" below.
-- **Say what your software is.** "A fork of MailOh", "based on MailOh",
-  "compatible with MailOh", "works with MailOh Cloud" are accurate descriptions
+- **Say what your software is.** "A fork of mailoh", "based on mailoh",
+  "compatible with mailoh", "works with mailoh Cloud" are accurate descriptions
   of fact. That is nominative use, it needs no licence, and this policy does not
   restrict it.
 
@@ -50,7 +56,7 @@ Present something we did not build as though we did.
 
 Concretely, if you distribute a **modified** build to other people:
 
-- Do not call it **MailOh**, or a name a user would confuse with MailOh.
+- Do not call it **mailoh**, or a name a user would confuse with mailoh.
 - Do not ship the **"oh." icon or wordmark** as your application's identity.
   Replace `Resources/MailOh.icns` and `apps/desktop/src-tauri/icons/` with your
   own artwork, and change the product name in `apps/macos/Package.swift`,
@@ -69,14 +75,14 @@ today: the code is free, the identity is not.
 
 ## Distribution packagers
 
-You are welcome, and we would rather you shipped MailOh under its own name than
-under a made-up one. Ship it as **MailOh** as long as:
+You are welcome, and we would rather you shipped mailoh under its own name than
+under a made-up one. Ship it as **mailoh** as long as:
 
 1. it is built from an official release tree, with patches limited to what
    packaging genuinely requires (build flags, paths, dependency and toolchain
    conventions, backported fixes from upstream), and
 2. your package points bug reports at your distribution first, so a
-   packaging-specific problem does not arrive at our address as a MailOh bug.
+   packaging-specific problem does not arrive at our address as a mailoh bug.
 
 If a patch changes behaviour a user would notice, tell us and we will almost
 certainly still say yes — we just want to know what is shipping with our name on
@@ -92,13 +98,13 @@ that artwork, not the typeface, that this policy covers.
 
 ## Asking
 
-If you want to use a MailOh mark in a way this document does not clearly allow —
+If you want to use a mailoh mark in a way this document does not clearly allow —
 a review, a comparison, a conference talk, a book, a compatible product, a
 distro package with unusual patches — just ask: **support@mailoh.io**. We are a
 small company in Zürich and we answer mail. A reasonable request gets a yes.
 
 ---
 
-Trademark policy for [MailOh](https://mailoh.io) · TrafficFlow GmbH, Zürich ·
+Trademark policy for [mailoh](https://mailoh.io) · TrafficFlow GmbH, Zürich ·
 Questions: support@mailoh.io · Code licence: [LICENSE](LICENSE) ·
 Copyright and third parties: [COPYRIGHT](COPYRIGHT)

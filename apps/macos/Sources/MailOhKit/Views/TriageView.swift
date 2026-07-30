@@ -138,9 +138,9 @@ private struct PileCard: View {
     }
 }
 
-// MARK: - Focus & Reply
+// MARK: - Reply Run
 
-/// Focus & Reply — the Reply Later pile, one message per screen, with a progress
+/// Reply Run — the Answer Later pile, one message per screen, with a progress
 /// bar that is the only thing telling you how much is left. A modal is right here:
 /// the whole point is that nothing else is on screen.
 ///

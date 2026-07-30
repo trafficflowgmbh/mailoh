@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/mailoh-icon.png" width="88" height="88" alt="MailOh">
+<img src="docs/mailoh-icon.png" width="88" height="88" alt="mailoh">
 
-# MailOh for the desktop
+# mailoh for the desktop
 
 **Consent-first email, on the mailboxes you already have.**
 
@@ -22,12 +22,12 @@ Free, GPL-3.0, no account, no subscription — this repository is the whole thin
 
 ## What this repository is
 
-**This repository is the free MailOh desktop apps** — macOS, Windows and Linux.
+**This repository is the free mailoh desktop apps** — macOS, Windows and Linux.
 All of them, all of their source, under GPL-3.0. There is no paid edition of the
 desktop app, no feature held back for one, and no telemetry reporting back on
 you.
 
-**MailOh Cloud — the hosted sync service — is the commercial product and is not
+**mailoh Cloud — the hosted sync service — is the commercial product and is not
 open source.** It is what puts your mail on your phone and on the web and keeps
 it organised while your laptop is shut. None of its code is in this repository:
 no backend, no billing, no sync server. It is entirely optional, and the desktop
@@ -56,7 +56,7 @@ stays boring.
 If you came here from [mailoh.io](https://mailoh.io) expecting to read your mail:
 not yet. Watch the repository, or ask us at support@mailoh.io.
 
-## What MailOh is
+## What mailoh is
 
 Email that asks your permission before it takes your attention, built **on your
 existing mailboxes** — any IMAP provider — and organising them **in place**, in
@@ -71,7 +71,7 @@ organised.
 - **Reads** — newsletters in a skim stream with a seen-waterline, so a week away
   costs you nothing.
 - **Receipts** — orders, confirmations, tickets. Filed, not read.
-- **Triage piles** — Reply Later, Set Aside, and **Resurface** for mail that
+- **Triage piles** — Answer Later, Parked, and **Resurface** for mail that
   should come back at a chosen time.
 - **Tags, never folders** — cross-cutting, and applied on top of the one place a
   message actually lives.
@@ -91,20 +91,20 @@ Rendered from this source tree by `swift run MailOh --shot`, unretouched.
 
 **Ohbox** — a thread, its rule provenance, the blocked tracking pixel, the tags.
 
-<img src="docs/ohbox-light.png" alt="MailOh Ohbox, light" width="100%">
+<img src="docs/ohbox-light.png" alt="mailoh Ohbox, light" width="100%">
 
 **Screener** — a first-time sender who is a person rather than a list: two held
 messages, both shown in full, one suggested destination, five to choose from, and
 the keys that pick them. (In this preview the suggestion is a fixture, not a live
 model — see [Status](#status--read-this-first).)
 
-<img src="docs/screener-light.png" alt="MailOh Screener, light" width="100%">
+<img src="docs/screener-light.png" alt="mailoh Screener, light" width="100%">
 
 <details>
 <summary><strong>Dark mode</strong> (same two surfaces)</summary>
 
-<img src="docs/ohbox-dark.png" alt="MailOh Ohbox, dark" width="100%">
-<img src="docs/screener-dark.png" alt="MailOh Screener, dark" width="100%">
+<img src="docs/ohbox-dark.png" alt="mailoh Ohbox, dark" width="100%">
+<img src="docs/screener-dark.png" alt="mailoh Screener, dark" width="100%">
 
 </details>
 
@@ -124,12 +124,12 @@ you downloaded against what the run made.
 
 | Platform | Artifacts | Runner |
 |---|---|---|
-| **macOS** | `MailOh.dmg` (universal, arm64 + x86_64), `MailOh.app.zip`, the full screenshot set | `macos-15` |
-| **Windows** | `MailOh_0.1.0_x64_en-US.msi`, `MailOh_0.1.0_x64-setup.exe` (NSIS) | `windows-latest` |
-| **Linux** | `MailOh_0.1.0_amd64.AppImage`, `MailOh_0.1.0_amd64.deb` | `ubuntu-latest` |
+| **macOS** | `mailoh.dmg` (universal, arm64 + x86_64), `mailoh.app.zip`, the full screenshot set | `macos-15` |
+| **Windows** | `mailoh_0.1.0_x64_en-US.msi`, `mailoh_0.1.0_x64-setup.exe` (NSIS) | `windows-latest` |
+| **Linux** | `mailoh_0.1.0_amd64.AppImage`, `mailoh_0.1.0_amd64.deb` | `ubuntu-latest` |
 
 **Nothing here is signed**, on any platform. Code-signing certificates cost money
-MailOh has not spent yet. We would rather say that plainly than have you discover
+mailoh has not spent yet. We would rather say that plainly than have you discover
 it from a scary dialog. On all three platforms, building from source is the
 option that requires trusting nobody.
 
@@ -139,7 +139,7 @@ option that requires trusting nobody.
 > **The DMG is unsigned and un-notarized.** It carries an ad-hoc signature only,
 > not an Apple Developer ID. On first launch macOS Gatekeeper will refuse a
 > double-click and may claim the app "is damaged". It is not.
-> **Right-click (or Control-click) MailOh.app → Open → Open.** The same note is
+> **Right-click (or Control-click) mailoh.app → Open → Open.** The same note is
 > in the DMG as *Read me first.txt*. Signed and notarized builds land with the
 > developer account.
 
@@ -161,7 +161,7 @@ Requires macOS 15 (Sequoia) or newer.
 > connection makes "it cannot reach the network" a footnote instead of a fact.
 > The trade is that **you must already have WebView2.** Windows 11 has it;
 > so does any Windows 10 that has taken updates since 2021, because Edge
-> installs it. If yours does not, MailOh will not start and will tell you so —
+> installs it. If yours does not, mailoh will not start and will tell you so —
 > install the Evergreen runtime once, from Microsoft:
 > <https://developer.microsoft.com/microsoft-edge/webview2/>
 
@@ -173,21 +173,17 @@ Requires Windows 10 or newer, plus the WebView2 runtime as described above.
 > **The AppImage needs the executable bit**, which GitHub's artifact zip does not
 > preserve:
 > ```bash
-> chmod +x MailOh_0.1.0_amd64.AppImage && ./MailOh_0.1.0_amd64.AppImage
+> chmod +x mailoh_0.1.0_amd64.AppImage && ./mailoh_0.1.0_amd64.AppImage
 > ```
 > If it exits immediately on a distribution that has not enabled unprivileged
 > user namespaces, run it with `--appimage-extract-and-run`.
 
-The `.deb` installs with `sudo apt install ./MailOh_0.1.0_amd64.deb` and pulls in
+The `.deb` installs with `sudo apt install ./mailoh_0.1.0_amd64.deb` and pulls in
 WebKitGTK. It is **not** in any repository, so it will never auto-update — and
 there is no update checker in this build at all.
 
-> [!NOTE]
-> **To uninstall it: `sudo apt remove mail-oh`.** With a hyphen. The binary, the
-> icon and the launcher entry are all `mailoh`, but Tauri derives the Debian
-> package name by kebab-casing the product name — `MailOh` → `mail-oh` — and
-> offers no way to override it. `apt remove mailoh` will tell you no such
-> package is installed, and it will be right.
+To uninstall it: `sudo apt remove mailoh`. The Debian package name, the binary at
+`/usr/bin/mailoh`, the icon and the launcher entry are all the same word.
 
 ### Verify it yourself
 
@@ -210,7 +206,7 @@ surrounding line for the three that are not URLs at all.
 
 CI runs exactly these greps on every build, prints the complete list in the job
 log, **asserts the count** so that "13 and 14" cannot quietly stop being true,
-and **fails the run** if any URL in the binary points at MailOh or TrafficFlow
+and **fails the run** if any URL in the binary points at mailoh or TrafficFlow
 infrastructure. It also fails the Windows job if the `.msi` or the `-setup.exe`
 contains a WebView2 downloader.
 
@@ -251,7 +247,7 @@ swift run --package-path apps/macos MailOh --shot shots
 And an installable bundle, which SwiftPM cannot make on its own:
 
 ```bash
-./scripts/package-app.sh     # → build/MailOh.app and build/MailOh.dmg
+./scripts/package-app.sh     # → build/mailoh.app and build/mailoh.dmg
 ```
 
 ### Windows and Linux
@@ -301,14 +297,14 @@ yourself. See the Windows note above.
 
 ## Desktop or Cloud
 
-MailOh comes in two halves, and **this repository is the whole of the first
+mailoh comes in two halves, and **this repository is the whole of the first
 one**. Here is the honest comparison, including the parts where Desktop wins.
 
 |  | **Desktop** — this repository | **Cloud** — optional |
 |---|---|---|
 | **Price** | **Free, forever.** Not a trial, not a freemium tier. | $9 / $15 / $29 per month |
 | **Mailboxes** | As many as you like | 2 / 5 / 10 |
-| **Where your mail is processed** | **Your machine. Only.** It never touches our servers — there is no server to touch. | Encrypted, EU-hosted, solely to serve you, deletable |
+| **Where your mail is processed** | **Your machine. Only.** It never touches our servers — there is no server to touch. | EU-hosted, encrypted in transit and at rest — not end-to-end — solely to serve you, deletable |
 | **Account** | **None.** Nothing to sign up for, nothing to cancel. | Yes |
 | **AI** | Bring your own API key, or run [Ollama](https://ollama.com) locally so nothing leaves your machine at all | A monthly allowance of managed AI actions is included (~2k / 6k / 20k) |
 | **Web and mobile apps** | — | Yes |
@@ -432,7 +428,7 @@ Zürich, Switzerland.
 
 The desktop client is free and is meant to stay free: GPL-3.0 means anyone can
 use, study, change and share it, and any redistributed change comes back under
-the same terms — so a closed-source re-skin of MailOh is not possible. Full text
+the same terms — so a closed-source re-skin of mailoh is not possible. Full text
 in [LICENSE](LICENSE) — a verbatim copy of the FSF's GPL-3.0 — and the reasoning,
 the third-party position and the per-file-header decision in
 [COPYRIGHT](COPYRIGHT).
@@ -441,7 +437,7 @@ the third-party position and the per-file-header decision in
 redistribute this source; a fork you publish needs its own name and its own
 artwork, so nobody is misled about who supports it.
 [TRADEMARK.md](TRADEMARK.md) is the policy, and it is more permissive than you
-probably expect — packaging MailOh for a distribution under its own name is
+probably expect — packaging mailoh for a distribution under its own name is
 explicitly fine.
 
 Contributions need **no CLA and no copyright assignment**, just a DCO sign-off

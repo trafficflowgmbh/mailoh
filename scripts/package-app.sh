@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# package-app.sh — build MailOh.app and MailOh.dmg from the SwiftPM package.
+# package-app.sh — build mailoh.app and mailoh.dmg from the SwiftPM package.
 #
 # SwiftPM produces a bare executable; macOS needs a bundle. This script does the
 # three things `swift build` cannot: it wraps the release binary in a .app with
@@ -15,14 +15,14 @@
 #   MAILOH_ARCHS="arm64" ./scripts/package-app.sh    # host arch only, faster
 #   MAILOH_BUILD_VERSION=42 ./scripts/package-app.sh # stamp CFBundleVersion
 #
-# Output: build/MailOh.app, build/MailOh.dmg
+# Output: build/mailoh.app, build/mailoh.dmg
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG="$ROOT/apps/macos"
 OUT="$ROOT/build"
-APP="$OUT/MailOh.app"
-DMG="$OUT/MailOh.dmg"
+APP="$OUT/mailoh.app"
+DMG="$OUT/mailoh.dmg"
 ARCHS="${MAILOH_ARCHS:-arm64 x86_64}"
 
 # CFBundleVersion has to be a monotonic build number. In CI that is the run
@@ -44,7 +44,7 @@ BIN="$BIN_DIR/MailOh"
 lipo -info "$BIN"
 
 # ---------------------------------------------------------------- bundle
-say "assembling MailOh.app"
+say "assembling mailoh.app"
 rm -rf "$APP" "$DMG"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/MailOh"
@@ -66,15 +66,15 @@ codesign --verify --verbose=2 "$APP"
 [ -s "$APP/Contents/Resources/MailOh.icns" ]
 
 # ---------------------------------------------------------------- dmg
-say "building MailOh.dmg"
+say "building mailoh.dmg"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-cp -R "$APP" "$STAGE/MailOh.app"
+cp -R "$APP" "$STAGE/mailoh.app"
 cp "$ROOT/Resources/FIRST-RUN.txt" "$STAGE/Read me first.txt"
 ln -s /Applications "$STAGE/Applications"
 
 hdiutil create \
-  -volname "MailOh $SHORT" \
+  -volname "mailoh $SHORT" \
   -srcfolder "$STAGE" \
   -fs HFS+ \
   -format UDZO \

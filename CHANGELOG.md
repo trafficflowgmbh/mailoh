@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the MailOh desktop apps are recorded here.
+All notable changes to the mailoh desktop apps are recorded here.
 
 The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -22,13 +22,13 @@ no network in any of them.
 
 ### Added
 
-- **MailOh for macOS** — a native SwiftUI client. Every surface: Ohbox, Screener
+- **mailoh for macOS** — a native SwiftUI client. Every surface: Ohbox, Screener
   (two-pane, decision bar, bulk undo), Reads with its waterline, Receipts,
-  triage piles with Focus & Reply, tags, search, compose, settings. Light and
+  triage piles with the Reply Run, tags, search, compose, settings. Light and
   dark, down to a 390 pt window, keyboard-first with a ⌘K palette. Ships with 99
   tests and a `--smoke` render check that hosts every route offscreen and fails
   if anything draws nothing. (2026-07-30)
-- **MailOh for Windows and Linux** — a Tauri v2 shell rendering the same
+- **mailoh for Windows and Linux** — a Tauri v2 shell rendering the same
   interface, built by Vite from the shared React shell rather than forked. The
   webview is locked down: `"permissions": []`, `withGlobalTauri` off,
   `assetProtocol` disabled, no `invoke_handler`, no plugins, and a CSP of

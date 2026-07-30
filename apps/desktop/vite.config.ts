@@ -69,7 +69,7 @@ export default defineConfig({
     emptyOutDir: true,
     /* Vite's modulepreload polyfill is the one line of the output that calls
        `fetch()` — it re-requests preload hrefs on browsers without native
-       support. Every webview MailOh runs in (WKWebView, WebView2, WebKitGTK)
+       support. Every webview mailoh runs in (WKWebView, WebView2, WebKitGTK)
        has had modulepreload for years, and a bundle that grep-cleanly contains
        no `fetch(` at all is worth more here than a polyfill for browsers this
        app cannot be opened in. */

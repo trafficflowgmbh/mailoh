@@ -183,22 +183,25 @@ public enum Fixtures {
 
     /// The one documented contradiction of `bannedTerms`, kept honest on purpose.
     ///
-    /// The product's IMAP folder namespace is still `TrafficFlow/…` — the
-    /// pre-rebrand company name, which contains a banned term and is created
-    /// inside real customer mailboxes. It is exempt TODAY, not forever: the
-    /// namespace is part of the Cloud API's wire contract, shared by the sync
-    /// core, the service layer, the HTTP API, the worker and the migration
-    /// scanner, and the folders already exist in live mailboxes, so renaming it
-    /// to `MailOh/…` is a folder-rename migration with reconciliation —
-    /// scheduled under "Folder namespace rebrand" in the Cloud architecture
-    /// plan. Mirrors `NAMESPACE_EXEMPTION` in `privacy.ts`.
+    /// The IMAP folder namespace used to be the contradiction: the product
+    /// created `TrafficFlow/…` folders inside real customer mailboxes. That is
+    /// fixed — on 2026-07-31, with zero real mailboxes connected, the five
+    /// strings became `mailoh/Screener`, `mailoh/Reads`, `mailoh/Receipts`,
+    /// `mailoh/Screened`, `mailoh/Quarantine`. Nothing a user can see carries
+    /// the pre-rebrand name any more.
     ///
-    /// Until then the rule for view code is narrow: never render a raw folder
-    /// string; map it, and fall back to the leaf segment, never the full path.
+    /// What survives is the backend workspace scope — `@trafficflow/{api,core,
+    /// db,services}` and `@trafficflow/worker`. Nothing is published, and the
+    /// specifiers are resolved away at build time, so the term appears in no
+    /// bundle, no payload and no mailbox. Mirrors `NAMESPACE_EXEMPTION` in
+    /// `privacy.ts`.
+    ///
+    /// The view rule stands regardless: never render a raw folder string; map
+    /// it, and fall back to the leaf segment, never the full path.
     public static let namespaceExemption = (
         term: "trafficflow",
-        site: "the IMAP folder namespace shared with the backend wire contract",
-        until: "Cloud architecture plan — Folder namespace rebrand"
+        site: "backend workspace package scope @trafficflow/{api,core,db,services,worker}",
+        until: "a future workspace-scope rename; the user-visible folder namespace is already mailoh/…"
     )
 
     // MARK: Tags (cross-cutting)
@@ -438,20 +441,20 @@ public enum Fixtures {
 
     // MARK: Triage
     //
-    // The piles are the single source of truth for triage. Counts, the Focus &
-    // Reply queue and the rail badges are all derived from these arrays — there is
+    // The piles are the single source of truth for triage. Counts, the Reply Run
+    // queue and the rail badges are all derived from these arrays — there is
     // no parallel integer to drift out of step.
 
     public static func piles() -> [TriagePile] {
         [
-            TriagePile(kind: .replyLater, title: "Reply Later", items: [
+            TriagePile(kind: .replyLater, title: "Answer Later", items: [
                 TriageItem(id: "giulia", title: "Giulia Ferrari",
                            subtitle: "Re: Glaze order #2214 — arriving early 🎉",
                            preview: "Buongiorno Mila, buone notizie — la spedizione arriva già il 4 agosto…"),
                 TriageItem(id: "petra", title: "Petra Wyss", subtitle: "Your talk is in! 🎈",
                            preview: "Great news — “Wabi-sabi for web people” made the final program…"),
-            ], hint: "Answered one at a time in Focus & Reply."),
-            TriagePile(kind: .setAside, title: "Set Aside", items: [
+            ], hint: "Answered one at a time in Reply Run."),
+            TriagePile(kind: .setAside, title: "Parked", items: [
                 TriageItem(id: "alpenbahn", title: "Alpenbahn",
                            subtitle: "Itinerary Winterthur→Lugano, 12 Aug"),
             ], hint: "Held here until you come back for it."),

@@ -6,7 +6,7 @@ export interface PileItem {
   subtitle?: string;
   /** Resurface time — rendered with the small clock ("resurfaces Fri 09:00"). */
   when?: string;
-  /** Dimmed once handled (Focus & Reply). */
+  /** Dimmed once handled (Reply Run). */
   done?: boolean;
 }
 
@@ -25,7 +25,7 @@ export interface PilesStackProps {
 }
 
 /**
- * The triage piles — Reply Later · Set Aside · Resurface — as stacked
+ * The triage piles — Answer Later · Parked · Resurface — as stacked
  * sheets: two receding panel layers behind a lift-2 top sheet that
  * rises to lift-3 on hover.
  */

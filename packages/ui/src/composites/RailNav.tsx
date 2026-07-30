@@ -40,7 +40,7 @@ export interface RailMailbox {
 }
 
 export interface RailNavProps {
-  /** Defaults to the MailOh wordmark. */
+  /** Defaults to the mailoh wordmark. */
   wordmark?: ReactNode;
   composeLabel?: string;
   composeKbd?: string;

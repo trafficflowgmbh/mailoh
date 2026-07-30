@@ -30,8 +30,8 @@ export const DEMO_NOW = new Date("2026-07-29T12:00:00.000Z");
 
 const FIXTURE_FOLDER: Record<MessageFixture["folder"], Folder> = {
   ohbox: "INBOX",
-  reads: "TrafficFlow/Feed",
-  receipts: "TrafficFlow/Paper Trail",
+  reads: "mailoh/Reads",
+  receipts: "mailoh/Receipts",
 };
 
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

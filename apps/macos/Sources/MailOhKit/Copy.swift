@@ -9,8 +9,8 @@ public enum Copy {
 
     // MARK: Ohbox
 
-    public static let groupNew = "New for you"
-    public static let groupSeen = "Previously seen"
+    public static let groupNew = "New"
+    public static let groupSeen = "Earlier"
     /// Tail rows state that the list is complete — the no-collapse rule in words.
     /// They never imply a hidden count on this screen.
     public static func ohboxTail(_ shown: Int) -> String {
@@ -90,9 +90,9 @@ public enum Copy {
 
     // MARK: Triage
 
-    public static let focusReply = "Focus & Reply"
-    public static let focusReplyNote = "Steps through the Reply Later pile, one message per screen."
-    public static let focusReplyEmpty = "Reply Later is empty."
+    public static let focusReply = "Reply Run"
+    public static let focusReplyNote = "Steps through the Answer Later pile, one message per screen."
+    public static let focusReplyEmpty = "Answer Later is empty."
     /// Explicit save semantics: this build has no mailbox, so nothing can be sent
     /// and the button never claims otherwise.
     public static let focusReplySave = "Save draft → next"
@@ -130,7 +130,7 @@ public enum Copy {
 
     // MARK: Message actions
 
-    public static let actions = ["Reply", "Reply Later", "Set Aside", "Resurface"]
+    public static let actions = ["Reply", "Answer Later", "Park", "Resurface"]
     public static let move = "Move"
     public static let draftReply = "Draft reply"
 

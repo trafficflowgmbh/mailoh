@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Ohbox — the two-pane accepted-mail view: grouped list (New for you /
- * Previously seen) against the engine's ohboxView selector, the Screener
+ * Ohbox — the two-pane accepted-mail view: grouped list (New / Earlier)
+ * against the engine's ohboxView selector, the Screener
  * doorbell, and the reading column. j/k moves, ↵ opens the reader,
  * t opens the tag picker.
  */

@@ -65,7 +65,7 @@ export function ListPane({
   );
 }
 
-/** Group label inside a list scroller ("New for you", "Today"). */
+/** Group label inside a list scroller ("New", "Earlier", "Today"). */
 export function ListGroupLabel({ children }: { children: ReactNode }) {
   return <div className="grouplabel">{children}</div>;
 }

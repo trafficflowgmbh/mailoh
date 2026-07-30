@@ -730,11 +730,11 @@ final class MailOhKitTests: XCTestCase {
         let s = AppState()
         let giulia = s.ohbox.first { $0.id == "giulia" }!
         s.replyLater(giulia)
-        XCTAssertEqual(s.replyCount, 2, "Giulia is already in the Reply Later pile")
+        XCTAssertEqual(s.replyCount, 2, "Giulia is already in the Answer Later pile")
     }
 
     /// "Done → next" discarded the typed draft and left the item in the pile, so
-    /// reopening Focus & Reply re-presented work that had been done.
+    /// reopening a Reply Run re-presented work that had been done.
     func testFocusReplySavesTheDraftAndRemovesTheItem() {
         let s = AppState()
         s.startFocusReply()

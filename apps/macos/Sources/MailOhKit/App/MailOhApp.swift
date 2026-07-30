@@ -9,7 +9,7 @@ public struct MailOhApp: App {
     public init() {}
 
     public var body: some Scene {
-        Window("MailOh", id: "mailoh") {
+        Window("mailoh", id: "mailoh") {
             // 390pt is the floor the design is verified at (invariant #7), not 1040 —
             // the shell has a real compact layout below `Space.mobileMax`.
             RootView(state)

@@ -174,10 +174,9 @@ function facetsOf(items: SearchHit[]): SearchFacets {
   const senders = new Map<string, { address: string; name: string | null; count: number }>();
   for (const { message: m } of items) {
     // Facet keys are view ids where a view exists, and otherwise the folder's
-    // LEAF — never the raw path. Views render these keys directly, and the
-    // folder namespace still carries the pre-rebrand company name (see
-    // `NAMESPACE_EXEMPTION` in @mailoh/fixtures), so a raw path here would put
-    // it straight on screen for any folder this client has no view for.
+    // LEAF — never the raw path. Views render these keys directly, so a raw
+    // path here would put a namespaced string straight on screen for any
+    // folder this client has no view for.
     const view = VIEW_OF_FOLDER[m.folder] ?? folderLeaf(m.folder);
     facets.folder[view] = (facets.folder[view] ?? 0) + 1;
     const s = senders.get(m.from.address) ?? { address: m.from.address, name: m.from.name, count: 0 };

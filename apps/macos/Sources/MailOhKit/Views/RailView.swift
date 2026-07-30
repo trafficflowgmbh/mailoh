@@ -47,8 +47,8 @@ public struct RailView: View {
 
                 group {
                     label("Triage")
-                    item("Reply Later", route: .triage, count: s.replyCount)
-                    item("Set Aside", route: .triage, count: s.asideCount)
+                    item("Answer Later", route: .triage, count: s.replyCount)
+                    item("Parked", route: .triage, count: s.asideCount)
                     item("Resurface", route: .triage, count: s.resurfaceCount)
                     tagsGroup
                 }
@@ -87,7 +87,7 @@ public struct RailView: View {
             .padding(.horizontal, 8)
             .padding(.top, 2)
             .padding(.bottom, 14)
-            .accessibilityLabel("MailOh")
+            .accessibilityLabel("mailoh")
     }
 
     private var composeCTA: some View {
@@ -173,7 +173,7 @@ public struct RailView: View {
     private func isOn(_ route: Route) -> Bool {
         switch (s.route, route) {
         case (.screener, .screener): return true
-        case (.triage, .triage): return title(of: route) == "Reply Later"
+        case (.triage, .triage): return title(of: route) == "Answer Later"
         default: return s.route == route
         }
     }

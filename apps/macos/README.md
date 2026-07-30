@@ -1,6 +1,6 @@
-# MailOh for macOS
+# mailoh for macOS
 
-The **free flagship native app** — Tier 1 of MailOh, built in SwiftUI on the Blanc
+The **free flagship native app** — Tier 1 of mailoh, built in SwiftUI on the Blanc
 design system. This is the Tier-1 *preview*: it runs entirely on Mila's fixture
 world with no network at all. The real IMAP/sync engine lands behind the same
 views later; nothing in `Views/` reaches past `AppState` — not even for a string.
@@ -87,7 +87,7 @@ testable from the command line with no Xcode project in the loop:
 | Invariant | Enforcement |
 |---|---|
 | **#1 sensitive mail** | `MailContent` is a sum type whose `.sensitiveRedacted` case has **no payload**. A protected message cannot hold plaintext — `body`, `preview`, `searchableText`, `aiPayload` and `forwardableBody` all return `nil` for it, so search, AI grounding and forwarding are excluded by construction rather than by a call-site `if`. `Message.protected(…)` and `HeldMail.protected(…)` have no body parameter to pass. |
-| **#2 no silent AI** | The Screener's AI destination is preselected, never applied; every decision, allow, not-spam and delete produces a typed `UndoOp` that the toast's Undo runs exactly once. Nothing sends: Focus & Reply saves a draft and the copy says so. |
+| **#2 no silent AI** | The Screener's AI destination is preselected, never applied; every decision, allow, not-spam and delete produces a typed `UndoOp` that the toast's Undo runs exactly once. Nothing sends: a Reply Run saves a draft and the copy says so. |
 | **#6 no-collapse** | Screener records carry a non-empty `HeldMailbag`, not a count plus one body — "8 held" is eight rendered cards. A thread badge is *derived* from `Message.earlier`, so it cannot claim messages the reader cannot see. `renderManifest` + `RenderLog` check this against the rendered view, per surface, in `--smoke`. |
 | **#6 fictional content** | `Fixtures.fictionalNames` is a reviewed registry with a note per name; `Fixtures.bannedTerms` is the ban list. The audit walks every renderable string at every depth (held bags, threads, body stores) and separately asserts that every renderable display name is registered — so a new sender cannot be added without review. |
 | **#7 design fidelity** | Color, radius, spacing and layout tokens are compared **numerically against `packages/tokens/src/tokens.ts`**, and the triage pile's sheet edge against `design/proposals/blanc/index.html` itself. Source audits fail the build if any file under `Views/` hand-writes an `OKLCH(` color or a bare `.shadow(`. |
@@ -146,6 +146,6 @@ lives in `SplitPane`. Rail · list · detail is intact; only the container diffe
 ## Packaging
 
 This is a **dev binary**, not an app bundle. `swift run` produces a plain
-executable, which is enough for the preview and for CI. A shippable `MailOh.app`
+executable, which is enough for the preview and for CI. A shippable `mailoh.app`
 needs full Xcode for `Info.plist` + bundle assembly, code signing, and
 notarization — that step comes with the release pipeline, along with the app icon.

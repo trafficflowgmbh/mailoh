@@ -46,7 +46,7 @@ export interface MessageRowProps {
 }
 
 /**
- * The one row language shared by every list in MailOh. Variants are
+ * The one row language shared by every list in mailoh. Variants are
  * additive: unread dot, badges, tag chips, right-aligned amount,
  * screener avatar + AI suggestion, quiet/dull spam rendering.
  */

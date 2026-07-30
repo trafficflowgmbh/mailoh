@@ -2,8 +2,8 @@
 
 /**
  * Triage — the three piles as stacked sheets over the engine's
- * triagePiles selector, plus the Focus & Reply entry point. Completing
- * a message in Focus & Reply clears its reply_later state through the
+ * triagePiles selector, plus the Reply Run entry point. Completing
+ * a message in a Reply Run clears its reply_later state through the
  * engine, so pile counts stay live everywhere.
  */
 import { useEffect } from "react";
@@ -19,7 +19,7 @@ export function TriageView({
   typingGuard,
 }: {
   piles: TriagePiles;
-  /** Message ids / titles completed in Focus & Reply this session. */
+  /** Message ids / titles completed in the Reply Run this session. */
   frDone: Set<string>;
   onStartFR: () => void;
   typingGuard: (e: KeyboardEvent) => boolean;

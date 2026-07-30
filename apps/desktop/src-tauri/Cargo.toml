@@ -1,16 +1,16 @@
 [package]
 name = "mailoh"
 version = "0.1.0"
-description = "MailOh — consent-first email. Windows/Linux preview shell."
+description = "mailoh — consent-first email. Windows/Linux preview shell."
 authors = ["TrafficFlow GmbH <support@mailoh.io>"]
 license = "GPL-3.0-or-later"
 edition = "2021"
 rust-version = "1.82"
 
-# The binary the installers ship. Named for the product, lower-cased, because it is
-# also the Linux command: the .deb puts it at /usr/bin/mailoh and CI asserts that.
-# The .deb's own `Package:` field is "mail-oh" and does NOT come from here — Tauri
-# derives that one from `productName` in tauri.conf.json.
+# The binary the installers ship. Named for the product, which is written lower-case,
+# and it is also the Linux command: the .deb puts it at /usr/bin/mailoh and CI asserts
+# that. The .deb's own `Package:` field does NOT come from here — Tauri kebab-cases
+# `productName` in tauri.conf.json — but that is "mailoh" too, so the two agree.
 [[bin]]
 name = "mailoh"
 path = "src/main.rs"
@@ -32,7 +32,7 @@ tauri-build = { version = "2", features = [] }
 # returns thirteen strings on Linux and fourteen on Windows, every one of them a
 # W3C namespace constant, a documentation link in a panic message, or the `http`
 # crate's "http://" literal glued to the next string in rodata. The READMEs list
-# all of them, and CI fails the build if one of them ever names MailOh or
+# all of them, and CI fails the build if one of them ever names mailoh or
 # TrafficFlow infrastructure. See the README's "Verify it yourself".
 #
 # Nothing here opens a socket, reads the filesystem or spawns a process:

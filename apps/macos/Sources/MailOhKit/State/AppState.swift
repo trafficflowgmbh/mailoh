@@ -98,9 +98,9 @@ public final class AppState {
     // MARK: Cross-cutting + triage
     public var tagsByID: [String: [TagID]]
     /// **The single source of truth for triage.** Counts, the rail badges, the
-    /// Triage cards and the Focus & Reply queue are all derived from this.
+    /// Triage cards and the Reply Run queue are all derived from this.
     public var piles: [TriagePile]
-    /// Drafts saved from Focus & Reply, by the mail's id. Nothing is ever sent
+    /// Drafts saved from Reply Run, by the mail's id. Nothing is ever sent
     /// here — this build has no network — so a saved draft is exactly that.
     public var drafts: [String: String] = [:]
 
@@ -519,10 +519,10 @@ public final class AppState {
         return await Task.detached(priority: .userInitiated) { index.search(raw) }.value
     }
 
-    // MARK: - Focus & Reply (derived from the Reply Later pile)
+    // MARK: - Reply Run (derived from the Answer Later pile)
 
-    /// The queue *is* the pile — completing an item removes it, so reopening Focus
-    /// & Reply can never re-present something already answered.
+    /// The queue *is* the pile — completing an item removes it, so reopening a
+    /// Reply Run can never re-present something already answered.
     public var focusReplyQueue: [TriageItem] { pile(.replyLater)?.items ?? [] }
 
     public func startFocusReply() { focusReplyIndex = 0; isFocusReplyOpen = true }
@@ -540,7 +540,7 @@ public final class AppState {
         // The pile shrank under the cursor, so the index already points at the next
         // item — advancing here would skip one.
         showToast(trimmed.isEmpty
-                  ? "Nothing typed — \(item.title) removed from Reply Later."
+                  ? "Nothing typed — \(item.title) removed from Answer Later."
                   : "Draft saved for \(item.title) — not sent.")
         return true
     }
@@ -572,16 +572,16 @@ public final class AppState {
     public func replyLater(_ m: Message) {
         let item = TriageItem(id: m.id, title: m.from, subtitle: m.subj, preview: m.preview)
         if addToPile(.replyLater, item) {
-            showToast("Queued in Reply Later (\(pileCounts[.replyLater] ?? 0))")
+            showToast("Queued in Answer Later (\(pileCounts[.replyLater] ?? 0))")
         } else {
             let first = m.from.split(separator: " ").first.map(String.init) ?? m.from
-            showToast("\(first) is already queued — Reply Later (\(pileCounts[.replyLater] ?? 0))")
+            showToast("\(first) is already queued — Answer Later (\(pileCounts[.replyLater] ?? 0))")
         }
     }
 
     public func setAside(_ m: Message) {
         let item = TriageItem(id: m.id, title: m.from, subtitle: m.subj)
-        showToast(addToPile(.setAside, item) ? "Set aside" : "Already set aside")
+        showToast(addToPile(.setAside, item) ? "Parked." : "Already parked.")
     }
 
     public func resurface(_ m: Message) {

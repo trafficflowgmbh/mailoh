@@ -1,6 +1,6 @@
 # Contributing
 
-MailOh is built by a small team at [TrafficFlow GmbH](https://trafficflow.ch) in
+mailoh is built by a small team at [TrafficFlow GmbH](https://trafficflow.ch) in
 Zürich. This repository is the free desktop client — native SwiftUI on macOS,
 a Tauri shell on Windows and Linux. Contributions are welcome, and
 so is a plain "this is wrong" — the client is early enough that direction still
@@ -131,7 +131,7 @@ of this repository. Nothing more is asked, and nothing more is taken.
 
 The honest consequence, which most projects leave you to work out yourself:
 because you keep your copyright and grant only the GPL, **TrafficFlow cannot
-move your code into MailOh Cloud**, which is closed-source. For almost
+move your code into mailoh Cloud**, which is closed-source. For almost
 everything here that is a non-issue — `apps/macos` and `apps/desktop` are the
 desktop clients and exist nowhere else.
 

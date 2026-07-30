@@ -154,8 +154,8 @@ public struct MessageView: View {
     private var actions: some View {
         FlowRow(spacing: 7) {
             PillButton("Reply") { s.route = .compose }
-            PillButton("Reply Later") { s.replyLater(m) }
-            PillButton("Set Aside") { s.setAside(m) }
+            PillButton("Answer Later") { s.replyLater(m) }
+            PillButton("Park") { s.setAside(m) }
             PillButton("Resurface") { s.resurface(m) }
             PillButton(Copy.move, kind: .ghost) {
                 s.showToast("Move lands with the folder picker in the engine slice.")

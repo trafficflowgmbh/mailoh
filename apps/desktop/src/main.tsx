@@ -1,5 +1,5 @@
 /**
- * MailOh Desktop — the entry point of the embedded UI.
+ * mailoh Desktop — the entry point of the embedded UI.
  *
  * There is no desktop fork of the interface. `AppShell` below is the same file
  * mailoh.app renders; the rail, the Screener, the reader, the ⌘K palette and
@@ -36,7 +36,7 @@ try {
 }
 
 const root = document.getElementById("root");
-if (!root) throw new Error("MailOh Desktop: #root is missing from index.html");
+if (!root) throw new Error("mailoh Desktop: #root is missing from index.html");
 
 createRoot(root).render(
   <StrictMode>

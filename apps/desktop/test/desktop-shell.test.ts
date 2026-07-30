@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 /**
  * The Tauri shell's security posture, asserted.
  *
- * Everything MailOh Desktop promises — no network, no filesystem, no commands,
+ * Everything mailoh Desktop promises — no network, no filesystem, no commands,
  * no remote origin — lives in four declarative files that nothing else in the
  * repository reads. A silent edit to any of them would keep every other test
  * green while the app quietly grew a capability, so they are checked here in
@@ -52,8 +52,8 @@ describe("tauri.conf.json", () => {
     };
   };
 
-  it("is MailOh, at the preview version, under its own identifier", () => {
-    expect(conf.productName).toBe("MailOh");
+  it("is mailoh, at the preview version, under its own identifier", () => {
+    expect(conf.productName).toBe("mailoh");
     expect(conf.version).toBe("0.1.0");
     expect(conf.identifier).toBe("io.mailoh.desktop.tauri");
   });

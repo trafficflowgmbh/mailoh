@@ -176,7 +176,7 @@ check("the dock rendered", doc.querySelector(".dock") != null);
 check("a list pane rendered", doc.querySelector(".rows") != null);
 check("body text is substantial", text.length > 800, `${text.length} chars`);
 
-for (const label of ["Ohbox", "Screener", "Reads", "Receipts", "Reply Later", "Search", "Settings"]) {
+for (const label of ["Ohbox", "Screener", "Reads", "Receipts", "Answer Later", "Search", "Settings"]) {
   check(`rail names "${label}"`, text.includes(label));
 }
 

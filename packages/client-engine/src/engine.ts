@@ -217,7 +217,7 @@ export class MailohEngine {
     if (m.kind === "feed_mark_seen" && m.messageIds === undefined) {
       const ids = this.read()
         .list<EngineMessage>("message")
-        .filter((msg) => msg.folder === "TrafficFlow/Feed" && msg.unread)
+        .filter((msg) => msg.folder === "mailoh/Reads" && msg.unread)
         .map((msg) => msg.id);
       return { ...m, messageIds: ids };
     }

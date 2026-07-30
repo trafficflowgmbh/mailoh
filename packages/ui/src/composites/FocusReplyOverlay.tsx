@@ -28,8 +28,11 @@ export interface FocusReplyOverlayProps {
 }
 
 /**
- * Focus & Reply: steps through the Reply Later pile, one message per
+ * Reply Run: steps through the Answer Later pile, one message per
  * screen, with the hairline progress bar filling on the spring.
+ *
+ * The component name and `focus-reply.css` keep their historical names;
+ * only the words a user reads or hears changed.
  */
 export function FocusReplyOverlay({
   open,
@@ -70,12 +73,12 @@ export function FocusReplyOverlay({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="fr-card" role="dialog" aria-modal="true" aria-label="Focus and reply">
+      <div className="fr-card" role="dialog" aria-modal="true" aria-label="Reply run">
         {finished ? (
           (emptyState ?? (
             <div className="empty" style={{ padding: "20px 10px" }}>
               <span className="glyph">🕊</span>
-              <b>Reply Later is empty.</b>
+              <b>Answer Later is empty.</b>
               <div style={{ marginTop: 18 }}>
                 <Button variant="primary" onClick={onClose}>
                   Back to Triage

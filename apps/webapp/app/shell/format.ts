@@ -25,10 +25,8 @@ export const PLACE_LABEL: Record<string, string> = {
  * the other rendered `undefined`.
  *
  * Neither is acceptable. A server may send a folder this client has no view
- * for (contract §8), and the folder namespace still carries the pre-rebrand
- * company name — so the fallback is the folder's LEAF ("Paper Trail", "Q1"),
- * which is always readable and never leaks a prefix. See `NAMESPACE_EXEMPTION`
- * in `@mailoh/fixtures`.
+ * for (contract §8), so the fallback is the folder's LEAF ("Receipts", "Q1"),
+ * which is always readable and never puts a namespaced path on screen.
  */
 export function placeLabel(folder: string): string {
   const view = VIEW_OF_FOLDER[folder as keyof typeof VIEW_OF_FOLDER];

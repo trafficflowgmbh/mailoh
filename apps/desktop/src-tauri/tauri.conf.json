@@ -1,5 +1,5 @@
 {
-  "productName": "MailOh",
+  "productName": "mailoh",
   "version": "0.1.0",
   "identifier": "io.mailoh.desktop.tauri",
   "build": {
@@ -10,7 +10,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "MailOh",
+        "title": "mailoh",
         "width": 1440,
         "height": 900,
         "minWidth": 390,
@@ -38,7 +38,7 @@
     "copyright": "Copyright (c) 2026 TrafficFlow GmbH",
     "publisher": "TrafficFlow GmbH",
     "shortDescription": "Consent-first email — interface preview",
-    "longDescription": "MailOh is consent-first email on the mailboxes you already have. This preview renders the complete interface on a small fictional mailbox that ships inside the app: there is no IMAP client, no HTTP client and no telemetry in this build.",
+    "longDescription": "mailoh is consent-first email on the mailboxes you already have. This preview renders the complete interface on a small fictional mailbox that ships inside the app: there is no IMAP client, no HTTP client and no telemetry in this build.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
