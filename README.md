@@ -76,8 +76,10 @@ Rendered from this source tree by `swift run MailOh --shot`, unretouched.
 
 <img src="docs/ohbox-light.png" alt="MailOh Ohbox, light" width="100%">
 
-**Screener** — first contact from a real person: two held messages, both shown in
-full, one AI suggestion, five destinations, and the keys that pick them.
+**Screener** — a first-time sender who is a person rather than a list: two held
+messages, both shown in full, one suggested destination, five to choose from, and
+the keys that pick them. (In this preview the suggestion is a fixture, not a live
+model — see [Status](#status--read-this-first).)
 
 <img src="docs/screener-light.png" alt="MailOh Screener, light" width="100%">
 
@@ -107,7 +109,7 @@ nothing to resolve, install or trust.
 git clone https://github.com/trafficflowgmbh/mailoh-desktop
 cd mailoh-desktop
 
-swift build --package-path apps/macos -c release   # ~15 s cold
+swift build --package-path apps/macos -c release   # ~15 s cold on an M-series Mac
 swift test  --package-path apps/macos              # 99 tests, ~1 s
 swift run   --package-path apps/macos MailOh       # opens the app
 ```
@@ -156,7 +158,8 @@ pretending otherwise.
 
 ## How it is put together
 
-7,600 lines of Swift in 30 files, one SwiftPM package, no dependencies.
+7,600 lines of Swift across 30 files plus 1,400 lines of tests, one SwiftPM
+package, no dependencies.
 
 | Target | Kind | What is in it |
 |---|---|---|
