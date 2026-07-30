@@ -852,9 +852,21 @@ final class MailOhKitTests: XCTestCase {
 
     /// The one token that had drifted: the triage pile's stacked-sheet edge, authored
     /// at alpha .10 in the prototype and duplicated by hand at .16.
+    ///
+    /// The Blanc prototype is *not* part of the public `mailoh-desktop` mirror (it is
+    /// an unreleased design source, and `scripts/publish-desktop.mjs` refuses to copy
+    /// it), so in a public checkout this check has nothing to compare against and
+    /// skips loudly rather than pretending to pass. In the monorepo the file is always
+    /// there and the assertion runs — this is the check that caught the .10 → .16 drift.
     func testPileSheetEdgeMatchesTheCanonicalPrototype() throws {
-        let html = try String(contentsOf: Self.repoRoot.appendingPathComponent("design/proposals/blanc/index.html"),
-                              encoding: .utf8)
+        let prototype = Self.repoRoot.appendingPathComponent("design/proposals/blanc/index.html")
+        guard FileManager.default.fileExists(atPath: prototype.path) else {
+            throw XCTSkip("""
+                design/proposals/blanc/index.html is monorepo-only — this fidelity check \
+                runs in the private monorepo, not in the public mirror.
+                """)
+        }
+        let html = try String(contentsOf: prototype, encoding: .utf8)
         let rule = try Self.line(containing: ".pile-stack::before,.pile-stack::after", in: html)
             + (try Self.line(containing: "border-radius:14px 14px 0 0", in: html))
         guard let authored = Self.allOKLCH(in: rule).first else {

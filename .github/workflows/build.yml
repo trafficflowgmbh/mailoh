@@ -1,0 +1,105 @@
+name: build
+
+# Everything the macOS client can honestly prove on a public runner: it compiles
+# in release, its tests pass, it actually renders (--smoke), and it packages into
+# an installable DMG. Nothing here is signed by Apple — see the "unsigned" note
+# in the README; the artifact is ad-hoc signed only.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS · build · test · smoke · dmg
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select the newest Xcode on the runner
+        run: |
+          ls -d /Applications/Xcode*.app
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+          swift --version
+          sw_vers
+
+      - name: swift build -c release
+        run: swift build --package-path apps/macos -c release
+
+      - name: swift test
+        run: swift test --package-path apps/macos
+
+      # The render check: every route × both colour schemes × both verified
+      # widths, hosted offscreen, rasterised, and audited for collapsed rows.
+      # It is the step that catches "compiles, lays out, draws nothing".
+      - name: MailOh --smoke
+        run: swift run --package-path apps/macos -c release MailOh --smoke
+
+      - name: Package MailOh.app + MailOh.dmg
+        env:
+          MAILOH_BUILD_VERSION: ${{ github.run_number }}
+        run: ./scripts/package-app.sh
+
+      # A DMG that does not mount is not an artifact. Mount it, look inside,
+      # unmount. If this ever fails the upload below never happens.
+      - name: Verify the DMG mounts and contains the app
+        run: |
+          set -euo pipefail
+          MNT="$(mktemp -d)"
+          hdiutil attach build/MailOh.dmg -nobrowse -readonly -mountpoint "$MNT"
+          ls -la "$MNT"
+          test -d "$MNT/MailOh.app"
+          test -x "$MNT/MailOh.app/Contents/MacOS/MailOh"
+          test -s "$MNT/MailOh.app/Contents/Resources/MailOh.icns"
+          test -f "$MNT/Read me first.txt"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$MNT/MailOh.app/Contents/Info.plist"
+          codesign --verify --verbose=2 "$MNT/MailOh.app"
+          lipo -archs "$MNT/MailOh.app/Contents/MacOS/MailOh"
+          hdiutil detach "$MNT"
+
+      - name: Screenshots (every route, light + dark, both widths)
+        run: swift run --package-path apps/macos -c release MailOh --shot shots
+
+      - name: Upload MailOh.dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: MailOh-dmg-${{ github.run_number }}
+          path: build/MailOh.dmg
+          if-no-files-found: error
+
+      - name: Upload MailOh.app (zipped, ad-hoc signature preserved)
+        run: ditto -c -k --keepParent build/MailOh.app build/MailOh.app.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MailOh-app-${{ github.run_number }}
+          path: build/MailOh.app.zip
+          if-no-files-found: error
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ github.run_number }}
+          path: shots
+          if-no-files-found: error
+
+# ---------------------------------------------------------------------------
+# Windows and Linux are NOT built here yet.
+#
+# The cross-platform shells are a Tauri app that does not exist in this
+# repository yet (planned; the Rust/webview side is being built separately).
+# There is deliberately no windows/ubuntu job below — a job that installs a
+# toolchain and builds nothing would be a green check that means nothing.
+# When the Tauri shell lands, the jobs appear here and this comment goes away.
+# ---------------------------------------------------------------------------

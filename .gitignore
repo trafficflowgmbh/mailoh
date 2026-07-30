@@ -1,0 +1,20 @@
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Local packaging output (scripts/package-app.sh)
+build/
+
+# Screenshots from `MailOh --shot`
+shots/
+
+# Xcode
+*.xcuserdata
+*.xcuserdatad
+xcuserdata/
+*.xcodeproj
+*.xcworkspace
+
+# macOS
+.DS_Store

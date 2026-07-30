@@ -1,0 +1,35 @@
+MailOh for macOS — the free MailOh desktop client
+Copyright (C) 2026 TrafficFlow GmbH, Staubstrasse 1, 8038 Zürich, Switzerland
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
+
+The full licence text is in ./LICENSE, verbatim.
+
+Why GPL-3.0
+-----------
+The desktop client is free and is meant to stay free. GPL-3.0 keeps it that
+way: anyone may use, study, change and redistribute it, and any redistributed
+change comes back under the same licence — so a closed-source re-skin of
+MailOh is not possible.
+
+TrafficFlow GmbH holds the copyright on this codebase and can therefore also
+license it differently for its own products (the MailOh Cloud tier, which is a
+separate, paid, not-published product). Contributions are accepted under
+GPL-3.0 with no copyright assignment and no CLA; see CONTRIBUTING.md.
+
+Trademarks
+----------
+The name "MailOh", the "oh." wordmark and the app icon are trademarks of
+TrafficFlow GmbH and are not licensed under the GPL. You may build, run and
+redistribute this source; please rename and re-brand a fork you distribute
+publicly so users are not misled about who supports it.

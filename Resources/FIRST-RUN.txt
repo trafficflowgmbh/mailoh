@@ -1,0 +1,41 @@
+MailOh for macOS — first run
+============================
+
+1.  Drag MailOh.app onto the Applications shortcut in this window.
+
+2.  THE FIRST LAUNCH NEEDS A RIGHT-CLICK.
+
+    In Applications, right-click (or Control-click) MailOh.app and choose
+    "Open", then confirm. A normal double-click will be blocked.
+
+    Why: this build is UNSIGNED and UN-NOTARIZED. It carries only an ad-hoc
+    signature, not an Apple Developer ID, so macOS Gatekeeper refuses it on a
+    plain double-click and says the app "is damaged" or "cannot be opened
+    because the developer cannot be verified". Nothing is damaged — the app has
+    simply not been through Apple's notary service. Signed, notarized builds
+    ship once the MailOh Apple Developer account is in place.
+
+    If macOS still refuses after a right-click → Open:
+        xattr -dr com.apple.quarantine /Applications/MailOh.app
+    Run that only if you trust where this DMG came from. The honest
+    alternative is to build it yourself:
+        git clone https://github.com/trafficflowgmbh/mailoh-desktop
+        swift build -c release --package-path apps/macos
+        swift run  -c release --package-path apps/macos MailOh
+
+3.  WHAT YOU ARE OPENING IS A PREVIEW.
+
+    This build does not connect to a mail server. It has no IMAP client, no
+    network code, and no account: it runs entirely on a small fictional mailbox
+    that ships inside the app, so you can walk the whole interface — Ohbox,
+    Screener, Reads, Receipts, triage piles, search, compose — and judge it.
+    Your own mail is not involved and cannot be. The real sync engine lands
+    behind these same views; the repository README tracks that work.
+
+Requires macOS 15 (Sequoia) or newer.
+
+MailOh is free software: GPL-3.0-or-later.
+Copyright (C) 2026 TrafficFlow GmbH, Zürich, Switzerland.
+Source, issues, roadmap:  https://github.com/trafficflowgmbh/mailoh-desktop
+About MailOh:             https://mailoh.io
+Questions:                support@mailoh.io
