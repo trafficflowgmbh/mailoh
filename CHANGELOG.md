@@ -39,8 +39,9 @@ no network in any of them.
   shadows, motion, z, in light and dark), `@mailoh/ui` (34 components, 2 hooks)
   and `@mailoh/fixtures` (the demo mailbox everything renders). The tokens carry
   an anti-drift gate: a test parses the canonical design prototype and fails on
-  any divergence, and the Swift theme is compared against the same file
-  numerically. (2026-07-29)
+  any divergence. Every colour, radius and layout value in the SwiftUI theme is
+  then compared numerically against `packages/tokens/src/tokens.ts`, so the two
+  clients cannot drift apart either. (2026-07-29)
 - **`@mailoh/client-engine`** — the delta-sync core the shell runs on: an
   idempotent apply core, an IndexedDB mirror that writes page and cursor in one
   transaction, selectors, local search, and an optimistic overlay in which the
