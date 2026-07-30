@@ -61,7 +61,7 @@ final class MailOhKitTests: XCTestCase {
 
     func testProtectedMessageFactoryHasNoBodyAtAll() {
         let s = AppState()
-        let sky = s.ohbox.first { $0.id == "skyfort" }!
+        let sky = s.ohbox.first { $0.id == "cinderlock" }!
         XCTAssertTrue(sky.isProtected)
         XCTAssertNil(sky.body, "an OTP message carries no plaintext body — stored redacted")
         XCTAssertNil(sky.preview)
@@ -84,10 +84,10 @@ final class MailOhKitTests: XCTestCase {
     func testSearchIndexHoldsNoProtectedContent() {
         let s = AppState()
         let index = s.searchIndex
-        let sky = index.entries.first { $0.id == "skyfort" }
+        let sky = index.entries.first { $0.id == "cinderlock" }
         XCTAssertNotNil(sky, "protected mail is still findable by its metadata")
         // Sender + subject are metadata. Nothing else may be in there.
-        XCTAssertEqual(sky?.haystack, "skyfort your verification code")
+        XCTAssertEqual(sky?.haystack, "cinderlock your verification code")
         for e in index.entries {
             XCTAssertFalse(e.haystack.contains("verification code ······"),
                            "the redaction label is copy, not index content")
@@ -97,7 +97,7 @@ final class MailOhKitTests: XCTestCase {
     func testProtectedMailSurvivesAScreenerDecisionWithoutGainingABody() {
         let s = AppState()
         let sender = WaitingSender(
-            id: "otp", from: "Skyfort", addr: "no-reply@skyfort.app", initial: "S", time: "09:00",
+            id: "otp", from: "Cinderlock", addr: "no-reply@cinderlock.app", initial: "S", time: "09:00",
             ai: AISuggestion(dest: .ohbox, conf: "0.99", why: "verification class"),
             held: HeldMailbag(HeldMail.protected(id: "otp-1", subj: "Your code", time: "09:00")))
         s.waiting.append(sender)
@@ -602,6 +602,7 @@ final class MailOhKitTests: XCTestCase {
         for entry in Fixtures.fictionalNames {
             XCTAssertFalse(entry.note.isEmpty, "\(entry.name) has no review note")
         }
+        XCTAssertEqual(registered.count, Fixtures.fictionalNames.count, "duplicate registry entries")
         var names = Set(s.allItems.map(\.from))
         names.formUnion(s.waiting.map(\.from))
         names.formUnion(s.vips)
@@ -623,6 +624,37 @@ final class MailOhKitTests: XCTestCase {
             XCTAssertTrue(Fixtures.bannedTerms.contains { blob.contains($0) },
                           "planting a banned term must be caught")
         }
+    }
+
+    /// The registry's previous failure mode was a note that merely SOUNDED
+    /// reviewed: nine live brands shipped as "coined", because writing the truth
+    /// costs exactly as many keystrokes as writing the wrong thing. A verdict of
+    /// `.nearCollision` is therefore only accepted with the real twin named.
+    func testNearCollisionEntriesNameTheRealEntityTheyCollidedWith() {
+        for entry in Fixtures.fictionalNames {
+            switch entry.verdict {
+            case .nearCollision:
+                let named = entry.collision ?? ""
+                XCTAssertGreaterThan(named.count, 10,
+                                     "‘\(entry.name)’ claims a near-collision but names no twin")
+            case .inventedPerson:
+                XCTAssertNil(entry.collision, "a person entry should not carry a brand collision")
+            case .coined, .descriptive:
+                break
+            }
+        }
+        // The verdict has to be load-bearing: if nothing admits a twin, the
+        // registry has quietly reverted to "everything is coined".
+        XCTAssertTrue(Fixtures.fictionalNames.contains { $0.verdict == .nearCollision },
+                      "no entry admits a near-collision — review has gone silent again")
+    }
+
+    /// The ban list must not be silently self-contradicting: the product still
+    /// ships one banned term as its IMAP folder namespace, and that exemption is
+    /// written down rather than left for the next reader to rediscover.
+    func testTheNamespaceExemptionPointsAtATermThatIsActuallyBanned() {
+        XCTAssertTrue(Fixtures.bannedTerms.contains(Fixtures.namespaceExemption.term))
+        XCTAssertFalse(Fixtures.namespaceExemption.until.isEmpty)
     }
 
     static func fixtureCorpus() -> [String] {
@@ -656,6 +688,7 @@ final class MailOhKitTests: XCTestCase {
         // are audited too — a note that names a real brand is still a real brand in
         // this repository.
         out += Fixtures.fictionalNames.map(\.note)
+        out += Fixtures.fictionalNames.compactMap(\.collision)
         return out.filter { !$0.isEmpty }
     }
 
@@ -901,7 +934,7 @@ final class MailOhKitTests: XCTestCase {
 
     func testBodyMetricsAccountForTheInlineFigure() {
         let plain = "Kleine Räume, grosse Wirkung."
-        let withFigure = "Kleine Räume, grosse Wirkung.\n\(MailContent.imageMarker)\nDer Klapptisch FALTO."
+        let withFigure = "Kleine Räume, grosse Wirkung.\n\(MailContent.imageMarker)\nDer Klapptisch KLAPPRI."
         XCTAssertGreaterThan(BodyMetrics.streamBodyHeight(withFigure, cardWidth: 620),
                              BodyMetrics.streamBodyHeight(plain, cardWidth: 620) + 100,
                              "the figure occupies real height in the clamp decision")
@@ -945,9 +978,9 @@ final class MailOhKitTests: XCTestCase {
     func testDecisionScopeChangesTheStatedRule() {
         let s = AppState()
         let lena = s.waiting.first { $0.id == "lena" }!
-        XCTAssertEqual(s.ruleTarget(lena), "lena@atelier-nord.ch")
+        XCTAssertEqual(s.ruleTarget(lena), "lena@atelier-eichspan.ch")
         s.setScope("lena", .domain)
-        XCTAssertEqual(s.ruleTarget(s.waiting.first { $0.id == "lena" }!), "@atelier-nord.ch")
+        XCTAssertEqual(s.ruleTarget(s.waiting.first { $0.id == "lena" }!), "@atelier-eichspan.ch")
         // the jackpot promo is domain-scoped out of the box
         XCTAssertEqual(s.ruleTarget(s.waiting.first { $0.id == "jackpot" }!),
                        "@jackpotjodel-alerts.info")
@@ -1190,9 +1223,9 @@ final class MailOhKitTests: XCTestCase {
     }
 
     func testDecisionBarStatesTheConsequence() {
-        let note = Copy.decideRule("lena@atelier-nord.ch")
+        let note = Copy.decideRule("lena@atelier-eichspan.ch")
         XCTAssertTrue(note.contains("Becomes a rule"))
-        XCTAssertTrue(note.contains("lena@atelier-nord.ch"))
+        XCTAssertTrue(note.contains("lena@atelier-eichspan.ch"))
         XCTAssertTrue(note.contains("marks this mail read"),
                       "the ✓ half's effect is stated, not implied")
     }

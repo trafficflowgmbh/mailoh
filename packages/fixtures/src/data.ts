@@ -27,15 +27,15 @@ import type {
 /* ------------------------------------------------------------ identity */
 
 export const account: AccountFixture = {
-  email: "mila@northlight.studio",
+  email: "mila@lichtgrat.studio",
   displayName: "Mila",
 };
 
 export const mailboxes: MailboxFixture[] = [
   {
-    id: "northlight",
-    name: "northlight.studio",
-    address: "mila@northlight.studio",
+    id: "lichtgrat",
+    name: "lichtgrat.studio",
+    address: "mila@lichtgrat.studio",
     provider: "Work",
     protocol: "IMAP",
     railHint: "IMAP",
@@ -123,9 +123,9 @@ export const ohbox: MessageFixture[] = [
     rationale: "Ohbox — rule: domain makersfest.ch → Ohbox",
   },
   {
-    id: "skyfort",
+    id: "cinderlock",
     folder: "ohbox",
-    from: { name: "Skyfort", address: "no-reply@skyfort.app" },
+    from: { name: "Cinderlock", address: "no-reply@cinderlock.app" },
     subject: "Your verification code",
     time: "08:31",
     unread: true,
@@ -141,14 +141,14 @@ export const ohbox: MessageFixture[] = [
   {
     id: "ben",
     folder: "ohbox",
-    from: { name: "Ben Arnold", address: "ben@northlight.studio" },
+    from: { name: "Ben Arnold", address: "ben@lichtgrat.studio" },
     subject: "Kiln’s fixed + Friday pizza 🍕",
     time: "07:58",
     unread: true,
     snippet:
       "Good news twice: the kiln heats evenly again, and Friday we fire the wood oven…",
     body: "Good news twice: the kiln heats evenly again — the new element arrived early — and Friday we fire the wood oven after work. Bring nothing but appetite.\n\n— Ben",
-    rationale: "Ohbox — rule: teammate @northlight.studio → Ohbox",
+    rationale: "Ohbox — rule: teammate @lichtgrat.studio → Ohbox",
   },
   {
     id: "anna",
@@ -173,7 +173,7 @@ export const ohbox: MessageFixture[] = [
   {
     id: "flurina",
     folder: "ohbox",
-    from: { name: "Flurina Caduff", address: "flurina@bergwind.ch" },
+    from: { name: "Flurina Caduff", address: "flurina@haldenlicht.ch" },
     subject: "Saturday’s workshop is full! 🙌",
     time: "yesterday",
     unread: false,
@@ -183,7 +183,7 @@ export const ohbox: MessageFixture[] = [
   {
     id: "tim",
     folder: "ohbox",
-    from: { name: "Tim Berger", address: "tim@quartierpost.ch" },
+    from: { name: "Tim Berger", address: "tim@gassenblatt.ch" },
     subject: "Got us tickets for the 22nd! 🎶",
     time: "Mon",
     unread: false,
@@ -218,7 +218,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f2",
     folder: "reads",
-    from: { name: "Looseleaf", address: "post@looseleaf.press" },
+    from: { name: "Blattgang", address: "post@blattgang.press" },
     subject: "Why paper keeps winning",
     snippet: "Three hundred years of interface design, still undefeated.",
     time: "06:31",
@@ -228,15 +228,15 @@ export const reads: MessageFixture[] = [
   {
     id: "f3",
     folder: "reads",
-    from: { name: "Hejmo Living", address: "news@hejmo-living.ch" },
+    from: { name: "Wohnfalz", address: "news@wohnfalz.ch" },
     subject: "Ideen für kleine Räume",
     snippet: "Neu diese Woche: Klappbares für Balkon und Flur.",
     time: "05:44",
     unread: true,
-    body: "Kleine Räume, grosse Wirkung: Diese Woche zeigen wir Neuheiten, die sich zusammenklappen, stapeln oder ganz verschwinden, wenn der Tag sie nicht braucht.\n[[img]]\nDer Klapptisch FALTO trägt vier Teller und einen Laptop — und hängt danach flach an der Wand. Dazu: ein Hocker, der Stauraum versteckt, und Haken, die keine Löcher hinterlassen.\n\nFür Hejmo Mitglieder diese Woche: 15% auf alle Aufbewahrungsserien — im Showroom und online.",
+    body: "Kleine Räume, grosse Wirkung: Diese Woche zeigen wir Neuheiten, die sich zusammenklappen, stapeln oder ganz verschwinden, wenn der Tag sie nicht braucht.\n[[img]]\nDer Klapptisch KLAPPRI trägt vier Teller und einen Laptop — und hängt danach flach an der Wand. Dazu: ein Hocker, der Stauraum versteckt, und Haken, die keine Löcher hinterlassen.\n\nFür Wohnfalz Mitglieder diese Woche: 15% auf alle Aufbewahrungsserien — im Showroom und online.",
     art: {
       ariaLabel: "Produktbild: Klapptisch, an der Wand montiert",
-      caption: "FALTO — klappbar, wandmontiert",
+      caption: "KLAPPRI — klappbar, wandmontiert",
     },
   },
   {
@@ -252,7 +252,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f5",
     folder: "reads",
-    from: { name: "Trailhead", address: "post@trailhead.cc" },
+    from: { name: "Gratbrief", address: "post@gratbrief.ch" },
     subject: "This week’s hike: the Chäserrugg ridge",
     snippet: "Four hours, one ridge, zero regrets.",
     time: "04:58",
@@ -262,7 +262,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f6",
     folder: "reads",
-    from: { name: "Morgenpost Briefing", address: "briefing@morgenpost-brief.ch" },
+    from: { name: "Frühbrief Briefing", address: "briefing@fruehbrief.ch" },
     subject: "Morgen-Briefing: Sommerfest-Wochenende",
     snippet: "Was heute schön wird — in fünf Minuten.",
     time: "04:30",
@@ -322,7 +322,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f12",
     folder: "reads",
-    from: { name: "Alpenglow Coffee", address: "hello@alpenglow.coffee" },
+    from: { name: "Röstsonntag", address: "hallo@roestsonntag.ch" },
     subject: "August roast: Kenya AA",
     snippet: "Blackcurrant, bright, dangerous before noon.",
     time: "Sun",
@@ -342,7 +342,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f14",
     folder: "reads",
-    from: { name: "Looseleaf", address: "post@looseleaf.press" },
+    from: { name: "Blattgang", address: "post@blattgang.press" },
     subject: "Weekly wrap — the week in one read",
     snippet: "Everything lovely, compressed.",
     time: "Thu",
@@ -352,7 +352,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f15",
     folder: "reads",
-    from: { name: "Hejmo Living", address: "news@hejmo-living.ch" },
+    from: { name: "Wohnfalz", address: "news@wohnfalz.ch" },
     subject: "Sommer-Sale endet Sonntag",
     snippet: "Letzte Chance auf Balkon-Lieblinge.",
     time: "Wed",
@@ -413,9 +413,9 @@ export const receipts: MessageFixture[] = [
     body: "Invoice #078 — July 2026\n\nWorkshop «Glaze & Fire», Sa 9. August, 2 seats — CHF 220.00\nMaterial & firing — CHF 20.00\n\nTotal CHF 240.00 (incl. VAT)\n\nPaid — this is your receipt. Aprons, clay and coffee are on us; bring ideas.",
   },
   {
-    id: "alpenglow",
+    id: "roestsonntag",
     folder: "receipts",
-    from: { name: "Alpenglow Coffee", address: "hello@alpenglow.coffee" },
+    from: { name: "Röstsonntag", address: "hallo@roestsonntag.ch" },
     subject: "Receipt — August roast subscription",
     amount: "CHF 24.00",
     snippet: "Kenya AA ships Monday — your subscription rolled over.",
@@ -424,9 +424,9 @@ export const receipts: MessageFixture[] = [
     body: "August subscription — Kenya AA, 500 g\n\n1 × monthly roast — CHF 24.00\nCharged to the card on file.\n\nYour bag ships Monday with the tasting card. Skip or pause any month with one click.",
   },
   {
-    id: "velowerk",
+    id: "speichenhof",
     folder: "receipts",
-    from: { name: "Velowerk Juna", address: "service@velowerk-juna.ch" },
+    from: { name: "Speichenhof Velos", address: "service@speichenhof-velos.ch" },
     subject: "Bike service — ready to ride 🚲",
     amount: "CHF 89.00",
     snippet: "New chain, fresh brakes — she runs like spring again.",
@@ -460,8 +460,8 @@ export const receipts: MessageFixture[] = [
 
 export const receiptsGroups: ReceiptsGroupFixture[] = [
   { label: "Today", items: ["brandung", "kino"] },
-  { label: "Tuesday", items: ["erdton", "alpenglow"] },
-  { label: "Monday", items: ["velowerk", "alpenbahn", "pigment"] },
+  { label: "Tuesday", items: ["erdton", "roestsonntag"] },
+  { label: "Monday", items: ["speichenhof", "alpenbahn", "pigment"] },
 ];
 
 /* ------------------------------------------------------------ screener */
@@ -469,7 +469,7 @@ export const receiptsGroups: ReceiptsGroupFixture[] = [
 export const waiting: WaitingSenderFixture[] = [
   {
     id: "lena",
-    from: { name: "Lena Kaufmann", address: "lena@atelier-nord.ch" },
+    from: { name: "Lena Kaufmann", address: "lena@atelier-eichspan.ch" },
     initial: "L",
     time: "08:40",
     scope: "sender",
@@ -480,11 +480,13 @@ export const waiting: WaitingSenderFixture[] = [
     },
     held: [
       {
+        id: "lena-1",
         subject: "Werkstatt-Besuch nächste Woche?",
         time: "08:12",
-        body: "Hallo Mila\n\nWir haben uns letzten Monat am Handwerksmarkt in Winterthur kurz unterhalten — ich hatte den Stand mit den Eichenmöbeln, gleich neben Ihrer Keramik. Ihre Karte liegt seither auf meiner Werkbank, und jetzt melde ich mich endlich.\n\nHätten Sie nächste Woche Zeit für einen Besuch in der Werkstatt? Ich hätte da eine Idee: Ihre Schalen, meine Tabletts — eine kleine gemeinsame Serie für den Herbstmarkt. Dienstag oder Donnerstag Nachmittag wäre ich frei.\n\nHerzliche Grüsse aus Winterthur\nLena Kaufmann\nAtelier Nord",
+        body: "Hallo Mila\n\nWir haben uns letzten Monat am Handwerksmarkt in Winterthur kurz unterhalten — ich hatte den Stand mit den Eichenmöbeln, gleich neben Ihrer Keramik. Ihre Karte liegt seither auf meiner Werkbank, und jetzt melde ich mich endlich.\n\nHätten Sie nächste Woche Zeit für einen Besuch in der Werkstatt? Ich hätte da eine Idee: Ihre Schalen, meine Tabletts — eine kleine gemeinsame Serie für den Herbstmarkt. Dienstag oder Donnerstag Nachmittag wäre ich frei.\n\nHerzliche Grüsse aus Winterthur\nLena Kaufmann\nAtelier Eichspan",
       },
       {
+        id: "lena-2",
         subject: "Kleine Ergänzung",
         time: "08:40",
         body: "Nochmals kurz: Falls es nächste Woche nicht klappt, ginge auch der Freitag darauf. Und bringen Sie gerne ein paar Schalen mit — ich habe schon ein Tablett im Kopf.\n\nLena",
@@ -504,6 +506,7 @@ export const waiting: WaitingSenderFixture[] = [
     },
     held: [
       {
+        id: "paperbird-1",
         subject: "Welcome to Paperbird ✏️",
         time: "07:26",
         body: "Hi Mila,\n\nYour notebook is ready. Here are the three things most new members do in their first week:\n\n1. Clip something — articles land clean, without the pop-ups.\n2. Make a collection — drag three clips together and give it a name.\n3. Try the Sunday digest — your clips come back to you once a week, tidy and readable.\n\nA quiet tip: press Cmd+K anywhere. Nearly everything in Paperbird is one box away.\n\nWe send one onboarding mail per week for the next three weeks — you can end the series with one click below.\n\n— The Paperbird team",
@@ -524,6 +527,7 @@ export const waiting: WaitingSenderFixture[] = [
     },
     held: [
       {
+        id: "jackpot-1",
         subject: "🎰 Sie haben 3 Freispiele gewonnen!",
         time: "06:58",
         trackerNote: "31 tracking links · 2 spy pixels blocked",
@@ -533,51 +537,121 @@ export const waiting: WaitingSenderFixture[] = [
   },
 ];
 
+/**
+ * Screened-out senders hold **all** their mail, in full. The list says
+ * "8 held" only because eight rendered messages are behind it.
+ */
 export const screenedOut: ScreenedSenderFixture[] = [
   {
     address: "promo@fashion-deals.ch",
     screenedOn: "12 Jul",
-    heldCount: 8,
-    lastSubject: "Mid-Season Sale: bis 70% auf alles",
-    lastBody:
-      "Nur dieses Wochenende: bis 70% auf über 4'000 Artikel.\n\nSneaker ab CHF 29.90 • Jacken ab CHF 49.90 • Accessoires ab CHF 9.90\n\nGratisversand ab CHF 50 — Code WEEKEND70 an der Kasse.",
+    held: [
+      {
+        id: "fd-1",
+        subject: "Willkommen — 10% auf die erste Bestellung",
+        time: "2 Mai",
+        body: "Schön, dass du da bist. Dein Willkommens-Code: HALLO10 — gültig auf alles, 30 Tage.\n\nUnd damit du nichts verpasst: neue Kollektionen landen jeden Donnerstag.",
+      },
+      {
+        id: "fd-2",
+        subject: "Neu eingetroffen: Leinen für den Sommer",
+        time: "16 Mai",
+        body: "Leinen in neun Farben, Hosen mit echten Taschen, und ein Hemd, das auch nach dem Waschen noch aussieht wie am Anfang.\n\nAb CHF 39.90 — solange der Vorrat reicht.",
+      },
+      {
+        id: "fd-3",
+        subject: "Nur heute: Gratisversand",
+        time: "29 Mai",
+        body: "Heute versenden wir gratis, ohne Mindestbestellwert. Code: FREITAG.\n\nGilt bis Mitternacht, auch auf reduzierte Artikel.",
+      },
+      {
+        id: "fd-4",
+        subject: "Du hast etwas im Warenkorb liegen lassen",
+        time: "3 Jun",
+        body: "Der Korb wartet noch: 1 × Leinenhemd, Grösse M, salbeigrün.\n\nWir halten ihn zwei Tage — danach geben wir die Grösse wieder frei.",
+      },
+      {
+        id: "fd-5",
+        subject: "Sommer-Sale startet: bis 50%",
+        time: "14 Jun",
+        body: "Der Sommer-Sale ist offen: über 2'000 Artikel reduziert, Sneaker ab CHF 29.90.\n\nMitglieder haben 24 Stunden Vorsprung — du bist Mitglied.",
+      },
+      {
+        id: "fd-6",
+        subject: "Deine Grösse ist wieder da",
+        time: "27 Jun",
+        body: "Das Leinenhemd in Salbeigrün, Grösse M, ist nachgeliefert.\n\nDiesmal in kleiner Stückzahl — wir sagen es dir zuerst.",
+      },
+      {
+        id: "fd-7",
+        subject: "Letzte Chance: Sale endet Sonntag",
+        time: "5 Jul",
+        body: "Am Sonntag um 23:59 ist der Sale vorbei. Was dann noch hängt, geht zurück ins Lager.\n\nVersand gratis ab CHF 50.",
+      },
+      {
+        id: "fd-8",
+        subject: "Mid-Season Sale: bis 70% auf alles",
+        time: "12 Jul",
+        body: "Nur dieses Wochenende: bis 70% auf über 4'000 Artikel.\n\nSneaker ab CHF 29.90 • Jacken ab CHF 49.90 • Accessoires ab CHF 9.90\n\nGratisversand ab CHF 50 — Code WEEKEND70 an der Kasse.",
+      },
+    ],
   },
   {
     address: "notifications@old-forum.net",
     screenedOn: "3 Jun",
-    heldCount: 2,
-    lastSubject: "3 neue Antworten in „Router-Konfiguration“",
-    lastBody:
-      "Es gibt 3 neue Antworten in einem Thema, dem du folgst: „Router-Konfiguration VDSL“.\n\nDu erhältst diese Benachrichtigung, weil du das Thema 2019 abonniert hast. Benachrichtigungen lassen sich im Profil verwalten.",
+    held: [
+      {
+        id: "of-1",
+        subject: "1 neue Antwort in „Router-Konfiguration“",
+        time: "21 Mai",
+        body: "Es gibt 1 neue Antwort in einem Thema, dem du folgst: „Router-Konfiguration VDSL“.\n\n> Bei mir lief es erst, nachdem ich den VLAN-Tag auf 10 gesetzt hatte.\n\nDu erhältst diese Benachrichtigung, weil du das Thema 2019 abonniert hast.",
+      },
+      {
+        id: "of-2",
+        subject: "3 neue Antworten in „Router-Konfiguration“",
+        time: "3 Jun",
+        body: "Es gibt 3 neue Antworten in einem Thema, dem du folgst: „Router-Konfiguration VDSL“.\n\nDu erhältst diese Benachrichtigung, weil du das Thema 2019 abonniert hast. Benachrichtigungen lassen sich im Profil verwalten.",
+      },
+    ],
   },
 ];
 
 export const spam: SpamItemFixture[] = [
   {
     from: "crypto-bonus@win-invest.biz",
-    subject: "Ihr Bitcoin Gewinn wartet 🎁",
     detection: {
       source: "auto-detected",
       confidence: 0.98,
       reason: "phishing fingerprint",
       label: "auto-detected · 0.98 · phishing fingerprint",
     },
-    time: "Tue",
-    trackerNote: "12 tracking links blocked",
-    body: "Sehr geehrter Kunde,\n\nIhr Konto zeigt einen nicht abgeholten Gewinn von 0.4 BTC. Bestätigen Sie Ihre Wallet-Adresse innert 48 Stunden, sonst verfällt der Betrag.\n\nJetzt bestätigen → wallet-verify-ch.win-invest.biz\n\nSupport Team",
+    held: [
+      {
+        id: "wi-1",
+        subject: "Ihr Bitcoin Gewinn wartet 🎁",
+        time: "Tue",
+        trackerNote: "12 tracking links blocked",
+        body: "Sehr geehrter Kunde,\n\nIhr Konto zeigt einen nicht abgeholten Gewinn von 0.4 BTC. Bestätigen Sie Ihre Wallet-Adresse innert 48 Stunden, sonst verfällt der Betrag.\n\nJetzt bestätigen → wallet-verify-ch.win-invest.biz\n\nSupport Team",
+      },
+    ],
   },
   {
-    from: "support@skyf0rt-secure.info",
-    subject: "Ihr Konto wurde eingeschränkt",
+    from: "support@cinderl0ck-secure.info",
     detection: {
       source: "auto-detected",
       confidence: 0.96,
-      reason: "lookalike domain (skyf0rt)",
-      label: "auto-detected · 0.96 · lookalike domain (skyf0rt)",
+      reason: "lookalike domain (cinderl0ck)",
+      label: "auto-detected · 0.96 · lookalike domain (cinderl0ck)",
     },
-    time: "Mon",
-    trackerNote: "lookalike link flagged: skyf0rt-secure.info",
-    body: "Ihr Skyfort-Konto wurde vorübergehend eingeschränkt. Um die Einschränkung aufzuheben, bestätigen Sie Ihre Daten über den folgenden Link.\n\nKonto bestätigen → secure.skyf0rt-secure.info/login\n\nDieser Vorgang dauert nur 2 Minuten.",
+    held: [
+      {
+        id: "sk-1",
+        subject: "Ihr Konto wurde eingeschränkt",
+        time: "Mon",
+        trackerNote: "lookalike link flagged: cinderl0ck-secure.info",
+        body: "Ihr Cinderlock-Konto wurde vorübergehend eingeschränkt. Um die Einschränkung aufzuheben, bestätigen Sie Ihre Daten über den folgenden Link.\n\nKonto bestätigen → secure.cinderl0ck-secure.info/login\n\nDieser Vorgang dauert nur 2 Minuten.",
+      },
+    ],
   },
 ];
 
@@ -622,7 +696,7 @@ export const triage: TriageFixture = {
   ],
   setAside: [{ title: "Alpenbahn", subtitle: "Itinerary Winterthur→Lugano, 12 Aug" }],
   resurface: [
-    { title: "Domain renewal northlight.studio", resurfaceAt: "Fri 09:00" },
+    { title: "Domain renewal lichtgrat.studio", resurfaceAt: "Fri 09:00" },
   ],
 };
 

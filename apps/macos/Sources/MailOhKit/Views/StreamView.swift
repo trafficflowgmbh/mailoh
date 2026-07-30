@@ -258,7 +258,7 @@ struct StreamCard: View {
         let chunks = body_.components(separatedBy: MailContent.imageMarker)
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(chunks.enumerated()), id: \.offset) { i, chunk in
-                if i > 0 { FaltoFigure(caption: figureCaption, artWidth: max(120, cardWidth - padX * 2)) }
+                if i > 0 { KlappriFigure(caption: figureCaption, artWidth: max(120, cardWidth - padX * 2)) }
                 Text(chunk.trimmingCharacters(in: .whitespacesAndNewlines))
                     .blanc(.streamBody)
                     .foregroundStyle(p.ink.color)
@@ -310,7 +310,7 @@ private struct ExpandPill: View {
 
 // MARK: - The one inline figure
 
-/// The product drawing inside the Hejmo Living issue. Redrawn as a native path —
+/// The product drawing inside the Wohnfalz issue. Redrawn as a native path —
 /// a line illustration on a tint wash, no photography, no gradient.
 ///
 /// The height is **computed**, not inferred: a stroked `Shape` has no ideal size, so
@@ -319,7 +319,7 @@ private struct ExpandPill: View {
 /// blank space. The card already knows its own width, so the figure derives its
 /// height from the authored 520 × 216 artboard — which is also exactly what
 /// `BodyMetrics` assumes when it decides whether the card needs clamping.
-struct FaltoFigure: View {
+struct KlappriFigure: View {
     @Environment(\.palette) private var p
     @Environment(\.compactLayout) private var compact
 
@@ -335,7 +335,7 @@ struct FaltoFigure: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            FaltoArt()
+            KlappriArt()
                 .stroke(p.ink3.color, style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
                 .frame(width: artWidth, height: artHeight)
                 .wash(Radius.rowDense, p.tint.color)
@@ -350,7 +350,7 @@ struct FaltoFigure: View {
     }
 }
 
-struct FaltoArt: Shape {
+struct KlappriArt: Shape {
     func path(in rect: CGRect) -> Path {
         let sx = rect.width / 520, sy = rect.height / 216
         func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {

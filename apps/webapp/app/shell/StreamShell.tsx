@@ -110,7 +110,7 @@ export const StreamShell = forwardRef<
   );
 });
 
-/** The Hejmo Living newsletter's inline product illustration (FALTO), verbatim. */
+/** The Wohnfalz newsletter's inline product illustration (KLAPPRI), verbatim. */
 export function FoldTableArt() {
   return (
     <svg

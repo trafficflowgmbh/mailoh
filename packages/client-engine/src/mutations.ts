@@ -125,7 +125,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           const msg: EngineMessage = {
             id: ctx.uuid(),
             accountId: "demo",
-            mailboxId: "northlight",
+            mailboxId: "lichtgrat",
             threadId: null,
             messageIdHeader: null,
             subject: held.subject,
@@ -152,8 +152,8 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         effects.push({ type: "screener_sender", id: sender.id, entity: null });
       } else {
         // No → the sender moves to the screened-out ledger (reversible; the
-        // fixture world keeps the entry, segment-flipped).
-        const lastHeld = sender.held[sender.held.length - 1];
+        // fixture world keeps the entry, segment-flipped). The whole held bag
+        // travels with it — screening out holds mail, it never discards it.
         effects.push({
           type: "screener_sender",
           id: sender.id,
@@ -161,8 +161,6 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
             ...sender,
             segment: "screened_out",
             screenedOn: iso.slice(0, 10),
-            heldCount: sender.held.length,
-            ...(lastHeld ? { lastSubject: lastHeld.subject, lastBody: lastHeld.body } : {}),
             updatedAt: iso,
           } satisfies ScreenerSenderDTO,
         });

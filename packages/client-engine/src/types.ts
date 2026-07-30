@@ -16,7 +16,25 @@ export interface EmailAddress {
   address: string;
 }
 
-/** Real IMAP folders — identical to core `Destination` (contract §1.2). */
+/**
+ * Real IMAP folders — identical to core `Destination` (contract §1.2).
+ *
+ * NAMING DEBT, DOCUMENTED ON PURPOSE. The `TrafficFlow/` prefix is the
+ * pre-rebrand company name. It is a banned term in the fixture privacy list
+ * (`packages/fixtures/src/privacy.ts` → `NAMESPACE_EXEMPTION`), and it is
+ * exempt here rather than silently contradicting that list, because this
+ * union is not a string constant: it is the wire contract shared with core,
+ * services, api, the worker and the Hey migration scanner — and these folders
+ * already exist inside live customer mailboxes. Renaming them to `MailOh/…`
+ * is an IMAP folder-rename migration with reconciliation, tracked in
+ * `docs/mailoh/STAGE2-ARCH.md` under "Folder namespace rebrand".
+ *
+ * Until that lands, the rule for every view is: NEVER render a raw folder
+ * string. Map it through `VIEW_OF_FOLDER`; when a server sends a folder this
+ * client does not know (contract §8 forward-compatible parsing), fall back to
+ * `folderLeaf()`, which yields the last path segment and so can never put the
+ * old company name on screen.
+ */
 export type Folder =
   | "INBOX"
   | "TrafficFlow/Screener"
@@ -175,6 +193,8 @@ export interface TagDTO {
 export type ScreenerSegment = "waiting" | "screened_out" | "spam";
 
 export interface ScreenerHeldMail {
+  /** Own identity, so a held message is never just a slot in a count. */
+  id: string;
   subject: string;
   time: string;
   body: string;
@@ -190,12 +210,15 @@ export interface ScreenerSenderDTO {
   scope: "sender" | "domain";
   dull?: boolean;
   ai: { dest: MailohView | "screened" | "spam"; confidence: number; rationale: string } | null;
+  /**
+   * NO-COLLAPSE (invariant #6): every held message, in full, oldest first —
+   * non-empty in every segment. There is deliberately no `heldCount` /
+   * `lastSubject` / `lastBody` beside it: a count that is not `held.length`
+   * can drift, and a "last body" is how held mail becomes hidden mail.
+   */
   held: ScreenerHeldMail[];
   /** screened_out only */
   screenedOn?: string;
-  heldCount?: number;
-  lastSubject?: string;
-  lastBody?: string;
   /** spam only */
   detection?: { source: string; confidence: number; reason: string; label: string };
   updatedAt: ISODateTime;
@@ -231,6 +254,22 @@ export const FOLDER_OF_VIEW: Record<MailohView, Folder> = {
   screened: "TrafficFlow/Screened",
   spam: "TrafficFlow/Quarantine",
 };
+
+/**
+ * The last path segment of a folder name — the only safe way to show a folder
+ * this client has no view for.
+ *
+ * Two reasons it exists rather than views falling back to the raw string:
+ * unknown folders are expected (the server may add folders a shipped client
+ * has never heard of, contract §8), and the current namespace still carries
+ * the pre-rebrand company name, which must never reach a user's screen. The
+ * leaf of `TrafficFlow/Paper Trail` is `Paper Trail`; the leaf of a customer's
+ * own `Archive/2026/Q1` is `Q1`. Both read correctly; neither leaks a prefix.
+ */
+export function folderLeaf(folder: string): string {
+  const leaf = folder.split("/").filter(Boolean).pop() ?? folder;
+  return leaf.trim() || folder;
+}
 
 export const VIEW_OF_FOLDER: Record<Folder, MailohView> = {
   "INBOX": "ohbox",

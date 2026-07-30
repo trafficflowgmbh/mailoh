@@ -251,7 +251,7 @@ export function useScreenerState(
     });
     toast(
       t("toastAllowed", {
-        count: sender.heldCount ?? sender.held.length,
+        count: sender.held.length,
         sender: sender.from.address,
         dest: DECISION_DONE_LABEL[dest],
       }),

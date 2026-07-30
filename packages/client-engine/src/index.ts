@@ -18,6 +18,7 @@ export {
   UnsupportedMutationError,
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
+  folderLeaf,
   encodeSeqCursor,
   decodeSeqCursor,
   type ChangeOp,

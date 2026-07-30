@@ -1,5 +1,12 @@
 export * from "./types.js";
 export {
+  bannedTerms,
+  fictionalNames,
+  NAMESPACE_EXEMPTION,
+  type FictionalName,
+  type NameVerdict,
+} from "./privacy.js";
+export {
   account,
   mailboxes,
   tags,

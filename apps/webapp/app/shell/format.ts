@@ -3,10 +3,37 @@
  * prototype's display time verbatim (`m.time`); rows minted by
  * mutations fall back to a clock/weekday derived from the ISO date.
  */
-import type { EngineMessage, TagDTO } from "@mailoh/client-engine";
+import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage, type TagDTO } from "@mailoh/client-engine";
 import type { TagHueName } from "@mailoh/ui";
 
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** The human name of each client view. Keys are view ids, never folders. */
+export const PLACE_LABEL: Record<string, string> = {
+  ohbox: "Ohbox",
+  reads: "Reads",
+  receipts: "Receipts",
+  screener: "Screener",
+  screened: "Screened",
+  spam: "Spam",
+};
+
+/**
+ * The place badge for a message — the ONE place that turns a folder into
+ * something a user reads. Lives here rather than in each view because both
+ * copies previously fell back differently: one rendered the raw folder path,
+ * the other rendered `undefined`.
+ *
+ * Neither is acceptable. A server may send a folder this client has no view
+ * for (contract §8), and the folder namespace still carries the pre-rebrand
+ * company name — so the fallback is the folder's LEAF ("Paper Trail", "Q1"),
+ * which is always readable and never leaks a prefix. See `NAMESPACE_EXEMPTION`
+ * in `@mailoh/fixtures`.
+ */
+export function placeLabel(folder: string): string {
+  const view = VIEW_OF_FOLDER[folder as keyof typeof VIEW_OF_FOLDER];
+  return (view && PLACE_LABEL[view]) || folderLeaf(folder);
+}
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");

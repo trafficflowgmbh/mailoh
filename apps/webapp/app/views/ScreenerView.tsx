@@ -148,15 +148,19 @@ export function ScreenerView({
   const row = (x: ScreenerSenderDTO | SpamRow) => {
     if (segment === "waiting") {
       const w = x as ScreenerSenderDTO;
-      const first = w.held[0];
+      // Both fields come from the SAME message — the newest one, which is what
+      // `w.time` already is. Pairing `w.time` with `held[0].subject` described a
+      // message that does not exist (Lena's 08:40 stamp over her 08:12 subject).
+      // Screened and spam rows already summarise the newest held message.
+      const newest = newestHeld(w);
       return (
         <MessageRow
           key={w.id}
           id={w.id}
           from={w.from.name || w.from.address}
           address={w.from.name ? w.from.address : undefined}
-          time={w.time}
-          subject={first?.subject ?? ""}
+          time={newest?.time ?? w.time}
+          subject={newest?.subject ?? ""}
           avatarInitial={w.initial}
           dull={w.dull}
           selected={w.id === activeId}
@@ -182,10 +186,10 @@ export function ScreenerView({
           id={w.id}
           from={w.from.address}
           time={screenedDate(w, t("today"))}
-          subject={w.lastSubject ?? ""}
+          subject={newestHeld(w)?.subject ?? ""}
           avatarInitial={w.initial}
           selected={w.id === activeId}
-          heldCount={w.heldCount}
+          heldCount={w.held.length}
           onClick={() => selectRow(w.id)}
         />
       );
@@ -196,11 +200,12 @@ export function ScreenerView({
         key={r.sender.id}
         id={r.sender.id}
         from={r.sender.from.address}
-        time={r.sender.time}
-        subject={r.sender.held[0]?.subject ?? ""}
+        time={newestHeld(r.sender)?.time ?? r.sender.time}
+        subject={newestHeld(r.sender)?.subject ?? ""}
         avatarInitial={r.sender.initial}
         dull
         selected={r.sender.id === activeId}
+        heldCount={r.sender.held.length}
         detection={r.pinned ? t("markedByYou") : r.sender.detection?.label}
         onClick={() => selectRow(r.sender.id)}
       />
@@ -336,6 +341,11 @@ function screenedDate(w: ScreenerSenderDTO, today: string): string {
   return /^\d{4}-/.test(d) ? today : d;
 }
 
+/** Rows summarise the newest held message; previews render every one of them. */
+function newestHeld(w: ScreenerSenderDTO) {
+  return w.held[w.held.length - 1];
+}
+
 function HeldMail({
   from,
   address,
@@ -426,9 +436,9 @@ function WaitingPreview({
             })}
           </div>
         ) : null}
-        {sender.held.map((h, i) => (
+        {sender.held.map((h) => (
           <HeldMail
-            key={i}
+            key={h.id}
             from={sender.from.name || sender.from.address}
             address={sender.from.name ? sender.from.address : undefined}
             subject={h.subject}
@@ -483,22 +493,27 @@ function ScreenedPreview({
           <span className="d-note num">
             {t("screenedNote", {
               date: screenedDate(sender, t("today")),
-              count: sender.heldCount ?? sender.held.length,
+              count: sender.held.length,
             })}
           </span>
         </div>
       </div>
+      {/* NO-COLLAPSE: every held message renders, oldest first. */}
       <div className="scn-mails">
         <div className="scn-caption num">
-          {t("screenedCaption", { count: sender.heldCount ?? sender.held.length })}
+          {t("heldCaptionAll", { count: sender.held.length })}
         </div>
-        <HeldMail
-          from={sender.from.address}
-          subject={sender.lastSubject ?? sender.held[sender.held.length - 1]?.subject ?? ""}
-          time={screenedDate(sender, t("today"))}
-          body={sender.lastBody ?? sender.held[sender.held.length - 1]?.body ?? ""}
-          dull
-        />
+        {sender.held.map((h) => (
+          <HeldMail
+            key={h.id}
+            from={sender.from.address}
+            subject={h.subject}
+            time={h.time}
+            body={h.body}
+            trackerNote={h.trackerNote}
+            dull
+          />
+        ))}
       </div>
     </>
   );
@@ -524,7 +539,7 @@ function SpamPreview({
   onBack: () => void;
 }) {
   const t = useTranslations("screener");
-  const held = row.sender.held[0];
+  const held = row.sender.held;
   const detection = row.pinned ? t("markedByYou") : row.sender.detection?.label;
   return (
     <>
@@ -557,18 +572,23 @@ function SpamPreview({
           <span className="d-note">{t("spamNote")}</span>
         </div>
       </div>
+      {/* NO-COLLAPSE: spam is held viewable — all of it, not the newest of it. */}
       <div className="scn-mails">
         {detection ? <div className="scn-caption">{detection}</div> : null}
-        {held ? (
+        {held.length > 1 ? (
+          <div className="scn-caption num">{t("heldCaptionAll", { count: held.length })}</div>
+        ) : null}
+        {held.map((h) => (
           <HeldMail
+            key={h.id}
             from={row.sender.from.address}
-            subject={held.subject}
-            time={held.time}
-            body={held.body}
-            trackerNote={held.trackerNote}
+            subject={h.subject}
+            time={h.time}
+            body={h.body}
+            trackerNote={h.trackerNote}
             dull
           />
-        ) : null}
+        ))}
       </div>
     </>
   );

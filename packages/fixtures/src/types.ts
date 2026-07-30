@@ -134,7 +134,13 @@ export interface ScreenerSuggestion {
   rationale: string;
 }
 
+/**
+ * One held message. It carries its own identity and its own full body, so
+ * moving it between screener segments and mail places can never collapse it
+ * into a count (NO-COLLAPSE, invariant #6).
+ */
 export interface HeldMailFixture {
+  id: string;
   subject: string;
   time: string;
   body: string;
@@ -151,15 +157,19 @@ export interface WaitingSenderFixture {
   /** Spam-grade mail renders quieter and duller. */
   dull?: boolean;
   ai: ScreenerSuggestion;
+  /** Every message held while the sender waits — non-empty, oldest first. */
   held: HeldMailFixture[];
 }
 
 export interface ScreenedSenderFixture {
   address: string;
   screenedOn: string;
-  heldCount: number;
-  lastSubject: string;
-  lastBody: string;
+  /**
+   * Every held message, in full — screening out holds mail, it never discards
+   * it. "8 held" exists only because eight renderable messages are behind it,
+   * so there is no count to drift and no hidden newest-only body.
+   */
+  held: HeldMailFixture[];
 }
 
 export interface SpamDetection {
@@ -172,11 +182,9 @@ export interface SpamDetection {
 
 export interface SpamItemFixture {
   from: string;
-  subject: string;
   detection: SpamDetection;
-  time: string;
-  trackerNote?: string;
-  body: string;
+  /** Held viewable, never deleted unseen — and never collapsed to a count. */
+  held: HeldMailFixture[];
 }
 
 export interface ScreenerEmptyState {

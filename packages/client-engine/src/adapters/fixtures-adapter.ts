@@ -148,7 +148,7 @@ export class FixturesAdapter implements EngineAdapter {
     return {
       id: f.id,
       accountId: "demo",
-      mailboxId: "northlight",
+      mailboxId: "lichtgrat",
       threadId: null,
       messageIdHeader: null,
       subject: f.subject,
@@ -251,11 +251,9 @@ export class FixturesAdapter implements EngineAdapter {
         time: s.screenedOn,
         scope: "sender",
         ai: null,
-        held: [],
+        // Every held message, in full — never a count plus a newest body.
+        held: s.held,
         screenedOn: s.screenedOn,
-        heldCount: s.heldCount,
-        lastSubject: s.lastSubject,
-        lastBody: s.lastBody,
         updatedAt: iso,
       };
       this.emit("screener_sender", entity.id, entity);
@@ -266,11 +264,11 @@ export class FixturesAdapter implements EngineAdapter {
         segment: "spam",
         from: { name: null, address: s.from },
         initial: (s.from[0] ?? "?").toUpperCase(),
-        time: s.time,
+        time: s.held[s.held.length - 1]!.time,
         scope: "sender",
         dull: true,
         ai: null,
-        held: [{ subject: s.subject, time: s.time, body: s.body, ...(s.trackerNote ? { trackerNote: s.trackerNote } : {}) }],
+        held: s.held,
         detection: s.detection,
         updatedAt: iso,
       };
@@ -279,7 +277,7 @@ export class FixturesAdapter implements EngineAdapter {
 
     const draft: EngineDraft = {
       id: "draft-compose",
-      mailboxId: "northlight",
+      mailboxId: "lichtgrat",
       threadId: null,
       inReplyToMessageId: "giulia",
       subject: fx.composeDraft.subject,

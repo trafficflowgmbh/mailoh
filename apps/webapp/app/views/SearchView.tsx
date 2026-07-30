@@ -8,22 +8,14 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
+  folderLeaf,
   VIEW_OF_FOLDER,
   type LocalSearchResult,
   type MailohEngine,
   type SearchHit as EngineSearchHit,
 } from "@mailoh/client-engine";
 import { Facets, SearchBox, SearchHit, type FacetGroup } from "@mailoh/ui";
-import { displayTime, senderName } from "../shell/format";
-
-const PLACE_LABEL: Record<string, string> = {
-  ohbox: "Ohbox",
-  reads: "Reads",
-  receipts: "Receipts",
-  screener: "Screener",
-  screened: "Screened",
-  spam: "Spam",
-};
+import { displayTime, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
 
 interface Filter {
   group: string;
@@ -69,7 +61,9 @@ export function SearchView({
     );
     if (!filter) return meaningful;
     return meaningful.filter(({ message: m }) => {
-      if (filter.group === "folder") return (VIEW_OF_FOLDER[m.folder] ?? "") === filter.label;
+      // Must match how the engine keys its folder facets, leaf fallback included.
+      if (filter.group === "folder")
+        return (VIEW_OF_FOLDER[m.folder] ?? folderLeaf(m.folder)) === filter.label;
       if (filter.group === "from")
         return (m.from.name ?? m.from.address) === filter.label;
       if (filter.group === "refine") return m.hasAttachments;
@@ -93,6 +87,8 @@ export function SearchView({
     if (folders.length) {
       groups.push({
         title: t("facetFolder"),
+        // Safe to show a key we have no label for: the engine keys these by
+        // view id or by folder LEAF, never by the raw namespaced path.
         items: folders.map(([view, count]) => ({
           label: PLACE_LABEL[view] ?? view,
           count,
@@ -193,7 +189,6 @@ function Hit({
 }) {
   const t = useTranslations("search");
   const m = hit.message;
-  const view = VIEW_OF_FOLDER[m.folder] ?? m.folder;
   const fuzzy = hit.matches.find((x) => x.fuzzy);
 
   // Highlight the first exact/prefix-matched term inside the subject.
@@ -215,7 +210,7 @@ function Hit({
   return (
     <SearchHit
       who={senderName(m)}
-      where={`${PLACE_LABEL[view] ?? view} · ${displayTime(m, now)}`}
+      where={`${placeLabel(m.folder)} · ${displayTime(m, now)}`}
       subject={subject}
       fuzzyNote={fuzzy ? t("fuzzyNote", { term: fuzzy.term }) : undefined}
       onPress={() => onOpen(hit)}

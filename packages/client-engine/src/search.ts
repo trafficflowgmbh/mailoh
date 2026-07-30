@@ -1,5 +1,5 @@
 import type { EntityReader } from "./store.js";
-import { VIEW_OF_FOLDER, type EngineMessage } from "./types.js";
+import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage } from "./types.js";
 
 /**
  * The minimal instant local search over the mirror (brief §1: "the client should
@@ -173,7 +173,12 @@ function facetsOf(items: SearchHit[]): SearchFacets {
   const facets = emptyFacets();
   const senders = new Map<string, { address: string; name: string | null; count: number }>();
   for (const { message: m } of items) {
-    const view = VIEW_OF_FOLDER[m.folder] ?? m.folder;
+    // Facet keys are view ids where a view exists, and otherwise the folder's
+    // LEAF — never the raw path. Views render these keys directly, and the
+    // folder namespace still carries the pre-rebrand company name (see
+    // `NAMESPACE_EXEMPTION` in @mailoh/fixtures), so a raw path here would put
+    // it straight on screen for any folder this client has no view for.
+    const view = VIEW_OF_FOLDER[m.folder] ?? folderLeaf(m.folder);
     facets.folder[view] = (facets.folder[view] ?? 0) + 1;
     const s = senders.get(m.from.address) ?? { address: m.from.address, name: m.from.name, count: 0 };
     s.count++;

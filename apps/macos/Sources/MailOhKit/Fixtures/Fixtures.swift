@@ -18,13 +18,13 @@ public enum Fixtures {
 
     // MARK: Account
 
-    public static let ownerAddress = "mila@northlight.studio"
+    public static let ownerAddress = "mila@lichtgrat.studio"
 
     public static func mailboxesRail() -> [MailboxAccount] { mailboxes() }
 
     public static func mailboxes() -> [MailboxAccount] {
         [
-            MailboxAccount(address: "mila@northlight.studio", kind: "Work · IMAP", shortName: "northlight.studio"),
+            MailboxAccount(address: "mila@lichtgrat.studio", kind: "Work · IMAP", shortName: "lichtgrat.studio"),
             MailboxAccount(address: "hello@milabrunner.ch", kind: "Personal · IMAP", shortName: "milabrunner.ch"),
             MailboxAccount(address: "mila.demo@wolkenmail.ch", kind: "Wolkenmail · IMAP", shortName: "Wolkenmail"),
         ]
@@ -33,72 +33,140 @@ public enum Fixtures {
     // MARK: - The reviewed fictional-name registry
     //
     // Adding a sender means adding a line here, which is the review step. The
-    // audit test fails on any renderable display name that is missing, and on any
-    // registry entry whose note is empty.
+    // audit test fails on any renderable display name that is missing, on any
+    // entry whose note is empty, and on any `.nearCollision` that does not name
+    // the real entity it collided with.
+    //
+    // This is the web mirror of `fictionalNames` / `bannedTerms` in
+    // `packages/fixtures/src/privacy.ts` — the two must stay in step, because the
+    // same persona ships on both surfaces. Read that file's header for the full
+    // rationale; the short version is below.
+    //
+    // WHAT THIS COST TO LEARN. The first pass of this registry certified nine
+    // names as coined that were live brands, among them the persona's own mail
+    // domain (a real studio's registered domain), the security sender the
+    // phishing demo impersonates (a real security company), and the flat-pack
+    // retailer (a real furniture label). Every one read plausibly coined. Hence
+    // the verdict below: prose alone was not falsifiable, so it was not enough.
+
+    /// The claim a registry entry is willing to make about its name.
+    public enum NameVerdict: String, Sendable {
+        /// A search for the name turned up no operating entity.
+        case coined
+        /// Real entities DO share the name; `collision` names them, reuse accepted.
+        case nearCollision
+        /// Ordinary words in ordinary use — no distinctive mark claimed or at risk.
+        case descriptive
+        /// A person's name, invented, no public figure.
+        case inventedPerson
+    }
 
     public struct FictionalName: Sendable {
         public let name: String
+        /// The reviewed claim. `.nearCollision` REQUIRES `collision`.
+        public let verdict: NameVerdict
         /// Why this name is safe to ship in a public demo.
         public let note: String
-        public init(_ name: String, _ note: String) { self.name = name; self.note = note }
+        /// For `.nearCollision` only: the real entity/entities found in review,
+        /// named explicitly, so an entry can never imply "nothing matched" when
+        /// something did.
+        public let collision: String?
+        public init(_ name: String, _ verdict: NameVerdict, _ note: String, collision: String? = nil) {
+            self.name = name; self.verdict = verdict; self.note = note; self.collision = collision
+        }
     }
 
     /// Every person, brand and organisation name the demo can put on screen.
+    ///
+    /// Notes deliberately do NOT spell out the real brands that were removed —
+    /// those strings are in `bannedTerms`, the notes are audited as corpus, and a
+    /// real brand named in a comment is still a real brand in this repository.
     public static let fictionalNames: [FictionalName] = [
         // People — invented, Swiss/Italian/German-plausible, no public figures.
-        .init("Mila Brunner", "the demo persona; invented"),
-        .init("Giulia Ferrari", "invented; common given + surname, no public figure"),
-        .init("Petra Wyss", "invented"),
-        .init("Ben Arnold", "invented"),
-        .init("Anna Odermatt", "invented"),
-        .init("Reto Frei", "invented"),
-        .init("Flurina Caduff", "invented"),
-        .init("Tim Berger", "invented"),
-        .init("Carla Meier", "invented"),
-        .init("Lena Kaufmann", "invented"),
-        .init("Mara Lehner", "invented; the Skylark Notes author signature"),
-        // Brands — coined compounds. None is an operating company we could find,
-        // and none reuses a mark identified in review.
-        .init("Northlight Studio", "coined; Mila's own studio"),
-        .init("Wolkenmail", "coined mail provider (Wolke = cloud)"),
-        .init("Terracotta Milano", "coined pottery supplier"),
-        .init("Makersfest", "coined conference"),
-        .init("Skyfort", "coined app; the protected-class verification sender"),
-        .init("Gartenlokal Rosa", "coined restaurant"),
-        .init("Bergwind", "coined workshop host"),
-        .init("Quartierpost", "coined neighbourhood paper"),
-        .init("Sommerfest Lind", "coined street party"),
-        .init("Alpmail", "coined mail provider"),
-        .init("Skylark Notes", "coined newsletter"),
-        .init("Looseleaf", "coined newsletter"),
-        .init("Hejmo Living", "coined furniture retailer — the flat-pack-catalogue stand-in"),
-        .init("FALTO", "coined product name inside the Hejmo issue"),
-        .init("The Maker’s Dozen", "coined newsletter"),
-        .init("Gratbrief", "coined hiking newsletter (Grat = ridge)"),
-        .init("Morgenpost Briefing", "coined morning briefing"),
-        .init("Brandung Records", "coined label"),
-        .init("Nordwind Outdoor", "coined outdoor retailer"),
-        .init("Comet Courier", "coined astronomy newsletter"),
-        .init("Bergbahn Club", "coined mountain-railway club"),
-        .init("Pixel & Thread", "coined textile/design newsletter"),
-        .init("Röstsonntag", "coined coffee roaster (replaces a name that collided with a real roaster)"),
-        .init("Open-Air Kino Seeblick", "coined open-air cinema"),
-        .init("Atelier Erdton", "coined pottery studio"),
-        .init("Velowerk Juna", "coined bike shop"),
-        .init("Alpenbahn", "coined rail operator"),
-        .init("Pigment & Papier", "coined art-supply shop"),
-        .init("Atelier Nord", "coined woodworking studio"),
-        .init("Paperbird", "coined note-taking app"),
-        .init("JackpotJodel Promo", "coined promo blast (the spam-grade sender)"),
-        .init("Fashion Deals", "coined retailer, screened out"),
-        .init("Old Forum", "coined forum, screened out"),
-        .init("Win-Invest", "coined phishing sender"),
-        .init("Skyf0rt Secure", "coined lookalike of the coined Skyfort — the phishing demo"),
+        .init("Mila Brunner", .inventedPerson, "the demo persona; invented"),
+        .init("Giulia Ferrari", .inventedPerson, "invented; common given + surname, no public figure"),
+        .init("Petra Wyss", .inventedPerson, "invented"),
+        .init("Ben Arnold", .inventedPerson, "invented"),
+        .init("Anna Odermatt", .inventedPerson, "invented"),
+        .init("Reto Frei", .inventedPerson, "invented"),
+        .init("Flurina Caduff", .inventedPerson, "invented"),
+        .init("Tim Berger", .inventedPerson, "invented"),
+        .init("Carla Meier", .inventedPerson, "invented"),
+        .init("Lena Kaufmann", .inventedPerson, "invented"),
+        .init("Mara Lehner", .inventedPerson, "invented; the Skylark Notes author signature"),
+
+        // Brands.
+        .init("Lichtgrat Studio", .coined,
+              "Mila's own studio (Licht + Grat, two words German does not compound); replaces a name whose domain was a real design agency's live domain — and it was the persona's own address, so it was on screen constantly"),
+        .init("Wolkenmail", .coined, "mail provider (Wolke = cloud); no operating entity found"),
+        .init("Terracotta Milano", .descriptive,
+              "pottery supplier; two ordinary Italian words (the material + the city), so no distinctive mark is claimed",
+              collision: "generic use is everywhere in Italian ceramics (e.g. the CottoMilano tile line, terracottaitalia.com); none is a mark this reuses"),
+        .init("Makersfest", .coined, "conference; no operating entity found"),
+        .init("Cinderlock", .coined,
+              "the protected-class verification sender; replaces a name that was a real security company's — which the phishing demo below was busy impersonating",
+              collision: "a World of Warcraft player character uses the word; a character handle is not a mark"),
+        .init("Gartenlokal Rosa", .coined, "restaurant; no operating entity found"),
+        .init("Haldenlicht", .coined,
+              "workshop host (Halde + Licht); replaces a name registered by several real companies"),
+        .init("Gassenblatt", .coined,
+              "neighbourhood paper; replaces a name that was a real Swiss neighbourhood paper — same word, same country, same trade"),
+        .init("Sommerfest Lind", .coined, "street party; no operating entity found"),
+        .init("Alpmail", .coined, "mail provider; no operating entity found"),
+        .init("Skylark Notes", .coined, "newsletter; no operating entity found"),
+        .init("Blattgang", .coined,
+              "newsletter (Blatt + Gang); replaces a name carried by a real reading app and a real security newsletter"),
+        .init("Wohnfalz", .coined,
+              "furniture retailer, the flat-pack-catalogue stand-in (Wohn + Falz, the woodworking rabbet); replaces a name that was a real furniture design label in exactly this trade"),
+        .init("KLAPPRI", .coined,
+              "the folding-table product inside the Wohnfalz issue; replaces a name carried by two real furniture makers"),
+        .init("The Maker’s Dozen", .coined, "newsletter; no operating entity found"),
+        .init("Gratbrief", .coined,
+              "hiking newsletter (Grat = ridge); replaces a name that collided with a real product"),
+        .init("Frühbrief Briefing", .coined,
+              "morning briefing (früh + Brief); replaces a name that is a real German newspaper masthead in three cities"),
+        .init("Brandung Records", .coined, "label; no operating entity found"),
+        .init("Nordwind Outdoor", .nearCollision,
+              "outdoor retailer; the qualifier puts it in a different trade from everything found, and Nordwind is an ordinary German word (north wind)",
+              collision: "Nordwind Records and the Nordwind Festival (Berlin) both operate under the bare word; neither sells outdoor kit"),
+        .init("Comet Courier", .nearCollision,
+              "astronomy newsletter; near-collision reviewed and accepted — the twin is a non-commercial school publication with no mark to reuse",
+              collision: "the Comet Courier, a US elementary-school newsletter (Horizon Elementary, Loudoun County)"),
+        .init("Bergbahn Club", .coined, "mountain-railway club; no operating entity found"),
+        .init("Pixel & Thread", .coined, "textile/design newsletter; no operating entity found"),
+        .init("Röstsonntag", .coined,
+              "coffee roaster; replaces a name that collided with a real roaster"),
+        .init("Open-Air Kino Seeblick", .coined, "open-air cinema; no operating entity found"),
+        .init("Atelier Erdton", .coined, "pottery studio (Erdton = earth tone); no operating entity found"),
+        .init("Speichenhof Velos", .coined,
+              "bike shop (Speichen + Hof); replaces a name that was a real Swiss bike shop's — same word, same country, same trade"),
+        .init("Alpenbahn", .descriptive,
+              "rail operator; the ordinary German term for an alpine railway, used generically, not as anyone's mark",
+              collision: "used descriptively across Swiss and Austrian rail tourism; no single operator owns it"),
+        .init("Pigment & Papier", .coined, "art-supply shop; no operating entity found"),
+        .init("Atelier Eichspan", .coined,
+              "woodworking studio (Eiche + Span, fitting Lena's oak furniture); replaces a name that is a real art institution's"),
+        .init("Paperbird", .nearCollision,
+              "note-taking app; near-collision reviewed and accepted — neither twin is mail- or notes-adjacent, so the coined usage stands",
+              collision: "paperbird.us, a Boston paper-goods and invitations business, and a “Paper Bird” Android app"),
+        .init("JackpotJodel Promo", .coined, "promo blast (the spam-grade sender); no operating entity found"),
+        .init("Fashion Deals", .descriptive,
+              "retailer, screened out; two generic retail words chosen precisely because they read as bulk filler, not as a brand"),
+        .init("Old Forum", .descriptive,
+              "forum, screened out; generic words standing in for any stale mailing list"),
+        .init("Win-Invest", .coined, "phishing sender; no operating entity found"),
+        .init("Cinderl0ck Secure", .coined,
+              "the phishing demo — a zero-for-o lookalike of the coined Cinderlock, so the impersonated brand is fictional too"),
     ]
 
-    /// Substrings that must never appear anywhere in the fixture corpus: the
+    /// Substrings that must never appear anywhere in the FIXTURE CORPUS: the
     /// owner's real identity, the real company, and every real brand identified in
-    /// review (including the coffee roaster this file used to name).
+    /// review — including the nine this registry once certified as coined.
+    ///
+    /// SCOPE. This list governs the demo world: fixtures, and the review notes
+    /// above (audited as corpus, so a note may never name a brand it bans). It is
+    /// not a repo-wide grep, and one product string deliberately contradicts it —
+    /// see `namespaceExemption`.
     public static let bannedTerms: [String] = [
         // real personal / company identity
         "gilles", "goetsch", "trafficflow", "steiner",
@@ -106,7 +174,31 @@ public enum Fixtures {
         "alpenglow", "trailhead", "ikea", "swisscom", "sbb", "migros", "coop",
         "nespresso", "starbucks", "salesforce", "hetzner", "github", "notion",
         "icloud", "gmail", "outlook", "protonmail", "fastmail", "superhuman", "hey.com",
+        // real brands this registry itself once shipped as "coined" — banned so the
+        // same nine names cannot walk back in behind a plausible-looking note
+        "hejmo", "falto", "northlight", "skyfort", "skyf0rt", "atelier nord",
+        "atelier-nord", "morgenpost", "looseleaf", "velowerk", "bergwind",
+        "quartierpost",
     ]
+
+    /// The one documented contradiction of `bannedTerms`, kept honest on purpose.
+    ///
+    /// The product's IMAP folder namespace is still `TrafficFlow/…` — the
+    /// pre-rebrand company name, which contains a banned term and is created
+    /// inside real customer mailboxes. It is exempt TODAY, not forever: the
+    /// namespace is the wire contract shared by core, services, api, the worker
+    /// and the migration scanner, and the folders already exist in live
+    /// mailboxes, so renaming it to `MailOh/…` is a folder-rename migration with
+    /// reconciliation — tracked in `docs/mailoh/STAGE2-ARCH.md` under "Folder
+    /// namespace rebrand". Mirrors `NAMESPACE_EXEMPTION` in `privacy.ts`.
+    ///
+    /// Until then the rule for view code is narrow: never render a raw folder
+    /// string; map it, and fall back to the leaf segment, never the full path.
+    public static let namespaceExemption = (
+        term: "trafficflow",
+        site: "the IMAP folder namespace shared with the backend wire contract",
+        until: "docs/mailoh/STAGE2-ARCH.md — Folder namespace rebrand"
+    )
 
     // MARK: Tags (cross-cutting)
 
@@ -145,13 +237,13 @@ public enum Fixtures {
                     attach: "Speaker_Info.pdf (1.2 MB)"),
             // Protected class: built through the `protected` factory, which has no
             // body or preview parameter — the plaintext cannot exist.
-            Message.protected(id: "skyfort", place: .ohbox, from: "Skyfort", addr: "no-reply@skyfort.app",
+            Message.protected(id: "cinderlock", place: .ohbox, from: "Cinderlock", addr: "no-reply@cinderlock.app",
                               subj: "Your verification code", time: "08:31", unread: true),
-            Message(id: "ben", place: .ohbox, from: "Ben Arnold", addr: "ben@northlight.studio",
+            Message(id: "ben", place: .ohbox, from: "Ben Arnold", addr: "ben@lichtgrat.studio",
                     subj: "Kiln’s fixed + Friday pizza 🍕", time: "07:58", unread: true,
                     preview: "Good news twice: the kiln heats evenly again, and Friday we fire the wood oven…",
                     body: "Good news twice: the kiln heats evenly again — the new element arrived early — and Friday we fire the wood oven after work. Bring nothing but appetite.\n\n— Ben",
-                    rationale: "Ohbox — rule: teammate @northlight.studio → Ohbox"),
+                    rationale: "Ohbox — rule: teammate @lichtgrat.studio → Ohbox"),
             Message(id: "anna", place: .ohbox, from: "Anna Odermatt", addr: "anna@gartenlokal-rosa.ch",
                     subj: "Re: the new menu cards — wow!", time: "yesterday", seen: true,
                     body: "The cards arrived and they’re even lovelier in person — guests keep picking them up and turning them over. Thank you for making us look this good!\n\nWarmly,\nAnna",
@@ -160,11 +252,11 @@ public enum Fixtures {
                     subj: "Fotos vom Grat 🏔", time: "yesterday", seen: true,
                     body: "Hoi Mila — die versprochenen Fotos vom Grat. Der Sonnenaufgang war jede Minute um 4 Uhr wert. Nächstes Mal kommst du mit!\n\nReto",
                     rationale: "Ohbox — you said Yes to this sender"),
-            Message(id: "flurina", place: .ohbox, from: "Flurina Caduff", addr: "flurina@bergwind.ch",
+            Message(id: "flurina", place: .ohbox, from: "Flurina Caduff", addr: "flurina@haldenlicht.ch",
                     subj: "Saturday’s workshop is full! 🙌", time: "yesterday", seen: true,
                     body: "All twelve spots are booked — and two people already asked about a second date. Shall we plan an autumn edition?\n\nFlurina",
                     rationale: "Ohbox — you said Yes to this sender"),
-            Message(id: "tim", place: .ohbox, from: "Tim Berger", addr: "tim@quartierpost.ch",
+            Message(id: "tim", place: .ohbox, from: "Tim Berger", addr: "tim@gassenblatt.ch",
                     subj: "Got us tickets for the 22nd! 🎶", time: "Mon", seen: true,
                     body: "Row 8, right side — close enough to see the drummer sweat. I’ll forward the details; you owe me a beer.\n\nTim",
                     rationale: "Ohbox — you said Yes to this sender"),
@@ -185,11 +277,11 @@ public enum Fixtures {
         }
         return [
             m("f1", "Skylark Notes", "mara@skylarknotes.com", "#118 — the joy of small tools", "Plus: a lamp, a ladle, and one very good pencil.", "07:02", unread: true),
-            m("f2", "Looseleaf", "post@looseleaf.press", "Why paper keeps winning", "Three hundred years of interface design, still undefeated.", "06:31", unread: true),
-            m("f3", "Hejmo Living", "news@hejmo-living.ch", "Ideen für kleine Räume", "Neu diese Woche: Klappbares für Balkon und Flur.", "05:44", unread: true),
+            m("f2", "Blattgang", "post@blattgang.press", "Why paper keeps winning", "Three hundred years of interface design, still undefeated.", "06:31", unread: true),
+            m("f3", "Wohnfalz", "news@wohnfalz.ch", "Ideen für kleine Räume", "Neu diese Woche: Klappbares für Balkon und Flur.", "05:44", unread: true),
             m("f4", "The Maker’s Dozen", "hello@makersdozen.studio", "#41 — twelve things makers loved", "A kiln timer, a broom, and a very honest pricing essay.", "05:12", unread: true),
             m("f5", "Gratbrief", "post@gratbrief.ch", "This week’s hike: the Chäserrugg ridge", "Four hours, one ridge, zero regrets.", "04:58", unread: true),
-            m("f6", "Morgenpost Briefing", "briefing@morgenpost-brief.ch", "Morgen-Briefing: Sommerfest-Wochenende", "Was heute schön wird — in fünf Minuten.", "04:30", unread: true),
+            m("f6", "Frühbrief Briefing", "briefing@fruehbrief.ch", "Morgen-Briefing: Sommerfest-Wochenende", "Was heute schön wird — in fünf Minuten.", "04:30", unread: true),
             m("f7", "Brandung Records", "post@brandung-records.de", "New signings + Sommernacht lineup 🎶", "Two new bands, one lake stage, all summer.", "Mon", unread: true),
             m("f8", "Nordwind Outdoor", "news@nordwind-outdoor.ch", "Fünf Zelte im Test", "Fünf Modelle, ein klarer Favorit.", "Mon", unread: true),
             m("f9", "Comet Courier", "mail@cometcourier.space", "A very good week above the clouds", "Meteor showers, a comet with a schedule, and one happy telescope.", "Mon", unread: true),
@@ -197,21 +289,21 @@ public enum Fixtures {
             m("f11", "Pixel & Thread", "letter@pixelthread.studio", "Weaving color into everything", "A dye garden, a palette tool, and one brave kitchen.", "Sun", unread: true),
             m("f12", "Röstsonntag", "hallo@roestsonntag.ch", "August roast: Kenya AA", "Blackcurrant, bright, dangerous before noon.", "Sun", unread: true),
             m("f13", "Skylark Notes", "mara@skylarknotes.com", "#117 — the tools we keep", "On objects that age well.", "Thu", unread: false),
-            m("f14", "Looseleaf", "post@looseleaf.press", "Weekly wrap — the week in one read", "Everything lovely, compressed.", "Thu", unread: false),
-            m("f15", "Hejmo Living", "news@hejmo-living.ch", "Sommer-Sale endet Sonntag", "Letzte Chance auf Balkon-Lieblinge.", "Wed", unread: false),
+            m("f14", "Blattgang", "post@blattgang.press", "Weekly wrap — the week in one read", "Everything lovely, compressed.", "Thu", unread: false),
+            m("f15", "Wohnfalz", "news@wohnfalz.ch", "Sommer-Sale endet Sonntag", "Letzte Chance auf Balkon-Lieblinge.", "Wed", unread: false),
         ]
     }
 
     /// Invented newsletter bodies so the skim stream feels real.
     /// `MailContent.imageMarker` splits a body around the inline product-image
     /// placeholder (rendered as a figure).
-    public static let readsArtCaption = "FALTO — klappbar, wandmontiert"
+    public static let readsArtCaption = "KLAPPRI — klappbar, wandmontiert"
 
     public static func readsBodies() -> [String: String] {
         [
             "f1": "Hi there — this issue is a love letter to tools that do one thing kindly.\n\nSmall tools are not lesser tools. They are the ones that fit your hand on the first try: the ladle that pours without dripping, the pencil that starts every list, the app with exactly one screen. This week’s essay visits three workshops and asks each maker which object they’d save from a fire. Nobody picked the expensive one.\n\nWorthy five: a lamp that ages like furniture, a wooden ladle from a two-person workshop, a pencil with honest graphite, a pocket notebook system, and one very good broom.\n\nAlso in this issue: an interview with a bookbinder on the pleasure of doing the same thing ten thousand times, and a reader thread about the tool you’ve owned longest.\n\nThe archive, as always, is open — issues #1 through #117, no paywall, no tracking.\n\n— Mara Lehner",
             "f2": "Three hundred years after the broadsheet, paper is still the best interface anyone has shipped: instant on, folds to pocket size, survives coffee, works in sunlight.\n\nThis week’s essay is about why the good digital tools all quietly imitate it — margins, pages, bookmarks, the satisfying flip — and what they still haven’t managed to copy. (Hint: it’s the smell, but it’s also the permission to scribble.)\n\nFrom the mailbag: a dozen of you sent photos of your reading chairs. They are all magnificent. The armchair-with-lamp configuration leads by a wide margin.\n\nNext week: a visit to a paper mill that has been run by the same family since 1874, and what their apprentice learned in year one. (Everything. She learned everything.)",
-            "f3": "Kleine Räume, grosse Wirkung: Diese Woche zeigen wir Neuheiten, die sich zusammenklappen, stapeln oder ganz verschwinden, wenn der Tag sie nicht braucht.\n\(MailContent.imageMarker)\nDer Klapptisch FALTO trägt vier Teller und einen Laptop — und hängt danach flach an der Wand. Dazu: ein Hocker, der Stauraum versteckt, und Haken, die keine Löcher hinterlassen.\n\nFür Hejmo Mitglieder diese Woche: 15% auf alle Aufbewahrungsserien — im Showroom und online.",
+            "f3": "Kleine Räume, grosse Wirkung: Diese Woche zeigen wir Neuheiten, die sich zusammenklappen, stapeln oder ganz verschwinden, wenn der Tag sie nicht braucht.\n\(MailContent.imageMarker)\nDer Klapptisch KLAPPRI trägt vier Teller und einen Laptop — und hängt danach flach an der Wand. Dazu: ein Hocker, der Stauraum versteckt, und Haken, die keine Löcher hinterlassen.\n\nFür Wohnfalz Mitglieder diese Woche: 15% auf alle Aufbewahrungsserien — im Showroom und online.",
             "f4": "Twelve things makers loved this month, and this one is a good batch.\n\nThe kiln timer that finally does ramps properly. A broom (yes, a second good broom this year — it’s a golden age). A price-your-work essay written by a potter who doubled her prices and lost exactly zero customers — required reading before your next market.\n\nAlso in the dozen: linen aprons that survive the wheel, a glaze-test tile system that ends the guessing, and a folding market table that one person can carry uphill.\n\nThe community thread this month: what did you make for yourself, not for sale? The answers are wonderful. A gate hinge. A soup bowl. A banjo.\n\nFull list with photos and links below.",
             "f5": "This week’s hike: the Chäserrugg ridge. Four hours, one ridge line, and the kind of views that make you forgive the first forty minutes of forest switchbacks.\n\nGo early — the light on the Churfirsten before nine is the whole point. Coffee at the top station is honest; the rösti is better. Boots over trail runners: the ridge path has opinions.\n\nNext week: a lake-to-lake traverse with a swim in the middle.",
             "f6": "Guten Morgen. Das Sommerfest-Wochenende steht vor der Tür — in Winterthur werden über vierzig Quartierfeste erwartet, und die Wetterprognose spielt mit.\n\nAusserdem: Die Nachtzug-Teststrecke nach Barcelona ist auf den Herbst bestätigt, die Badis melden die wärmsten Wassertemperaturen seit fünf Jahren, und im Wallis beginnt die Aprikosenernte — süsser als letztes Jahr, sagen die Bauern.\n\nDas Wetter: sonnig, am Nachmittag Quellwolken, 27 Grad. Perfektes Fest-Wetter.",
@@ -238,7 +330,7 @@ public enum Fixtures {
             m("kino", "Open-Air Kino Seeblick", "tickets@kino-seeblick.ch", "Deine Tickets — Filmnacht am See", "CHF 36.00", "2 × Liegestuhl, Do 21:15 — Decken gibt’s am Eingang.", "07:41"),
             m("erdton", "Atelier Erdton", "billing@erdton-atelier.ch", "Invoice #078 — Pottery Workshop", "CHF 240.00", "Workshop «Glaze & Fire», 2 seats — thanks for booking with us!", "Tue"),
             m("roestsonntag", "Röstsonntag", "hallo@roestsonntag.ch", "Receipt — August roast subscription", "CHF 24.00", "Kenya AA ships Monday — your subscription rolled over.", "Tue"),
-            m("velowerk", "Velowerk Juna", "service@velowerk-juna.ch", "Bike service — ready to ride 🚲", "CHF 89.00", "New chain, fresh brakes — she runs like spring again.", "Mon"),
+            m("speichenhof", "Speichenhof Velos", "service@speichenhof-velos.ch", "Bike service — ready to ride 🚲", "CHF 89.00", "New chain, fresh brakes — she runs like spring again.", "Mon"),
             m("alpenbahn", "Alpenbahn", "tickets@alpenbahn.ch", "Dein Billett Winterthur–Lugano", "CHF 52.00", "Winterthur ab 08:02 — Sitzplatz am Fenster, Seeseite.", "Mon"),
             m("pigment", "Pigment & Papier", "shop@pigmentpapier.de", "Order #5521 shipped 📦", "€31.40", "Gouache set + two brushes — on the way to the studio.", "Mon"),
         ]
@@ -250,7 +342,7 @@ public enum Fixtures {
             "kino": "Filmnacht am See — Do 31. Juli, 21:15\n\n2 × Liegestuhl-Platz — CHF 36.00\nBezahlt mit der hinterlegten Karte.\n\nBei Regen wandert die Vorstellung auf Freitag — dein Ticket bleibt gültig. Decken und Popcorn gibt es am Eingang.",
             "erdton": "Invoice #078 — July 2026\n\nWorkshop «Glaze & Fire», Sa 9. August, 2 seats — CHF 220.00\nMaterial & firing — CHF 20.00\n\nTotal CHF 240.00 (incl. VAT)\n\nPaid — this is your receipt. Aprons, clay and coffee are on us; bring ideas.",
             "roestsonntag": "August subscription — Kenya AA, 500 g\n\n1 × monthly roast — CHF 24.00\nCharged to the card on file.\n\nYour bag ships Monday with the tasting card. Skip or pause any month with one click.",
-            "velowerk": "Service summary — city bike\n\nNew chain + cassette — CHF 62.00\nBrake pads, front — CHF 18.00\nLabour flat rate — CHF 9.00\n\nTotal CHF 89.00, paid in store.\n\nShe runs like spring again — next check-up is on us.",
+            "speichenhof": "Service summary — city bike\n\nNew chain + cassette — CHF 62.00\nBrake pads, front — CHF 18.00\nLabour flat rate — CHF 9.00\n\nTotal CHF 89.00, paid in store.\n\nShe runs like spring again — next check-up is on us.",
             "alpenbahn": "Winterthur → Lugano\nDi 12. August · Abfahrt 08:02 · Ankunft 11:24\n\n1 × 2. Klasse — CHF 52.00\nBezahlt mit der hinterlegten Karte.\n\nSitzplatz 44, Fenster, Seeseite — die schöne Hälfte der Strecke gehört dir.",
             "pigment": "Order #5521 — shipped today\n\nGouache set, 12 colours — €24.90\nBrush, round no. 6 — €3.80\nBrush, flat no. 10 — €2.70\n\nTotal €31.40 (incl. VAT), paid by card.\n\nTracking is in your account — expected Thursday.",
         ]
@@ -260,7 +352,7 @@ public enum Fixtures {
         [
             ReceiptGroup(label: "Today", itemIDs: ["brandung", "kino"]),
             ReceiptGroup(label: "Tuesday", itemIDs: ["erdton", "roestsonntag"]),
-            ReceiptGroup(label: "Monday", itemIDs: ["velowerk", "alpenbahn", "pigment"]),
+            ReceiptGroup(label: "Monday", itemIDs: ["speichenhof", "alpenbahn", "pigment"]),
         ]
     }
 
@@ -268,11 +360,11 @@ public enum Fixtures {
 
     public static func waiting() -> [WaitingSender] {
         [
-            WaitingSender(id: "lena", from: "Lena Kaufmann", addr: "lena@atelier-nord.ch", initial: "L", time: "08:40",
+            WaitingSender(id: "lena", from: "Lena Kaufmann", addr: "lena@atelier-eichspan.ch", initial: "L", time: "08:40",
                           scope: .sender, ai: AISuggestion(dest: .ohbox, conf: "0.92", why: "personal message, real sender, no bulk fingerprint"),
                           held: HeldMailbag(
                             HeldMail(id: "lena-1", subj: "Werkstatt-Besuch nächste Woche?", time: "08:12",
-                                     body: "Hallo Mila\n\nWir haben uns letzten Monat am Handwerksmarkt in Winterthur kurz unterhalten — ich hatte den Stand mit den Eichenmöbeln, gleich neben Ihrer Keramik. Ihre Karte liegt seither auf meiner Werkbank, und jetzt melde ich mich endlich.\n\nHätten Sie nächste Woche Zeit für einen Besuch in der Werkstatt? Ich hätte da eine Idee: Ihre Schalen, meine Tabletts — eine kleine gemeinsame Serie für den Herbstmarkt. Dienstag oder Donnerstag Nachmittag wäre ich frei.\n\nHerzliche Grüsse aus Winterthur\nLena Kaufmann\nAtelier Nord"),
+                                     body: "Hallo Mila\n\nWir haben uns letzten Monat am Handwerksmarkt in Winterthur kurz unterhalten — ich hatte den Stand mit den Eichenmöbeln, gleich neben Ihrer Keramik. Ihre Karte liegt seither auf meiner Werkbank, und jetzt melde ich mich endlich.\n\nHätten Sie nächste Woche Zeit für einen Besuch in der Werkstatt? Ich hätte da eine Idee: Ihre Schalen, meine Tabletts — eine kleine gemeinsame Serie für den Herbstmarkt. Dienstag oder Donnerstag Nachmittag wäre ich frei.\n\nHerzliche Grüsse aus Winterthur\nLena Kaufmann\nAtelier Eichspan"),
                             [
                               HeldMail(id: "lena-2", subj: "Kleine Ergänzung", time: "08:40",
                                        body: "Nochmals kurz: Falls es nächste Woche nicht klappt, ginge auch der Freitag darauf. Und bringen Sie gerne ein paar Schalen mit — ich habe schon ein Tablett im Kopf.\n\nLena"),
@@ -334,12 +426,12 @@ public enum Fixtures {
                         HeldMail(id: "wi-1", subj: "Ihr Bitcoin Gewinn wartet 🎁", time: "Tue",
                                  body: "Sehr geehrter Kunde,\n\nIhr Konto zeigt einen nicht abgeholten Gewinn von 0.4 BTC. Bestätigen Sie Ihre Wallet-Adresse innert 48 Stunden, sonst verfällt der Betrag.\n\nJetzt bestätigen → wallet-verify-ch.win-invest.biz\n\nSupport Team",
                                  trackers: "12 tracking links blocked"))),
-            SpamSender(from: "support@skyf0rt-secure.info",
-                       det: "auto-detected · 0.96 · lookalike domain (skyf0rt)",
+            SpamSender(from: "support@cinderl0ck-secure.info",
+                       det: "auto-detected · 0.96 · lookalike domain (cinderl0ck)",
                        held: HeldMailbag(
                         HeldMail(id: "sk-1", subj: "Ihr Konto wurde eingeschränkt", time: "Mon",
-                                 body: "Ihr Skyfort-Konto wurde vorübergehend eingeschränkt. Um die Einschränkung aufzuheben, bestätigen Sie Ihre Daten über den folgenden Link.\n\nKonto bestätigen → secure.skyf0rt-secure.info/login\n\nDieser Vorgang dauert nur 2 Minuten.",
-                                 trackers: "lookalike link flagged: skyf0rt-secure.info"))),
+                                 body: "Ihr Cinderlock-Konto wurde vorübergehend eingeschränkt. Um die Einschränkung aufzuheben, bestätigen Sie Ihre Daten über den folgenden Link.\n\nKonto bestätigen → secure.cinderl0ck-secure.info/login\n\nDieser Vorgang dauert nur 2 Minuten.",
+                                 trackers: "lookalike link flagged: cinderl0ck-secure.info"))),
         ]
     }
 
@@ -363,7 +455,7 @@ public enum Fixtures {
                            subtitle: "Itinerary Winterthur→Lugano, 12 Aug"),
             ], hint: "Held here until you come back for it."),
             TriagePile(kind: .resurface, title: "Resurface", items: [
-                TriageItem(id: "domain-renewal", title: "Domain renewal northlight.studio",
+                TriageItem(id: "domain-renewal", title: "Domain renewal lichtgrat.studio",
                            subtitle: "", when: "resurfaces Fri 09:00"),
             ], hint: "Returns to the Ohbox at the set time."),
         ]
