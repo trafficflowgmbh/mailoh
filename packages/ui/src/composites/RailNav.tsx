@@ -105,9 +105,12 @@ export function RailNav({
   return (
     <nav className={className ? `rail ${className}` : "rail"} aria-label={ariaLabel}>
       <div className="wordmark">
+        {/* Two elements, not one string: `.wordmark b em` paints the second
+            half in accent-ink, so the rail echoes the "oh." app mark. Keep the
+            split at the word boundary — mail | oh — and keep it lower-case. */}
         {wordmark ?? (
           <b>
-            Mail<em>Oh</em>
+            mail<em>oh</em>
           </b>
         )}
       </div>

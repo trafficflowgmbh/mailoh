@@ -81,8 +81,11 @@ public struct RailView: View {
 
     // MARK: Pieces
 
+    /// Two runs, not one string: the second half is accent-ink so the rail
+    /// echoes the "oh." app mark. Split at the word boundary — mail | oh — and
+    /// lower-case, which is how the name is written everywhere a human reads it.
     private var wordmark: some View {
-        (Text("Mail").foregroundStyle(p.ink.color) + Text("Oh").foregroundStyle(p.accentInk.color))
+        (Text("mail").foregroundStyle(p.ink.color) + Text("oh").foregroundStyle(p.accentInk.color))
             .blanc(.wordmark)
             .padding(.horizontal, 8)
             .padding(.top, 2)
