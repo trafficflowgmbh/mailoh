@@ -1,8 +1,75 @@
+import fs from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
+
+/**
+ * The message namespaces the SHELL actually reads — and therefore the only ones
+ * that belong in a desktop binary.
+ *
+ * `apps/webapp/messages/en.json` is one file for two products. Since S15 it also
+ * holds the marketing site's copy: the nav, the hero, the pricing table, the FAQ.
+ * `main.tsx` imports it whole, so all of it was ending up inside the executable —
+ * `strings ohmail_0.2.0_amd64.deb`'s binary printed `$9 a month`, which is a price
+ * quoted by an app that cannot be subscribed to, in a build that has no account.
+ * Wrong, and it dates the moment the price changes.
+ *
+ * Two provenances, because the shell reads translations two ways:
+ *  · `useTranslations("<ns>")` — thirteen call sites across shell/ and views/;
+ *  · `useTranslations()` in `AppShell.tsx`, unscoped, which then addresses
+ *    `about.*`, `dock.*`, `palette.*`, `rail.*` and `ribbon.*` by dotted key.
+ * Miss the second kind and the app renders raw key names at runtime, so the list
+ * is DERIVED FROM THE SOURCE by `test/desktop-messages.test.ts` and compared with
+ * this array — adding a `useTranslations` to a view without adding its namespace
+ * here fails the suite rather than the app.
+ */
+export const SHELL_MESSAGE_NAMESPACES = [
+  "about", "compose", "dock", "ohbox", "palette", "rail", "reads", "receipts",
+  "ribbon", "screener", "search", "session", "settings", "tag", "triage",
+] as const;
+
+/**
+ * Replace the en.json module with just those namespaces, at build time.
+ *
+ * A runtime `pick()` would not do: a JSON import compiles to one object literal
+ * and nothing tree-shakes the keys back out, so the strings would still be in the
+ * artifact. This replaces the file's CONTENT before anything reads it, which is why
+ * it is a `load` hook and cannot be an alias.
+ *
+ * It returns JSON, not an ES module, and that is deliberate: `vite:json` transforms
+ * this id afterwards regardless of `enforce`, so emitting `export default …` here
+ * gets handed to its `JSON.parse` and fails the build with "Failed to parse JSON
+ * file". Returning the filtered document lets that plugin do the module conversion
+ * it was going to do anyway.
+ *
+ * An absent namespace ABORTS the build. The alternative is a binary that renders
+ * `rail.ohbox` where a word should be, discovered by a user.
+ */
+function shellMessagesOnly(): Plugin {
+  const target = r("../webapp/messages/en.json");
+  return {
+    name: "ohmail-shell-messages-only",
+    enforce: "pre",
+    load(id) {
+      if (path.resolve(id.split("?")[0]) !== path.resolve(target)) return null;
+      const all = JSON.parse(fs.readFileSync(target, "utf8")) as Record<string, unknown>;
+      const missing = SHELL_MESSAGE_NAMESPACES.filter((ns) => !(ns in all));
+      if (missing.length) {
+        this.error(
+          `apps/webapp/messages/en.json has no ${missing.join(", ")} — ` +
+            `the shell reads ${missing.length > 1 ? "them" : "it"}. ` +
+            `Renamed upstream? Update SHELL_MESSAGE_NAMESPACES in vite.config.ts.`,
+        );
+      }
+      const picked: Record<string, unknown> = {};
+      for (const ns of SHELL_MESSAGE_NAMESPACES) picked[ns] = all[ns];
+      return JSON.stringify(picked);
+    },
+  };
+}
 
 /**
  * The desktop UI bundle: the SAME client shell app.ohmail.app renders, compiled to a
@@ -28,13 +95,17 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
  *     absolute alias resolves identically in the monorepo and in the mirror, and
  *     guarantees one React instance for both.
  *
+ * One further transform, and it is a `load` hook rather than an alias because it
+ * rewrites a module's body: `shellMessagesOnly()` above keeps the marketing site's
+ * copy — nav, pricing, FAQ — out of the executable. See its comment.
+ *
  * `base: "./"` makes every emitted URL relative, so the bundle is origin-agnostic:
  * it works under `tauri://localhost`, `http://tauri.localhost` and `file://`
  * alike, and there is no absolute path for anything to escape through.
  */
 export default defineConfig({
   base: "./",
-  plugins: [react()],
+  plugins: [shellMessagesOnly(), react()],
 
   define: {
     /* apps/webapp/app/shell/engine.tsx branches on this to pick FixturesAdapter
