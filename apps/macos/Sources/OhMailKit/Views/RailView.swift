@@ -81,11 +81,16 @@ public struct RailView: View {
 
     // MARK: Pieces
 
-    /// Two runs, not one string: the second half is accent-ink so the rail
-    /// echoes the "oh." app mark. Split at the word boundary — mail | oh — and
-    /// lower-case, which is how the name is written everywhere a human reads it.
+    /// Two runs, not one string: the ACCENTED run is "oh", so the rail echoes the
+    /// "oh." app mark. Split at the word boundary — oh | mail — and lower-case,
+    /// which is how the name is written everywhere a human reads it. The rename
+    /// moved the accent from the tail to the head; same motif, same reading.
+    ///
+    /// Two runs is also exactly why a grep for the name as one string cannot see
+    /// this line, so `OhMailKitTests.wordmarkReadsOhmail` asserts the CONCATENATED
+    /// text instead — see the note there.
     private var wordmark: some View {
-        (Text("mail").foregroundStyle(p.ink.color) + Text("oh").foregroundStyle(p.accentInk.color))
+        (Text("oh").foregroundStyle(p.accentInk.color) + Text("mail").foregroundStyle(p.ink.color))
             .blanc(.wordmark)
             .padding(.horizontal, 8)
             .padding(.top, 2)

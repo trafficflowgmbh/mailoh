@@ -929,6 +929,53 @@ final class OhMailKitTests: XCTestCase {
                       "overlay layers mark themselves modal")
     }
 
+    /// THE WORDMARK IS SPLIT ACROSS TWO `Text` RUNS, which is exactly why a
+    /// rename sweep cannot see it: the source says `Text("oh")` and
+    /// `Text("mail")`, so `grep -ri mailoh` over this file returns nothing
+    /// however the two runs are ordered. The `mailoh → ohmail` rename left this
+    /// line reading the OLD name for that reason, with an
+    /// `.accessibilityLabel("ohmail")` directly under it contradicting the
+    /// visible text — sighted users and VoiceOver users read different brands.
+    ///
+    /// So this asserts the CONCATENATION of the runs, which is what a person
+    /// actually reads, and asserts the accessibility label agrees with it. Every
+    /// other client that paints the mark in two pieces carries the equivalent
+    /// assertion in its own suite.
+    func testWordmarkReadsOhmailHoweverItIsSplit() throws {
+        let source = try Self.source("Views/RailView.swift")
+        guard let body = source.range(of: "private var wordmark: some View {") else {
+            return XCTFail("RailView no longer declares `wordmark` — this audit is stale")
+        }
+        // The declaration through the end of its `.accessibilityLabel(...)` line.
+        let tail = source[body.upperBound...]
+        guard let stop = tail.range(of: ".accessibilityLabel(") else {
+            return XCTFail("the wordmark no longer carries an accessibility label")
+        }
+        let decl = tail[..<stop.lowerBound]
+
+        var runs: [String] = []
+        var rest = Substring(decl)
+        while let open = rest.range(of: "Text(\"") {
+            let after = rest[open.upperBound...]
+            guard let close = after.range(of: "\"") else { break }
+            runs.append(String(after[..<close.lowerBound]))
+            rest = after[close.upperBound...]
+        }
+        XCTAssertGreaterThan(runs.count, 1, "the wordmark is meant to be split into accent + ink runs")
+        XCTAssertEqual(runs.joined(), "ohmail",
+                       "the rail wordmark reads \"\(runs.joined())\" — lower-case \"ohmail\", however it is split")
+
+        // The accent run is "oh": the rail echoes the "oh." app mark.
+        let accent = runs.filter { decl.contains("Text(\"\($0)\").foregroundStyle(p.accentInk.color)") }
+        XCTAssertEqual(accent, ["oh"], "the accent-ink run must be \"oh\"")
+
+        // And VoiceOver must not read a different brand from the one on screen.
+        let labelled = tail[stop.upperBound...]
+        guard let labelEnd = labelled.range(of: ")") else { return XCTFail("unterminated accessibilityLabel") }
+        XCTAssertEqual(String(labelled[..<labelEnd.lowerBound]), "\"\(runs.joined())\"",
+                       "the accessibility label must say what the visible runs say")
+    }
+
     // MARK: - Body measurement (replaces the duplicate hidden body tree)
 
     func testBodyMetricsGrowWithContentAndAreStable() {

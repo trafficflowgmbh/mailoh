@@ -245,7 +245,7 @@ jobs:
           echo "unique URL strings: $URLS (expected 14)"
           test "$URLS" -eq 14
           # Nothing may point at ohmail infrastructure.
-          ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'ohmail|trafficflow'
+          ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'ohmail|mailoh|trafficflow'
 
       - name: Upload the .msi
         uses: actions/upload-artifact@v7
@@ -380,7 +380,7 @@ jobs:
           echo "unique URL strings: $URLS (expected 13)"
           test "$URLS" -eq 13
           # Nothing may point at ohmail infrastructure.
-          ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'ohmail|trafficflow'
+          ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'ohmail|mailoh|trafficflow'
 
       - name: Upload the AppImage
         uses: actions/upload-artifact@v7

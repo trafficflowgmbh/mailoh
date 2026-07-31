@@ -17,7 +17,7 @@ and nothing more — it takes away no freedom the GPL gives you over the *code*.
 
 | Mark | Where it appears in this tree |
 |---|---|
-| the name **ohmail**, in any casing | throughout — the product name, the macOS bundle `app.ohmail.app`, `ohmail.exe`, `/usr/bin/ohmail`, the Debian package `ohmail` |
+| the name **ohmail**, in any casing | throughout — the product name, the macOS bundle `ohmail.app`, `ohmail.exe`, `/usr/bin/ohmail`, the Debian package `ohmail` |
 | the **"oh." wordmark** | drawn into the icon artwork below |
 | the **app icon** — the "oh." squircle tile | `Resources/ohmail.icns`, `docs/ohmail-icon.png`, `apps/desktop/src-tauri/icons/` (`icon.icns`, `icon.ico`, `icon.png`, `32x32.png`, `64x64.png`, `128x128.png`, `128x128@2x.png`) |
 | the domains **ohmail.app** and **app.ohmail.app** | links in the README and in `Resources/FIRST-RUN.txt` |

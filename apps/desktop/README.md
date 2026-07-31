@@ -187,9 +187,12 @@ a suffix already stated in three other places is a bad trade.
 field by kebab-casing `productName`, and `productName` is `ohmail`, so the
 package name, the binary at `/usr/bin/ohmail`, the icon and the `.desktop`
 entry's `Icon=` and `StartupWMClass` are all the same string: `apt remove
-ohmail` works. This was not always true — `productName` used to be `OhMail`,
+ohmail` works. This was not always true — `productName` used to be `MailOh`,
 which kebab-cased to `mail-oh` and made the package the one thing on the system
-spelled differently from everything else. The Linux CI job asserts
+spelled differently from everything else. (`MailOh` is a historical fact, not a
+brand reference: it is the only string that produces `mail-oh`, and the rename
+sweep briefly turned it into `OhMail`, which kebab-cases to `oh-mail` and made
+the sentence impossible.) The Linux CI job asserts
 `Package: ohmail` against the built artifact, so if a future Tauri changes the
 slug this paragraph goes red instead of quietly going stale.
 
