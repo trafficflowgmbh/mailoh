@@ -126,7 +126,17 @@
     "inviteRequiredAfterAll": "This server is still asking for an invite code. If you have one, paste it here; otherwise write to support@ohmail.app and we will sort it out.",
     "expiredOpen": "The setup session lasts five minutes and this one has expired. Sign in with the email and password you just chose and we will pick up where you left off.",
     "capacityTitle": "We are full just now",
-    "capacityCta": "Put me on the list"
+    "capacityCta": "Put me on the list",
+    "rail_verify": "Email",
+    "step_sent_title": "Check your email",
+    "step_sent_lead": "We’ve sent a message to {email}. Open it and follow the link to finish setting up — it works once and expires in 24 hours.",
+    "sentNote": "The link asks for the password you just chose, so nobody who happens to see the message can use it. If it does not arrive in a few minutes, check your spam folder.",
+    "step_verify_title": "Confirm your email",
+    "step_verify_lead": "We need to know {email} reaches you before you choose a plan or connect a mailbox. Open the link we sent, or ask for a fresh one.",
+    "verifyWhy": "It is the address we would use to reach you about your account, and the only way back in if you ever lose your passkey and your recovery codes.",
+    "verifyResend": "Send me a new link",
+    "verifyResent": "On its way",
+    "verifyRecheck": "I’ve confirmed it — continue"
   },
   "rail": {
     "compose": "Compose",
@@ -669,7 +679,7 @@
     "joining": "Adding you…",
     "errorTitle": "That did not go through.",
     "successTitle": "You’re on the list.",
-    "successBody": "{email} is on the list. If a confirmation arrives, that’s us; after that we write when there is something to say — the local desktop engine landing, or a place opening on Cloud — and about nothing else.",
+    "successBody": "{email} is on the list, and a confirmation is on its way to it now. After that we write when there is something to say — the local desktop engine landing, or a place opening on Cloud — and about nothing else.",
     "done": "Done",
     "close": "Close",
     "errorBody": "We could not record your signup just now. Try again in a moment — or write to support@ohmail.app and we will add you by hand.",
@@ -700,5 +710,21 @@
     "illusReads": "Reads",
     "illusReceipts": "Receipts",
     "illusNo": "Never"
+  },
+  "verify": {
+    "title": "Confirm your email",
+    "lead": "One step, and your ohmail account is ready to set up.",
+    "tokenLabel": "Confirmation code from your email",
+    "passwordLabel": "Your password",
+    "passwordHint": "The password you chose when you signed up. We ask for it here so that only you can confirm this address — the link on its own is not enough.",
+    "confirm": "Confirm my email",
+    "working": "Confirming…",
+    "lostLink": "Link expired or already used? Sign in with your email and password and we will send you a fresh one.",
+    "doneTitle": "Your email is confirmed",
+    "doneBody": "Thank you — this address is confirmed. Sign in to carry on where you left off.",
+    "signIn": "Sign in",
+    "unavailableTitle": "Not available here",
+    "unavailableBody": "This copy of ohmail has no server attached, so there is nothing to confirm against.",
+    "footer": "Passkeys, two-factor, and no password to leak."
   }
 }
