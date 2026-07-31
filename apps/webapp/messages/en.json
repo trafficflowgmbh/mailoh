@@ -740,7 +740,7 @@
     "gone4": "Your passkeys, authenticator and recovery codes, and every session on every device.",
     "goneWhen": "One database transaction, immediately, and the copy in this browser is wiped too.",
     "keptTitle": "Kept",
-    "kept1": "One billing row with a random id and no name, and the invoices and credit ledger attached to it. Your address on it is overwritten. Financial records carry a retention obligation that Art. 17(3)(b) preserves.",
+    "kept1": "One billing row with a random id and no name, plus the credit ledger, the subscription record and the link to Stripe. Your address on it is overwritten. Financial records carry a retention obligation that Art. 17(3)(b) preserves.",
     "keptSub": "Your {plan} subscription is cancelled immediately as part of this. The days already paid for are not refunded.",
     "backups": "Backups expire on their own schedule.",
     "backupsLink": "Privacy policy",
