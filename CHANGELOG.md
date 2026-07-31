@@ -12,8 +12,36 @@ does not connect to a mailbox. See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+Next is the engine slice — IMAP behind today's `AppState` seam, and the thing
+that makes these apps a mail client rather than a preview of one. See
+[Roadmap](README.md#roadmap) and issue #1.
+
+## [0.2.0-preview] — 2026-07-31
+
+The same interface under its real name. **Still a preview**: this build does not
+connect to a mailbox either, and is not meant to until the engine slice lands.
+0.1.0-preview's artifacts were left where they are rather than relabelled, so
+this is the first release whose files are called `ohmail_*`.
+
 ### Changed
 
+- **The version is 0.2.0, not 0.1.1.** Nothing here is a patch: the product is
+  called something else than it was, and the installers a stranger downloads have
+  different names. It is not 1.0 or a beta either, because the sentence above is
+  still true — 0.x means a preview of the interface, and it will keep meaning
+  that until the engine ships. `tauri.conf.json` and `Cargo.toml` carry the bare
+  `0.2.0` the MSI bundler requires; the `-preview` suffix lives in
+  `package.json`, `Info.plist`, the tag and this file.
+- **The published message catalogue is a single file, and it grew.**
+  `apps/webapp/messages/en.json` is shared with the Cloud client and is published
+  whole, so it now also carries the strings for surfaces the desktop app has
+  never rendered — a sign-up wizard, plan cards, a marketing page. Those screens
+  are Cloud-only and are not part of this repository; their text is compiled into
+  the Windows/Linux bundle only because the catalogue is not split. Cosmetic, and
+  worth knowing before you run `strings` over a binary and find a price in it.
+- **The demo decision left the React module** so it can be tested on its own,
+  and the plan card became one template rather than three hard-coded plans.
+  Neither changes what the desktop app renders.
 - **Renamed: `mailoh` → `ohmail`, on `ohmail.app`.** The mark is unchanged — the
   same outlined "oh." with its terracotta period, the same icon files. Only the
   name set as type moved. This reaches everything a user can see or type: the app
@@ -23,13 +51,38 @@ does not connect to a mailbox. See [Status](README.md#status--read-this-first).
   (`trafficflowhq/ohmail`). The Debian `Package:` field follows `productName` and
   is now `ohmail`, so the uninstall command is `apt remove ohmail`.
 
-  Entries below this line were written under the old name and are left as they
-  were: they describe releases that really did ship as `mailoh`, and the
-  `0.1.0-preview` assets really are called `mailoh_*`. A fresh release is cut
-  from the renamed build rather than relabelling those files.
+  The `0.1.0-preview` section below was written under the old name and is left
+  as it was: it describes a release that really did ship as `mailoh`, and its
+  assets really are called `mailoh_*`. A fresh release is cut from the renamed
+  build rather than relabelling those files.
 
-Next is the engine slice — IMAP behind today's `AppState` seam. See
-[Roadmap](README.md#roadmap).
+  Precisely, for anyone comparing the two release pages: 0.1.0-preview's six
+  files are `MailOh.dmg`, `MailOh.app.zip`, `MailOh_0.1.0_x64_en-US.msi`,
+  `MailOh_0.1.0_x64-setup.exe`, `MailOh_0.1.0_amd64.AppImage` and
+  `MailOh_0.1.0_amd64.deb` — the casing `productName` carried at the time.
+  Renaming them now would invalidate the six checksums published against them,
+  which is the whole reason a new release exists instead.
+
+### Fixed
+
+- **The rail wordmark still read the old name.** It is painted as two `Text` runs
+  so the accent falls on "oh", which means the brand never appears in the source
+  as one string and a grep over the tree cannot see it — the rename sweep missed
+  it, and its `.accessibilityLabel` had begun contradicting its own visible text,
+  telling a sighted user and a VoiceOver user two different names.
+  `testWordmarkReadsOhmailHoweverItIsSplit` reconstructs the concatenation of the
+  runs and asserts all three agree; verified by mutation.
+- **Two claims the rename sweep turned false.** `apps/desktop/README.md` said
+  `productName` "used to be `OhMail`, which kebab-cased to `mail-oh`" — it cannot:
+  `OhMail` kebab-cases to `oh-mail`, and the value that produces `mail-oh` is
+  `MailOh`, which is what it really was. `TRADEMARK.md` named the macOS bundle
+  `app.ohmail.app`; the bundle is `ohmail.app`, and `app.ohmail.app` is a website.
+- **The CI binary audit was renamed along with everything else**, to
+  `ohmail|trafficflow` — but during a rename the old name is exactly what you
+  still want asserted against. Both jobs now match `ohmail|mailoh|trafficflow`.
+- The "Desktop or Cloud" table in the README described the product the engine
+  will make possible as though it already existed. The rows waiting on it are
+  marked, and the paragraph above the table says so.
 
 ## [0.1.0-preview] — 2026-07-30
 
@@ -130,5 +183,6 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.1.0-preview...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.2.0-preview...HEAD
+[0.2.0-preview]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.2.0-preview
 [0.1.0-preview]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.1.0-preview

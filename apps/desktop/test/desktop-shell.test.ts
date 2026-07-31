@@ -54,8 +54,39 @@ describe("tauri.conf.json", () => {
 
   it("is ohmail, at the preview version, under its own identifier", () => {
     expect(conf.productName).toBe("ohmail");
-    expect(conf.version).toBe("0.1.0");
+    // Bare, with no `-preview` suffix: the MSI bundler rejects a semver
+    // pre-release identifier, and this number reaches the installer filenames
+    // (`ohmail_0.2.0_amd64.deb`).
+    expect(conf.version).toBe("0.2.0");
     expect(conf.identifier).toBe("io.ohmail.desktop.tauri");
+  });
+
+  // The version is written in four places in two spellings — bare here and in
+  // Cargo.toml, `-preview`-suffixed in package.json and Info.plist — and a
+  // release bumps all four by hand. Bumping three of them is the easy mistake,
+  // and it ships an installer whose filename disagrees with the tag it was cut
+  // from. So the NUMBER is asserted to be one number, whatever it is: this test
+  // does not care which version it is, only that nothing was left behind.
+  it("carries one version number, in both of its spellings", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(APP, "package.json"), "utf8")) as {
+      version: string;
+    };
+    const cargo = fs.readFileSync(path.resolve(APP, "src-tauri/Cargo.toml"), "utf8");
+    const lock = fs.readFileSync(path.resolve(APP, "src-tauri/Cargo.lock"), "utf8");
+    const plist = fs.readFileSync(
+      path.resolve(APP, "../../public/ohmail/Resources/Info.plist"),
+      "utf8",
+    );
+    const shortVersion = /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(
+      plist,
+    )?.[1];
+
+    expect(pkg.version).toBe(`${conf.version}-preview`);
+    expect(shortVersion).toBe(`${conf.version}-preview`);
+    // The crate the installers are built from, and the lockfile the mirror
+    // publishes so a stranger can reproduce them.
+    expect(cargo).toContain(`\nversion = "${conf.version}"\n`);
+    expect(lock).toContain(`name = "ohmail"\nversion = "${conf.version}"\n`);
   });
 
   it("does not collide with the SwiftUI client's bundle id", () => {

@@ -10,6 +10,7 @@ A native SwiftUI client for macOS and a Tauri shell for Windows and Linux.
 Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
+[![latest release](https://img.shields.io/badge/download-v0.2.0--preview-a3461c)](https://github.com/trafficflowhq/ohmail/releases/latest)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -22,19 +23,46 @@ Free, GPL-3.0, no account, no subscription — this repository is the whole thin
 
 ## What this repository is
 
+**ohmail is email that asks your permission before it takes your attention.** A
+first-time sender waits in the Screener until you say where they belong; after
+that the Ohbox holds only people you said yes to, newsletters skim past in Reads,
+and receipts file themselves. It runs on the mailbox you already have — any IMAP
+provider — and organises it **in place**, in real folders on your real server, so
+leaving costs you nothing.
+
 **This repository is the free ohmail desktop apps** — macOS, Windows and Linux.
 All of them, all of their source, under GPL-3.0. There is no paid edition of the
 desktop app, no feature held back for one, and no telemetry reporting back on
 you.
 
-**ohmail Cloud — the hosted sync service — is the commercial product and is not
-open source.** It is what puts your mail on your phone and on the web and keeps
-it organised while your laptop is shut. None of its code is in this repository:
-no backend, no billing, no sync server. It is entirely optional, and the desktop
-app never asks you for it.
+**ohmail Cloud is the optional hosted half, and it is what pays for this one.**
+Your phone cannot hold a connection to your mailbox open all day; something has
+to stay awake to notice new mail, run it past the Screener and file it. Cloud is
+that work done on a machine that never sleeps, plus the web and mobile apps and
+push. It is a commercial service with a codebase of its own, built by the same
+people, and the desktop app neither asks for it nor needs it.
+[Desktop or Cloud](#desktop-or-cloud) is the full comparison, prices included.
 
-[Desktop or Cloud](#desktop-or-cloud) explains the split properly, including
-what Cloud costs.
+## The current release — v0.2.0-preview
+
+**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/latest)**
+`ohmail.dmg` for macOS, an `.msi` and an NSIS `-setup.exe` for Windows, an
+`.AppImage` and a `.deb` for Linux. Every file was built by GitHub Actions from
+the tree this tag points at, and the run that made them prints the SHA-256 of
+each one. Nothing is signed on any platform — see the per-platform install notes
+under [Download a build](#download-a-build) before you double-click anything.
+
+**It is a preview of the interface. It does not connect to a mailbox.** There is
+no IMAP client and no HTTP client compiled into any of these builds. What you get
+is every screen of the product, working, on a small fictional mailbox that ships
+inside the app — so you can screen a sender, skim Reads, search, compose and
+decide whether you want the real thing. The local mail engine is what we are
+building now; it is [issue #1](https://github.com/trafficflowhq/ohmail/issues/1).
+
+This is the first release under the name **ohmail**. v0.1.0-preview shipped as
+`mailoh` and its files are still named that way; it was not relabelled, because
+renaming a released file invalidates every checksum published against it.
+[CHANGELOG.md](CHANGELOG.md) has what changed between the two.
 
 ## Status — read this first
 
@@ -113,20 +141,23 @@ brands, no scraped inboxes.
 
 ## Download a build
 
-Every push to `main` builds all three platforms on GitHub-hosted runners and
-attaches the installers to the run:
-[latest builds →](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
+**[Releases](https://github.com/trafficflowhq/ohmail/releases/latest) is the
+place to start** — the installers are attached there, they need no GitHub
+account, and each release names the run that built it.
 
-The artifact list is at the bottom of a run page, and GitHub requires you to be
-signed in to download artifacts. **Each run's summary prints the SHA-256 of every
-artifact it produced**, plus the toolchain and the runner, so you can check what
-you downloaded against what the run made.
+Every push to `main` also builds all three platforms and attaches the installers
+to that run: [latest builds →](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml).
+That is how to get a build newer than the last release. The artifact list is at
+the bottom of a run page and GitHub requires you to be signed in to download from
+there. **Each run's summary prints the SHA-256 of every artifact it produced**,
+plus the toolchain and the runner, so you can check what you downloaded against
+what the run made.
 
 | Platform | Artifacts | Runner |
 |---|---|---|
 | **macOS** | `ohmail.dmg` (universal, arm64 + x86_64), `ohmail.app.zip`, the full screenshot set | `macos-15` |
-| **Windows** | `ohmail_0.1.0_x64_en-US.msi`, `ohmail_0.1.0_x64-setup.exe` (NSIS) | `windows-latest` |
-| **Linux** | `ohmail_0.1.0_amd64.AppImage`, `ohmail_0.1.0_amd64.deb` | `ubuntu-latest` |
+| **Windows** | `ohmail_0.2.0_x64_en-US.msi`, `ohmail_0.2.0_x64-setup.exe` (NSIS) | `windows-latest` |
+| **Linux** | `ohmail_0.2.0_amd64.AppImage`, `ohmail_0.2.0_amd64.deb` | `ubuntu-latest` |
 
 **Nothing here is signed**, on any platform. Code-signing certificates cost money
 ohmail has not spent yet. We would rather say that plainly than have you discover
@@ -173,12 +204,12 @@ Requires Windows 10 or newer, plus the WebView2 runtime as described above.
 > **The AppImage needs the executable bit**, which GitHub's artifact zip does not
 > preserve:
 > ```bash
-> chmod +x ohmail_0.1.0_amd64.AppImage && ./ohmail_0.1.0_amd64.AppImage
+> chmod +x ohmail_0.2.0_amd64.AppImage && ./ohmail_0.2.0_amd64.AppImage
 > ```
 > If it exits immediately on a distribution that has not enabled unprivileged
 > user namespaces, run it with `--appimage-extract-and-run`.
 
-The `.deb` installs with `sudo apt install ./ohmail_0.1.0_amd64.deb` and pulls in
+The `.deb` installs with `sudo apt install ./ohmail_0.2.0_amd64.deb` and pulls in
 WebKitGTK. It is **not** in any repository, so it will never auto-update — and
 there is no update checker in this build at all.
 

@@ -178,10 +178,13 @@ cannot cross-compile Windows or Linux installers. Two apps sharing a
 `CFBundleIdentifier` are indistinguishable to LaunchServices, which is exactly
 the collision the fallback exists for.
 
-The bundle version is **`0.1.0`**, and the release is called **0.1.0-preview**
+The bundle version is **`0.2.0`**, and the release is called **0.2.0-preview**
 in `package.json`, the README and the run summaries. Not a slip: the MSI
 bundler rejects a semver pre-release identifier, and a red Windows job to carry
-a suffix already stated in three other places is a bad trade.
+a suffix already stated in three other places is a bad trade. The bare number is
+what reaches the installer filenames — `ohmail_0.2.0_amd64.deb`,
+`ohmail_0.2.0_x64_en-US.msi` — so the two spellings differ by a suffix and never
+by a number.
 
 **One word on Linux, everywhere.** The bundler derives the `.deb`'s `Package:`
 field by kebab-casing `productName`, and `productName` is `ohmail`, so the

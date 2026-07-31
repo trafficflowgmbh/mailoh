@@ -1,6 +1,6 @@
 {
   "name": "@ohmail/desktop",
-  "version": "0.1.0-preview",
+  "version": "0.2.0-preview",
   "private": true,
   "type": "module",
   "description": "ohmail for Windows and Linux — a Tauri v2 shell around the ohmail client UI, fixtures-only, zero network.",
