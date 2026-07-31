@@ -300,13 +300,18 @@ yourself. See the Windows note above.
 mailoh comes in two halves, and **this repository is the whole of the first
 one**. Here is the honest comparison, including the parts where Desktop wins.
 
+The Desktop column describes the product the local engine will make possible.
+Per [Status](#status--read-this-first), that engine is not shipped: what you can
+run today is the interface on a fictional mailbox. Rows marked 🔜 are the ones
+waiting on it.
+
 |  | **Desktop** — this repository | **Cloud** — optional |
 |---|---|---|
 | **Price** | **Free, forever.** Not a trial, not a freemium tier. | $9 / $15 / $29 per month |
-| **Mailboxes** | As many as you like | 2 / 5 / 10 |
-| **Where your mail is processed** | **Your machine. Only.** It never touches our servers — there is no server to touch. | EU-hosted, encrypted in transit and at rest — not end-to-end — solely to serve you, deletable |
+| **Mailboxes** | 🔜 As many as you like | 2 / 5 / 10 |
+| **Where your mail is processed** | 🔜 **Your machine. Only.** It never touches our servers — there is no server to touch. | EU-hosted: a full copy of your mail, encrypted at rest, **not** end-to-end — solely to serve you, deletable |
 | **Account** | **None.** Nothing to sign up for, nothing to cancel. | Yes |
-| **AI** | Bring your own API key, or run [Ollama](https://ollama.com) locally so nothing leaves your machine at all | A monthly allowance of managed AI actions is included (~2k / 6k / 20k) |
+| **AI** | 🔜 Bring your own API key, or run a local model such as [Ollama](https://ollama.com) so nothing leaves your machine at all. Not built yet — no model of any kind is wired into this repository. | A monthly allowance of managed AI actions (~2k / 6k / 20k). 🔜 No live model is connected in production yet either; the metering that governs it is. |
 | **Web and mobile apps** | — | Yes |
 | **Push notifications** | — | Yes |
 | **Works while your laptop is shut** | — | Yes — mail is screened and filed as it arrives |
@@ -320,9 +325,16 @@ to stay awake to notice new mail, run it past the Screener and file it. On
 Desktop that something is your computer, while it is on. Cloud is that same work,
 done on a machine that does not sleep.
 
-That is the entire difference. **The Screener, the Ohbox, the tags, the
-organise-in-place model and the privacy promise are identical on both.** Desktop
-is not a demo of Cloud.
+**The Screener, the Ohbox, the tags and the organise-in-place model are identical
+on both — the privacy posture deliberately is not.** That is the axis of the whole
+table above: Desktop is designed so your mail never leaves your machine, while
+Cloud necessarily holds a copy of it to deliver push, mobile and search. Both are
+honest positions; they are not the same position, and picking between them is the
+point.
+
+Desktop is not *planned* as a demo of Cloud — it is meant to be a complete product
+on its own. Today, before the local engine lands, it does run on fixtures, so
+"preview" is the fair word for what you can download right now.
 
 ### If you do want Cloud
 
