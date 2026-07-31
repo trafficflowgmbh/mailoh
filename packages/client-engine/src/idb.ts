@@ -200,6 +200,24 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     // of it. An ownership check that ran after hydration would be a check on data already
     // in memory and already renderable.
     await this.bindOwner(db);
+    /**
+     * YIELD TO A DELETE. Measured, not theorised (S19).
+     *
+     * `deleteDatabase` fires `versionchange` on every OPEN connection and is BLOCKED until
+     * they all close. `deleteDatabase` here resolves on `onblocked` deliberately — hygiene
+     * must not hang — so a connection that ignores `versionchange` turns "the local copy is
+     * wiped" into a silent no-op. And the connection that blocks it is normally OUR OWN: the
+     * sign-out and account-erasure paths both run in the page whose engine holds the mirror.
+     *
+     * Found by deleting a live account through the product's own screen and then asking the
+     * browser what databases it still had: `ohmail-mirror:<account>` was still there, and a
+     * subsequent `open()` hung behind the pending delete. Every existing test in
+     * `idb-owner.test.ts` called `close()` first, so none of them could see it.
+     */
+    db.onversionchange = () => {
+      db.close();
+      if (this.db === db) this.db = null;
+    };
     this.db = db;
     return db;
   }
