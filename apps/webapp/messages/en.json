@@ -5,7 +5,7 @@
     "ogAlt": "The ohmail app icon — a lowercase \"oh.\" on the canvas tile"
   },
   "ribbon": {
-    "label": "<b>Demo — fixtures only.</b> Nothing leaves this tab.",
+    "label": "<b>Demo.</b> Invented mail. Nothing leaves this tab.",
     "dismiss": "Dismiss"
   },
   "gate": {
@@ -376,7 +376,7 @@
   "about": {
     "title": "ohmail — demo",
     "close": "Close",
-    "p1": "This is the real ohmail client running on a fixture mailbox: the same sync engine that will talk to your IMAP servers, bootstrapped from local demo data. Every click lands as an optimistic mutation and is confirmed by the demo adapter — no network, nothing leaves this tab.",
+    "p1": "A demo mailbox, invented for it — nobody real, nothing real. Every key and every click works, and none of it leaves this tab: there is no network here at all.",
     "p2": "The Screener holds first-time senders until you decide. One click files a sender to Ohbox, Reads or Receipts — the ✓ half also marks the held mail read — and the decision becomes a rule for future mail. Reads and Receipts share a skim stream where scrolling past an item marks it seen at the waterline. Tags group messages across views without moving them.",
     "keys": "Keyboard: j/k, ↵, y + o/r/c/n/x in the Screener (⇧ marks read), t, /, c, ⌘K.",
     "titleLive": "ohmail",
