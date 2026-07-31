@@ -50,12 +50,22 @@ export function SettingsView({
   tags,
   tagCounts,
   accountSection,
+  mailboxSection,
 }: {
   mailboxes: MailboxEntity[];
   tags: TagDTO[];
   tagCounts: Record<string, number>;
   /** The Cloud client's Account pane, or absent — see the header. */
   accountSection?: ReactNode;
+  /**
+   * The Cloud client's Mailboxes pane, REPLACING the mirror-backed list below.
+   *
+   * Same seam and same reason as {@link accountSection}: connecting a mailbox means
+   * `POST /mailboxes`, a step-up ceremony and `app/api-client`, none of which may exist in
+   * the Desktop mirror. Absent ⇒ the shared fixture list, which is the correct pane for
+   * Desktop and for `?demo=1`.
+   */
+  mailboxSection?: ReactNode;
 }) {
   const t = useTranslations("settings");
   const toast = useToast();
@@ -187,18 +197,27 @@ export function SettingsView({
             </SettingsSection>
           ) : null}
 
+          {/* MAILBOXES. The Cloud client REPLACES this pane wholesale (`mailboxSection`),
+              because the list below cannot be right for it: these are the MIRROR's mailbox
+              entities, and `"mailbox"` is not an `EntityType` in the change log
+              (`packages/db/src/change-log.ts`), so `/sync` never emits one. Only the
+              FixturesAdapter seeds them — which is exactly right for Desktop and for the
+              demo, and always empty for a real account. See
+              `(product)/mailbox/MailboxSection.tsx`. */}
           {pane === "mailboxes" ? (
-            <SettingsSection>
-              {mailboxes.map((m) => (
-                <SettingsRow
-                  key={m.id}
-                  label={m.address}
-                  description={`${m.provider} · ${m.protocol}`}
-                  value={t("mailboxStatus")}
-                />
-              ))}
-              <p className="set-note-inline">{t("mailboxNote")}</p>
-            </SettingsSection>
+            mailboxSection ?? (
+              <SettingsSection>
+                {mailboxes.map((m) => (
+                  <SettingsRow
+                    key={m.id}
+                    label={m.address}
+                    description={`${m.provider} · ${m.protocol}`}
+                    value={t("mailboxStatus")}
+                  />
+                ))}
+                <p className="set-note-inline">{t("mailboxNote")}</p>
+              </SettingsSection>
+            )
           ) : null}
 
           {pane === "tags" ? (

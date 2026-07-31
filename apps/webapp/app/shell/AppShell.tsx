@@ -79,6 +79,8 @@ export function AppShell({
   demo,
   resolveOwner,
   accountSection,
+  mailboxSection,
+  aboutSection,
 }: {
   demo: boolean;
   resolveOwner?: OwnerResolver;
@@ -88,15 +90,31 @@ export function AppShell({
    * Absent on Desktop, which is standalone and has no account.
    */
   accountSection?: ReactNode;
+  /** The Cloud client's Settings → Mailboxes pane. Same seam. */
+  mailboxSection?: ReactNode;
+  /**
+   * The BODY of the (i) panel for a live account. Same seam again, and it has to be: the
+   * facts worth showing there — which mailbox is connected and when it last synced — come
+   * from `GET /mailboxes`, which this shared shell may not call. Absent ⇒ the demo body.
+   */
+  aboutSection?: ReactNode;
 }) {
   return (
     <EngineProvider demo={demo} resolveOwner={resolveOwner}>
-      <ShellInner accountSection={accountSection} />
+      <ShellInner
+        accountSection={accountSection}
+        mailboxSection={mailboxSection}
+        aboutSection={aboutSection}
+      />
     </EngineProvider>
   );
 }
 
-function ShellInner({ accountSection }: { accountSection?: ReactNode }) {
+function ShellInner({ accountSection, mailboxSection, aboutSection }: {
+  accountSection?: ReactNode;
+  mailboxSection?: ReactNode;
+  aboutSection?: ReactNode;
+}) {
   const demo = useDemoMode();
   const t = useTranslations();
   const engine = useEngine();
@@ -652,6 +670,10 @@ function ShellInner({ accountSection }: { accountSection?: ReactNode }) {
                    an Account pane there would offer to erase something that does not
                    exist. */
                 accountSection={demo ? undefined : accountSection}
+                /* Same rule: `?demo=1` has no session, so "connect a mailbox" there would
+                   be a form posting to a server this tab is not talking to. The demo keeps
+                   the fixture list, which is the honest thing for it to show. */
+                mailboxSection={demo ? undefined : mailboxSection}
               />
             ) : null}
           </main>
@@ -738,9 +760,17 @@ function ShellInner({ accountSection }: { accountSection?: ReactNode }) {
         />
       ) : null}
 
-      {/* About */}
+      {/* (i) — AND IT MUST KNOW WHICH MODE IT IS IN.
+          This panel used to be unconditional: every signed-in customer opened it and read
+          "ohmail — demo / This is the real ohmail client running on a fixture mailbox…".
+          It was the implementation talking — the sentence explained the sync engine's
+          bootstrap to somebody who wanted to know whether their own mail was arriving — and
+          on a live account it was also simply false.
+          Live now shows the facts that answer the question actually being asked (which
+          mailbox, synced when, which build), supplied by `aboutSection` because this shared
+          shell cannot call the API. The demo keeps a demo panel, because there it is true. */}
       {aboutOpen ? (
-        <div className="about" role="dialog" aria-label={t("about.title")}>
+        <div className="about" role="dialog" aria-label={demo ? t("about.title") : t("about.titleLive")}>
           <button
             type="button"
             className="x"
@@ -750,10 +780,16 @@ function ShellInner({ accountSection }: { accountSection?: ReactNode }) {
             <Icon name="x" />
           </button>
           <h3>
-            <Icon name="open" /> {t("about.title")}
+            <Icon name="open" /> {demo ? t("about.title") : t("about.titleLive")}
           </h3>
-          <p>{t("about.p1")}</p>
-          <p>{t("about.p2")}</p>
+          {demo ? (
+            <>
+              <p>{t("about.p1")}</p>
+              <p>{t("about.p2")}</p>
+            </>
+          ) : (
+            aboutSection
+          )}
           <p>{t("about.keys")}</p>
         </div>
       ) : null}
