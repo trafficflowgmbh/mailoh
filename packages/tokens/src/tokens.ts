@@ -1,5 +1,5 @@
 /**
- * @mailoh/tokens — typed design tokens for the Blanc design system.
+ * @ohmail/tokens — typed design tokens for the Blanc design system.
  *
  * Direction 03c · "shadow-sculpted white": white panels on an off-white
  * canvas, structure read from layered warm-tinted shadows instead of

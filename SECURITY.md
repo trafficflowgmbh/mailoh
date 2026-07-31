@@ -2,8 +2,8 @@
 
 ## Reporting a vulnerability
 
-Email **support@mailoh.io** with `SECURITY` in the subject. That address is the
-one published on [mailoh.io](https://mailoh.io) and is monitored by the team at
+Email **support@ohmail.app** with `SECURITY` in the subject. That address is the
+one published on [ohmail.app](https://ohmail.app) and is monitored by the team at
 TrafficFlow GmbH; there is no separate security alias yet, and we would rather
 say so than publish an address nobody reads.
 
@@ -26,13 +26,13 @@ the shared client UI they render, the build and packaging scripts, and the CI
 workflow.
 
 Out of scope here, but still worth reporting to the same address:
-mailoh.io, mailoh.app, and the mailoh Cloud backend. None of that code lives in
+ohmail.app, app.ohmail.app, and the ohmail Cloud backend. None of that code lives in
 this repository.
 
-## mailoh Cloud
+## ohmail Cloud
 
 The same address, the same commitments, and the same 5-working-day
-acknowledgement cover **mailoh.io, mailoh.app and the Cloud backend** — the code
+acknowledgement cover **ohmail.app, app.ohmail.app and the Cloud backend** — the code
 is not published, but the disclosure policy is, and reports about it are as
 welcome as reports about this repository. Two limits, stated so nobody has to
 guess: please do not test against another person's account or mailbox, and
@@ -40,7 +40,7 @@ please do not run load or denial-of-service tests against the hosted service.
 Cloud mail is encrypted in transit and at rest but is **not** end-to-end
 encrypted — the service has to read mail to file and search it. The subprocessor
 list and the retention table are published at
-<https://mailoh.io/subprocessors>; the conditions under which a human at
+<https://ohmail.app/subprocessors>; the conditions under which a human at
 TrafficFlow can reach production data are written down in the product privacy
 policy, which publishes before the first real mailbox connects.
 If personal data is ever breached we notify the competent
@@ -65,7 +65,7 @@ classes of issues:
   read no file and spawn no process. A way around any of that is exactly the
   kind of report we want.
 - Because the interface is embedded **uncompressed**, you can audit a downloaded
-  binary directly: `strings -a mailoh | grep -oE 'https?://[^ ]+' | sort -u`.
+  binary directly: `strings -a ohmail | grep -oE 'https?://[^ ]+' | sort -u`.
 - There are **no credentials**, no keychain use, and no account.
 - The CI-built artifacts are **unsigned**: ad-hoc signature only on macOS, no
   Authenticode signature on Windows, nothing on Linux. That is a distribution

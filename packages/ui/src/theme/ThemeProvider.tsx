@@ -65,7 +65,7 @@ function readStored(storageKey: string): ThemePreference | null {
  *
  *   <script dangerouslySetInnerHTML={{ __html: themeInitScript() }} />
  */
-export function themeInitScript(storageKey = "mailoh.theme"): string {
+export function themeInitScript(storageKey = "ohmail.theme"): string {
   const key = JSON.stringify(storageKey);
   return `(function(){try{var t=localStorage.getItem(${key});if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}})()`;
 }
@@ -81,7 +81,7 @@ export interface ThemeProviderProps {
 export function ThemeProvider({
   children,
   defaultPreference = "system",
-  storageKey = "mailoh.theme",
+  storageKey = "ohmail.theme",
 }: ThemeProviderProps) {
   // null = not yet hydrated: render with the deterministic default and do
   // NOT touch <html> — the themeInitScript stamp stays in charge until the

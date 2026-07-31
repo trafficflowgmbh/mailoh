@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 /**
  * The Tauri shell's security posture, asserted.
  *
- * Everything mailoh Desktop promises — no network, no filesystem, no commands,
+ * Everything ohmail Desktop promises — no network, no filesystem, no commands,
  * no remote origin — lives in four declarative files that nothing else in the
  * repository reads. A silent edit to any of them would keep every other test
  * green while the app quietly grew a capability, so they are checked here in
@@ -52,22 +52,22 @@ describe("tauri.conf.json", () => {
     };
   };
 
-  it("is mailoh, at the preview version, under its own identifier", () => {
-    expect(conf.productName).toBe("mailoh");
+  it("is ohmail, at the preview version, under its own identifier", () => {
+    expect(conf.productName).toBe("ohmail");
     expect(conf.version).toBe("0.1.0");
-    expect(conf.identifier).toBe("io.mailoh.desktop.tauri");
+    expect(conf.identifier).toBe("io.ohmail.desktop.tauri");
   });
 
   it("does not collide with the SwiftUI client's bundle id", () => {
-    // apps/macos ships io.mailoh.desktop. The Tauri config can also produce a
+    // apps/macos ships io.ohmail.desktop. The Tauri config can also produce a
     // macOS bundle (it is how this shell is verified locally), and two apps
     // sharing a CFBundleIdentifier are indistinguishable to LaunchServices.
     const plist = fs.readFileSync(
-      path.resolve(APP, "../../public/mailoh/Resources/Info.plist"),
+      path.resolve(APP, "../../public/ohmail/Resources/Info.plist"),
       "utf8",
     );
     const macOsId = /<key>CFBundleIdentifier<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
-    expect(macOsId).toBe("io.mailoh.desktop");
+    expect(macOsId).toBe("io.ohmail.desktop");
     expect(conf.identifier).not.toBe(macOsId);
     expect(conf.identifier.startsWith(`${macOsId}.`)).toBe(true);
   });

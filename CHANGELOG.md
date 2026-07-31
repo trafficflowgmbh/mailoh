@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the mailoh desktop apps are recorded here.
+All notable changes to the ohmail desktop apps are recorded here.
 
 The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -12,6 +12,22 @@ does not connect to a mailbox. See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Changed
+
+- **Renamed: `mailoh` → `ohmail`, on `ohmail.app`.** The mark is unchanged — the
+  same outlined "oh." with its terracotta period, the same icon files. Only the
+  name set as type moved. This reaches everything a user can see or type: the app
+  and window titles, the macOS bundle identifier (`io.mailoh.desktop` →
+  `io.ohmail.desktop`) and its Tauri variant, the installer filenames, the Swift
+  module and product names, and the repository itself
+  (`trafficflowhq/ohmail`). The Debian `Package:` field follows `productName` and
+  is now `ohmail`, so the uninstall command is `apt remove ohmail`.
+
+  Entries below this line were written under the old name and are left as they
+  were: they describe releases that really did ship as `mailoh`, and the
+  `0.1.0-preview` assets really are called `mailoh_*`. A fresh release is cut
+  from the renamed build rather than relabelling those files.
+
 Next is the engine slice — IMAP behind today's `AppState` seam. See
 [Roadmap](README.md#roadmap).
 
@@ -22,33 +38,33 @@ no network in any of them.
 
 ### Added
 
-- **mailoh for macOS** — a native SwiftUI client. Every surface: Ohbox, Screener
+- **ohmail for macOS** — a native SwiftUI client. Every surface: Ohbox, Screener
   (two-pane, decision bar, bulk undo), Reads with its waterline, Receipts,
   triage piles with the Reply Run, tags, search, compose, settings. Light and
   dark, down to a 390 pt window, keyboard-first with a ⌘K palette. Ships with 99
   tests and a `--smoke` render check that hosts every route offscreen and fails
   if anything draws nothing. (2026-07-30)
-- **mailoh for Windows and Linux** — a Tauri v2 shell rendering the same
+- **ohmail for Windows and Linux** — a Tauri v2 shell rendering the same
   interface, built by Vite from the shared React shell rather than forked. The
   webview is locked down: `"permissions": []`, `withGlobalTauri` off,
   `assetProtocol` disabled, no `invoke_handler`, no plugins, and a CSP of
   `connect-src 'none'`. `offline-guard.ts` replaces fetch, XHR, WebSocket,
   EventSource and sendBeacon with functions that throw, so "no network" is
   testable rather than merely claimed. (2026-07-30)
-- **The design system** — `@mailoh/tokens` (colour, type, spacing, radii,
-  shadows, motion, z, in light and dark), `@mailoh/ui` (34 components, 2 hooks)
-  and `@mailoh/fixtures` (the demo mailbox everything renders). The tokens carry
+- **The design system** — `@ohmail/tokens` (colour, type, spacing, radii,
+  shadows, motion, z, in light and dark), `@ohmail/ui` (34 components, 2 hooks)
+  and `@ohmail/fixtures` (the demo mailbox everything renders). The tokens carry
   an anti-drift gate: a test parses the canonical design prototype and fails on
   any divergence. Every colour, radius and layout value in the SwiftUI theme is
   then compared numerically against `packages/tokens/src/tokens.ts`, so the two
   clients cannot drift apart either. (2026-07-29)
-- **`@mailoh/client-engine`** — the delta-sync core the shell runs on: an
+- **`@ohmail/client-engine`** — the delta-sync core the shell runs on: an
   idempotent apply core, an IndexedDB mirror that writes page and cursor in one
   transaction, selectors, local search, and an optimistic overlay in which the
   user always wins. In this repository it runs against `FixturesAdapter`, a
   complete in-memory server. (2026-07-30)
 - **The "oh." icon system** — one master mark in three optical tiers, so it stays
-  legible from 16 px to 1024 px. `Resources/MailOh.icns` is the macOS bundle
+  legible from 16 px to 1024 px. `Resources/ohmail.icns` is the macOS bundle
   icon; the Tauri shell carries the same mark. (2026-07-30)
 - **CI that builds what you download** — GitHub Actions produces a `.dmg` and a
   zipped `.app` on macOS 15, `.msi` and NSIS `-setup.exe` on Windows, and
@@ -62,11 +78,11 @@ no network in any of them.
 
 ### Changed
 
-- The repository is `trafficflowgmbh/mailoh`. It was `mailoh-desktop` while the
+- The repository is `trafficflowhq/ohmail`. It was `mailoh-desktop` while the
   macOS app was the only thing in it; the Windows and Linux shells made that name
   narrower than the contents. The Rust crate was renamed with it. Nothing shipped
-  changed: the binaries are still `mailoh` / `mailoh.exe`, and the `.deb` still
-  installs `usr/bin/mailoh`. (2026-07-30)
+  changed: the binaries are still `ohmail` / `ohmail.exe`, and the `.deb` still
+  installs `usr/bin/ohmail`. (2026-07-30)
 - The demo mailbox is entirely fictional — no real people, no real brands, no
   real domains — and every name in it was cleared before use and recorded in a
   registry that CI greps. (2026-07-29 – 2026-07-30)
@@ -88,7 +104,9 @@ no network in any of them.
 - The `.deb`'s package name is `mail-oh`, not `mailoh` — Tauri kebab-cases it out
   of `productName` and gives no way to override it. `apt remove mail-oh` is the
   command. Pinned in CI so the documentation goes red rather than stale.
-  (2026-07-30)
+  (2026-07-30) — *historical: this entry describes the `mailoh` release. The
+  product has since been renamed and `productName` is now `ohmail`, which
+  kebab-cases to itself; see the rename entry under Unreleased.*
 - The Linux `.deb` inspection in CI anchored its assertions on a leading `/`,
   which `dpkg-deb -c` never prints, so three checks could never have matched.
   (2026-07-30)
@@ -112,5 +130,5 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowgmbh/mailoh/compare/v0.1.0-preview...HEAD
-[0.1.0-preview]: https://github.com/trafficflowgmbh/mailoh/releases/tag/v0.1.0-preview
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.1.0-preview...HEAD
+[0.1.0-preview]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.1.0-preview

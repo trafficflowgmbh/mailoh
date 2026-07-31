@@ -2,7 +2,7 @@
 /**
  * smoke.mjs — the render check for the embedded UI bundle.
  *
- * The macOS client has `MailOh --smoke`: it hosts every route offscreen,
+ * The macOS client has `OhMail --smoke`: it hosts every route offscreen,
  * rasterises it and audits the result. This is its counterpart for the Tauri
  * shell, and it deliberately checks the ARTIFACT rather than the sources —
  * `dist/index.html` and the emitted chunks, exactly the bytes the installers

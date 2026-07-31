@@ -9,8 +9,8 @@
  */
 import { useEffect, useMemo, useRef, useState, Fragment } from "react";
 import { useTranslations } from "next-intl";
-import type { EngineMessage, ReceiptsDayGroup, TagDTO } from "@mailoh/client-engine";
-import { Kbd, ListGroupLabel, ListPane, ListRows, MessageRow, StreamCard } from "@mailoh/ui";
+import type { EngineMessage, ReceiptsDayGroup, TagDTO } from "@ohmail/client-engine";
+import { Kbd, ListGroupLabel, ListPane, ListRows, MessageRow, StreamCard } from "@ohmail/ui";
 import { displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { StreamShell, type StreamHandle } from "../shell/StreamShell";
 

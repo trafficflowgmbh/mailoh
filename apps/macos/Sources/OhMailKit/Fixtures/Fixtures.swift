@@ -5,7 +5,7 @@ import Foundation
 ///
 /// PRIVACY INVARIANT (#6): zero real personal data, zero real brands. Every
 /// sender, address and brand below is invented for Mila and listed in
-/// `fictionalNames` with the reason it is safe. `MailOhKitTests` audits the whole
+/// `fictionalNames` with the reason it is safe. `OhMailKitTests` audits the whole
 /// corpus — every field, every held message at every depth — against
 /// `bannedTerms`, and additionally asserts that every display name the app can
 /// render appears in the registry, so a new sender cannot be added without review.
@@ -186,8 +186,8 @@ public enum Fixtures {
     /// The IMAP folder namespace used to be the contradiction: the product
     /// created `TrafficFlow/…` folders inside real customer mailboxes. That is
     /// fixed — on 2026-07-31, with zero real mailboxes connected, the five
-    /// strings became `mailoh/Screener`, `mailoh/Reads`, `mailoh/Receipts`,
-    /// `mailoh/Screened`, `mailoh/Quarantine`. Nothing a user can see carries
+    /// strings became `ohmail/Screener`, `ohmail/Reads`, `ohmail/Receipts`,
+    /// `ohmail/Screened`, `ohmail/Quarantine`. Nothing a user can see carries
     /// the pre-rebrand name any more.
     ///
     /// What survives is the backend workspace scope — `@trafficflow/{api,core,
@@ -201,7 +201,7 @@ public enum Fixtures {
     public static let namespaceExemption = (
         term: "trafficflow",
         site: "backend workspace package scope @trafficflow/{api,core,db,services,worker}",
-        until: "a future workspace-scope rename; the user-visible folder namespace is already mailoh/…"
+        until: "a future workspace-scope rename; the user-visible folder namespace is already ohmail/…"
     )
 
     // MARK: Tags (cross-cutting)

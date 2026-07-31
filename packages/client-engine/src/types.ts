@@ -1,14 +1,14 @@
 /**
- * @mailoh/client-engine — wire vocabulary.
+ * @ohmail/client-engine — wire vocabulary.
  *
- * These shapes MIRROR the mailoh Cloud API contract without importing any
+ * These shapes MIRROR the ohmail Cloud API contract without importing any
  * backend package: the engine consumes the wire contract only, exactly as the
  * native SwiftData mirror will. Clients must tolerate unknown fields and
  * unknown entity types (forward-compatible parsing) — hence the open unions
  * below.
  *
  * ABOUT THE `§` REFERENCES in this package. They cite the Cloud API contract
- * document, which is **not public** — mailoh Desktop is the free, GPL-3.0 half
+ * document, which is **not public** — ohmail Desktop is the free, GPL-3.0 half
  * of the product and the Cloud service is the other half. The citations are
  * left in rather than stripped because they are load-bearing where the file is
  * authored, and because pretending the other half does not exist would be its
@@ -32,7 +32,7 @@ export interface EmailAddress {
  * These five strings are the most durable copy the product writes: they are
  * created inside the customer's own mailbox and render in Apple Mail, Outlook
  * and every other client, forever — including after the customer leaves. The
- * namespace was renamed from the pre-rebrand company name to `mailoh/…` on
+ * namespace was renamed from the pre-rebrand company name to `ohmail/…` on
  * 2026-07-31, while zero real mailboxes were connected, precisely so that no
  * folder-rename migration would ever be needed. Changing them again is an
  * IMAP data migration, not an edit.
@@ -44,11 +44,11 @@ export interface EmailAddress {
  */
 export type Folder =
   | "INBOX"
-  | "mailoh/Screener"
-  | "mailoh/Reads"
-  | "mailoh/Receipts"
-  | "mailoh/Screened"
-  | "mailoh/Quarantine";
+  | "ohmail/Screener"
+  | "ohmail/Reads"
+  | "ohmail/Receipts"
+  | "ohmail/Screened"
+  | "ohmail/Quarantine";
 
 export type ChangeOp = "create" | "update" | "move" | "delete";
 
@@ -216,7 +216,7 @@ export interface ScreenerSenderDTO {
   time: string;
   scope: "sender" | "domain";
   dull?: boolean;
-  ai: { dest: MailohView | "screened" | "spam"; confidence: number; rationale: string } | null;
+  ai: { dest: OhmailView | "screened" | "spam"; confidence: number; rationale: string } | null;
   /**
    * NO-COLLAPSE (invariant #6): every held message, in full, oldest first —
    * non-empty in every segment. There is deliberately no `heldCount` /
@@ -251,15 +251,15 @@ export interface WaterlineMeta {
 // ── views ──────────────────────────────────────────────────────────────────
 
 /** Views are CLIENT groupings over folders, not folders (brief §4). */
-export type MailohView = "ohbox" | "reads" | "receipts" | "screener" | "screened" | "spam";
+export type OhmailView = "ohbox" | "reads" | "receipts" | "screener" | "screened" | "spam";
 
-export const FOLDER_OF_VIEW: Record<MailohView, Folder> = {
+export const FOLDER_OF_VIEW: Record<OhmailView, Folder> = {
   ohbox: "INBOX",
-  reads: "mailoh/Reads",
-  receipts: "mailoh/Receipts",
-  screener: "mailoh/Screener",
-  screened: "mailoh/Screened",
-  spam: "mailoh/Quarantine",
+  reads: "ohmail/Reads",
+  receipts: "ohmail/Receipts",
+  screener: "ohmail/Screener",
+  screened: "ohmail/Screened",
+  spam: "ohmail/Quarantine",
 };
 
 /**
@@ -269,7 +269,7 @@ export const FOLDER_OF_VIEW: Record<MailohView, Folder> = {
  * It exists rather than views falling back to the raw string because unknown
  * folders are expected: the server may add folders a shipped client has never
  * heard of (contract §8), and customers nest their own. The leaf of
- * `mailoh/Receipts` is `Receipts`; the leaf of a customer's own
+ * `ohmail/Receipts` is `Receipts`; the leaf of a customer's own
  * `Archive/2026/Q1` is `Q1`. Both read correctly; neither shows a path.
  */
 export function folderLeaf(folder: string): string {
@@ -277,13 +277,13 @@ export function folderLeaf(folder: string): string {
   return leaf.trim() || folder;
 }
 
-export const VIEW_OF_FOLDER: Record<Folder, MailohView> = {
+export const VIEW_OF_FOLDER: Record<Folder, OhmailView> = {
   "INBOX": "ohbox",
-  "mailoh/Reads": "reads",
-  "mailoh/Receipts": "receipts",
-  "mailoh/Screener": "screener",
-  "mailoh/Screened": "screened",
-  "mailoh/Quarantine": "spam",
+  "ohmail/Reads": "reads",
+  "ohmail/Receipts": "receipts",
+  "ohmail/Screener": "screener",
+  "ohmail/Screened": "screened",
+  "ohmail/Quarantine": "spam",
 };
 
 // ── mutations ──────────────────────────────────────────────────────────────
@@ -301,7 +301,7 @@ export type EngineMutation =
       senderId: string;
       decision: "yes" | "no";
       /** Where a Yes files the held mail; defaults to the AI suggestion, then ohbox. */
-      dest?: MailohView;
+      dest?: OhmailView;
       /** "&read" seen-semantics: a Yes files the held mail already-seen (unread=false). */
       read?: boolean;
       scope?: "sender" | "domain";

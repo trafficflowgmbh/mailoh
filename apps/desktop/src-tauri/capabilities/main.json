@@ -1,6 +1,6 @@
 {
   "identifier": "main",
-  "description": "mailoh Desktop calls no Tauri command. The window renders a static bundle and talks to nothing — not the filesystem, not a shell, not the network, not even the Tauri core API. This capability exists so that the grant is explicit and reviewable: it applies to the main window and its permission list is empty.",
+  "description": "ohmail Desktop calls no Tauri command. The window renders a static bundle and talks to nothing — not the filesystem, not a shell, not the network, not even the Tauri core API. This capability exists so that the grant is explicit and reviewable: it applies to the main window and its permission list is empty.",
   "windows": ["main"],
   "permissions": []
 }

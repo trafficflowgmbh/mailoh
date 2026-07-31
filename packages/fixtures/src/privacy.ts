@@ -3,7 +3,7 @@
  *
  * This file is the single place where the demo world's naming is reviewed.
  * It is the web mirror of `Fixtures.fictionalNames` / `Fixtures.bannedTerms`
- * in `apps/macos/Sources/MailOhKit/Fixtures/Fixtures.swift` — the two lists
+ * in `apps/macos/Sources/OhMailKit/Fixtures/Fixtures.swift` — the two lists
  * must stay in step, because the same persona ships on both surfaces.
  *
  * HOW A NAME EARNS ITS PLACE. Every entry carries a `verdict`, not just prose,
@@ -233,7 +233,7 @@ export const fictionalNames: FictionalName[] = [
  *  1. `NAMESPACE_EXEMPTION` below — the product's IMAP folder namespace still
  *     carries the pre-rebrand company name. Documented, with a tracked fix.
  *  2. Product code outside the fixtures names real vendors on purpose: the
- *     marketing copy has to name the mail providers mailoh works with, and the
+ *     marketing copy has to name the mail providers ohmail works with, and the
  *     tracker blocklist has to name the trackers it blocks. That is nominative
  *     use, not a leak, and both would be nonsense anonymised.
  *
@@ -289,8 +289,8 @@ export const bannedTerms: string[] = [
  * The IMAP folder namespace used to be the contradiction: the product created
  * `TrafficFlow/…` folders inside real customer mailboxes. That is **fixed** —
  * on 2026-07-31, while zero real mailboxes were connected, the five strings
- * became `mailoh/Screener`, `mailoh/Reads`, `mailoh/Receipts`,
- * `mailoh/Screened`, `mailoh/Quarantine`. Nothing a user can see carries the
+ * became `ohmail/Screener`, `ohmail/Reads`, `ohmail/Receipts`,
+ * `ohmail/Screened`, `ohmail/Quarantine`. Nothing a user can see carries the
  * pre-rebrand name any more.
  *
  * What survives is the backend workspace scope — `@trafficflow/{api,core,db,
@@ -310,6 +310,6 @@ export const NAMESPACE_EXEMPTION = {
   term: "trafficflow",
   where: "backend workspace package scope @trafficflow/{api,core,db,services,worker}",
   why: "never published, resolved away at build time — absent from every bundle, payload and mailbox",
-  until: "folded into a future workspace-scope rename; the user-visible folder namespace is already mailoh/…",
+  until: "folded into a future workspace-scope rename; the user-visible folder namespace is already ohmail/…",
   uiRule: "never render a raw folder string; map via VIEW_OF_FOLDER, fall back to folderLeaf()",
 } as const;

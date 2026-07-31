@@ -7,8 +7,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import type { TagDTO } from "@mailoh/client-engine";
-import { TagDot } from "@mailoh/ui";
+import type { TagDTO } from "@ohmail/client-engine";
+import { TagDot } from "@ohmail/ui";
 import { hueOf } from "./format";
 
 export interface TagPickerState {

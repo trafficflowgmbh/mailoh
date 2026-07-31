@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Engine wiring: ONE MailohEngine per tab, boots in an effect, and the
+ * Engine wiring: ONE OhmailEngine per tab, boots in an effect, and the
  * UI reads it through useSyncExternalStore so every selector recomputes
  * exactly when the mirror (or the optimistic overlay) changes.
  *
@@ -18,12 +18,12 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { MailohEngine, type EntityReader } from "@mailoh/client-engine";
+import { OhmailEngine, type EntityReader } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
 import { createEngine } from "./engine-config";
 
 interface EngineBinding {
-  engine: MailohEngine;
+  engine: OhmailEngine;
   /** The mode the ENGINE was actually built in — client truth, never the server's guess. */
   demo: boolean;
   /** What the server rendered with, so hydration has a snapshot that matches the markup. */
@@ -59,7 +59,7 @@ export function EngineProvider({
    * is built from the resolved mode before a single effect (and therefore before a single
    * request) can run: there is no window in which a `?demo=1` page holds an HttpAdapter.
    */
-  const [binding, setBinding] = useState<{ demo: boolean; engine: MailohEngine }>(() => {
+  const [binding, setBinding] = useState<{ demo: boolean; engine: OhmailEngine }>(() => {
     const demo = resolveDemo(serverDemo);
     return { demo, engine: createEngine(demo) };
   });
@@ -97,7 +97,7 @@ function useBinding(): EngineBinding {
   return binding;
 }
 
-export function useEngine(): MailohEngine {
+export function useEngine(): OhmailEngine {
   return useBinding().engine;
 }
 

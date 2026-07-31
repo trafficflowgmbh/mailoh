@@ -22,7 +22,7 @@ public struct ShadowLayer: Sendable {
 ///   lift0 small control · lift1 resting panel · lift2 raised object · lift3 floating layer
 ///
 /// **Every shadow in the app comes from this enum.** `Views/` carries no `OKLCH(…)`
-/// literal and no bare `.shadow(…)`; `MailOhKitTests.testNoUntrackedVisualConstants`
+/// literal and no bare `.shadow(…)`; `OhMailKitTests.testNoUntrackedVisualConstants`
 /// audits the sources for both, so a hand-tuned value cannot drift in again the way
 /// the pile sheet edge did (it was authored at alpha .16 against the prototype's .10).
 public enum Lift: Sendable {

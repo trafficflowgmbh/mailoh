@@ -1,5 +1,5 @@
 /**
- * @mailoh/fixtures — types for the mailoh demo world.
+ * @ohmail/fixtures — types for the ohmail demo world.
  *
  * The shapes deliberately echo the backend DTO vocabulary
  * (id / from{name,address} / subject / snippet / folder / unread / tags)

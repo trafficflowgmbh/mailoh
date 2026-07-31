@@ -8,17 +8,17 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>mailoh</string>
+	<string>ohmail</string>
 	<key>CFBundleExecutable</key>
-	<string>MailOh</string>
+	<string>OhMail</string>
 	<key>CFBundleIconFile</key>
-	<string>MailOh</string>
+	<string>ohmail</string>
 	<key>CFBundleIdentifier</key>
-	<string>io.mailoh.desktop</string>
+	<string>io.ohmail.desktop</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>mailoh</string>
+	<string>ohmail</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

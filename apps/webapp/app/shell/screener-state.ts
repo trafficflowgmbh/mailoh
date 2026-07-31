@@ -22,16 +22,16 @@ import {
   FOLDER_OF_VIEW,
   screenerSegments,
   type EngineMessage,
-  type MailohView,
-  type MailohEngine,
+  type OhmailView,
+  type OhmailEngine,
   type ScreenerSenderDTO,
-} from "@mailoh/client-engine";
+} from "@ohmail/client-engine";
 import {
   DECISION_DONE_LABEL,
   type DecisionDestination,
   type DecisionScope,
   type ToastFn,
-} from "@mailoh/ui";
+} from "@ohmail/ui";
 
 export interface SpamRow {
   sender: ScreenerSenderDTO;
@@ -78,7 +78,7 @@ const COMMIT_MS = 6200;
 const BULK_STEP_MS = 240;
 
 export function useScreenerState(
-  engine: MailohEngine,
+  engine: OhmailEngine,
   version: number,
   toast: ToastFn,
 ): ScreenerState {
@@ -120,7 +120,7 @@ export function useScreenerState(
       senderId: id,
       decision,
       ...(decision === "yes"
-        ? { dest: entry.dest as MailohView, read: entry.read }
+        ? { dest: entry.dest as OhmailView, read: entry.read }
         : {}),
       scope: entry.scope,
     });

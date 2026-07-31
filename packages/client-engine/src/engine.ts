@@ -101,7 +101,7 @@ class OverlayReader implements EntityReader {
   }
 }
 
-export class MailohEngine {
+export class OhmailEngine {
   readonly store: MirrorStore;
   private readonly adapter: EngineAdapter;
   private readonly types: string[] | undefined;
@@ -217,7 +217,7 @@ export class MailohEngine {
     if (m.kind === "feed_mark_seen" && m.messageIds === undefined) {
       const ids = this.read()
         .list<EngineMessage>("message")
-        .filter((msg) => msg.folder === "mailoh/Reads" && msg.unread)
+        .filter((msg) => msg.folder === "ohmail/Reads" && msg.unread)
         .map((msg) => msg.id);
       return { ...m, messageIds: ids };
     }

@@ -4,7 +4,7 @@ import {
   type Fixtures,
   type MessageFixture,
   type TriageItemFixture,
-} from "@mailoh/fixtures";
+} from "@ohmail/fixtures";
 import { applyToRecords, recordKey, type MirrorRecord } from "../apply.js";
 import type { EntityReader } from "../store.js";
 import { mutationEffects, type MutationEffect } from "../mutations.js";
@@ -30,8 +30,8 @@ export const DEMO_NOW = new Date("2026-07-29T12:00:00.000Z");
 
 const FIXTURE_FOLDER: Record<MessageFixture["folder"], Folder> = {
   ohbox: "INBOX",
-  reads: "mailoh/Reads",
-  receipts: "mailoh/Receipts",
+  reads: "ohmail/Reads",
+  receipts: "ohmail/Receipts",
 };
 
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -77,7 +77,7 @@ export interface FixturesAdapterOptions {
 }
 
 /**
- * The demo backend: boots the mirror from @mailoh/fixtures and serves mutations
+ * The demo backend: boots the mirror from @ohmail/fixtures and serves mutations
  * locally with realistic protocol semantics — a real change log with monotonic
  * seqs, paged bootstrap (`hasMore` drain), tail deltas after every mutation,
  * malformed-cursor 410s, and Idempotency-Key replay. Powers ?demo and UI tests;

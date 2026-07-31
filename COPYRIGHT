@@ -1,4 +1,4 @@
-mailoh for the desktop — the free mailoh client for macOS, Windows and Linux
+ohmail for the desktop — the free ohmail client for macOS, Windows and Linux
 Copyright (C) 2026 TrafficFlow GmbH, Staubstrasse 1, 8038 Zürich, Switzerland
 
 This program is free software: you can redistribute it and/or modify it under
@@ -40,10 +40,10 @@ source tree and are covered by the same grant.
 
 What is NOT under GPL-3.0
 -------------------------
-The mailoh brand. The name "mailoh", the "oh." wordmark, and the icon artwork:
+The ohmail brand. The name "ohmail", the "oh." wordmark, and the icon artwork:
 
-  Resources/MailOh.icns
-  docs/mailoh-icon.png
+  Resources/ohmail.icns
+  docs/ohmail-icon.png
   apps/desktop/src-tauri/icons/{icon.icns, icon.ico, icon.png, 32x32.png,
                                 64x64.png, 128x128.png, 128x128@2x.png}
 
@@ -86,7 +86,7 @@ nothing in this file changes any of them.
 
 The "oh." mark and Inter
 ------------------------
-The letterforms in the mailoh icon were drawn as outlined paths from Inter Bold
+The letterforms in the ohmail icon were drawn as outlined paths from Inter Bold
 (Inter 4.1, copyright (c) 2016 The Inter Project Authors,
 https://github.com/rsms/inter), licensed under the SIL Open Font License 1.1.
 
@@ -124,10 +124,10 @@ so a file separated from its project still carries its terms — a real risk for
 a library whose files get vendored into other projects, a small one for an
 application nobody copies a single file out of.
 
-The one specific to mailoh: this repository is a generated mirror. Several of
+The one specific to ohmail: this repository is a generated mirror. Several of
 the trees published here — packages/tokens, packages/ui, packages/fixtures,
 packages/client-engine and apps/webapp/app — are the *same files* the
-closed-source mailoh Cloud web client is built from. TrafficFlow GmbH holds the
+closed-source ohmail Cloud web client is built from. TrafficFlow GmbH holds the
 copyright on all of it and licenses it both ways: GPL-3.0 in this repository,
 proprietary in the Cloud product. Stamping a GPL header into each of those
 files upstream would assert, inside the Cloud client's own sources, a licence
@@ -143,11 +143,11 @@ Why GPL-3.0
 -----------
 The desktop client is free and is meant to stay free. GPL-3.0 keeps it that
 way: anyone may use, study, change and redistribute it, and any redistributed
-change comes back under the same licence — so a closed-source re-skin of mailoh
+change comes back under the same licence — so a closed-source re-skin of ohmail
 is not possible.
 
 TrafficFlow GmbH holds the copyright on this codebase and can therefore also
-license it differently for its own products — the mailoh Cloud tier, which is a
+license it differently for its own products — the ohmail Cloud tier, which is a
 separate, paid, unpublished product. Contributions are accepted under GPL-3.0
 with a DCO sign-off, with no copyright assignment and no CLA. CONTRIBUTING.md
 explains what that means in practice, including the one part of the tree where
@@ -157,4 +157,4 @@ it genuinely constrains what we can accept.
 Contact
 -------
 TrafficFlow GmbH, Staubstrasse 1, 8038 Zürich, Switzerland
-support@mailoh.io · https://mailoh.io · https://trafficflow.ch
+support@ohmail.app · https://ohmail.app · https://trafficflow.ch

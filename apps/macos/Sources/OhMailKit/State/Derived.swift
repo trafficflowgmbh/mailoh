@@ -4,7 +4,7 @@ import SwiftUI
 /// resolution. Views own no list logic of their own: whatever a view shows, it
 /// shows by iterating one of these. That is what makes the NO-COLLAPSE RULE
 /// testable — `renderManifest(_:)` enumerates every mail identity a route puts on
-/// screen, and `MailOhKitTests` asserts it covers the fixtures exactly, at every
+/// screen, and `OhMailKitTests` asserts it covers the fixtures exactly, at every
 /// depth (threads, held bags). A "12 more" placeholder would drop identities from
 /// the manifest and fail.
 public extension AppState {

@@ -285,7 +285,7 @@ public struct AboutPanel: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 Icon(.info, 14).foregroundStyle(p.accentInk.color)
-                Text("mailoh for macOS")
+                Text("ohmail for macOS")
                     .font(Typography.font(Typography.Size.body, Typography.Weight.heavy))
                     .foregroundStyle(p.ink.color)
                 Spacer(minLength: 12)

@@ -5,7 +5,7 @@ import react from "@vitejs/plugin-react";
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 /**
- * The desktop UI bundle: the SAME client shell mailoh.app renders, compiled to a
+ * The desktop UI bundle: the SAME client shell app.ohmail.app renders, compiled to a
  * self-contained folder of files that Tauri embeds. No dev server, no CDN, no
  * remote origin, no Next.js.
  *
@@ -56,11 +56,11 @@ export default defineConfig({
          so a pattern that leaves the leading "./" behind yields a broken path. */
       { find: /^(?:.*\/)?adapters\/http-adapter\.js$/, replacement: r("./src/no-http-adapter.ts") },
 
-      { find: "@mailoh/tokens/tokens.css", replacement: r("../../packages/tokens/src/tokens.css") },
-      { find: "@mailoh/tokens", replacement: r("../../packages/tokens/src/index.ts") },
-      { find: "@mailoh/fixtures", replacement: r("../../packages/fixtures/src/index.ts") },
-      { find: "@mailoh/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
-      { find: "@mailoh/ui", replacement: r("../../packages/ui/src/index.ts") },
+      { find: "@ohmail/tokens/tokens.css", replacement: r("../../packages/tokens/src/tokens.css") },
+      { find: "@ohmail/tokens", replacement: r("../../packages/tokens/src/index.ts") },
+      { find: "@ohmail/fixtures", replacement: r("../../packages/fixtures/src/index.ts") },
+      { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
+      { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
     ],
   },
 
@@ -69,7 +69,7 @@ export default defineConfig({
     emptyOutDir: true,
     /* Vite's modulepreload polyfill is the one line of the output that calls
        `fetch()` — it re-requests preload hrefs on browsers without native
-       support. Every webview mailoh runs in (WKWebView, WebView2, WebKitGTK)
+       support. Every webview ohmail runs in (WKWebView, WebView2, WebKitGTK)
        has had modulepreload for years, and a bundle that grep-cleanly contains
        no `fetch(` at all is worth more here than a polyfill for browsers this
        app cannot be opened in. */

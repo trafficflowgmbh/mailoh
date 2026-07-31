@@ -40,7 +40,7 @@ export interface RailMailbox {
 }
 
 export interface RailNavProps {
-  /** Defaults to the mailoh wordmark. */
+  /** Defaults to the ohmail wordmark. */
   wordmark?: ReactNode;
   composeLabel?: string;
   composeKbd?: string;
@@ -105,12 +105,14 @@ export function RailNav({
   return (
     <nav className={className ? `rail ${className}` : "rail"} aria-label={ariaLabel}>
       <div className="wordmark">
-        {/* Two elements, not one string: `.wordmark b em` paints the second
-            half in accent-ink, so the rail echoes the "oh." app mark. Keep the
-            split at the word boundary — mail | oh — and keep it lower-case. */}
+        {/* Two elements, not one string: `.wordmark b em` paints the `em` half
+            in accent-ink, so the rail echoes the "oh." app mark. Keep the split
+            at the word boundary — oh | mail — and keep it lower-case. The accent
+            is on "oh" wherever it falls; the rename moved it from the tail to
+            the head, which is the same motif reading the same way. */}
         {wordmark ?? (
           <b>
-            mail<em>oh</em>
+            <em>oh</em>mail
           </b>
         )}
       </div>

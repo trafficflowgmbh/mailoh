@@ -1,7 +1,7 @@
-# mailoh for Windows and Linux
+# ohmail for Windows and Linux
 
 The **Tauri v2 shell** — Tier 1 on the two platforms SwiftUI does not reach. Same
-tier as `apps/macos`, same honest maturity: it renders the complete mailoh
+tier as `apps/macos`, same honest maturity: it renders the complete ohmail
 interface on Mila's fixture world, with **no network at all**.
 
 A native Rust window, a locked-down webview, and a static bundle of the *same*
@@ -24,9 +24,9 @@ build log. CI does the same, in the same order.
 ## How the UI gets in: the decision
 
 **There is no desktop fork of the interface.** `src/main.tsx` imports
-`apps/webapp/app/shell/AppShell` — the same file mailoh.app renders — and Vite
-compiles it, `@mailoh/ui`, `@mailoh/tokens`, `@mailoh/fixtures` and
-`@mailoh/client-engine` into one self-contained folder. Three lines of that file
+`apps/webapp/app/shell/AppShell` — the same file app.ohmail.app renders — and Vite
+compiles it, `@ohmail/ui`, `@ohmail/tokens`, `@ohmail/fixtures` and
+`@ohmail/client-engine` into one self-contained folder. Three lines of that file
 are the whole desktop-specific layer: the providers Next would otherwise supply,
 the pre-paint theme stamp, and the offline guard.
 
@@ -55,7 +55,7 @@ Three of them are about the running app. The fourth is about the installer,
 because an installer that phones home makes the other three beside the point.
 
 **1 · The Cloud sync client is not in the module graph.**
-`@mailoh/client-engine`'s barrel re-exports `HttpAdapter`, the `/sync` protocol
+`@ohmail/client-engine`'s barrel re-exports `HttpAdapter`, the `/sync` protocol
 client. Vite aliases that module to [`src/no-http-adapter.ts`](src/no-http-adapter.ts),
 whose constructor throws. The consequence is not cosmetic: `publish-desktop.mjs`
 therefore does not publish `packages/client-engine/src/adapters/http-adapter.ts`
@@ -136,7 +136,7 @@ Rust side there is no `invoke_handler`, no plugin, no `std::fs`, no `std::net`.
 That costs about a quarter of a megabyte and buys the audit:
 
 ```bash
-strings -a src-tauri/target/release/mailoh \
+strings -a src-tauri/target/release/ohmail \
   | grep -oE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' | sort -u
 ```
 
@@ -164,14 +164,14 @@ Drop the `| sort -u` and read the whole lines if you want to check the three
 adjacency claims yourself — that is the point of shipping uncompressed. CI
 prints the list on every run, **asserts the count** (13 and 14; a toolchain bump
 that changes it turns the job red, which is the only way a number in a README
-stays true), and **fails** if any URL in the binary matches `mailoh` or
+stays true), and **fails** if any URL in the binary matches `ohmail` or
 `trafficflow`. And `strings … | grep Ohbox` finds the interface, so you can see
 that the binary contains the app you were promised without running it. With
 brotli on, all of that is an opaque blob.
 
 ## Identifiers, names and version
 
-**`io.mailoh.desktop.tauri`**, not `io.mailoh.desktop`. The SwiftUI client
+**`io.ohmail.desktop.tauri`**, not `io.ohmail.desktop`. The SwiftUI client
 already claims the latter (`Resources/Info.plist`), and this configuration also
 produces a macOS bundle — that is how the shell is verified locally, since macOS
 cannot cross-compile Windows or Linux installers. Two apps sharing a
@@ -184,13 +184,13 @@ bundler rejects a semver pre-release identifier, and a red Windows job to carry
 a suffix already stated in three other places is a bad trade.
 
 **One word on Linux, everywhere.** The bundler derives the `.deb`'s `Package:`
-field by kebab-casing `productName`, and `productName` is `mailoh`, so the
-package name, the binary at `/usr/bin/mailoh`, the icon and the `.desktop`
+field by kebab-casing `productName`, and `productName` is `ohmail`, so the
+package name, the binary at `/usr/bin/ohmail`, the icon and the `.desktop`
 entry's `Icon=` and `StartupWMClass` are all the same string: `apt remove
-mailoh` works. This was not always true — `productName` used to be `MailOh`,
+ohmail` works. This was not always true — `productName` used to be `OhMail`,
 which kebab-cased to `mail-oh` and made the package the one thing on the system
 spelled differently from everything else. The Linux CI job asserts
-`Package: mailoh` against the built artifact, so if a future Tauri changes the
+`Package: ohmail` against the built artifact, so if a future Tauri changes the
 slug this paragraph goes red instead of quietly going stale.
 
 ## Verify it
@@ -235,7 +235,7 @@ apps/desktop/
 ## What is not here yet
 
 The same list as the macOS client: no IMAP, no accounts, no AI, no updater. The
-engine slice lands behind `AppState`/`MailohEngine` on both platforms at once —
+engine slice lands behind `AppState`/`OhmailEngine` on both platforms at once —
 that is the point of sharing the shell. Signed builds need a certificate
 (Authenticode for Windows) that does not exist yet; until then the installers
 are unsigned and the README says so on every platform.

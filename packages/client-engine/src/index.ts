@@ -1,12 +1,12 @@
 /**
- * @mailoh/client-engine — the delta-first client spine (brief §4), shared by the
+ * @ohmail/client-engine — the delta-first client spine (brief §4), shared by the
  * web app now and mirrored by the native SwiftData port later:
  *
  *   MirrorStore  — IndexedDB (web) / in-memory (SSR, tests) local mirror with
  *                  the idempotent, seq-guarded apply the backend tests prove;
  *   Adapters     — FixturesAdapter (?demo + UI tests) and HttpAdapter (the real
  *                  /sync + mutation protocol) behind ONE interface;
- *   MailohEngine — bootstrap → drain → apply, optimistic mutation queue
+ *   OhmailEngine — bootstrap → drain → apply, optimistic mutation queue
  *                  (user-always-wins), wake-signal hook, instant local search.
  */
 export const ENGINE_VERSION = "0.1.0";
@@ -30,7 +30,7 @@ export {
   type EngineMutation,
   type Folder,
   type ISODateTime,
-  type MailohView,
+  type OhmailView,
   type MessageStateDTO,
   type MirrorEntityType,
   type RuleDTO,
@@ -85,7 +85,7 @@ export { HttpAdapter, type FetchLike, type HttpAdapterOptions } from "./adapters
 
 // The engine.
 export {
-  MailohEngine,
+  OhmailEngine,
   type EngineOptions,
   type MutationResult,
   type MutationStatus,

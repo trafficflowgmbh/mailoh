@@ -46,7 +46,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
 
   constructor(opts: IndexedDbMirrorStoreOptions = {}) {
     super();
-    this.dbName = opts.dbName ?? "mailoh-mirror";
+    this.dbName = opts.dbName ?? "ohmail-mirror";
     const factory = opts.factory ?? (typeof indexedDB !== "undefined" ? indexedDB : undefined);
     if (!factory) {
       throw new Error("IndexedDB is unavailable in this environment — use MemoryMirrorStore instead");

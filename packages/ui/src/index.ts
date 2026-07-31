@@ -1,13 +1,13 @@
 /**
- * @mailoh/ui — the Blanc design system as React components.
+ * @ohmail/ui — the Blanc design system as React components.
  *
  * Structure is read from light falloff: white panels on an off-white
  * canvas, sculpted by the four-step lift shadow ladder instead of
- * borders. Tokens come from @mailoh/tokens (fidelity-locked against
+ * borders. Tokens come from @ohmail/tokens (fidelity-locked against
  * the canonical prototype); wrap your app in an element with the
  * `mo-canvas` class to get the ground styles.
  */
-import "@mailoh/tokens/tokens.css";
+import "@ohmail/tokens/tokens.css";
 import "./base.css";
 
 /* theme */

@@ -23,7 +23,7 @@ import AppKit
 ///     perfectly correct model and still fails here.
 ///
 /// Everything is collected, then reported: a failing run prints each failure and
-/// exits non-zero. `MailOhKitTests` additionally asserts that the blank-detector and
+/// exits non-zero. `OhMailKitTests` additionally asserts that the blank-detector and
 /// the row audit really do reject a bad render (mutation checks), so the harness
 /// cannot rot into a rubber stamp again.
 ///
@@ -309,7 +309,7 @@ public enum Smoke {
     // MARK: - Thresholds
     //
     // Deliberately loose enough that a real render always clears them and tight
-    // enough that a blank canvas never does. `MailOhKitTests` renders a deliberately
+    // enough that a blank canvas never does. `OhMailKitTests` renders a deliberately
     // empty view and asserts it is rejected.
 
     static let minDistinctColors = 8

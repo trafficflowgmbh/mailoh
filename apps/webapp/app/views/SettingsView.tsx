@@ -7,8 +7,8 @@
  */
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { notificationSettings } from "@mailoh/fixtures";
-import type { TagDTO } from "@mailoh/client-engine";
+import { notificationSettings } from "@ohmail/fixtures";
+import type { TagDTO } from "@ohmail/client-engine";
 import {
   Button,
   SegmentedControl,
@@ -22,7 +22,7 @@ import {
   useToast,
   VipChip,
   type ThemePreference,
-} from "@mailoh/ui";
+} from "@ohmail/ui";
 import { hueOf } from "../shell/format";
 
 type PaneId = "general" | "notifications" | "mailboxes" | "tags";

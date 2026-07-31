@@ -1,9 +1,9 @@
 import XCTest
 import SwiftUI
-@testable import MailOhKit
+@testable import OhMailKit
 
 @MainActor
-final class MailOhKitTests: XCTestCase {
+final class OhMailKitTests: XCTestCase {
 
     // MARK: Fixture counts (no-collapse rule: every mail is a real fixture)
 
@@ -853,7 +853,7 @@ final class MailOhKitTests: XCTestCase {
     /// The one token that had drifted: the triage pile's stacked-sheet edge, authored
     /// at alpha .10 in the prototype and duplicated by hand at .16.
     ///
-    /// The Blanc prototype is *not* part of the public `mailoh` mirror (it is
+    /// The Blanc prototype is *not* part of the public `ohmail` mirror (it is
     /// an unreleased design source, and `scripts/publish-desktop.mjs` refuses to copy
     /// it), so in a public checkout this check has nothing to compare against and
     /// skips loudly rather than pretending to pass. In the monorepo the file is always
@@ -1266,7 +1266,7 @@ final class MailOhKitTests: XCTestCase {
 
     static var repoRoot: URL {
         URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // MailOhKitTests
+            .deletingLastPathComponent()   // OhMailKitTests
             .deletingLastPathComponent()   // Tests
             .deletingLastPathComponent()   // macos
             .deletingLastPathComponent()   // apps
@@ -1274,13 +1274,13 @@ final class MailOhKitTests: XCTestCase {
     }
 
     static func source(_ relative: String) throws -> String {
-        try String(contentsOf: repoRoot.appendingPathComponent("apps/macos/Sources/MailOhKit/\(relative)"),
+        try String(contentsOf: repoRoot.appendingPathComponent("apps/macos/Sources/OhMailKit/\(relative)"),
                    encoding: .utf8)
     }
 
     /// Every file under `Views/`, for the source audits.
     static func viewSources() throws -> [(String, String)] {
-        let dir = repoRoot.appendingPathComponent("apps/macos/Sources/MailOhKit/Views")
+        let dir = repoRoot.appendingPathComponent("apps/macos/Sources/OhMailKit/Views")
         let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
             .filter { $0.hasSuffix(".swift") }.sorted()
         XCTAssertGreaterThan(names.count, 10, "the audit found almost no view files")

@@ -5,7 +5,7 @@
  * scroll container with
  *  - scroll-spy (the stream drives the list selection),
  *  - seen-on-scroll (a card fully risen into the top third marks seen,
- *    only after a real user scroll — via @mailoh/ui's useSeenOnScroll),
+ *    only after a real user scroll — via @ohmail/ui's useSeenOnScroll),
  *  - imperative scrollTo(id) for row clicks and j/k.
  */
 import {
@@ -15,7 +15,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { useSeenOnScroll } from "@mailoh/ui";
+import { useSeenOnScroll } from "@ohmail/ui";
 
 export interface StreamHandle {
   scrollTo: (id: string) => void;

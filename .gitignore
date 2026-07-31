@@ -6,7 +6,7 @@ Package.resolved
 # Local packaging output (scripts/package-app.sh)
 build/
 
-# Screenshots from `MailOh --shot`
+# Screenshots from `OhMail --shot`
 shots/
 
 # Tauri shell (apps/desktop): npm deps, the UI bundle, Rust output, and the ACL

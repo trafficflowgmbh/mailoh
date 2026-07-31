@@ -51,12 +51,12 @@ jobs:
       # The render check: every route × both colour schemes × both verified
       # widths, hosted offscreen, rasterised, and audited for collapsed rows.
       # It is the step that catches "compiles, lays out, draws nothing".
-      - name: MailOh --smoke
-        run: swift run --package-path apps/macos -c release MailOh --smoke
+      - name: OhMail --smoke
+        run: swift run --package-path apps/macos -c release OhMail --smoke
 
-      - name: Package mailoh.app + mailoh.dmg
+      - name: Package ohmail.app + ohmail.dmg
         env:
-          MAILOH_BUILD_VERSION: ${{ github.run_number }}
+          OHMAIL_BUILD_VERSION: ${{ github.run_number }}
         run: ./scripts/package-app.sh
 
       # A DMG that does not mount is not an artifact. Mount it, look inside,
@@ -65,33 +65,33 @@ jobs:
         run: |
           set -euo pipefail
           MNT="$(mktemp -d)"
-          hdiutil attach build/mailoh.dmg -nobrowse -readonly -mountpoint "$MNT"
+          hdiutil attach build/ohmail.dmg -nobrowse -readonly -mountpoint "$MNT"
           ls -la "$MNT"
-          test -d "$MNT/mailoh.app"
-          test -x "$MNT/mailoh.app/Contents/MacOS/MailOh"
-          test -s "$MNT/mailoh.app/Contents/Resources/MailOh.icns"
+          test -d "$MNT/ohmail.app"
+          test -x "$MNT/ohmail.app/Contents/MacOS/OhMail"
+          test -s "$MNT/ohmail.app/Contents/Resources/ohmail.icns"
           test -f "$MNT/Read me first.txt"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$MNT/mailoh.app/Contents/Info.plist"
-          codesign --verify --verbose=2 "$MNT/mailoh.app"
-          lipo -archs "$MNT/mailoh.app/Contents/MacOS/MailOh"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$MNT/ohmail.app/Contents/Info.plist"
+          codesign --verify --verbose=2 "$MNT/ohmail.app"
+          lipo -archs "$MNT/ohmail.app/Contents/MacOS/OhMail"
           hdiutil detach "$MNT"
 
       - name: Screenshots (every route, light + dark, both widths)
-        run: swift run --package-path apps/macos -c release MailOh --shot shots
+        run: swift run --package-path apps/macos -c release OhMail --shot shots
 
-      - name: Upload mailoh.dmg
+      - name: Upload ohmail.dmg
         uses: actions/upload-artifact@v7
         with:
-          name: mailoh-dmg-${{ github.run_number }}
-          path: build/mailoh.dmg
+          name: ohmail-dmg-${{ github.run_number }}
+          path: build/ohmail.dmg
           if-no-files-found: error
 
-      - name: Upload mailoh.app (zipped, ad-hoc signature preserved)
-        run: ditto -c -k --keepParent build/mailoh.app build/mailoh.app.zip
+      - name: Upload ohmail.app (zipped, ad-hoc signature preserved)
+        run: ditto -c -k --keepParent build/ohmail.app build/ohmail.app.zip
       - uses: actions/upload-artifact@v7
         with:
-          name: mailoh-app-${{ github.run_number }}
-          path: build/mailoh.app.zip
+          name: ohmail-app-${{ github.run_number }}
+          path: build/ohmail.app.zip
           if-no-files-found: error
 
       - name: Upload screenshots
@@ -106,17 +106,17 @@ jobs:
         if: always()
         run: |
           {
-            echo '### mailoh — unsigned preview build'
+            echo '### ohmail — unsigned preview build'
             echo
             echo "| | |"
             echo "|---|---|"
             echo "| commit | \`${GITHUB_SHA:0:9}\` |"
             echo "| toolchain | $(xcodebuild -version | tr '\n' ' ') · $(swift --version 2>&1 | head -1) |"
             echo "| runner | macOS $(sw_vers -productVersion) $(uname -m) |"
-            [ -f build/mailoh.dmg ] && {
-              echo "| architectures | $(lipo -archs build/mailoh.app/Contents/MacOS/MailOh) |"
-              echo "| DMG sha256 | \`$(shasum -a 256 build/mailoh.dmg | cut -d' ' -f1)\` |"
-              echo "| DMG size | $(du -h build/mailoh.dmg | cut -f1) |"
+            [ -f build/ohmail.dmg ] && {
+              echo "| architectures | $(lipo -archs build/ohmail.app/Contents/MacOS/OhMail) |"
+              echo "| DMG sha256 | \`$(shasum -a 256 build/ohmail.dmg | cut -d' ' -f1)\` |"
+              echo "| DMG size | $(du -h build/ohmail.dmg | cut -f1) |"
             }
             echo
             echo 'Ad-hoc signed, **not** notarized: first launch needs right-click → Open.'
@@ -227,7 +227,7 @@ jobs:
           ! grep -rlai 'MicrosoftEdgeWebview2Setup' nsis-unpacked | grep -q .
           rm -rf nsis-unpacked
 
-          BIN=src-tauri/target/release/mailoh.exe
+          BIN=src-tauri/target/release/ohmail.exe
           test -s "$BIN"
           # The UI is embedded uncompressed on purpose (see src-tauri/Cargo.toml),
           # so the shipped binary can be audited without being run. `grep -a`
@@ -244,20 +244,20 @@ jobs:
           URLS=$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u | wc -l)
           echo "unique URL strings: $URLS (expected 14)"
           test "$URLS" -eq 14
-          # Nothing may point at mailoh infrastructure.
-          ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'mailoh|trafficflow'
+          # Nothing may point at ohmail infrastructure.
+          ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'ohmail|trafficflow'
 
       - name: Upload the .msi
         uses: actions/upload-artifact@v7
         with:
-          name: mailoh-msi-${{ github.run_number }}
+          name: ohmail-msi-${{ github.run_number }}
           path: apps/desktop/src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
       - name: Upload the setup .exe (NSIS)
         uses: actions/upload-artifact@v7
         with:
-          name: mailoh-nsis-${{ github.run_number }}
+          name: ohmail-nsis-${{ github.run_number }}
           path: apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
 
@@ -265,7 +265,7 @@ jobs:
         if: always()
         run: |
           {
-            echo '### mailoh for Windows — unsigned preview build'
+            echo '### ohmail for Windows — unsigned preview build'
             echo
             echo "| | |"
             echo "|---|---|"
@@ -358,16 +358,16 @@ jobs:
           dpkg-deb -c "$DEB"
           # dpkg-deb lists paths with no leading slash, so anchor on the space
           # that ends the tar columns instead.
-          dpkg-deb -c "$DEB" | grep -qE ' usr/bin/mailoh$'
+          dpkg-deb -c "$DEB" | grep -qE ' usr/bin/ohmail$'
           dpkg-deb -c "$DEB" | grep -qiE ' usr/share/applications/.+\.desktop$'
           dpkg-deb -c "$DEB" | grep -qiE ' usr/share/icons/hicolor/128x128/apps/.+\.png$'
           # The bundler kebab-cases productName to get the package name. Since
-          # productName is `mailoh`, so is the package — `apt remove mailoh`
-          # works, and it matches /usr/bin/mailoh and the AppImage. Pinned so a
+          # productName is `ohmail`, so is the package — `apt remove ohmail`
+          # works, and it matches /usr/bin/ohmail and the AppImage. Pinned so a
           # future Tauri that changes the slug goes red rather than stale.
-          test "$(dpkg-deb -f "$DEB" Package)" = "mailoh"
+          test "$(dpkg-deb -f "$DEB" Package)" = "ohmail"
 
-          BIN=src-tauri/target/release/mailoh
+          BIN=src-tauri/target/release/ohmail
           test -s "$BIN"
           grep -aq 'Ohbox' "$BIN"
           grep -aq 'Giulia Ferrari' "$BIN"
@@ -379,20 +379,20 @@ jobs:
           URLS=$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u | wc -l)
           echo "unique URL strings: $URLS (expected 13)"
           test "$URLS" -eq 13
-          # Nothing may point at mailoh infrastructure.
-          ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'mailoh|trafficflow'
+          # Nothing may point at ohmail infrastructure.
+          ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'ohmail|trafficflow'
 
       - name: Upload the AppImage
         uses: actions/upload-artifact@v7
         with:
-          name: mailoh-appimage-${{ github.run_number }}
+          name: ohmail-appimage-${{ github.run_number }}
           path: apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
       - name: Upload the .deb
         uses: actions/upload-artifact@v7
         with:
-          name: mailoh-deb-${{ github.run_number }}
+          name: ohmail-deb-${{ github.run_number }}
           path: apps/desktop/src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
 
@@ -400,7 +400,7 @@ jobs:
         if: always()
         run: |
           {
-            echo '### mailoh for Linux — unsigned preview build'
+            echo '### ohmail for Linux — unsigned preview build'
             echo
             echo "| | |"
             echo "|---|---|"

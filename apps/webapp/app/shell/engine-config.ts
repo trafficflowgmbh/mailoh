@@ -2,8 +2,8 @@ import {
   FixturesAdapter,
   HttpAdapter,
   IndexedDbMirrorStore,
-  MailohEngine,
-} from "@mailoh/client-engine";
+  OhmailEngine,
+} from "@ohmail/client-engine";
 
 /**
  * Stage-2 S12 — THE ENGINE DECISION, extracted so it can be TESTED rather than described.
@@ -51,14 +51,14 @@ const BUILD_ENV: EngineEnv = { NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API
  * fixture world into the visitor's browser, and "nothing leaves this tab" should also mean
  * "nothing stays behind in it".
  */
-export function createEngine(demo: boolean, env: EngineEnv = BUILD_ENV): MailohEngine {
+export function createEngine(demo: boolean, env: EngineEnv = BUILD_ENV): OhmailEngine {
   const apiBase = env.NEXT_PUBLIC_API_BASE;
   if (!demo && apiBase) {
     const store = typeof indexedDB !== "undefined" ? new IndexedDbMirrorStore() : undefined;
-    return new MailohEngine({
+    return new OhmailEngine({
       adapter: new HttpAdapter({ baseUrl: apiBase }),
       ...(store ? { store } : {}),
     });
   }
-  return new MailohEngine({ adapter: new FixturesAdapter() });
+  return new OhmailEngine({ adapter: new FixturesAdapter() });
 }

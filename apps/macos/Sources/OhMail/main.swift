@@ -1,5 +1,5 @@
 import SwiftUI
-import MailOhKit
+import OhMailKit
 
 // Entry point. We intentionally do NOT use `@main`: the --smoke path must run
 // (an offscreen render check) without ever activating NSApp or showing a window.
@@ -13,5 +13,5 @@ if args.contains("--smoke") {
     let dir = args.count > i + 1 ? args[i + 1] : "./shots"
     MainActor.assumeIsolated { Smoke.shoot(into: dir) }
 } else {
-    MailOhApp.main()
+    OhMailApp.main()
 }

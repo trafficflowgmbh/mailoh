@@ -1,5 +1,5 @@
 /**
- * The mailoh demo world — every string extracted verbatim from the
+ * The ohmail demo world — every string extracted verbatim from the
  * canonical Blanc prototype (design/proposals/blanc/index.html).
  * This dataset powers the component showcase, the webapp's ?demo mode,
  * app-store screenshots and tests. Extract, never invent.

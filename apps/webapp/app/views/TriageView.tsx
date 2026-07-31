@@ -8,8 +8,8 @@
  */
 import { useEffect } from "react";
 import { useTranslations } from "next-intl";
-import type { TriagePiles } from "@mailoh/client-engine";
-import { Button, PilesStack } from "@mailoh/ui";
+import type { TriagePiles } from "@ohmail/client-engine";
+import { Button, PilesStack } from "@ohmail/ui";
 import { resurfaceLabel } from "../shell/format";
 
 export function TriageView({

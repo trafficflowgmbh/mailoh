@@ -12,7 +12,7 @@ import type {
   EngineMessage,
   ReadsPartition,
   TagDTO,
-} from "@mailoh/client-engine";
+} from "@ohmail/client-engine";
 import {
   Chip,
   Kbd,
@@ -22,7 +22,7 @@ import {
   StreamArt,
   StreamCard,
   Waterline,
-} from "@mailoh/ui";
+} from "@ohmail/ui";
 import { displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { FoldTableArt, StreamShell, type StreamHandle } from "../shell/StreamShell";
 

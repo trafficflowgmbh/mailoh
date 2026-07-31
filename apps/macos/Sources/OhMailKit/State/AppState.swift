@@ -41,7 +41,7 @@ public struct ToastState: Equatable, Sendable {
 
 /// The whole app's live state and logic. Fixtures-only for the Tier-1 preview;
 /// the real IMAP/sync engine wires in behind this same surface later. Deliberately
-/// framework-light so `MailOhKitTests` can drive every rule without SwiftUI.
+/// framework-light so `OhMailKitTests` can drive every rule without SwiftUI.
 ///
 /// **Views never see `Fixtures`.** Everything a view renders — mail, counts, the
 /// rail's mailbox list, the owner address, the waterline meta, the pre-filled

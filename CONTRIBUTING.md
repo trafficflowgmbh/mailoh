@@ -1,6 +1,6 @@
 # Contributing
 
-mailoh is built by a small team at [TrafficFlow GmbH](https://trafficflow.ch) in
+ohmail is built by a small team at [TrafficFlow GmbH](https://trafficflow.ch) in
 Zürich. This repository is the free desktop client — native SwiftUI on macOS,
 a Tauri shell on Windows and Linux. Contributions are welcome, and
 so is a plain "this is wrong" — the client is early enough that direction still
@@ -37,14 +37,14 @@ wasted work. Open an issue first and we will tell you what is planned.
 Issues are welcome and read. Useful bug reports carry: your OS version, the
 toolchain version (`swift --version`, or `rustc --version` and `node --version`
 for the Tauri shell), what you ran, what happened, what you expected. If it is visual, a screenshot beats a description —
-`swift run --package-path apps/macos MailOh --shot /tmp/shots` renders every
+`swift run --package-path apps/macos OhMail --shot /tmp/shots` renders every
 route in both colour schemes at both verified widths.
 
 ## Pull requests
 
 - Fork, branch, open a PR against `main`. PRs are reviewed by a human.
 - CI runs three jobs. macOS: `swift build -c release`, `swift test`, and
-  `MailOh --smoke`. Windows and Linux: `tsc`, the UI bundle build,
+  `OhMail --smoke`. Windows and Linux: `tsc`, the UI bundle build,
   `npm run smoke` over the built bundle, then `tauri build`. All must pass;
   the two smokes are what catch a view that lays out but draws nothing, a list
   that quietly collapses rows, or a build that grew a network call.
@@ -131,7 +131,7 @@ of this repository. Nothing more is asked, and nothing more is taken.
 
 The honest consequence, which most projects leave you to work out yourself:
 because you keep your copyright and grant only the GPL, **TrafficFlow cannot
-move your code into mailoh Cloud**, which is closed-source. For almost
+move your code into ohmail Cloud**, which is closed-source. For almost
 everything here that is a non-issue — `apps/macos` and `apps/desktop` are the
 desktop clients and exist nowhere else.
 
@@ -172,6 +172,6 @@ removed from the repository, and there is no appeal process.
 
 ## Contact
 
-Anything that does not belong in a public issue: **support@mailoh.io**.
+Anything that does not belong in a public issue: **support@ohmail.app**.
 Security reports go the way [SECURITY.md](SECURITY.md) describes — not into an
 issue.

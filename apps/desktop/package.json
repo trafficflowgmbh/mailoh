@@ -1,9 +1,9 @@
 {
-  "name": "@mailoh/desktop",
+  "name": "@ohmail/desktop",
   "version": "0.1.0-preview",
   "private": true,
   "type": "module",
-  "description": "mailoh for Windows and Linux — a Tauri v2 shell around the mailoh client UI, fixtures-only, zero network.",
+  "description": "ohmail for Windows and Linux — a Tauri v2 shell around the ohmail client UI, fixtures-only, zero network.",
   "//": "Ranges, not exact pins, and the same ones the rest of the monorepo uses: an exact pin here puts a SECOND copy of @types/react in the workspace, and two React type identities break apps/webapp's typecheck. In the published mirror npm resolves these fresh; every CI run prints what it got.",
   "scripts": {
     "ui:dev": "vite",

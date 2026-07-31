@@ -7,8 +7,8 @@
  */
 import { useRef } from "react";
 import { useTranslations } from "next-intl";
-import type { EngineMessage, TagDTO } from "@mailoh/client-engine";
-import { Button, Chip, ProtectedBlock, ReadingPane } from "@mailoh/ui";
+import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
+import { Button, Chip, ProtectedBlock, ReadingPane } from "@ohmail/ui";
 import { displayTime, hueOf, senderName, tagsOfMessage } from "./format";
 
 export type MessageAction = "reply" | "later" | "aside" | "resurface" | "move" | "draft";

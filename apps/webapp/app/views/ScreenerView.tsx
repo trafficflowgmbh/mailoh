@@ -10,8 +10,8 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import { screenerEmptyStates } from "@mailoh/fixtures";
-import type { ScreenerSenderDTO } from "@mailoh/client-engine";
+import { screenerEmptyStates } from "@ohmail/fixtures";
+import type { ScreenerSenderDTO } from "@ohmail/client-engine";
 import {
   Button,
   DecisionBar,
@@ -23,7 +23,7 @@ import {
   MessageRow,
   SegmentedControl,
   type DecisionScope,
-} from "@mailoh/ui";
+} from "@ohmail/ui";
 import { goScreener, type ScreenerSegmentId } from "../shell/routing";
 import type { ScreenerState, SpamRow } from "../shell/screener-state";
 

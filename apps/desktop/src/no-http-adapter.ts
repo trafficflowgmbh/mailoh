@@ -1,8 +1,8 @@
 /**
  * The Cloud sync client, absent.
  *
- * `@mailoh/client-engine`'s barrel re-exports `HttpAdapter` — the `/sync`
- * protocol client for mailoh Cloud. The desktop tier has no account, no server
+ * `@ohmail/client-engine`'s barrel re-exports `HttpAdapter` — the `/sync`
+ * protocol client for ohmail Cloud. The desktop tier has no account, no server
  * and no network, so `vite.config.ts` aliases the real module to this file. The
  * consequences are the point:
  *
@@ -26,7 +26,7 @@
  * The types below are therefore declared rather than imported. That costs
  * nothing in safety: `sync` and `mutate` are class methods, whose parameters are
  * bivariant, so `unknown` in and `Promise<never>` out stays assignable to
- * `EngineAdapter` — the shell's `new MailohEngine({ adapter })` still typechecks
+ * `EngineAdapter` — the shell's `new OhmailEngine({ adapter })` still typechecks
  * against the real interface, and would still fail if that interface changed
  * shape in a way this could not satisfy.
  */
@@ -42,7 +42,7 @@ export interface HttpAdapterOptions {
 }
 
 const REFUSAL =
-  "mailoh Desktop is standalone: there is no Cloud sync client in this build. " +
+  "ohmail Desktop is standalone: there is no Cloud sync client in this build. " +
   "The HTTP adapter is aliased away at bundle time (apps/desktop/vite.config.ts).";
 
 export class HttpAdapter {

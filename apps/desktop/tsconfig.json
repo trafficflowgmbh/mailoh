@@ -30,10 +30,10 @@
       "react-dom": ["./node_modules/@types/react-dom"],
       "react-dom/client": ["./node_modules/@types/react-dom/client"],
       "next-intl": ["./node_modules/use-intl"],
-      "@mailoh/tokens": ["../../packages/tokens/src/index.ts"],
-      "@mailoh/fixtures": ["../../packages/fixtures/src/index.ts"],
-      "@mailoh/client-engine": ["../../packages/client-engine/src/index.ts"],
-      "@mailoh/ui": ["../../packages/ui/src/index.ts"]
+      "@ohmail/tokens": ["../../packages/tokens/src/index.ts"],
+      "@ohmail/fixtures": ["../../packages/fixtures/src/index.ts"],
+      "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
+      "@ohmail/ui": ["../../packages/ui/src/index.ts"]
     }
   },
   "include": ["src", "vite.config.ts"]

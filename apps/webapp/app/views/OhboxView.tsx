@@ -8,7 +8,7 @@
  */
 import { useEffect, useMemo } from "react";
 import { useTranslations } from "next-intl";
-import type { EngineMessage, TagDTO } from "@mailoh/client-engine";
+import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
 import {
   Doorbell,
   Kbd,
@@ -17,7 +17,7 @@ import {
   ListRows,
   MessageRow,
   ReadColumn,
-} from "@mailoh/ui";
+} from "@ohmail/ui";
 import { displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 

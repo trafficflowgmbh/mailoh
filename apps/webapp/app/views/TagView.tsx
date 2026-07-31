@@ -6,8 +6,8 @@
  * home view.
  */
 import { useTranslations } from "next-intl";
-import { type EngineMessage, type TagDTO } from "@mailoh/client-engine";
-import { Kbd, ListPane, ListRows, MessageRow } from "@mailoh/ui";
+import { type EngineMessage, type TagDTO } from "@ohmail/client-engine";
+import { Kbd, ListPane, ListRows, MessageRow } from "@ohmail/ui";
 import { displayTime, placeLabel, senderName, tagsOfMessage, hueOf } from "../shell/format";
 
 export function TagView({

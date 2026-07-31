@@ -3,13 +3,13 @@ import SwiftUI
 /// The SwiftUI scene. Deliberately thin: one window, no toolbar (the design has
 /// its own chrome — a rail and a floating dock), plus the standard macOS menu
 /// commands the app can honestly service.
-public struct MailOhApp: App {
+public struct OhMailApp: App {
     @State private var state = AppState()
 
     public init() {}
 
     public var body: some Scene {
-        Window("mailoh", id: "mailoh") {
+        Window("ohmail", id: "ohmail") {
             // 390pt is the floor the design is verified at (invariant #7), not 1040 —
             // the shell has a real compact layout below `Space.mobileMax`.
             RootView(state)
@@ -17,13 +17,13 @@ public struct MailOhApp: App {
         }
         .windowToolbarStyle(.unifiedCompact(showsTitle: false))
         .defaultSize(width: 1440, height: 900)
-        .commands { MailOhCommands(state: state) }
+        .commands { OhMailCommands(state: state) }
     }
 }
 
 /// Menu-bar commands mirror the in-app keyboard map, so the shortcuts are
 /// discoverable without a cheat sheet.
-struct MailOhCommands: Commands {
+struct OhMailCommands: Commands {
     let state: AppState
 
     var body: some Commands {

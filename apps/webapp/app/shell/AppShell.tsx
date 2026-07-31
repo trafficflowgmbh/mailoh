@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * The mailoh client shell: rail + views over ONE engine, the reader
+ * The ohmail client shell: rail + views over ONE engine, the reader
  * exhale, the Reply Run, the ⌘K palette, the tag picker, the dock and
  * the demo ribbon. Every list, count and mutation runs through
- * @mailoh/client-engine — the shell only owns view state.
+ * @ohmail/client-engine — the shell only owns view state.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -21,7 +21,7 @@ import {
   type SearchHit,
   type TagDTO,
   type TriagePileEntry,
-} from "@mailoh/client-engine";
+} from "@ohmail/client-engine";
 import {
   CommandPalette,
   Dock,
@@ -36,7 +36,7 @@ import {
   useToast,
   type Command,
   type RailGroup,
-} from "@mailoh/ui";
+} from "@ohmail/ui";
 import { EngineProvider, useDemoMode, useEngine, useEngineVersion } from "./engine";
 import { firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
 import { MessagePane, type MessageAction } from "./MessagePane";
@@ -139,7 +139,7 @@ function ShellInner() {
 
   useEffect(() => {
     try {
-      if (sessionStorage.getItem("mailoh.demo-ribbon") === "gone") setRibbonGone(true);
+      if (sessionStorage.getItem("ohmail.demo-ribbon") === "gone") setRibbonGone(true);
     } catch {
       /* storage blocked — the ribbon stays */
     }
@@ -464,7 +464,7 @@ function ShellInner() {
               onClick={() => {
                 setRibbonGone(true);
                 try {
-                  sessionStorage.setItem("mailoh.demo-ribbon", "gone");
+                  sessionStorage.setItem("ohmail.demo-ribbon", "gone");
                 } catch {
                   /* fine — dismissed for this render only */
                 }

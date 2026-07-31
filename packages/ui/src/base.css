@@ -1,4 +1,4 @@
-/* @mailoh/ui — base layer.
+/* @ohmail/ui — base layer.
    Ported from the Blanc prototype. Element-level pieces of the design
    system (keycaps, icons, focus ring, selection) plus the `.mo-canvas`
    app container. Wrap your app (or any showcase panel) in `.mo-canvas`

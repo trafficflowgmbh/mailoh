@@ -3,8 +3,8 @@
  * prototype's display time verbatim (`m.time`); rows minted by
  * mutations fall back to a clock/weekday derived from the ISO date.
  */
-import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage, type TagDTO } from "@mailoh/client-engine";
-import type { TagHueName } from "@mailoh/ui";
+import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
+import type { TagHueName } from "@ohmail/ui";
 
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 

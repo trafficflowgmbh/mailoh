@@ -90,7 +90,7 @@ public struct RailView: View {
             .padding(.horizontal, 8)
             .padding(.top, 2)
             .padding(.bottom, 14)
-            .accessibilityLabel("mailoh")
+            .accessibilityLabel("ohmail")
     }
 
     private var composeCTA: some View {

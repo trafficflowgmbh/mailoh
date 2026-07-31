@@ -1,7 +1,7 @@
 /**
  * The network, removed from the page.
  *
- * mailoh Desktop is standalone: the Tauri CSP already forbids every connection
+ * ohmail Desktop is standalone: the Tauri CSP already forbids every connection
  * (`connect-src 'none'`), and there is no code in the bundle that would open
  * one. This is the third lock, and the only one that is observable from inside
  * the app: every browser API capable of leaving the process is replaced with a
@@ -19,10 +19,10 @@
  */
 
 const REFUSAL =
-  "mailoh Desktop is offline by construction — this build has no network layer. " +
+  "ohmail Desktop is offline by construction — this build has no network layer. " +
   "See apps/desktop/src/offline-guard.ts.";
 
-type Guarded = { __mailohOfflineGuard?: true };
+type Guarded = { __ohmailOfflineGuard?: true };
 
 function refuse(): never {
   throw new Error(REFUSAL);
@@ -34,7 +34,7 @@ function seal(target: Record<string, unknown>, name: string): void {
   const stub = function (): never {
     return refuse();
   };
-  (stub as unknown as Guarded).__mailohOfflineGuard = true;
+  (stub as unknown as Guarded).__ohmailOfflineGuard = true;
   try {
     Object.defineProperty(target, name, {
       value: stub,
@@ -55,5 +55,5 @@ export function installOfflineGuard(scope: Record<string, unknown> = globalThis 
 
 /** True when `installOfflineGuard` has run in this realm — asserted by the smoke test. */
 export function offlineGuardInstalled(scope: Record<string, unknown> = globalThis as never): boolean {
-  return (scope.fetch as Guarded | undefined)?.__mailohOfflineGuard === true;
+  return (scope.fetch as Guarded | undefined)?.__ohmailOfflineGuard === true;
 }

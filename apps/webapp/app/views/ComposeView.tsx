@@ -8,15 +8,15 @@
  */
 import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { composeDraft } from "@mailoh/fixtures";
-import type { EngineDraft, MailohEngine } from "@mailoh/client-engine";
-import { Button, Chip, Icon, useToast } from "@mailoh/ui";
+import { composeDraft } from "@ohmail/fixtures";
+import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
+import { Button, Chip, Icon, useToast } from "@ohmail/ui";
 
 export function ComposeView({
   engine,
   draft,
 }: {
-  engine: MailohEngine;
+  engine: OhmailEngine;
   draft: EngineDraft | null;
 }) {
   const t = useTranslations("compose");

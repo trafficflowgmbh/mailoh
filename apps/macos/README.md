@@ -1,6 +1,6 @@
-# mailoh for macOS
+# ohmail for macOS
 
-The **free flagship native app** — Tier 1 of mailoh, built in SwiftUI on the Blanc
+The **free flagship native app** — Tier 1 of ohmail, built in SwiftUI on the Blanc
 design system. This is the Tier-1 *preview*: it runs entirely on Mila's fixture
 world with no network at all. The real IMAP/sync engine lands behind the same
 views later; nothing in `Views/` reaches past `AppState` — not even for a string.
@@ -10,13 +10,13 @@ views later; nothing in `Views/` reaches past `AppState` — not even for a stri
 ```bash
 swift build --package-path apps/macos          # compile
 swift test  --package-path apps/macos          # 97 model/logic/fidelity tests
-swift run   --package-path apps/macos MailOh   # open the app
+swift run   --package-path apps/macos OhMail   # open the app
 ```
 
 ### `--smoke` — the CI render check
 
 ```bash
-swift run --package-path apps/macos MailOh --smoke
+swift run --package-path apps/macos OhMail --smoke
 # → SMOKE OK (110 checks)   exit 0     (~5s)
 ```
 
@@ -31,13 +31,13 @@ Walks **every route × both color schemes × every overlay × both verified widt
    the canvas, fails. This is the check that catches "laid out fine, drew nothing".
 3. **It is not collapsed.** Every mail identity in `AppState.renderManifest` must
    have been built by a real row / card / thread view, recorded through
-   [`RenderLog`](Sources/MailOhKit/Views/RenderLog.swift). This is a check on the
+   [`RenderLog`](Sources/OhMailKit/Views/RenderLog.swift). This is a check on the
    *view*: a list that drew `items.prefix(3)` plus a "12 more" placeholder has a
    perfectly correct model and still fails. Surfaces that only exist below the
    breakpoint — reading mode, the full-screen Screener pane — are covered too.
 
 Failures are collected and printed with a reason, and the run exits non-zero.
-`MailOhKitTests` mutation-tests the harness itself: a flat bitmap must fail the
+`OhMailKitTests` mutation-tests the harness itself: a flat bitmap must fail the
 blank check, and a deliberately-collapsing list must fail the row audit — so the
 check cannot rot back into a rubber stamp.
 
@@ -50,15 +50,15 @@ therefore attached through a plain `View` wrapper.
 ### `--shot <dir>` — the design-review pass
 
 ```bash
-swift run --package-path apps/macos MailOh --shot /tmp/shots
+swift run --package-path apps/macos OhMail --shot /tmp/shots
 # → SHOTS OK (54 checks) /tmp/shots
 ```
 
 Renders each route at both widths in both schemes to PNG via `ImageRenderer`, and
 **fails loudly** if a file cannot be produced, comes out blank, or lands under 1 KB.
 Because `ImageRenderer` cannot rasterize `ScrollView` content, this pass sets
-`\.staticRender`, which makes [`VScroll`](Sources/MailOhKit/Views/VScroll.swift)
-and [`LazyStack`](Sources/MailOhKit/Views/Support.swift) lay their content out as
+`\.staticRender`, which makes [`VScroll`](Sources/OhMailKit/Views/VScroll.swift)
+and [`LazyStack`](Sources/OhMailKit/Views/Support.swift) lay their content out as
 plain stacks — so a screenshot shows a whole list at real metrics. Interactive
 builds never set the flag and always get a real `ScrollView` over a `LazyVStack`.
 
@@ -75,9 +75,9 @@ testable from the command line with no Xcode project in the loop:
 
 | Target | Kind | Contents |
 |---|---|---|
-| `MailOhKit` | library | `Theme/` (Blanc tokens), `Models/`, `Fixtures/`, `State/`, `Views/`, `App/`, `Copy.swift` |
-| `MailOh` | executable | `main.swift` — dispatches `--smoke` / `--shot` / the app |
-| `MailOhKitTests` | test | 97 tests over counts, seen-semantics, lossless screener moves, undo, triage, tags, search, token fidelity, source audits, no-collapse |
+| `OhMailKit` | library | `Theme/` (Blanc tokens), `Models/`, `Fixtures/`, `State/`, `Views/`, `App/`, `Copy.swift` |
+| `OhMail` | executable | `main.swift` — dispatches `--smoke` / `--shot` / the app |
+| `OhMailKitTests` | test | 97 tests over counts, seen-semantics, lossless screener moves, undo, triage, tags, search, token fidelity, source audits, no-collapse |
 
 `main.swift` deliberately avoids `@main`: the `--smoke` path has to run before any
 `App` scene exists.
@@ -146,6 +146,6 @@ lives in `SplitPane`. Rail · list · detail is intact; only the container diffe
 ## Packaging
 
 This is a **dev binary**, not an app bundle. `swift run` produces a plain
-executable, which is enough for the preview and for CI. A shippable `mailoh.app`
+executable, which is enough for the preview and for CI. A shippable `ohmail.app`
 needs full Xcode for `Info.plist` + bundle assembly, code signing, and
 notarization — that step comes with the release pipeline, along with the app icon.

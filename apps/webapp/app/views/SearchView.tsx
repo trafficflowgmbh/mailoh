@@ -11,10 +11,10 @@ import {
   folderLeaf,
   VIEW_OF_FOLDER,
   type LocalSearchResult,
-  type MailohEngine,
+  type OhmailEngine,
   type SearchHit as EngineSearchHit,
-} from "@mailoh/client-engine";
-import { Facets, SearchBox, SearchHit, type FacetGroup } from "@mailoh/ui";
+} from "@ohmail/client-engine";
+import { Facets, SearchBox, SearchHit, type FacetGroup } from "@ohmail/ui";
 import { displayTime, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
 
 interface Filter {
@@ -31,7 +31,7 @@ export function SearchView({
   onOpen,
   onServerSearch,
 }: {
-  engine: MailohEngine;
+  engine: OhmailEngine;
   version: number;
   now: Date;
   query: string;

@@ -1,20 +1,20 @@
 <div align="center">
 
-<img src="docs/mailoh-icon.png" width="88" height="88" alt="mailoh">
+<img src="docs/ohmail-icon.png" width="88" height="88" alt="ohmail">
 
-# mailoh for the desktop
+# ohmail for the desktop
 
 **Consent-first email, on the mailboxes you already have.**
 
 A native SwiftUI client for macOS and a Tauri shell for Windows and Linux.
 Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
-[![build](https://github.com/trafficflowgmbh/mailoh/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowgmbh/mailoh/actions/workflows/build.yml)
+[![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
 [![Linux](https://img.shields.io/badge/Linux-AppImage%20%C2%B7%20deb-111111)](#linux)
-[![mailoh.io](https://img.shields.io/badge/mailoh.io-website-666666)](https://mailoh.io)
+[![ohmail.app](https://img.shields.io/badge/ohmail.app-website-666666)](https://ohmail.app)
 
 </div>
 
@@ -22,12 +22,12 @@ Free, GPL-3.0, no account, no subscription — this repository is the whole thin
 
 ## What this repository is
 
-**This repository is the free mailoh desktop apps** — macOS, Windows and Linux.
+**This repository is the free ohmail desktop apps** — macOS, Windows and Linux.
 All of them, all of their source, under GPL-3.0. There is no paid edition of the
 desktop app, no feature held back for one, and no telemetry reporting back on
 you.
 
-**mailoh Cloud — the hosted sync service — is the commercial product and is not
+**ohmail Cloud — the hosted sync service — is the commercial product and is not
 open source.** It is what puts your mail on your phone and on the web and keeps
 it organised while your laptop is shut. None of its code is in this repository:
 no backend, no billing, no sync server. It is entirely optional, and the desktop
@@ -53,10 +53,10 @@ Nothing in `Views/` reaches past `AppState` — not even for a string. That is t
 seam the engine lands behind, and the test suite enforces it today so the swap
 stays boring.
 
-If you came here from [mailoh.io](https://mailoh.io) expecting to read your mail:
-not yet. Watch the repository, or ask us at support@mailoh.io.
+If you came here from [ohmail.app](https://ohmail.app) expecting to read your mail:
+not yet. Watch the repository, or ask us at support@ohmail.app.
 
-## What mailoh is
+## What ohmail is
 
 Email that asks your permission before it takes your attention, built **on your
 existing mailboxes** — any IMAP provider — and organising them **in place**, in
@@ -87,24 +87,24 @@ organised.
 
 ## Screenshots
 
-Rendered from this source tree by `swift run MailOh --shot`, unretouched.
+Rendered from this source tree by `swift run OhMail --shot`, unretouched.
 
 **Ohbox** — a thread, its rule provenance, the blocked tracking pixel, the tags.
 
-<img src="docs/ohbox-light.png" alt="mailoh Ohbox, light" width="100%">
+<img src="docs/ohbox-light.png" alt="ohmail Ohbox, light" width="100%">
 
 **Screener** — a first-time sender who is a person rather than a list: two held
 messages, both shown in full, one suggested destination, five to choose from, and
 the keys that pick them. (In this preview the suggestion is a fixture, not a live
 model — see [Status](#status--read-this-first).)
 
-<img src="docs/screener-light.png" alt="mailoh Screener, light" width="100%">
+<img src="docs/screener-light.png" alt="ohmail Screener, light" width="100%">
 
 <details>
 <summary><strong>Dark mode</strong> (same two surfaces)</summary>
 
-<img src="docs/ohbox-dark.png" alt="mailoh Ohbox, dark" width="100%">
-<img src="docs/screener-dark.png" alt="mailoh Screener, dark" width="100%">
+<img src="docs/ohbox-dark.png" alt="ohmail Ohbox, dark" width="100%">
+<img src="docs/screener-dark.png" alt="ohmail Screener, dark" width="100%">
 
 </details>
 
@@ -115,7 +115,7 @@ brands, no scraped inboxes.
 
 Every push to `main` builds all three platforms on GitHub-hosted runners and
 attaches the installers to the run:
-[latest builds →](https://github.com/trafficflowgmbh/mailoh/actions/workflows/build.yml)
+[latest builds →](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
 
 The artifact list is at the bottom of a run page, and GitHub requires you to be
 signed in to download artifacts. **Each run's summary prints the SHA-256 of every
@@ -124,12 +124,12 @@ you downloaded against what the run made.
 
 | Platform | Artifacts | Runner |
 |---|---|---|
-| **macOS** | `mailoh.dmg` (universal, arm64 + x86_64), `mailoh.app.zip`, the full screenshot set | `macos-15` |
-| **Windows** | `mailoh_0.1.0_x64_en-US.msi`, `mailoh_0.1.0_x64-setup.exe` (NSIS) | `windows-latest` |
-| **Linux** | `mailoh_0.1.0_amd64.AppImage`, `mailoh_0.1.0_amd64.deb` | `ubuntu-latest` |
+| **macOS** | `ohmail.dmg` (universal, arm64 + x86_64), `ohmail.app.zip`, the full screenshot set | `macos-15` |
+| **Windows** | `ohmail_0.1.0_x64_en-US.msi`, `ohmail_0.1.0_x64-setup.exe` (NSIS) | `windows-latest` |
+| **Linux** | `ohmail_0.1.0_amd64.AppImage`, `ohmail_0.1.0_amd64.deb` | `ubuntu-latest` |
 
 **Nothing here is signed**, on any platform. Code-signing certificates cost money
-mailoh has not spent yet. We would rather say that plainly than have you discover
+ohmail has not spent yet. We would rather say that plainly than have you discover
 it from a scary dialog. On all three platforms, building from source is the
 option that requires trusting nobody.
 
@@ -139,7 +139,7 @@ option that requires trusting nobody.
 > **The DMG is unsigned and un-notarized.** It carries an ad-hoc signature only,
 > not an Apple Developer ID. On first launch macOS Gatekeeper will refuse a
 > double-click and may claim the app "is damaged". It is not.
-> **Right-click (or Control-click) mailoh.app → Open → Open.** The same note is
+> **Right-click (or Control-click) ohmail.app → Open → Open.** The same note is
 > in the DMG as *Read me first.txt*. Signed and notarized builds land with the
 > developer account.
 
@@ -161,7 +161,7 @@ Requires macOS 15 (Sequoia) or newer.
 > connection makes "it cannot reach the network" a footnote instead of a fact.
 > The trade is that **you must already have WebView2.** Windows 11 has it;
 > so does any Windows 10 that has taken updates since 2021, because Edge
-> installs it. If yours does not, mailoh will not start and will tell you so —
+> installs it. If yours does not, ohmail will not start and will tell you so —
 > install the Evergreen runtime once, from Microsoft:
 > <https://developer.microsoft.com/microsoft-edge/webview2/>
 
@@ -173,17 +173,17 @@ Requires Windows 10 or newer, plus the WebView2 runtime as described above.
 > **The AppImage needs the executable bit**, which GitHub's artifact zip does not
 > preserve:
 > ```bash
-> chmod +x mailoh_0.1.0_amd64.AppImage && ./mailoh_0.1.0_amd64.AppImage
+> chmod +x ohmail_0.1.0_amd64.AppImage && ./ohmail_0.1.0_amd64.AppImage
 > ```
 > If it exits immediately on a distribution that has not enabled unprivileged
 > user namespaces, run it with `--appimage-extract-and-run`.
 
-The `.deb` installs with `sudo apt install ./mailoh_0.1.0_amd64.deb` and pulls in
+The `.deb` installs with `sudo apt install ./ohmail_0.1.0_amd64.deb` and pulls in
 WebKitGTK. It is **not** in any repository, so it will never auto-update — and
 there is no update checker in this build at all.
 
-To uninstall it: `sudo apt remove mailoh`. The Debian package name, the binary at
-`/usr/bin/mailoh`, the icon and the launcher entry are all the same word.
+To uninstall it: `sudo apt remove ohmail`. The Debian package name, the binary at
+`/usr/bin/ohmail`, the icon and the launcher entry are all the same word.
 
 ### Verify it yourself
 
@@ -191,8 +191,8 @@ On Windows and Linux the interface is embedded **uncompressed** on purpose, so
 you can check what a downloaded binary does without running it:
 
 ```bash
-strings -a mailoh.exe | grep -oE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' | sort -u
-strings -a mailoh.exe | grep -c Ohbox      # the interface really is in there
+strings -a ohmail.exe | grep -oE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' | sort -u
+strings -a ohmail.exe | grep -c Ohbox      # the interface really is in there
 ```
 
 The first command prints **13 strings on Linux, 14 on Windows**, and every one
@@ -206,7 +206,7 @@ surrounding line for the three that are not URLs at all.
 
 CI runs exactly these greps on every build, prints the complete list in the job
 log, **asserts the count** so that "13 and 14" cannot quietly stop being true,
-and **fails the run** if any URL in the binary points at mailoh or TrafficFlow
+and **fails the run** if any URL in the binary points at ohmail or TrafficFlow
 infrastructure. It also fails the Windows job if the `.msi` or the `-setup.exe`
 contains a WebView2 downloader.
 
@@ -224,12 +224,12 @@ No dependencies: `Package.swift` declares zero third-party packages, so there is
 nothing to resolve, install or trust.
 
 ```bash
-git clone https://github.com/trafficflowgmbh/mailoh
-cd mailoh
+git clone https://github.com/trafficflowhq/ohmail
+cd ohmail
 
 swift build --package-path apps/macos -c release   # ~15 s cold on an M-series Mac
 swift test  --package-path apps/macos              # 99 tests, ~1 s
-swift run   --package-path apps/macos MailOh       # opens the app
+swift run   --package-path apps/macos OhMail       # opens the app
 ```
 
 Two extra entry points, both used by CI:
@@ -238,16 +238,16 @@ Two extra entry points, both used by CI:
 # Render check: every route × light/dark × 1440 pt and 390 pt, hosted offscreen,
 # rasterised, and audited — including that no message was replaced by a "N more"
 # placeholder. Prints "SMOKE OK (110 checks)" and exits 0.
-swift run --package-path apps/macos MailOh --smoke
+swift run --package-path apps/macos OhMail --smoke
 
 # Screenshots of every route, both schemes, both widths, as PNGs.
-swift run --package-path apps/macos MailOh --shot shots
+swift run --package-path apps/macos OhMail --shot shots
 ```
 
 And an installable bundle, which SwiftPM cannot make on its own:
 
 ```bash
-./scripts/package-app.sh     # → build/mailoh.app and build/mailoh.dmg
+./scripts/package-app.sh     # → build/ohmail.app and build/ohmail.dmg
 ```
 
 ### Windows and Linux
@@ -297,7 +297,7 @@ yourself. See the Windows note above.
 
 ## Desktop or Cloud
 
-mailoh comes in two halves, and **this repository is the whole of the first
+ohmail comes in two halves, and **this repository is the whole of the first
 one**. Here is the honest comparison, including the parts where Desktop wins.
 
 The Desktop column describes the product the local engine will make possible.
@@ -347,7 +347,7 @@ on its own. Today, before the local engine lands, it does run on fixtures, so
   own server, the entire time. There is no export, because there is nothing to
   export — cancel and your mailbox stays exactly as organised as it was.
 
-Details and sign-up: **[mailoh.io](https://mailoh.io)**. And if the answer is
+Details and sign-up: **[ohmail.app](https://ohmail.app)**. And if the answer is
 "the free desktop app is fine, thanks" — genuinely, that is a good outcome. It is
 why we built it this way.
 
@@ -366,9 +366,9 @@ package, no dependencies.
 
 | Target | Kind | What is in it |
 |---|---|---|
-| `MailOhKit` | library | `Theme/` (the design tokens), `Models/`, `Fixtures/`, `State/`, `Views/`, `App/` |
-| `MailOh` | executable | `main.swift` — dispatches `--smoke`, `--shot`, or the app |
-| `MailOhKitTests` | tests | 99 tests: counts and seen-semantics, lossless Screener moves, undo, triage, tags, search, numeric design-token fidelity, source audits, and the no-collapse audit |
+| `OhMailKit` | library | `Theme/` (the design tokens), `Models/`, `Fixtures/`, `State/`, `Views/`, `App/` |
+| `OhMail` | executable | `main.swift` — dispatches `--smoke`, `--shot`, or the app |
+| `OhMailKitTests` | tests | 99 tests: counts and seen-semantics, lossless Screener moves, undo, triage, tags, search, numeric design-token fidelity, source audits, and the no-collapse audit |
 
 One of those 99 reports as *skipped* here, and says why when it does: it compares
 the triage pile's sheet-edge shadow against the original design prototype, which
@@ -440,7 +440,7 @@ Zürich, Switzerland.
 
 The desktop client is free and is meant to stay free: GPL-3.0 means anyone can
 use, study, change and share it, and any redistributed change comes back under
-the same terms — so a closed-source re-skin of mailoh is not possible. Full text
+the same terms — so a closed-source re-skin of ohmail is not possible. Full text
 in [LICENSE](LICENSE) — a verbatim copy of the FSF's GPL-3.0 — and the reasoning,
 the third-party position and the per-file-header decision in
 [COPYRIGHT](COPYRIGHT).
@@ -449,7 +449,7 @@ the third-party position and the per-file-header decision in
 redistribute this source; a fork you publish needs its own name and its own
 artwork, so nobody is misled about who supports it.
 [TRADEMARK.md](TRADEMARK.md) is the policy, and it is more permissive than you
-probably expect — packaging mailoh for a distribution under its own name is
+probably expect — packaging ohmail for a distribution under its own name is
 explicitly fine.
 
 Contributions need **no CLA and no copyright assignment**, just a DCO sign-off
@@ -461,7 +461,7 @@ Security reports: [SECURITY.md](SECURITY.md).
 
 <div align="center">
 
-[mailoh.io](https://mailoh.io) · [issues](https://github.com/trafficflowgmbh/mailoh/issues) · support@mailoh.io
+[ohmail.app](https://ohmail.app) · [issues](https://github.com/trafficflowhq/ohmail/issues) · support@ohmail.app
 
 Built in Zürich by [TrafficFlow GmbH](https://trafficflow.ch).
 
