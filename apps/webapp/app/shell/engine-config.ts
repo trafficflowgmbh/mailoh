@@ -40,6 +40,40 @@ export interface EngineEnv {
 const BUILD_ENV: EngineEnv = { NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API_BASE };
 
 /**
+ * A live engine was asked for and this build has no server to point it at.
+ *
+ * THE FAILURE THIS EXISTS TO MAKE IMPOSSIBLE. `createEngine` used to answer that request
+ * with a `FixturesAdapter` — the same branch `?demo=1` takes. The two situations are not
+ * alike and must never share an outcome:
+ *
+ *  · `?demo=1` is somebody ASKING for Mila's fictional world. Fixtures are the right answer.
+ *  · `demo: false` with no API base is a MISCONFIGURED BUILD. Answering it with fixtures
+ *    hands a signed-in, paying customer a stranger's invented mailbox, renders it in the
+ *    live chrome (no demo ribbon — `AppShell` reads the engine's mode, and the mode is
+ *    `false`), and accepts their clicks as though they were organising their own mail.
+ *
+ * It looks like it works, which is what makes it the worst failure shape in this product.
+ * A missing environment variable must never be able to SELECT the demo; the demo is opted
+ * into, by a URL or by `NEXT_PUBLIC_DEMO`, and by nothing else. So the unarmed live request
+ * throws, loudly, at the moment the engine is constructed.
+ *
+ * This should be unreachable in a deployed build — `next.config.mjs` refuses to BUILD a
+ * production bundle with no `TF_API_ORIGIN` (`assertApiArmed`), which is the guard that
+ * actually stops it shipping. This is the second ring: the one that holds if the first is
+ * ever configured away, and the one a test can drive directly.
+ */
+export class EngineUnarmedError extends Error {
+  constructor() {
+    super(
+      "ohmail: a live engine was requested but this build has no NEXT_PUBLIC_API_BASE. " +
+        "Refusing to fall back to demo fixtures — set TF_API_ORIGIN and rebuild, or ask for " +
+        "the demo explicitly with ?demo=1.",
+    );
+    this.name = "EngineUnarmedError";
+  }
+}
+
+/**
  * Build the engine for a resolved mode.
  *
  * `demo` WINS over everything. It is checked first and there is no configuration, no
@@ -73,20 +107,28 @@ export function createEngine(
   env: EngineEnv = BUILD_ENV,
   owner: string | null = null,
 ): OhmailEngine {
+  // `demo` FIRST, and it returns — so there is no configuration, no environment variable
+  // and no argument that can make a `demo: true` call yield an `HttpAdapter`. Unchanged in
+  // effect from the old `!demo && apiBase` ordering; spelled as an early return because the
+  // branch below now throws, and "the demo is decided before anything can fail" has to stay
+  // obvious.
+  if (demo) return new OhmailEngine({ adapter: new FixturesAdapter() });
+
+  // FIXTURES ARE NOT A FALLBACK. See {@link EngineUnarmedError}: reaching here without a
+  // base used to return the demo world to a real signed-in account, silently.
   const apiBase = env.NEXT_PUBLIC_API_BASE;
-  if (!demo && apiBase) {
-    const persist = owner !== null && typeof indexedDB !== "undefined";
-    if (persist) {
-      // Fire-and-forget, once per engine: the pre-repair database is not ours to read and
-      // is not something to leave lying on the origin. It is never opened, only deleted.
-      void purgeLegacyMirror().catch(() => {
-        /* blocked by another tab, or storage refused — hygiene, not an invariant */
-      });
-    }
-    return new OhmailEngine({
-      adapter: new HttpAdapter({ baseUrl: apiBase }),
-      ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),
+  if (!apiBase) throw new EngineUnarmedError();
+
+  const persist = owner !== null && typeof indexedDB !== "undefined";
+  if (persist) {
+    // Fire-and-forget, once per engine: the pre-repair database is not ours to read and
+    // is not something to leave lying on the origin. It is never opened, only deleted.
+    void purgeLegacyMirror().catch(() => {
+      /* blocked by another tab, or storage refused — hygiene, not an invariant */
     });
   }
-  return new OhmailEngine({ adapter: new FixturesAdapter() });
+  return new OhmailEngine({
+    adapter: new HttpAdapter({ baseUrl: apiBase }),
+    ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),
+  });
 }

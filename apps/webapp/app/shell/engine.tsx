@@ -21,7 +21,7 @@ import {
 import { useTranslations } from "next-intl";
 import { OhmailEngine, type EntityReader } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
-import { createEngine } from "./engine-config";
+import { createEngine, EngineUnarmedError } from "./engine-config";
 
 /**
  * "Whose mailbox is this?", as a function the SHELL does not know how to answer.
@@ -158,7 +158,13 @@ export function EngineProvider({
         }
         setBinding({ status: "ready", demo: false, engine: createEngine(false, undefined, owner) });
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        // A build with no API base is NOT "we could not prove who you are" — it is a broken
+        // deployment, and rendering the session screen for it would be the same silent lie
+        // `EngineUnarmedError` exists to end: a signed-in user told their session expired
+        // when the truth is that this bundle was never wired to a server. Let it escape to
+        // the error boundary and the console instead of dressing it as an auth outcome.
+        if (err instanceof EngineUnarmedError) throw err;
         if (!cancelled) setBinding({ status: "unauthenticated" });
       });
     return () => {
