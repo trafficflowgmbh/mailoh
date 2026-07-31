@@ -15,6 +15,12 @@
     "signIn": "Sign in",
     "footer": "ohmail · consent-first email on your own mailboxes"
   },
+  "session": {
+    "endedTitle": "You are signed out.",
+    "endedBody": "We could not confirm this session, so nothing has been loaded. Sign in again and your mail will be here.",
+    "signIn": "Sign in",
+    "openDemo": "Open the demo"
+  },
   "login": {
     "title": "Sign in",
     "sub": "Your password, then your passkey. The passkey never leaves your device.",
