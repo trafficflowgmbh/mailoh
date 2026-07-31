@@ -49,7 +49,7 @@
     "rail_mailbox": "Mailbox",
     "rail_plan": "Plan",
     "step_invite_title": "Redeem your invite",
-    "step_invite_lead": "ohmail is invite-only during the beta. Paste the code from your invite mail — it only works for the address it was sent to.",
+    "step_invite_lead": "ohmail is invite-only during the beta. Paste the code exactly as your invite mail shows it.",
     "inviteLabel": "Invite code",
     "inviteHint": "It looks like OHMAIL-XXXX-XXXX-XXXX. Spaces and lower case are fine.",
     "inviteMissing": "Paste the code from your invite mail to continue.",
@@ -66,7 +66,7 @@
     "addPasskey": "Add a passkey",
     "passkeyNote": "Face ID, Touch ID or your device PIN. The key itself never leaves the device.",
     "useTotp": "Use an authenticator app instead",
-    "totpScan": "Scan this with your authenticator app, or type the key below into it.",
+    "totpScan": "Type this key into your authenticator app. Most apps offer “enter a setup key” next to the scan button.",
     "totpLabel": "Six-digit code from the app",
     "activate": "Activate",
     "step_codes_title": "Save your recovery codes",
@@ -106,7 +106,13 @@
     "openDemo": "Open the demo",
     "planPrice": "${price}/mo",
     "planSub": "{mailboxes} mailboxes · ~{credits} AI actions a month",
-    "planLoading": "Loading plans…"
+    "planLoading": "Loading plans…",
+    "step_done_lead": "Your mailbox is connecting now. The first sync brings in recent mail; older mail follows in the background.",
+    "planConfirmed": "Plan confirmed. Taking you to the last step…",
+    "planPending": "Your payment went through, but the confirmation has not reached us yet. Reload this page in a moment — nothing is lost.",
+    "stepUpExpired": "For your security, connecting a mailbox needs a second factor you used in the last few minutes, and that window has closed. Sign in again and the setup carries on from the mailbox step.",
+    "appPasswordReady": "Have the app password ready before you start: this step expires a few minutes after your last passkey or authenticator check.",
+    "totpOpenApp": "On this device? Open your authenticator app with the key already filled in."
   },
   "rail": {
     "compose": "Compose",
