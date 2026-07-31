@@ -6,7 +6,7 @@
  * the demo ribbon. Every list, count and mutation runs through
  * @ohmail/client-engine — the shell only owns view state.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import {
   DEMO_NOW,
@@ -75,15 +75,28 @@ const typingGuard = (e: KeyboardEvent): boolean =>
  * in. The chrome below reads THAT (`useDemoMode`), so the ribbon and the frozen demo clock
  * can never disagree with the adapter the data is coming from.
  */
-export function AppShell({ demo, resolveOwner }: { demo: boolean; resolveOwner?: OwnerResolver }) {
+export function AppShell({
+  demo,
+  resolveOwner,
+  accountSection,
+}: {
+  demo: boolean;
+  resolveOwner?: OwnerResolver;
+  /**
+   * The Cloud client's Settings → Account pane, injected rather than imported — the same
+   * seam as `resolveOwner`, and see `views/SettingsView.tsx` for why it has to be one.
+   * Absent on Desktop, which is standalone and has no account.
+   */
+  accountSection?: ReactNode;
+}) {
   return (
     <EngineProvider demo={demo} resolveOwner={resolveOwner}>
-      <ShellInner />
+      <ShellInner accountSection={accountSection} />
     </EngineProvider>
   );
 }
 
-function ShellInner() {
+function ShellInner({ accountSection }: { accountSection?: ReactNode }) {
   const demo = useDemoMode();
   const t = useTranslations();
   const engine = useEngine();
@@ -634,6 +647,11 @@ function ShellInner() {
                 tagCounts={Object.fromEntries(
                   tagGroups.map((g) => [g.tag.id, g.messages.length]),
                 )}
+                /* `demo` is the ENGINE's answer, not the server's floor (see the note on
+                   AppShell): `?demo=1` runs on fixtures with no session and no account, so
+                   an Account pane there would offer to erase something that does not
+                   exist. */
+                accountSection={demo ? undefined : accountSection}
               />
             ) : null}
           </main>

@@ -4,8 +4,18 @@
  * Settings — General (language + theme, wired to the ThemeProvider),
  * Notifications (only-what-matters defaults + VIP + the learned
  * suggestion), Mailboxes (the mirror's mailbox entities) and Tags.
+ *
+ * ── AND A FIFTH PANE THIS FILE DELIBERATELY KNOWS NOTHING ABOUT ─────────────────────────
+ *
+ * `accountSection` is the same seam `AppShell`'s `resolveOwner` is, for the same reason.
+ * This file is SHARED with `apps/desktop` and copied into a public GPL mirror that does not
+ * contain `app/api-client` at all (`scripts/publish-desktop.mjs` DENYs it), so it cannot
+ * import "erase this account from the server" — and Desktop, which is standalone and has no
+ * account, must not grow an Account pane by accident. The Cloud client passes a node in
+ * (`(product)/mailbox/AccountSection.tsx`); Desktop passes nothing and the pane does not
+ * exist. Nothing about account deletion is written down in this file.
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { notificationSettings } from "@ohmail/fixtures";
 import type { TagDTO } from "@ohmail/client-engine";
@@ -25,7 +35,7 @@ import {
 } from "@ohmail/ui";
 import { hueOf } from "../shell/format";
 
-type PaneId = "general" | "notifications" | "mailboxes" | "tags";
+type PaneId = "general" | "notifications" | "mailboxes" | "tags" | "account";
 
 export interface MailboxEntity {
   id: string;
@@ -39,10 +49,13 @@ export function SettingsView({
   mailboxes,
   tags,
   tagCounts,
+  accountSection,
 }: {
   mailboxes: MailboxEntity[];
   tags: TagDTO[];
   tagCounts: Record<string, number>;
+  /** The Cloud client's Account pane, or absent — see the header. */
+  accountSection?: ReactNode;
 }) {
   const t = useTranslations("settings");
   const toast = useToast();
@@ -57,6 +70,10 @@ export function SettingsView({
     ["notifications", t("notifications")],
     ["mailboxes", t("mailboxes")],
     ["tags", t("tags")],
+    // LAST, and only where there is an account to act on. Last because the pane's only
+    // content is irreversible, and a destructive control at the top of a list is one
+    // mis-click away from the thing above it.
+    ...(accountSection ? [["account", t("account")] as [PaneId, string]] : []),
   ];
 
   return (
@@ -207,6 +224,8 @@ export function SettingsView({
               <p className="set-note-inline">{t("tagNote")}</p>
             </SettingsSection>
           ) : null}
+
+          {pane === "account" ? accountSection : null}
         </div>
       </div>
     </section>

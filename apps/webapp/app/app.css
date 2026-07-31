@@ -1108,3 +1108,112 @@ body.reading .shell {
     display: none !important;
   }
 }
+
+/* ================= Settings → Account (S19) =================
+   The deletion control. Blanc rules apply unchanged: shadow-sculpted surface (the pane
+   comes from SettingsSection), hairlines only on real input fields, no gradients. The
+   accent is spent ONCE here — on the shield beside the sentence about the user's mail —
+   and the destructive button is ink-on-canvas with a hairline rather than a red fill: a
+   red slab would be the loudest thing on the surface and this pane is meant to be read
+   before it is used. */
+.acct {
+  max-width: 620px;
+}
+.acct-h {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 14px 0 6px;
+}
+.acct-lead {
+  font-size: 13px;
+  color: var(--ink2);
+  line-height: 1.6;
+  margin: 0 0 4px;
+}
+.acct-sub {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink3);
+  margin: 0 0 8px;
+}
+.acct-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+  padding: 4px 0 2px;
+}
+.acct-list {
+  margin: 0;
+  padding: 0 0 0 15px;
+  font-size: 12px;
+  color: var(--ink2);
+  line-height: 1.55;
+}
+.acct-list li + li {
+  margin-top: 5px;
+}
+.acct-fine {
+  font-size: 11.5px;
+  color: var(--ink3);
+  line-height: 1.55;
+  margin: 9px 0 0;
+}
+.acct-fine a {
+  color: var(--ink2);
+  text-decoration: underline;
+}
+.acct-warn {
+  font-size: 12px;
+  color: var(--ink);
+  line-height: 1.55;
+  margin: 12px 0;
+  border-radius: 14px;
+  padding: 11px 13px;
+  background: var(--accent-soft);
+}
+.acct-confirm {
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+.acct-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 16px;
+}
+.acct-actions .btn {
+  text-decoration: none;
+}
+.acct-methods {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.acct-methods .join-alt {
+  margin: 14px 0 0;
+}
+/* The one destructive affordance in the product. `primary` gives it the weight; this takes
+   the accent fill back off, because an irreversible action should not look like the happy
+   path it is styled from. */
+.btn.primary.danger {
+  background: var(--canvas);
+  color: var(--ink);
+  box-shadow: var(--lift-0);
+  border: 1px solid var(--hair);
+}
+.btn.primary.danger:hover:not(:disabled) {
+  box-shadow: var(--lift-2);
+}
+.btn.primary.danger:disabled {
+  color: var(--ink3);
+}
+@media (max-width: 620px) {
+  .acct-cols {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+}
