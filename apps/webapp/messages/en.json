@@ -87,14 +87,8 @@
     "step_plan_lead": "Start with 14 days free. No card, and nothing renews on its own.",
     "mailboxConnected": "{address} is connected.",
     "plan_solo": "Solo",
-    "plan_solo_price": "$9/mo",
-    "plan_solo_sub": "5 mailboxes · ~2,000 AI actions",
     "plan_plus": "Plus",
-    "plan_plus_price": "$15/mo",
-    "plan_plus_sub": "10 mailboxes · ~6,000 AI actions",
     "plan_pro": "Pro",
-    "plan_pro_price": "$29/mo",
-    "plan_pro_sub": "50 mailboxes · ~20,000 AI actions",
     "trialNote": "The 14-day trial needs no card and runs the deterministic rules — screening, filing, Reads, Receipts, Resurface. Managed AI actions (drafts and pre-suggestions) start with the subscription, so nothing is spent on your behalf during the trial.",
     "alreadySubscribed": "This account is on {plan} ({status}).",
     "openMailoh": "Open mailoh",
@@ -109,7 +103,10 @@
     "signIn": "Sign in",
     "unavailableTitle": "Not connected yet",
     "unavailableBody": "This build of mailoh is not pointed at a server, so accounts cannot be created here. The demo runs the whole client on a fixture mailbox.",
-    "openDemo": "Open the demo"
+    "openDemo": "Open the demo",
+    "planPrice": "${price}/mo",
+    "planSub": "{mailboxes} mailboxes · ~{credits} AI actions a month",
+    "planLoading": "Loading plans…"
   },
   "rail": {
     "compose": "Compose",
