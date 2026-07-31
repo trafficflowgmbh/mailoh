@@ -37,13 +37,7 @@ import {
   type Command,
   type RailGroup,
 } from "@ohmail/ui";
-import {
-  EngineProvider,
-  useDemoMode,
-  useEngine,
-  useEngineVersion,
-  type OwnerResolver,
-} from "./engine";
+import { EngineProvider, useDemoMode, useEngine, useEngineVersion } from "./engine";
 import { firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
 import { MessagePane, type MessageAction } from "./MessagePane";
 import { useScreenerState } from "./screener-state";
@@ -75,9 +69,9 @@ const typingGuard = (e: KeyboardEvent): boolean =>
  * in. The chrome below reads THAT (`useDemoMode`), so the ribbon and the frozen demo clock
  * can never disagree with the adapter the data is coming from.
  */
-export function AppShell({ demo, resolveOwner }: { demo: boolean; resolveOwner?: OwnerResolver }) {
+export function AppShell({ demo }: { demo: boolean }) {
   return (
-    <EngineProvider demo={demo} resolveOwner={resolveOwner}>
+    <EngineProvider demo={demo}>
       <ShellInner />
     </EngineProvider>
   );

@@ -10,7 +10,7 @@ A native SwiftUI client for macOS and a Tauri shell for Windows and Linux.
 Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/badge/download-v0.2.0--preview-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.2.0-preview)
+[![latest release](https://img.shields.io/badge/download-v0.2.0--preview-a3461c)](https://github.com/trafficflowhq/ohmail/releases/latest)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -45,7 +45,7 @@ people, and the desktop app neither asks for it nor needs it.
 
 ## The current release — v0.2.0-preview
 
-**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.2.0-preview)**
+**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/latest)**
 `ohmail.dmg` for macOS, an `.msi` and an NSIS `-setup.exe` for Windows, an
 `.AppImage` and a `.deb` for Linux. Every file was built by GitHub Actions from
 the tree this tag points at, and the run that made them prints the SHA-256 of
@@ -141,12 +141,9 @@ brands, no scraped inboxes.
 
 ## Download a build
 
-**[Releases](https://github.com/trafficflowhq/ohmail/releases) is the place to
-start** — the installers are attached there, they need no GitHub account, and
-each release names the run that built it. (Every release so far is marked a
-pre-release, which is accurate and which is why `/releases/latest` does not
-resolve to one: GitHub reserves that address for stable releases, and there has
-not been one yet.)
+**[Releases](https://github.com/trafficflowhq/ohmail/releases/latest) is the
+place to start** — the installers are attached there, they need no GitHub
+account, and each release names the run that built it.
 
 Every push to `main` also builds all three platforms and attaches the installers
 to that run: [latest builds →](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml).

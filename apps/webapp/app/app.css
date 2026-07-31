@@ -747,6 +747,35 @@ body.reading .shell {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   letter-spacing: 0.06em;
 }
+/* S16 — the OPTIONAL invite on the open signup path. A `<details>` so the common case
+   (no code) is a three-input form and the uncommon one (an invited person who lost the
+   link) is one click away rather than absent. */
+.join-invite-opt {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.join-invite-opt > summary {
+  font-size: 12.5px;
+  color: var(--ink2);
+  cursor: pointer;
+  list-style: none;
+  padding: 2px 0;
+}
+.join-invite-opt > summary::-webkit-details-marker { display: none; }
+.join-invite-opt > summary::before {
+  content: "+";
+  display: inline-block;
+  width: 1em;
+  color: var(--ink3);
+}
+.join-invite-opt[open] > summary::before { content: "−"; }
+.join-invite-opt > summary:hover { color: var(--ink1); }
+.join-invite-opt > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
 .join-hint,
 .join-note {
   font-size: 11.5px;

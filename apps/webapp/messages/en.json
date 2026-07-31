@@ -9,17 +9,11 @@
     "dismiss": "Dismiss"
   },
   "gate": {
-    "lede": "Accounts open with the beta.",
-    "body": "The client is ready; sign-in switches on when invites go out. Until then the demo runs the full app on a fixture mailbox — engine, keyboard and all — right here in your browser.",
+    "lede": "This build has no server attached.",
+    "body": "It is the ohmail interface running on a fixture mailbox — engine, keyboard and all — right here, with no network at all. The Cloud client, with your own mailboxes, lives at ohmail.app.",
     "openDemo": "Open the demo",
     "signIn": "Sign in",
     "footer": "ohmail · consent-first email on your own mailboxes"
-  },
-  "session": {
-    "endedTitle": "You are signed out.",
-    "endedBody": "We could not confirm this session, so nothing has been loaded. Sign in again and your mail will be here.",
-    "signIn": "Sign in",
-    "openDemo": "Open the demo"
   },
   "login": {
     "title": "Sign in",
@@ -30,10 +24,10 @@
     "totpLabel": "Six-digit code from your authenticator app",
     "totpVerify": "Verify code",
     "totpBack": "Back to passkey",
-    "betaNote": "Accounts open with the beta.",
-    "betaBody": "Sign-in is wired to the server in the next stage. Meanwhile, the demo runs the full client on a fixture mailbox.",
+    "betaNote": "This build has no server attached.",
+    "betaBody": "Signing in needs the Cloud client at ohmail.app. Here, the demo runs the full interface on a fixture mailbox.",
     "betaCta": "Open the demo",
-    "toastBeta": "Accounts open with the beta — sign-in isn't live yet.",
+    "toastBeta": "This build has no server attached — sign in at ohmail.app.",
     "footer": "ohmail · mail stays in real folders on your own servers",
     "emailLabel": "Email",
     "passwordLabel": "Password",
@@ -118,7 +112,15 @@
     "planPending": "Your payment went through, but the confirmation has not reached us yet. Reload this page in a moment — nothing is lost.",
     "stepUpExpired": "For your security, connecting a mailbox needs a second factor you used in the last few minutes, and that window has closed. Sign in again and the setup carries on from the mailbox step.",
     "appPasswordReady": "Have the app password ready before you start: this step expires a few minutes after your last passkey or authenticator check.",
-    "totpOpenApp": "On this device? Open your authenticator app with the key already filled in."
+    "totpOpenApp": "On this device? Open your authenticator app with the key already filled in.",
+    "step_invite_lead_open": "Have an invite code? Paste it exactly as your invite mail shows it. You do not need one to sign up — this is here for people who were sent one.",
+    "emailHintOpen": "Where we will reach you about your account. It is not a new email address.",
+    "inviteOptional": "I have an invite code",
+    "inviteOptionalHint": "Optional. It looks like OHMAIL-XXXX-XXXX-XXXX, and it is checked against the address above.",
+    "inviteRequiredAfterAll": "This server is still asking for an invite code. If you have one, paste it here; otherwise write to support@ohmail.app and we will sort it out.",
+    "expiredOpen": "The setup session lasts five minutes and this one has expired. Sign in with the email and password you just chose and we will pick up where you left off.",
+    "capacityTitle": "We are full just now",
+    "capacityCta": "Put me on the list"
   },
   "rail": {
     "compose": "Compose",
@@ -507,13 +509,13 @@
   "trial": {
     "titleA": "<k>Fourteen days, free.</k>",
     "titleB": "No card.",
-    "when": "Not yet, though: Cloud opens with the beta.",
-    "lede": "When it does, every tier starts with the whole trial — your own mailboxes, the Screener, real folders, always-on sync, push, mobile and web. Everything the product does with rules.",
+    "when": "Open now: start today and the fourteen days start with you.",
+    "lede": "Every tier starts with the whole trial — your own mailboxes, the Screener, real folders, always-on sync, push, mobile and web. Everything the product does with rules.",
     "terms": "The managed AI actions begin when a subscription does — the trial never spends them. And there is nothing to cancel: give no card, and after fourteen days the trial simply ends."
   },
   "pricing": {
     "title": "Desktop is free. The cloud is optional.",
-    "sub": "ohmail Desktop will be the full product — free, standalone, no account, no artificial limits. Cloud is for when you want your mail on your phone, on the web, and working while you sleep. An AI action is one piece of AI work — a Screener suggestion, a summary, a draft — and if you ever run out, mail keeps flowing rules-only. Never a surprise charge. Nothing on this page is for sale or download yet: both tiers open with the beta.",
+    "sub": "ohmail Desktop will be the full product — free, standalone, no account, no artificial limits. Cloud is for when you want your mail on your phone, on the web, and working while you sleep. An AI action is one piece of AI work — a Screener suggestion, a summary, a draft — and if you ever run out, mail keeps flowing rules-only. Never a surprise charge. Cloud is open today, trial first and no card. Desktop is a free download today, and what you download is the interface: the local mail engine is what we are building now.",
     "desktopName": "ohmail Desktop",
     "desktopStatus": "in development",
     "desktopPrice": "Free",
@@ -525,8 +527,8 @@
     "desktopC": "All processing on your machine",
     "desktopD": "Bring your own AI key, or a local model",
     "desktopE": "No artificial limits — everything included",
-    "desktopCta": "Get Desktop free",
-    "desktopCtaNote": "Downloads open with the beta — join the list.",
+    "desktopCta": "Download Desktop free",
+    "desktopCtaNote": "macOS, Windows and Linux. This build is the interface only — it connects to no mailbox yet.",
     "cloudName": "ohmail Cloud",
     "cloudOptional": "optional",
     "cloudShared": "Your mail on your phone, the web — and working while you sleep. Mobile + web apps, push, always-on processing, AI included.",
@@ -547,7 +549,8 @@
     "cloudCta": "Choose {tier}",
     "trialNote": "Every tier starts with the 14 days above — no card, rules-only; the managed AI actions begin when the subscription does.",
     "annualNote": "Two months free when billed annually.",
-    "footerLine": "You keep your mail either way — it lives on your server, in ordinary folders."
+    "footerLine": "You keep your mail either way — it lives on your server, in ordinary folders.",
+    "desktopNotify": "Tell me when the engine lands"
   },
   "platforms": {
     "title": "Everywhere you read mail.",
@@ -557,7 +560,7 @@
     "ios": "iOS",
     "android": "Android",
     "web": "Web",
-    "note": "Desktop is being built for macOS, Windows and Linux — free, and designed to stand on its own. Cloud adds web, iOS and Android, with push. None of them are downloadable yet; they open with the beta."
+    "note": "Desktop is being built for macOS, Windows and Linux — free, and designed to stand on its own; the apps are downloadable today as an interface preview. Cloud adds web, iOS and Android, with push: the web app is live now and the mobile apps follow."
   },
   "compare": {
     "title": "Your mailbox, or theirs.",
@@ -634,17 +637,17 @@
     "q7": "Is there a trial for Cloud?",
     "a7": "Yes — 14 days, no card. It is the whole product except the managed AI actions: rules, sync, push, mobile and web all run, and the included AI actions begin when a subscription does. Desktop needs no trial at all; it is simply free.",
     "q8": "Desktop or Cloud — what’s the real difference?",
-    "a8": "The same model, the same vocabulary, and deliberately not the same privacy posture — that is the honest difference. Desktop is free and is being built to be fully standalone: all processing local, no account, no artificial limits, with your own AI key or a local model. It is not there yet; today it is a preview of the interface with no mailbox connection. Cloud adds the web and mobile apps, push notifications, always-on processing while your computer sleeps, and AI included from $9 a month — and it holds a copy of your mail on our servers to do that. Both open with the beta."
+    "a8": "The same model, the same vocabulary, and deliberately not the same privacy posture — that is the honest difference. Desktop is free and is being built to be fully standalone: all processing local, no account, no artificial limits, with your own AI key or a local model. It is not there yet; today it is a preview of the interface with no mailbox connection. Cloud adds the web and mobile apps, push notifications, always-on processing while your computer sleeps, and AI included from $9 a month — and it holds a copy of your mail on our servers to do that. Cloud is open today; the desktop apps are downloadable now as an interface preview."
   },
   "signup": {
-    "title": "Get ohmail",
+    "title": "Keep me posted",
     "stepEmail": "Where should we reach you?",
     "emailLabel": "Your email",
     "emailPlaceholder": "you@your-domain.ch",
     "emailError": "That doesn’t look like an address — check for a typo.",
     "continue": "Continue",
-    "stepTier": "Which ohmail are you leaning toward?",
-    "tierHint": "Not binding — just helps us plan the beta.",
+    "stepTier": "What should we tell you about?",
+    "tierHint": "Not binding — it just tells us what is worth writing to you about.",
     "tierDesktop": "Desktop",
     "tierDesktopSub": "Free",
     "tierSolo": "Cloud Solo",
@@ -660,7 +663,7 @@
     "joining": "Adding you…",
     "errorTitle": "That did not go through.",
     "successTitle": "You’re on the list.",
-    "successBody": "Accounts open with the beta. {email} is on the list. If a confirmation arrives, that’s us; after that we write once more, when your invite is ready, and about nothing else.",
+    "successBody": "{email} is on the list. If a confirmation arrives, that’s us; after that we write when there is something to say — the local desktop engine landing, or a place opening on Cloud — and about nothing else.",
     "done": "Done",
     "close": "Close",
     "errorBody": "We could not record your signup just now. Try again in a moment — or write to support@ohmail.app and we will add you by hand.",
@@ -676,7 +679,7 @@
   },
   "siteMeta": {
     "title": "ohmail — Consent-first email on your own mailboxes.",
-    "description": "The last mail client you will ever need. The Screener holds first-time senders until you decide; everything you said yes to is organized in place — real folders on your real server. Free on desktop, or Cloud from $9/mo — both open with the beta.",
+    "description": "The last mail client you will ever need. The Screener holds first-time senders until you decide; everything you said yes to is organized in place — real folders on your real server. Free on desktop, or Cloud from $9/mo with a 14-day trial and no card.",
     "ogAlt": "ohmail — consent-first email on your own mailboxes"
   },
   "siteScreener": {

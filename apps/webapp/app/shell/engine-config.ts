@@ -3,7 +3,6 @@ import {
   HttpAdapter,
   IndexedDbMirrorStore,
   OhmailEngine,
-  purgeLegacyMirror,
 } from "@ohmail/client-engine";
 
 /**
@@ -51,41 +50,14 @@ const BUILD_ENV: EngineEnv = { NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API
  * The demo engine also gets NO mirror store: `IndexedDbMirrorStore` would persist a
  * fixture world into the visitor's browser, and "nothing leaves this tab" should also mean
  * "nothing stays behind in it".
- *
- * ── `owner` IS THE PERSISTENCE KEY, AND `null` MEANS "DO NOT PERSIST" ────────────────────
- *
- * This function used to build `new IndexedDbMirrorStore()` with no arguments, which took
- * the store's default database name — ONE name, `ohmail-mirror`, for every account that
- * ever signed in on a given browser. The option's own doc comment said "one mirror per
- * account should use a distinct name" and nothing supplied one. Two accounts on a shared
- * browser therefore shared a cursor and a set of persisted records; `/sync` is
- * account-filtered but it only MERGES pages, so nothing removed the first account's mail
- * and it rendered to the second.
- *
- * So the account id is now a REQUIRED argument for the persistent path, and it must be one
- * the SERVER confirmed — `app/shell/engine.tsx` gets it from `GET /auth/session` and does
- * not render the shell until it has it. Passing `null` is legal and gives a live engine
- * with an in-memory mirror: correct for a session whose owner is not yet known, because
- * nothing it holds outlives the tab. It is never the shipped path.
  */
-export function createEngine(
-  demo: boolean,
-  env: EngineEnv = BUILD_ENV,
-  owner: string | null = null,
-): OhmailEngine {
+export function createEngine(demo: boolean, env: EngineEnv = BUILD_ENV): OhmailEngine {
   const apiBase = env.NEXT_PUBLIC_API_BASE;
   if (!demo && apiBase) {
-    const persist = owner !== null && typeof indexedDB !== "undefined";
-    if (persist) {
-      // Fire-and-forget, once per engine: the pre-repair database is not ours to read and
-      // is not something to leave lying on the origin. It is never opened, only deleted.
-      void purgeLegacyMirror().catch(() => {
-        /* blocked by another tab, or storage refused — hygiene, not an invariant */
-      });
-    }
+    const store = typeof indexedDB !== "undefined" ? new IndexedDbMirrorStore() : undefined;
     return new OhmailEngine({
       adapter: new HttpAdapter({ baseUrl: apiBase }),
-      ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),
+      ...(store ? { store } : {}),
     });
   }
   return new OhmailEngine({ adapter: new FixturesAdapter() });
