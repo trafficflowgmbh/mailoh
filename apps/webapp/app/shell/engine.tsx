@@ -18,14 +18,9 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import {
-  FixturesAdapter,
-  HttpAdapter,
-  IndexedDbMirrorStore,
-  MailohEngine,
-  type EntityReader,
-} from "@mailoh/client-engine";
+import { MailohEngine, type EntityReader } from "@mailoh/client-engine";
 import { isDemoRequested } from "../demo-mode";
+import { createEngine } from "./engine-config";
 
 interface EngineBinding {
   engine: MailohEngine;
@@ -36,19 +31,6 @@ interface EngineBinding {
 }
 
 const EngineContext = createContext<EngineBinding | null>(null);
-
-function createEngine(demo: boolean): MailohEngine {
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE;
-  if (!demo && apiBase) {
-    const store =
-      typeof indexedDB !== "undefined" ? new IndexedDbMirrorStore() : undefined;
-    return new MailohEngine({
-      adapter: new HttpAdapter({ baseUrl: apiBase }),
-      ...(store ? { store } : {}),
-    });
-  }
-  return new MailohEngine({ adapter: new FixturesAdapter() });
-}
 
 /**
  * THE mode decision, taken where the real URL is guaranteed to exist.

@@ -308,7 +308,7 @@ waiting on it.
 |  | **Desktop** — this repository | **Cloud** — optional |
 |---|---|---|
 | **Price** | **Free, forever.** Not a trial, not a freemium tier. | $9 / $15 / $29 per month |
-| **Mailboxes** | 🔜 As many as you like | 2 / 5 / 10 |
+| **Mailboxes** | 🔜 As many as you like | 5 / 10 / 50 |
 | **Where your mail is processed** | 🔜 **Your machine. Only.** It never touches our servers — there is no server to touch. | EU-hosted: a full copy of your mail, encrypted at rest, **not** end-to-end — solely to serve you, deletable |
 | **Account** | **None.** Nothing to sign up for, nothing to cancel. | Yes |
 | **AI** | 🔜 Bring your own API key, or run a local model such as [Ollama](https://ollama.com) so nothing leaves your machine at all. Not built yet — no model of any kind is wired into this repository. | A monthly allowance of managed AI actions (~2k / 6k / 20k). 🔜 No live model is connected in production yet either; the metering that governs it is. |

@@ -677,6 +677,218 @@ body.reading .shell {
   display: inline-flex;
 }
 
+/* ================= onboarding (S12) =================
+   The join wizard reuses the login card. Blanc rules apply exactly as everywhere else:
+   shadow-sculpted surfaces, hairlines only on real input fields, terracotta accent used
+   once per view, no gradients and no backdrop-filter. */
+.join-card {
+  width: min(520px, 100%);
+}
+.join-rail {
+  display: flex;
+  gap: 4px;
+  list-style: none;
+  margin: 0 0 22px;
+  padding: 0;
+}
+.join-rail li {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.join-rail-dot {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--hair);
+}
+.join-rail li[data-state="done"] .join-rail-dot {
+  background: var(--accent-soft-ink, var(--ink3));
+}
+.join-rail li[data-state="now"] .join-rail-dot {
+  background: var(--accent);
+}
+.join-rail-label {
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  color: var(--ink3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.join-rail li[data-state="now"] .join-rail-label {
+  color: var(--ink);
+  font-weight: 600;
+}
+.join-label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink2);
+  margin: 16px 0 6px;
+}
+.join-input {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--canvas);
+  border: 1px solid var(--hair); /* input field — kept */
+  border-radius: 12px;
+}
+.join-input:focus {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 0;
+  border-color: transparent;
+}
+.join-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.06em;
+}
+.join-hint,
+.join-note {
+  font-size: 11.5px;
+  color: var(--ink3);
+  line-height: 1.55;
+  margin: 7px 0 0;
+}
+.join-note {
+  margin-top: 12px;
+  background: var(--accent-soft);
+  border-radius: 14px;
+  padding: 12px 14px;
+  color: var(--ink2);
+}
+.join-note a {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.join-error {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--accent-soft);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin: 0 0 16px;
+}
+.join-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 22px;
+}
+.join-alt {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink2);
+  text-decoration: none;
+}
+.join-alt:hover {
+  color: var(--ink);
+}
+.join-qr {
+  width: 168px;
+  margin: 14px 0 10px;
+}
+.join-qr svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.join-secret {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--ink2);
+  word-break: break-all;
+  margin: 0 0 4px;
+}
+.join-codes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 14px;
+  list-style: none;
+  margin: 16px 0 18px;
+  padding: 14px 16px;
+  background: var(--canvas);
+  border-radius: 14px;
+}
+.join-codes code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.join-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+  color: var(--ink2);
+}
+.join-plans {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+}
+.join-plan {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  text-align: left;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--float);
+  box-shadow: var(--lift-1);
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+.join-plan:hover:not(:disabled) {
+  box-shadow: var(--lift-2);
+  transform: translateY(-1px);
+}
+.join-plan:disabled {
+  opacity: 0.55;
+}
+.join-plan b {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--ink);
+}
+.join-plan .num {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.join-plan-sub {
+  grid-column: 1 / -1;
+  font-size: 11.5px;
+  color: var(--ink3);
+}
+.login-methods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 18px;
+}
+.login-methods .join-alt {
+  margin: 0;
+}
+.login-invite-note {
+  font-size: 11.5px;
+  color: var(--ink3);
+  line-height: 1.55;
+  margin: 14px 0 0;
+}
+.login-invite-note a {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
 /* ================= mobile ================= */
 .topbar {
   display: none;
