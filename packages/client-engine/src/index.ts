@@ -50,7 +50,15 @@ export {
 // Apply core (the convergence oracle) + stores.
 export { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
 export { BaseMirrorStore, MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
-export { IndexedDbMirrorStore, type IndexedDbMirrorStoreOptions } from "./idb.js";
+export {
+  IndexedDbMirrorStore,
+  LEGACY_MIRROR_DB,
+  MIRROR_DB_PREFIX,
+  clearAllMirrors,
+  mirrorDbName,
+  purgeLegacyMirror,
+  type IndexedDbMirrorStoreOptions,
+} from "./idb.js";
 
 // Selectors.
 export {
