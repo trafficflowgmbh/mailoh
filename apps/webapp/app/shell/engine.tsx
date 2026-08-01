@@ -175,8 +175,23 @@ export function EngineProvider({
   const engine = binding.status === "ready" ? binding.engine : null;
   useEffect(() => {
     if (!engine) return;
-    void engine.start().catch(() => {
-      /* Fixtures never throw; the HTTP path retries on the next wake signal. */
+    /**
+     * A FAILED FIRST DRAIN MUST BE AUDIBLE.
+     *
+     * This used to discard the rejection entirely, excusing it as "the HTTP path retries on
+     * the next wake signal" — and this app attaches no wake signal (see the teardown note
+     * above, which says so), so there is no next attempt and no retry. The two facts
+     * together turned one throw into a permanently empty mailbox: no request, no console
+     * entry, no error state, a signed-in account rendering "0 unread of 0" against a
+     * mailbox holding thousands of messages. It shipped that way, and the reason it
+     * survived review is that nothing anywhere said it had happened.
+     *
+     * Reporting is not recovery, and this is deliberately only the first half: the mirror
+     * keeps whatever earlier pages it persisted and the UI still renders it, so a partial
+     * drain degrades instead of blanking. What it must never do again is fail in silence.
+     */
+    void engine.start().catch((err: unknown) => {
+      console.error("ohmail: the mailbox sync engine failed to start", err);
     });
   }, [engine]);
 
