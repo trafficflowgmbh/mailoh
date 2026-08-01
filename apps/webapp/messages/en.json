@@ -884,6 +884,7 @@
     "working": "Working…",
     "continue": "Continue",
     "cancel": "Cancel",
-    "noFactor": "This account has no second factor yet, and the billing portal requires one."
+    "noFactor": "This account has no second factor yet, and the billing portal requires one.",
+    "aiOnTrial": "Starts with your subscription. The trial never spends AI actions."
   }
 }

@@ -449,7 +449,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
       // pile. Own group, own label, and it stands even when empty — a collapsed group with a
       // count of zero is how someone learns the feature exists.
       {
-        label: t("rail.tags"),
+        // No group label: `TagsGroup` renders its own heading, so setting both printed
+        // "Tags" twice in the rail. Caught in the live walkthrough.
         items: [],
         tags: {
           label: t("rail.tags"),
