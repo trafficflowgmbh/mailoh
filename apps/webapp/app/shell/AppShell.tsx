@@ -80,6 +80,7 @@ export function AppShell({
   resolveOwner,
   accountSection,
   mailboxSection,
+  billingSection,
   aboutSection,
 }: {
   demo: boolean;
@@ -92,6 +93,8 @@ export function AppShell({
   accountSection?: ReactNode;
   /** The Cloud client's Settings → Mailboxes pane. Same seam. */
   mailboxSection?: ReactNode;
+  /** The Cloud client's Settings → Subscription pane (plan, AI switch, Stripe portal). */
+  billingSection?: ReactNode;
   /**
    * The BODY of the (i) panel for a live account. Same seam again, and it has to be: the
    * facts worth showing there — which mailbox is connected and when it last synced — come
@@ -104,15 +107,17 @@ export function AppShell({
       <ShellInner
         accountSection={accountSection}
         mailboxSection={mailboxSection}
+        billingSection={billingSection}
         aboutSection={aboutSection}
       />
     </EngineProvider>
   );
 }
 
-function ShellInner({ accountSection, mailboxSection, aboutSection }: {
+function ShellInner({ accountSection, mailboxSection, billingSection, aboutSection }: {
   accountSection?: ReactNode;
   mailboxSection?: ReactNode;
+  billingSection?: ReactNode;
   aboutSection?: ReactNode;
 }) {
   const demo = useDemoMode();
@@ -436,8 +441,19 @@ function ShellInner({ accountSection, mailboxSection, aboutSection }: {
           { id: "triage-aside", label: t("rail.setAside"), count: piles.setAside.length },
           { id: "triage-resurface", label: t("rail.resurface"), count: piles.resurface.length },
         ],
+      },
+      // TAGS ARE THEIR OWN GROUP, not a sub-item of Triage. They were nested under it, which
+      // said the wrong thing about what they are: triage piles are three fixed places a
+      // message can sit, and tags are a cross-cutting dimension over every view (invariant:
+      // "Tags (never folders)"). Filing the second under the first made tags read as a fourth
+      // pile. Own group, own label, and it stands even when empty — a collapsed group with a
+      // count of zero is how someone learns the feature exists.
+      {
+        label: t("rail.tags"),
+        items: [],
         tags: {
           label: t("rail.tags"),
+          defaultOpen: true,
           items: tagGroups.map((g) => ({
             id: g.tag.id,
             label: g.tag.name,
@@ -560,6 +576,7 @@ function ShellInner({ accountSection, mailboxSection, aboutSection }: {
           <main className="stage">
             {effectiveView === "ohbox" ? (
               <OhboxView
+                demo={demo}
                 newForYou={ohbox.newForYou}
                 previouslySeen={ohbox.previouslySeen}
                 tags={tags}
@@ -674,6 +691,7 @@ function ShellInner({ accountSection, mailboxSection, aboutSection }: {
                    be a form posting to a server this tab is not talking to. The demo keeps
                    the fixture list, which is the honest thing for it to show. */
                 mailboxSection={demo ? undefined : mailboxSection}
+                billingSection={demo ? undefined : billingSection}
               />
             ) : null}
           </main>

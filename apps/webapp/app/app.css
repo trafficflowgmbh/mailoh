@@ -259,7 +259,11 @@ body.reading .shell {
 .search-wrap {
   max-width: 740px;
   margin: 0 auto;
-  padding: 0 30px;
+  /* The 6px top is not decorative. `.scroller` (list-pane.css) pads only its BOTTOM — "room
+     for the dock + full shadow falloff" — so the search pill, which is the one lifted element
+     sitting at the very top of a scroller, had its upper shadow sliced off by the clip edge
+     and read as a cut border. */
+  padding: 6px 30px 0;
   width: 100%;
 }
 .search-cols {
@@ -977,21 +981,14 @@ body.reading .shell {
   right: 9px;
   color: var(--accent-ink);
 }
-/* "none of these" — recessed rather than lifted, a row rather than a tile */
+/* "none of these" — a TILE like the rest, held one step back: same box, same lift, a
+   tinted face so the seven named providers still read as the primary answers. It was a
+   full-width borderless row and looked like a leftover next to the grid. */
 .pvp-other {
-  margin-top: 10px;
-  width: 100%;
-  flex-direction: row;
-  align-items: baseline;
-  column-gap: 9px;
-  flex-wrap: wrap;
-  background: var(--canvas);
-  box-shadow: none;
+  background: var(--tint);
 }
 .pvp-other:hover {
   background: var(--tint);
-  box-shadow: none;
-  transform: none;
 }
 .pvp-other[aria-checked="true"] {
   background: var(--canvas);
@@ -1357,3 +1354,69 @@ body.reading .shell {
     gap: 18px;
   }
 }
+
+/* ================= Settings → Mailboxes: the sync state ================= */
+/* A mailbox row answers one question first — "is my mail coming down?" — so the state and
+   its control sit on the right of the address, not under it. The first version put a bare
+   "Not synced yet" in a value slot and offered nothing to do about it. */
+.mbx-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 2px;
+  border-bottom: 1px solid var(--hair);
+}
+.mbx-row:last-of-type { border-bottom: 0; }
+.mbx-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.mbx-addr { font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
+.mbx-sub { font-size: 11.5px; color: var(--ink2); }
+.mbx-state { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.mbx-ok { font-size: 12px; color: var(--ink2); font-variant-numeric: tabular-nums; }
+.mbx-bad { font-size: 12px; color: var(--danger, #b3261e); }
+.mbx-wait { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink2); }
+/* A one-second sweep, not a throbber: it says "something is running" without asking to be
+   watched. Honest about the worker's cadence — this can legitimately sit for a minute. */
+.mbx-spin {
+  width: 11px; height: 11px; border-radius: 99px;
+  border: 1.5px solid var(--hair); border-top-color: var(--accent);
+  animation: mbx-spin 1s linear infinite;
+}
+@keyframes mbx-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mbx-spin { animation: none; } }
+.mbx-btn { font-size: 12px; padding: 5px 12px; }
+@media (max-width: 560px) {
+  .mbx-row { flex-direction: column; align-items: flex-start; gap: 9px; }
+  .mbx-state { width: 100%; justify-content: space-between; }
+}
+
+/* ================= Settings → Subscription ================= */
+.bill-plans {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.bill-plan {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 13px 15px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--lift-1);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: box-shadow .18s var(--swift), transform .18s var(--swift);
+}
+.bill-plan:hover:not(:disabled) { box-shadow: var(--lift-2); transform: translateY(-1px); }
+.bill-plan:focus-visible { outline: none; box-shadow: 0 0 0 1.5px var(--accent), var(--lift-2); }
+/* The plan already held is not a thing to buy again — flat, tinted, and not pressable. */
+.bill-plan.is-current { background: var(--tint); box-shadow: none; cursor: default; }
+.bill-plan-name { font-size: 13.5px; color: var(--ink); }
+.bill-plan-price { font-size: 18px; color: var(--accent-ink); font-variant-numeric: tabular-nums; }
+.bill-plan-meta { font-size: 11px; color: var(--ink2); }
+.bill-plan-cur { font-size: 10.5px; color: var(--ink3); text-transform: uppercase; letter-spacing: .06em; }

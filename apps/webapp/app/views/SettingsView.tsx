@@ -35,7 +35,7 @@ import {
 } from "@ohmail/ui";
 import { hueOf } from "../shell/format";
 
-type PaneId = "general" | "notifications" | "mailboxes" | "tags" | "account";
+type PaneId = "general" | "notifications" | "mailboxes" | "billing" | "tags" | "account";
 
 export interface MailboxEntity {
   id: string;
@@ -51,6 +51,7 @@ export function SettingsView({
   tagCounts,
   accountSection,
   mailboxSection,
+  billingSection,
 }: {
   mailboxes: MailboxEntity[];
   tags: TagDTO[];
@@ -66,6 +67,8 @@ export function SettingsView({
    * Desktop and for `?demo=1`.
    */
   mailboxSection?: ReactNode;
+  /** The Cloud client's Subscription pane — plan, the AI switch, and Stripe's portal. */
+  billingSection?: ReactNode;
 }) {
   const t = useTranslations("settings");
   const toast = useToast();
@@ -79,6 +82,9 @@ export function SettingsView({
     ["general", t("general")],
     ["notifications", t("notifications")],
     ["mailboxes", t("mailboxes")],
+    // Only where there is something to bill. Desktop is free and standalone; a Subscription
+    // pane there would be offering to sell what the tier already gives away.
+    ...(billingSection ? [["billing", t("billing")] as [PaneId, string]] : []),
     ["tags", t("tags")],
     // LAST, and only where there is an account to act on. Last because the pane's only
     // content is irreversible, and a destructive control at the top of a list is one
@@ -219,6 +225,8 @@ export function SettingsView({
               </SettingsSection>
             )
           ) : null}
+
+          {pane === "billing" ? billingSection : null}
 
           {pane === "tags" ? (
             <SettingsSection>

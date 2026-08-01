@@ -22,6 +22,7 @@ import { displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 
 export function OhboxView({
+  demo,
   newForYou,
   previouslySeen,
   tags,
@@ -37,6 +38,8 @@ export function OhboxView({
   onAttachment,
   typingGuard,
 }: {
+  /** Fixture world or a real mailbox — decides the "older mail" tail. See its use below. */
+  demo: boolean;
   newForYou: EngineMessage[];
   previouslySeen: EngineMessage[];
   tags: TagDTO[];
@@ -153,9 +156,14 @@ export function OhboxView({
         <ListRows>{newForYou.map(row)}</ListRows>
         <ListGroupLabel>{t("previouslySeen")}</ListGroupLabel>
         <ListRows>{previouslySeen.map(row)}</ListRows>
-        {/* No-collapse rule: every mail in the demo world is a real row above —
-            the tail only points at the server for anything older. */}
-        <div className="tail-row">{t("tail")}</div>
+        {/* DEMO ONLY, and it was not. "Older mail stays on your server — find it in Search."
+            is true of Mila's fixture world, which holds a hand-made slice of a mailbox. It is
+            FALSE of a live account: the worker syncs every folder from cursor zero, so what is
+            on the server is what is in the mirror, and telling a paying customer their old
+            mail is somewhere else is the kind of claim CLAUDE.md forbids shipping. The
+            no-collapse rule (invariant #6) is satisfied either way — every message is a real
+            row above. */}
+        {demo ? <div className="tail-row">{t("tail")}</div> : null}
       </ListPane>
       <ReadColumn>
         {selected ? (
