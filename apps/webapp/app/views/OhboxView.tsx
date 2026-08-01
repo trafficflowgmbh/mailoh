@@ -19,6 +19,7 @@ import {
   ReadColumn,
 } from "@ohmail/ui";
 import { displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { useEngineVersion, useReader, useSyncStatus } from "../shell/engine";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 
 export function OhboxView({
@@ -156,6 +157,7 @@ export function OhboxView({
         <ListRows>{newForYou.map(row)}</ListRows>
         <ListGroupLabel>{t("previouslySeen")}</ListGroupLabel>
         <ListRows>{previouslySeen.map(row)}</ListRows>
+        {all.length === 0 ? <SyncState /> : null}
         {/* DEMO ONLY, and it was not. "Older mail stays on your server — find it in Search."
             is true of Mila's fixture world, which holds a hand-made slice of a mailbox. It is
             FALSE of a live account: the worker syncs every folder from cursor zero, so what is
@@ -179,6 +181,53 @@ export function OhboxView({
         ) : null}
       </ReadColumn>
     </section>
+  );
+}
+
+/**
+ * WHY AN EMPTY OHBOX IS EMPTY — a count, and never a percentage.
+ *
+ * P16. A first drain is thirty-odd pages and twelve to fifteen seconds on a real mailbox, and
+ * for all of it this pane said "0 unread of 0" with no rows and no explanation, which is what
+ * a broken account looks like. The engine already calls `notify()` once per page, so the
+ * mirror's size is live here with no extra plumbing.
+ *
+ * A progress bar is impossible and would have to be invented: `/sync` answers `hasMore` as a
+ * boolean, so the total is unknowable until the drain ends. A count is the largest true thing
+ * available, and it moves, which is the part that distinguishes working from hung. It counts
+ * every message in the MIRROR — Screener, Reads and Receipts included — not the ohbox rows
+ * above, so the wording says "messages", not "in your Ohbox".
+ *
+ * Three consecutive failures replaces it with the failure, because by then the count has
+ * stopped moving and a frozen counter is the same lie in a new font. It says the loop is still
+ * retrying because it is: the scheduler backs off to a minute and never gives up while the tab
+ * is visible.
+ *
+ * The demo and the desktop never reach either branch — `useSyncStatus()` is permanently
+ * settled for a fixtures engine.
+ */
+function SyncState() {
+  const t = useTranslations("ohbox");
+  const { bootstrapping, failures } = useSyncStatus();
+  const reader = useReader();
+  const version = useEngineVersion();
+  const mirrored = useMemo(() => reader.list("message").length, [reader, version]);
+
+  if (failures >= 3) {
+    return (
+      <div className="empty" role="status">
+        <span className="glyph" aria-hidden="true">⚠</span>
+        <b>{t("syncFailed")}</b>
+      </div>
+    );
+  }
+  if (!bootstrapping) return null;
+  return (
+    <div className="empty" role="status">
+      <span className="glyph" aria-hidden="true">✉</span>
+      <b>{t("syncingTitle")}</b>
+      {t("syncingCount", { count: mirrored })}
+    </div>
   );
 }
 

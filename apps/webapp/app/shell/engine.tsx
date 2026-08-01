@@ -22,6 +22,12 @@ import { useTranslations } from "next-intl";
 import { OhmailEngine, type EntityReader } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
 import { createEngine, EngineUnarmedError } from "./engine-config";
+import {
+  startSyncScheduler,
+  SYNC_BOOTSTRAPPING,
+  SYNC_SETTLED,
+  type SyncStatus,
+} from "./sync-scheduler";
 
 /**
  * "Whose mailbox is this?", as a function the SHELL does not know how to answer.
@@ -43,6 +49,8 @@ interface EngineBinding {
   demo: boolean;
   /** What the server rendered with, so hydration has a snapshot that matches the markup. */
   serverDemo: boolean;
+  /** What the sync loop is doing, for the views that must say so. Always settled in demo. */
+  sync: SyncStatus;
 }
 
 /**
@@ -117,9 +125,18 @@ export function EngineProvider({
   const desired = resolveDemo(serverDemo);
   useEffect(() => {
     if (binding.status === "ready" ? desired === binding.demo : !desired) return;
-    // The engine owns no timers and no open sockets (`start()` is one drain; SSE is
-    // attached by the caller and this app never attaches one), so dropping the reference
-    // IS the teardown — there is nothing left running to cancel.
+    // TWO TEARDOWNS, and only one of them is this line's.
+    //
+    // The ENGINE still owns no timers and no open sockets — `syncOnce()` is a drain and
+    // nothing schedules it from inside, and `attachWakeSignal()` is a hook this app does not
+    // use. That property is unchanged by P16 and it is why replacing the reference is safe:
+    // there is nothing running inside the object being dropped.
+    //
+    // The SCHEDULER is where the timer and the two window listeners now live, and it is torn
+    // down by the effect below rather than by this assignment. Its dependency is `engine`, so
+    // React runs that cleanup before the new engine's scheduler starts. A live→demo
+    // navigation therefore cancels the poll on the way out; it does not merely stop caring
+    // about it.
     setBinding(
       desired ? { status: "ready", demo: true, engine: createEngine(true) } : { status: "resolving" },
     );
@@ -172,33 +189,74 @@ export function EngineProvider({
     };
   }, [binding.status, resolveOwner]);
 
+  /**
+   * What the sync loop is doing. Only a LIVE engine ever moves it off its resting value —
+   * the demo drains once, from fixtures, and has nothing to report.
+   *
+   * The updater returns `prev` when nothing changed, which is a bail-out rather than a
+   * micro-optimisation: a healthy tab settles a drain every eight seconds forever, and
+   * without it every one of those would re-render the whole shell to publish a value
+   * identical to the one already on screen.
+   */
+  const [sync, setSync] = useState<SyncStatus>(SYNC_BOOTSTRAPPING);
+  const onSyncStatus = useCallback((next: SyncStatus) => {
+    setSync((prev) =>
+      prev.bootstrapping === next.bootstrapping && prev.failures === next.failures ? prev : next,
+    );
+  }, []);
+
   const engine = binding.status === "ready" ? binding.engine : null;
+  const live = binding.status === "ready" && binding.demo === false;
   useEffect(() => {
     if (!engine) return;
     /**
-     * A FAILED FIRST DRAIN MUST BE AUDIBLE.
+     * THE WAKE SIGNAL, AND WHY IT IS HERE RATHER THAN IN A PROP.
      *
-     * This used to discard the rejection entirely, excusing it as "the HTTP path retries on
-     * the next wake signal" — and this app attaches no wake signal (see the teardown note
-     * above, which says so), so there is no next attempt and no retry. The two facts
-     * together turned one throw into a permanently empty mailbox: no request, no console
-     * entry, no error state, a signed-in account rendering "0 unread of 0" against a
-     * mailbox holding thousands of messages. It shipped that way, and the reason it
-     * survived review is that nothing anywhere said it had happened.
+     * This was one `engine.start()` and nothing else — the only drain the tab would ever
+     * perform. The comment that stood here reported a failed first drain to the console and
+     * called that "deliberately only the first half", on the reasoning that the HTTP path
+     * would retry on the next wake signal. There was no next wake signal: no EventSource, no
+     * interval, no `visibilitychange`, nothing. So one throw produced a permanently empty
+     * mailbox, new mail never arrived without a manual reload, and a thirty-seven page
+     * bootstrap rendered "0 unread of 0" for twelve to fifteen seconds. All three shipped.
      *
-     * Reporting is not recovery, and this is deliberately only the first half: the mirror
-     * keeps whatever earlier pages it persisted and the UI still renders it, so a partial
-     * drain degrades instead of blanking. What it must never do again is fail in silence.
+     * `sync-scheduler.ts` is the second half: a serialized poll while the tab is visible,
+     * an immediate drain when it comes back or the network does, and jittered exponential
+     * backoff on failure. Read that file for the poll-versus-SSE decision and the cost
+     * argument behind the visibility gate.
+     *
+     * It is wired HERE, inside the provider, and not passed down from
+     * `(product)/mailbox/CloudShell.tsx` the way `resolveOwner` is. That seam exists to keep
+     * `app/api-client` out of the offline desktop bundle; a scheduler imports nothing but
+     * `setTimeout`, `document` and the engine it was handed, so it costs the desktop build
+     * nothing. A prop would buy only a silent-omission mode — a shell that forgets to pass
+     * one loads fine and then never syncs again, which is this exact bug re-created as a
+     * wiring bug.
+     *
+     * The demo keeps the single `start()`. It has fixtures, no server and no cursor to
+     * advance, and polling it would be a timer that can only ever find the same world
+     * (invariant #6: nothing leaves this tab, and nothing needs to).
      */
-    void engine.start().catch((err: unknown) => {
-      console.error("ohmail: the mailbox sync engine failed to start", err);
-    });
-  }, [engine]);
+    if (!live) {
+      void engine.start().catch((err: unknown) => {
+        console.error("ohmail: the mailbox sync engine failed to start", err);
+      });
+      return;
+    }
+    return startSyncScheduler(engine, { onStatus: onSyncStatus });
+  }, [engine, live, onSyncStatus]);
 
   if (binding.status !== "ready") return <SessionScreen status={binding.status} />;
 
   return (
-    <EngineContext.Provider value={{ engine: binding.engine, demo: binding.demo, serverDemo }}>
+    <EngineContext.Provider
+      value={{
+        engine: binding.engine,
+        demo: binding.demo,
+        serverDemo,
+        sync: live ? sync : SYNC_SETTLED,
+      }}
+    >
       {children}
     </EngineContext.Provider>
   );
@@ -248,6 +306,18 @@ function useBinding(): EngineBinding {
 
 export function useEngine(): OhmailEngine {
   return useBinding().engine;
+}
+
+/**
+ * What the sync loop is doing, for the one view that has to say so.
+ *
+ * A hook rather than a prop threaded through `AppShell` for the same reason the scheduler is
+ * not a prop: `OhboxView` is the only consumer today, and passing this down four levels would
+ * make forgetting it the default. The demo and the desktop read a permanently settled value,
+ * so neither renders anything new.
+ */
+export function useSyncStatus(): SyncStatus {
+  return useBinding().sync;
 }
 
 /** Nothing to subscribe to — the mode is decided once per engine, at construction. */

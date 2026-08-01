@@ -187,7 +187,10 @@
     "doorbell": "{count, plural, one {<b>1 new sender</b> waiting} other {<b># new senders</b> waiting}}",
     "doorbellAction": "Screener ›",
     "doorbellAria": "{count} new senders waiting — open the Screener",
-    "threadMeta": "thread ({count}) · "
+    "threadMeta": "thread ({count}) · ",
+    "syncingTitle": "Syncing your mailbox",
+    "syncingCount": "{count, plural, =0 {No messages yet} one {1 message so far} other {# messages so far}}",
+    "syncFailed": "Sync failed. Retrying."
   },
   "reads": {
     "title": "Reads",
