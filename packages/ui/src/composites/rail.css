@@ -28,7 +28,10 @@
 .rgroup.closed .rlabel-toggle .chev{transform:none}
 .rgroup.closed .rgroup-body{display:none}
 /* tags — subordinate group nested under Triage: indented, one size down */
-.rgroup .rgroup.rsub{margin:3px 0 0 10px}
+/* Tags sits FLUSH with the rest of the rail. It used to carry a 10px left margin, which read
+   as "a child of Triage" — the exact subordination the group was moved out of Triage to undo.
+   Tags cut across every view, so nothing above it owns it. */
+.rgroup .rgroup.rsub{margin:3px 0 0}
 .rsub .rlabel-toggle{padding:3px 8px}
 .rsub .ritem{font-size:12.5px;padding:5px 8px}
 .rsub .ritem .cnt{font-size:11px}
