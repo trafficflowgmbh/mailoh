@@ -833,7 +833,16 @@
     "syncPending": "Waiting for first sync",
     "syncQueued": "Sync queued",
     "syncError": "Sync failed",
-    "syncNow": "Sync now"
+    "syncNow": "Sync now",
+    "err_auth": "Sync failed — the mailbox rejected the password.",
+    "err_connect": "Sync failed — the mail server could not be reached.",
+    "err_tls": "Sync failed — the mail server's certificate was refused.",
+    "err_timeout": "Sync failed — the mail server stopped responding.",
+    "err_storage": "Sync failed — ohmail could not store this mail. This one is on us.",
+    "err_sync": "Sync failed while reading the mailbox.",
+    "err_unknown": "Sync failed, and we could not tell why.",
+    "errSince": "Failing since {when}",
+    "errAttempts": "{count} attempts"
   },
   "resume": {
     "failedTitle": "Please sign in again",
