@@ -1274,6 +1274,26 @@ body.reading .shell {
   color: var(--ink3);
   margin: 0 0 8px;
 }
+/* Sign out — text left, action right, separated from the erasure ceremony below by a rule
+   rather than a heading, because the two must not read as steps of one flow. */
+.acct-signout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 2px 0 16px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 18px;
+}
+.acct-signout > div { min-width: 0; }
+@media (max-width: 560px) {
+  .acct-signout {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+}
+
 .acct-cols {
   display: grid;
   grid-template-columns: 1fr 1fr;
