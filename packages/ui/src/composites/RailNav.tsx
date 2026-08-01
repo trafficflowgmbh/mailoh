@@ -31,6 +31,9 @@ export interface RailGroup {
     label?: string;
     items: RailTagItem[];
     defaultOpen?: boolean;
+    /** Controlled collapse state. Provide with `onOpenChange` when the host persists it. */
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
   };
 }
 
@@ -155,6 +158,8 @@ export function RailNav({
               label={group.tags.label ?? "Tags"}
               items={group.tags.items}
               defaultOpen={group.tags.defaultOpen ?? true}
+              open={group.tags.open}
+              onOpenChange={group.tags.onOpenChange}
               activeTagId={activeTagId}
               onNavigateTag={onNavigateTag}
             />
@@ -180,27 +185,48 @@ export function RailNav({
   );
 }
 
+/**
+ * CONTROLLED-OPTIONAL, deliberately.
+ *
+ * The collapse state has to SURVIVE A RELOAD — "saved if it's collapsed or not so ui stays as
+ * one left it". But persistence is a host concern, not a design-system one: `packages/ui` is
+ * shared with the desktop shell, which has no `localStorage` and no business inheriting the
+ * web client's storage decisions. So the component takes `open`/`onOpenChange` when a host
+ * wants to own the state, and falls back to its own `useState(defaultOpen)` when nobody does.
+ *
+ * That keeps the fallback honest too: an uncontrolled group still works, it just forgets — so
+ * a host that forgets to wire persistence gets today's behaviour rather than a broken toggle.
+ */
 function TagsGroup({
   label,
   items,
   defaultOpen,
+  open: openProp,
+  onOpenChange,
   activeTagId,
   onNavigateTag,
 }: {
   label: string;
   items: RailTagItem[];
   defaultOpen: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   activeTagId?: string;
   onNavigateTag?: (id: string) => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [uncontrolled, setUncontrolled] = useState(defaultOpen);
+  const open = openProp ?? uncontrolled;
+  const setOpen = (next: boolean): void => {
+    if (openProp === undefined) setUncontrolled(next);
+    onOpenChange?.(next);
+  };
   return (
     <div className={open ? "rgroup rsub" : "rgroup rsub closed"}>
       <button
         type="button"
         className="rlabel-toggle"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setOpen(!open)}
       >
         {label} <Icon name="chev" className="chev" />
       </button>

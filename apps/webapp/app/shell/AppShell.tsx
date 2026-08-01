@@ -58,6 +58,7 @@ import { SettingsView, type MailboxEntity } from "../views/SettingsView";
 import { TagView } from "../views/TagView";
 import { TriageView } from "../views/TriageView";
 import { ComposeView } from "../views/ComposeView";
+import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
 
 interface ReadsAiChipEntity {
   afterId: string;
@@ -169,6 +170,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
   const [readerOpen, setReaderOpen] = useState(false);
   const [railOpen, setRailOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  // Survives a reload; see `persisted-ui.ts` for why it is local and read after mount.
+  const [tagsOpen, setTagsOpen] = usePersistedFlag(UI_KEYS.tagsOpen, true);
   const [picker, setPicker] = useState<TagPickerState | null>(null);
   const [chipState, setChipState] = useState<ReadsChipState>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -455,6 +458,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
         tags: {
           label: t("rail.tags"),
           defaultOpen: true,
+          // Persisted, because a rail that springs back open on every reload is a rail that
+          // ignores the person using it. `RailNav` stays uncontrolled-by-default so the
+          // desktop shell, which has no `localStorage`, keeps working untouched.
+          open: tagsOpen,
+          onOpenChange: setTagsOpen,
           items: tagGroups.map((g) => ({
             id: g.tag.id,
             label: g.tag.name,
