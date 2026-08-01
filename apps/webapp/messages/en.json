@@ -80,7 +80,6 @@
     "codesConfirm": "I have saved these somewhere safe.",
     "step_mailbox_title": "Connect a mailbox",
     "step_mailbox_lead": "ohmail organizes a mailbox you already own, in place — real folders on your real server. Nothing is copied to a new address.",
-    "providerLabel": "Provider",
     "mailboxAddress": "Mailbox address",
     "mailboxUser": "Username (if different)",
     "mailboxUserPlaceholder": "usually the same as the address",
@@ -398,6 +397,8 @@
     "faq": "FAQ",
     "cta": "Get ohmail.",
     "ctaDemo": "Try the demo",
+    "signIn": "Sign in",
+    "open": "Open ohmail",
     "themeToggle": "Switch color theme",
     "home": "ohmail — home"
   },
@@ -784,6 +785,10 @@
     "signIn": "Sign in",
     "unavailableBody": "This copy of ohmail has no server attached, so there is no account to delete."
   },
+  "providerPicker": {
+    "label": "Provider",
+    "otherSub": "your own domain or server"
+  },
   "mailboxes": {
     "unavailable": "This build is not connected to an ohmail server.",
     "loading": "Reading your mailboxes…",
@@ -795,7 +800,6 @@
     "status_disabled": "disconnected",
     "syncedAt": "Synced {when}",
     "neverSynced": "Not synced yet",
-    "providerLabel": "Provider",
     "addressLabel": "Mailbox address",
     "imapLabel": "IMAP host",
     "smtpLabel": "SMTP host",
@@ -820,5 +824,11 @@
     "cancel": "Cancel",
     "noFactorTitle": "No second factor",
     "noFactorBody": "This account has no passkey or authenticator app, and connecting a mailbox requires one."
+  },
+  "resume": {
+    "failedTitle": "Please sign in again",
+    "failedBody": "Your session could not be restored.",
+    "signIn": "Sign in",
+    "openDemo": "Open the demo"
   }
 }

@@ -898,6 +898,146 @@ body.reading .shell {
   font-size: 11.5px;
   color: var(--ink3);
 }
+/* ── provider picker (shared: /join mailbox step + Settings → Mailboxes) ──
+   The named providers are shadow-lifted tiles — a real choice, not a form
+   field. The generic IMAP entry is a recessed canvas row: a different kind
+   of answer, so a different surface. The accent is spent on the selected
+   state and on the note the selection reveals; per Blanc, no borders, no
+   logos — the name and the host are the identification. */
+.pvp {
+  container-type: inline-size;
+}
+.pvp-grid {
+  display: grid;
+  /* 160px is the narrowest tile on which the longest IMAP host
+     (outlook.office365.com) still fits un-truncated at 10px mono */
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+}
+/* narrow container (the join card at 390px viewports): two name-only columns —
+   the host line is confirmation, not identification, and a domain cut mid-word
+   by an ellipsis is worse than no domain */
+@container (max-width: 372px) {
+  .pvp-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pvp-grid .pvp-host {
+    display: none;
+  }
+  .pvp-grid .pvp-tile {
+    justify-content: center; /* name-only tiles center in rows a two-line name stretched */
+  }
+}
+.pvp-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+  text-align: left;
+  padding: 11px 26px 10px 13px;
+  border-radius: 14px;
+  background: var(--float);
+  box-shadow: var(--lift-0);
+  cursor: pointer;
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+.pvp-tile:hover {
+  box-shadow: var(--lift-1);
+  transform: translateY(-1px);
+}
+.pvp-tile[aria-checked="true"] {
+  box-shadow: inset 0 0 0 1.5px var(--accent), var(--lift-1);
+  transform: none;
+}
+.pvp-tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pvp-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.3;
+}
+.pvp-host {
+  max-width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  color: var(--ink3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pvp-check {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  color: var(--accent-ink);
+}
+/* "none of these" — recessed rather than lifted, a row rather than a tile */
+.pvp-other {
+  margin-top: 10px;
+  width: 100%;
+  flex-direction: row;
+  align-items: baseline;
+  column-gap: 9px;
+  flex-wrap: wrap;
+  background: var(--canvas);
+  box-shadow: none;
+}
+.pvp-other:hover {
+  background: var(--tint);
+  box-shadow: none;
+  transform: none;
+}
+.pvp-other[aria-checked="true"] {
+  background: var(--canvas);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.pvp-other .pvp-host {
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+/* the load-bearing panel: what to fetch from the provider BEFORE typing anything,
+   and the one sentence that stops an account password landing here */
+.pvp-note {
+  margin-top: 12px;
+  background: var(--accent-soft);
+  border-radius: 14px;
+  padding: 12px 14px;
+  animation: rise 0.22s var(--spring);
+}
+.pvp-note p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink2);
+}
+.pvp-note a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pvp-tile {
+    transition: none;
+  }
+  .pvp-tile:hover {
+    transform: none;
+  }
+  .pvp-note {
+    animation: none;
+  }
+}
+
 .login-methods {
   display: flex;
   flex-wrap: wrap;
