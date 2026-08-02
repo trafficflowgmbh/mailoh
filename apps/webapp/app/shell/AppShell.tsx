@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useTranslations } from "next-intl";
 import {
   DEMO_NOW,
+  FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
   ohboxView,
   readsPartition,
@@ -18,6 +19,7 @@ import {
   triagePiles,
   type EngineDraft,
   type EngineMessage,
+  type OhmailView,
   type SearchHit,
   type TagDTO,
   type TriagePileEntry,
@@ -44,7 +46,7 @@ import {
   useEngineVersion,
   type OwnerResolver,
 } from "./engine";
-import { firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
+import { PLACE_LABEL, firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
 import { MessagePane, type MessageAction } from "./MessagePane";
 import { useScreenerState } from "./screener-state";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
@@ -312,9 +314,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
           toast(t("ohbox.toastResurface", { when: resurfaceLabel(when) }));
           break;
         }
-        case "move":
-          toast(t("ohbox.toastMove"));
+        default: {
+          // `move:<view>` — the destination travels with the action (gap C4). Before
+          // this the whole branch was a toast reading "Demo — Move isn't wired yet.",
+          // rendered on live accounts; the mutation was already on the wire.
+          const view = action.slice("move:".length) as OhmailView;
+          const folder = FOLDER_OF_VIEW[view];
+          if (!folder || folder === m.folder) break;
+          void engine.mutate({ kind: "move", messageId: m.id, folder });
+          toast(t("ohbox.toastMoved", { place: PLACE_LABEL[view] ?? view }));
           break;
+        }
       }
     },
     [engine, toast, t, piles.replyLater.length, now],

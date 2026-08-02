@@ -3,7 +3,13 @@
  * prototype's display time verbatim (`m.time`); rows minted by
  * mutations fall back to a clock/weekday derived from the ISO date.
  */
-import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
+import {
+  folderLeaf,
+  messageDisplayTime,
+  VIEW_OF_FOLDER,
+  type EngineMessage,
+  type TagDTO,
+} from "@ohmail/client-engine";
 import type { TagHueName } from "@ohmail/ui";
 
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -42,16 +48,14 @@ export function clockOf(iso: string): string {
   return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
 }
 
+/**
+ * The row stamp. The rule moved into `@ohmail/client-engine` when the Screener started
+ * deriving its own rows (slice C1) and had to mint the same stamp for senders with no
+ * fixture behind them; this stays as the app-side name every view already imports, and
+ * delegates so the two can never drift apart.
+ */
 export function displayTime(m: EngineMessage, now: Date): string {
-  if (m.time) return m.time;
-  if (!m.date) return "";
-  const d = new Date(m.date);
-  const sameDay =
-    d.getUTCFullYear() === now.getUTCFullYear() &&
-    d.getUTCMonth() === now.getUTCMonth() &&
-    d.getUTCDate() === now.getUTCDate();
-  if (sameDay) return clockOf(m.date);
-  return WEEKDAY_SHORT[d.getUTCDay()] ?? clockOf(m.date);
+  return messageDisplayTime(m, now);
 }
 
 /** "Fri 09:00" from an ISO instant (or the raw string when not ISO). */

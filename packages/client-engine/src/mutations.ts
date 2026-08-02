@@ -1,6 +1,8 @@
+import { senderKey } from "./selectors.js";
 import type { EntityReader } from "./store.js";
 import {
   FOLDER_OF_VIEW,
+  type EmailAddress,
   type EngineDraft,
   type EngineMessage,
   type EngineMutation,
@@ -47,7 +49,7 @@ function destFolderOf(m: Extract<EngineMutation, { kind: "screener_decide" }>, s
 }
 
 function promotedRule(
-  sender: ScreenerSenderDTO,
+  from: EmailAddress,
   scope: "sender" | "domain",
   destination: Folder,
   ctx: EffectContext,
@@ -56,7 +58,7 @@ function promotedRule(
   return {
     id: ctx.uuid(),
     kind: scope,
-    match: scope === "domain" ? sender.from.address.split("@")[1] ?? sender.from.address : sender.from.address,
+    match: scope === "domain" ? from.address.split("@")[1] ?? from.address : from.address,
     destination,
     priority: 0,
     provenance: "promoted",
@@ -65,6 +67,62 @@ function promotedRule(
     createdAt: iso,
     updatedAt: iso,
   };
+}
+
+/**
+ * The wire's TWO destinations, and the reason `m.dest` is ignored on a derived row.
+ *
+ * `POST /screener/:id` takes `{ decision, scope }` and nothing else: yes files to INBOX,
+ * no files to `ohmail/Screened` (`screener-service.ts:17-18`). An optimistic effect that
+ * honoured `m.dest` would put the mail in `ohmail/Reads` while the server put it in the
+ * Ohbox — the same overlay/wire disagreement that made `feed_mark_seen` unusable outside
+ * Reads, and it would surface as a row that moves once and then moves again under the
+ * cursor on the next drain. The Screener surface composes a follow-up `move` mutation for
+ * the other three destinations instead; that half IS in the vocabulary.
+ */
+const WIRE_DECIDE_FOLDER: Record<"yes" | "no", Folder> = {
+  yes: "INBOX",
+  no: "ohmail/Screened",
+};
+
+/**
+ * A DERIVED sender's decision (slice C1): `m.senderId` is the REPRESENTATIVE MESSAGE id,
+ * so the effect is per-message moves across everything that sender is holding, plus the
+ * promoted rule the server will also create.
+ *
+ * The Screener-folder precondition is not a nicety: the server resolves `:id` against
+ * rows whose DESIRED FOLDER is `ohmail/Screener` only (`screener-service.ts:257`), so a
+ * representative outside that folder is a 404 on the wire. Producing no effect makes the
+ * engine reject it locally with the same verdict instead of moving mail optimistically
+ * and rolling it back a round-trip later.
+ */
+function derivedScreenerEffects(
+  reader: EntityReader,
+  m: Extract<EngineMutation, { kind: "screener_decide" }>,
+  ctx: EffectContext,
+  iso: string,
+): MutationEffect[] {
+  const rep = reader.get<EngineMessage>("message", m.senderId);
+  if (!rep || rep.folder !== FOLDER_OF_VIEW.screener) return [];
+
+  const key = senderKey(rep.from.address);
+  const destination = WIRE_DECIDE_FOLDER[m.decision];
+  const effects: MutationEffect[] = reader
+    .list<EngineMessage>("message")
+    .filter((x) => x.folder === FOLDER_OF_VIEW.screener && senderKey(x.from.address) === key)
+    .map((msg) => ({
+      type: "message",
+      id: msg.id,
+      // NO `unread` FLIP. "&read" is not a field on `POST /screener/:id`, so the seen
+      // half of a "file & read" is a separate `mark_seen` the surface dispatches — the
+      // two halves of THIS mutation say exactly what the wire says.
+      entity: { ...msg, folder: destination, updatedAt: iso } satisfies EngineMessage,
+      move: { from: msg.folder, to: destination },
+    }));
+
+  const rule = promotedRule(rep.from, m.scope ?? "sender", destination, ctx);
+  effects.push({ type: "rule", id: rule.id, entity: rule });
+  return effects;
 }
 
 /**
@@ -110,8 +168,10 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     case "screener_decide": {
+      // A fixture row wins, exactly as it does in `screenerSegments()`. With none, the
+      // sender is DERIVED from the message mirror and `m.senderId` is a message id.
       const sender = reader.get<ScreenerSenderDTO>("screener_sender", m.senderId);
-      if (!sender) return [];
+      if (!sender) return derivedScreenerEffects(reader, m, ctx, iso);
       const scope = m.scope ?? sender.scope ?? "sender";
       const destination = destFolderOf(m, sender);
       const effects: MutationEffect[] = [];
@@ -165,7 +225,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           } satisfies ScreenerSenderDTO,
         });
       }
-      const rule = promotedRule(sender, scope, destination, ctx);
+      const rule = promotedRule(sender.from, scope, destination, ctx);
       effects.push({ type: "rule", id: rule.id, entity: rule });
       return effects;
     }

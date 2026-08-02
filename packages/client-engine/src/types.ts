@@ -228,6 +228,18 @@ export interface ScreenerSenderDTO {
   screenedOn?: string;
   /** spam only */
   detection?: { source: string; confidence: number; reason: string; label: string };
+  /**
+   * TRUE when `screenerSegments()` computed this row from the MESSAGE MIRROR rather
+   * than reading a `screener_sender` entity (slice C1) — i.e. every row on a Cloud
+   * account, and none in the demo world.
+   *
+   * It is not cosmetic. `id` is then the representative MESSAGE id, which is what
+   * `POST /screener/:id` resolves, and the surrounding affordances differ: the server
+   * has no un-screen and no delete endpoint, so releasing a derived screened-out or
+   * quarantined sender is per-message `move`, and Delete is not offered at all. The
+   * UI must not guess which kind of row it has.
+   */
+  derived?: true;
   updatedAt: ISODateTime;
 }
 

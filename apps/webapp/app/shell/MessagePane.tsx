@@ -5,13 +5,26 @@
  * from-line, subject, chips (routing rationale, tracker shield, tags,
  * add-affordance), body or the protected-OTP block, attachment, actions.
  */
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, ProtectedBlock, ReadingPane } from "@ohmail/ui";
-import { displayTime, hueOf, senderName, tagsOfMessage } from "./format";
+import { PLACE_LABEL, displayTime, hueOf, senderName, tagsOfMessage } from "./format";
 
-export type MessageAction = "reply" | "later" | "aside" | "resurface" | "move" | "draft";
+/**
+ * MOVE CARRIES ITS DESTINATION (gap C4).
+ *
+ * It used to be a bare `"move"` that AppShell answered with a toast reading "Demo — Move
+ * isn't wired yet." — on live, paying accounts. The mutation it needed has been on the
+ * wire the whole time (`POST /messages/:id/move`, contract-tested), and the only thing
+ * missing was a destination, so the action carries one. A template member rather than a
+ * second callback argument: every pass-through of `onAction` keeps compiling unchanged.
+ */
+export type MoveTarget = Extract<OhmailView, "ohbox" | "reads" | "receipts" | "screened" | "spam">;
+export type MessageAction = "reply" | "later" | "aside" | "resurface" | "draft" | `move:${MoveTarget}`;
+
+/** The DecisionBar's vocabulary, so filing means the same thing everywhere. */
+const MOVE_TARGETS: MoveTarget[] = ["ohbox", "reads", "receipts", "screened", "spam"];
 
 /** "Protected — …" renders with the leading word bolded, like the prototype. */
 function ProtectedPolicy({ text }: { text: string }) {
@@ -46,6 +59,10 @@ export function MessagePane({
   const addRef = useRef<HTMLSpanElement>(null);
   const isProtected = message.protected != null;
   const mine = tagsOfMessage(message, tags);
+  const [moving, setMoving] = useState(false);
+
+  // A half-open destination row must not carry over to the next message.
+  useEffect(() => setMoving(false), [message.id]);
 
   return (
     <ReadingPane
@@ -87,23 +104,43 @@ export function MessagePane({
           : undefined
       }
       actions={
-        <>
-          <Button onClick={() => onAction("reply")}>{t("actionReply")}</Button>
-          <Button onClick={() => onAction("later")}>{t("actionReplyLater")}</Button>
-          <Button onClick={() => onAction("aside")}>{t("actionSetAside")}</Button>
-          <Button onClick={() => onAction("resurface")}>{t("actionResurface")}</Button>
-          <Button variant="ghost" onClick={() => onAction("move")}>
-            {t("actionMove")}
-          </Button>
-          <Button
-            variant="primary"
-            icon="spark"
-            style={{ marginLeft: "auto" }}
-            onClick={() => onAction("draft")}
-          >
-            {t("actionDraftReply")}
-          </Button>
-        </>
+        moving ? (
+          <>
+            <span className="choose-lab">{t("moveLabel")}</span>
+            {MOVE_TARGETS.filter((v) => FOLDER_OF_VIEW[v] !== message.folder).map((v) => (
+              <Button
+                key={v}
+                onClick={() => {
+                  setMoving(false);
+                  onAction(`move:${v}`);
+                }}
+              >
+                → {PLACE_LABEL[v] ?? v}
+              </Button>
+            ))}
+            <Button variant="ghost" onClick={() => setMoving(false)}>
+              {t("moveCancel")}
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button onClick={() => onAction("reply")}>{t("actionReply")}</Button>
+            <Button onClick={() => onAction("later")}>{t("actionReplyLater")}</Button>
+            <Button onClick={() => onAction("aside")}>{t("actionSetAside")}</Button>
+            <Button onClick={() => onAction("resurface")}>{t("actionResurface")}</Button>
+            <Button variant="ghost" onClick={() => setMoving(true)}>
+              {t("actionMove")}
+            </Button>
+            <Button
+              variant="primary"
+              icon="spark"
+              style={{ marginLeft: "auto" }}
+              onClick={() => onAction("draft")}
+            >
+              {t("actionDraftReply")}
+            </Button>
+          </>
+        )
       }
     >
       {isProtected ? (

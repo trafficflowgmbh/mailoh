@@ -562,9 +562,15 @@ function SpamPreview({
           ) : (
             <>
               <Button onClick={onChoose}>{t("notSpam")}</Button>
-              <Button variant="ghost" onClick={onDelete}>
-                {t("delete")}
-              </Button>
+              {/* Delete is a DEMO affordance: it hides the row and nothing else. There
+                  is no delete endpoint, so on a live account (every row derived) the
+                  button would lie until the next reload brought the mail back. It is
+                  not offered there. */}
+              {row.sender.derived ? null : (
+                <Button variant="ghost" onClick={onDelete}>
+                  {t("delete")}
+                </Button>
+              )}
             </>
           )}
         </div>

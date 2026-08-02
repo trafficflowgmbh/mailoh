@@ -15,13 +15,23 @@
  *    locally; the engine files their held mail to Quarantine + a rule);
  *  - "Not spam → Screener" pulls a fixture spam sender back to Waiting;
  *  - "Delete" hides a spam row.
+ *
+ * DERIVED ROWS (slice C1). On a Cloud account every row comes out of the
+ * message mirror, not out of a `screener_sender` fixture, and the two are
+ * not interchangeable here: `POST /screener/:id` has exactly two outcomes
+ * (yes ⇒ INBOX, no ⇒ ohmail/Screened) and resolves only mail still held in
+ * `ohmail/Screener`. So a derived row composes the rest out of `move` and
+ * `mark_seen` — both already on the wire — rather than letting a button
+ * mean something the server will not do. `sender.derived` is the switch.
  */
 import { useMemo, useReducer, useRef } from "react";
 import { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
   screenerSegments,
+  senderKey,
   type EngineMessage,
+  type Folder,
   type OhmailView,
   type OhmailEngine,
   type ScreenerSenderDTO,
@@ -76,6 +86,8 @@ export interface ScreenerState {
 const OUT_MS = 330;
 const COMMIT_MS = 6200;
 const BULK_STEP_MS = 240;
+/** `PATCH /messages` takes at most 200 ids (413 above it) — `routes/messages.ts:52`. */
+const MARK_SEEN_MAX = 200;
 
 export function useScreenerState(
   engine: OhmailEngine,
@@ -103,6 +115,14 @@ export function useScreenerState(
       ? t("wholeDomain", { domain: "@" + (x.from.address.split("@")[1] ?? x.from.address) })
       : x.from.address;
 
+  /** A derived row's held ids ARE message ids; a fixture row's are not. */
+  const heldMessageIds = (sender: ScreenerSenderDTO): string[] =>
+    sender.derived ? sender.held.map((h) => h.id) : [];
+
+  const moveAll = (ids: string[], folder: Folder) => {
+    for (const messageId of ids) void engine.mutate({ kind: "move", messageId, folder });
+  };
+
   const commit = (id: string) => {
     const entry = s.pending.get(id);
     if (!entry) return;
@@ -114,7 +134,15 @@ export function useScreenerState(
       s.pins = [entry.sender, ...s.pins];
     }
     s.overrides.delete(id);
-    const decision = entry.dest === "screened" ? "no" : "yes";
+    const derived = entry.sender.derived === true;
+    // Spam must ride the NO branch on a derived row. The endpoint's yes files to INBOX,
+    // so the old "yes unless screened" mapping would have filed spam into the Ohbox on a
+    // live account. Fixture rows keep the demo's own semantics, where the local effect
+    // files straight to Quarantine.
+    const decision: "yes" | "no" =
+      entry.dest === "screened" || (derived && entry.dest === "spam") ? "no" : "yes";
+    const heldIds = heldMessageIds(entry.sender);
+
     void engine.mutate({
       kind: "screener_decide",
       senderId: id,
@@ -124,6 +152,28 @@ export function useScreenerState(
         : {}),
       scope: entry.scope,
     });
+
+    if (derived) {
+      // Everything the endpoint cannot express, expressed with mutations that CAN.
+      // Dispatched after the decide so each one reads an overlay that already shows it —
+      // the engine's overlay is last-write-wins per entity, so the order is the
+      // correctness. The rule the decide promotes still points at the wire's folder; that
+      // is a real limitation of `POST /screener/:id`, not something to hide.
+      const wireFolder = decision === "yes" ? FOLDER_OF_VIEW.ohbox : FOLDER_OF_VIEW.screened;
+      const wanted = FOLDER_OF_VIEW[entry.dest as OhmailView] ?? FOLDER_OF_VIEW.ohbox;
+      if (wanted !== wireFolder) moveAll(heldIds, wanted);
+      // "&read" is not a field on the decide endpoint either, so the seen half is the
+      // same `PATCH /messages` batch the Ohbox uses.
+      if (entry.read) {
+        for (let i = 0; i < heldIds.length; i += MARK_SEEN_MAX) {
+          void engine.mutate({
+            kind: "mark_seen",
+            messageIds: heldIds.slice(i, i + MARK_SEEN_MAX),
+            unread: false,
+          });
+        }
+      }
+    }
     bump();
   };
 
@@ -241,7 +291,30 @@ export function useScreenerState(
       (snaps) => t("toastBulkSpam", { count: snaps.length }),
     );
 
+  /**
+   * Releasing a sender the Screener already decided about.
+   *
+   * There is no un-screen endpoint: `decide` resolves `:id` only against mail whose
+   * DESIRED folder is still `ohmail/Screener`, so a screened-out or quarantined
+   * representative is a 404. Per-message `move` releases the held mail for real. It
+   * creates no rule, and the copy says so instead of promising future mail will follow.
+   */
+  const release = (sender: ScreenerSenderDTO, dest: "ohbox" | "reads") => {
+    moveAll(heldMessageIds(sender), FOLDER_OF_VIEW[dest]);
+    toast(
+      t("toastReleased", {
+        count: sender.held.length,
+        sender: sender.from.address,
+        dest: DECISION_DONE_LABEL[dest],
+      }),
+    );
+  };
+
   const allowScreened = (sender: ScreenerSenderDTO, dest: "ohbox" | "reads") => {
+    if (sender.derived) {
+      release(sender, dest);
+      return;
+    }
     void engine.mutate({
       kind: "screener_decide",
       senderId: sender.id,
@@ -260,6 +333,14 @@ export function useScreenerState(
 
   const notSpamToWaiting = (row: SpamRow) => {
     if (row.pinned) return;
+    if (row.sender.derived) {
+      // Back to Waiting means the mail goes back to `ohmail/Screener` — the derived
+      // queue reads the folder, so a local override would show a row whose mail is
+      // still quarantined and whose decision would 404.
+      moveAll(heldMessageIds(row.sender), FOLDER_OF_VIEW.screener);
+      toast(t("toastNotSpamWaiting", { sender: senderLabel(row.sender) }));
+      return;
+    }
     s.overrides.add(row.sender.id);
     bump();
     toast(t("toastNotSpamWaiting", { sender: senderLabel(row.sender) }));
@@ -281,6 +362,9 @@ export function useScreenerState(
       }
       s.pins = s.pins.filter((p) => p.id !== row.sender.id);
       bump();
+    } else if (row.sender.derived) {
+      release(row.sender, "ohbox");
+      return;
     } else {
       void engine.mutate({
         kind: "screener_decide",
@@ -304,10 +388,15 @@ export function useScreenerState(
     for (const id of [...s.pending.keys()]) commit(id);
   };
 
+  // A pinned sender and the DERIVED row for the same address are the same sender: the
+  // pin is this session's memory of a decision whose mail the mirror now reports sitting
+  // in `ohmail/Quarantine`. Without the address filter, marking a sender spam lists them
+  // twice the moment the move lands.
+  const pinnedKeys = new Set(s.pins.map((p) => senderKey(p.from.address)));
   const spam: SpamRow[] = [
     ...s.pins.map((p) => ({ sender: p, pinned: true })),
     ...segments.spam
-      .filter((x) => !s.overrides.has(x.id) && !s.hidden.has(x.id))
+      .filter((x) => !s.overrides.has(x.id) && !s.hidden.has(x.id) && !pinnedKeys.has(senderKey(x.from.address)))
       .map((x) => ({ sender: x, pinned: false })),
   ];
 
