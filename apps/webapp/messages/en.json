@@ -953,6 +953,7 @@
     "reply": "Reply inside the message",
     "replyRun": "Start the Reply Run",
     "screen": "Change this sender's screening",
+    "answerLater": "Queue it for the Reply Run",
     "park": "Park it (out of the way, still here)",
     "resurface": "Resurface it later",
     "palette": "Command palette",

@@ -617,6 +617,21 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
       },
     },
     {
+      // U6. `f` starts a Reply Run over the Answer Later pile, and until this binding there
+      // was NO keyboard way to put anything INTO that pile — `later` was reachable only from
+      // the reader's action menu. A keyboard user could start a run they could not fill, and
+      // `f` sat permanently `disabled` for them. Found while writing the S15 guard, which is
+      // blocked on exactly this.
+      //
+      // `a` for Answer, next to the pile's own name. Free: the bound set was
+      // ? / b c e f r s, `g`-prefixed jumps, mod+k and Escape.
+      chord: "a",
+      group: "message",
+      label: t("shortcuts.answerLater"),
+      disabled: focused == null,
+      run: () => focused && onMessageAction("later", focused),
+    },
+    {
       chord: "e",
       group: "message",
       // ohmail has no Archive: "out of the way, still here" is the Park pile. Naming it
