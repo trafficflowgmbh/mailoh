@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, ProtectedBlock, ReadingPane } from "@ohmail/ui";
+import { ConversationEntries, ConversationHead, ConversationLimit } from "./Conversation";
 import { PLACE_LABEL, avatarHue, displayTime, hueOf, initialsOf, rowAddress, senderName, tagsOfMessage } from "./format";
 import { InlineReply } from "./InlineReply";
 import { useMessageChrome } from "./message-chrome";
@@ -59,6 +60,8 @@ export function MessagePane({
 }) {
   const t = useTranslations("ohbox");
   const tr = useTranslations("screening");
+  /** The conversation's copy lives with the reply's — one namespace owns the thread. */
+  const tc = useTranslations("reply");
   const addRef = useRef<HTMLSpanElement>(null);
   const isProtected = message.protected != null;
   const mine = tagsOfMessage(message, tags);
@@ -68,6 +71,43 @@ export function MessagePane({
   // A half-open destination row must not carry over to the next message.
   useEffect(() => setMoving(false), [message.id]);
 
+  /**
+   * THE CONVERSATION (slice P6b) — oldest first, empty when there is no conversation.
+   *
+   * Computed on every render rather than memoised: the value it derives from is the engine
+   * mirror, which has no signal reachable from here (this pane deliberately holds no engine
+   * hook — see `message-chrome.tsx`). The shell re-renders this pane on every version bump,
+   * so an inline call is always fresh and a `useMemo` with no version dep would go stale
+   * the first time a delta landed.
+   */
+  const conversation = chrome.conversationOf(message.id);
+  const replying = chrome.replyTo === message.id;
+  /**
+   * ONE COPY OF THE CONVERSATION ON SCREEN, EVER.
+   *
+   * The reply editor mounts INSIDE this same `<article class="msg">`, three inches below,
+   * and its `.reply-context` scroller shows the same list. Rendering both would put the
+   * conversation twice in one scrolling column, which reads as a bug. The pane stands its
+   * copy down while its own editor is open; nothing is hidden, it moved.
+   */
+  const showConversation = conversation.length > 0 && !replying;
+  /**
+   * The from-line count. Real on Cloud now; the fixture fallback stays because the demo
+   * world sets `threadId: null` on every row (`fixtures-adapter.ts`) and carries a curated
+   * `threadCount` instead — dropping it would delete chrome the demo ships today.
+   */
+  const threadCount = conversation.length >= 2 ? conversation.length : message.threadCount;
+
+  const focusedBody = isProtected ? (
+    <ProtectedBlock
+      label={message.protected!.label}
+      redactedNote={message.protected!.redactedNote}
+      policy={<ProtectedPolicy text={message.protected!.policy} />}
+    />
+  ) : (
+    <p className="msg-body">{message.body ?? message.snippet}</p>
+  );
+
   return (
     <ReadingPane
       from={senderName(message)}
@@ -76,7 +116,7 @@ export function MessagePane({
       avatarHue={avatarHue(message.from.address)}
       onSender={(anchor) => chrome.openSenderMenu(message.id, anchor)}
       senderTitle={tr("openFor", { sender: message.from.address })}
-      time={`${message.threadCount ? t("threadMeta", { count: message.threadCount }) : ""}${displayTime(message, now)}`}
+      time={`${threadCount ? t("threadMeta", { count: threadCount }) : ""}${displayTime(message, now)}`}
       subject={message.subject}
       onEnterReader={onEnterReader}
       chips={
@@ -99,7 +139,10 @@ export function MessagePane({
           </span>
         </>
       }
-      {...(isProtected
+      {...(isProtected || showConversation
+        // `children` REPLACES `body` in `ReadingPane`, so the conversation case composes the
+        // whole middle section itself. A message with no conversation keeps exactly the
+        // shape it had before this slice: the `body` prop, or the protected block.
         ? {}
         : { body: message.body ?? message.snippet })}
       attachment={
@@ -165,13 +208,14 @@ export function MessagePane({
         )
       }
       reply={
-        chrome.replyTo === message.id ? (
+        replying ? (
           <InlineReply
             message={message}
-            /* ONE entry, and `InlineReply`'s header says why: threading does not exist
-               yet (C3 — `thread_id` is NULL on every row), so the conversation this can
-               honestly show is the message being answered. */
-            context={[message]}
+            /* THE CONVERSATION, not one entry. It used to be `[message]` with a comment
+               saying C3 would fill it; C3 landed, `threadOf` reads it, and this is the
+               list. Falls back to the message being answered when there is no
+               conversation — a reply still quotes what it answers. */
+            context={conversation.length > 0 ? conversation : [message]}
             now={now}
             value={chrome.replyBody}
             onChange={chrome.onReplyBody}
@@ -181,13 +225,51 @@ export function MessagePane({
         ) : undefined
       }
     >
-      {isProtected ? (
-        <ProtectedBlock
-          label={message.protected!.label}
-          redactedNote={message.protected!.redactedNote}
-          policy={<ProtectedPolicy text={message.protected!.policy} />}
-        />
+      {/* THE CONVERSATION IN THE MESSAGE (P6b).
+          Oldest first, and the message you opened keeps the full anatomy — plain prose
+          between carded siblings — so which one is focused needs no legend. Siblings older
+          than it sit above and newer ones below, which means the stack reads in order
+          whichever message was opened, not only the newest. */}
+      {showConversation ? (
+        // `role="group"` because `aria-label` on a bare div is ignored, and a landmark
+        // (`<section>`) would be too loud for one part of one message.
+        <div className="conv" role="group" aria-label={tc("conversationAria")}>
+          <ConversationHead count={conversation.length} />
+          <ConversationEntries
+            messages={conversation.filter((m) => before(m, message))}
+            threadSubject={message.subject}
+            now={now}
+            variant="pane"
+          />
+          <div className="conv-focus" data-conv-id={message.id} aria-current="true">
+            {focusedBody}
+          </div>
+          <ConversationEntries
+            messages={conversation.filter((m) => m.id !== message.id && !before(m, message))}
+            threadSubject={message.subject}
+            now={now}
+            variant="pane"
+          />
+          <ConversationLimit />
+        </div>
+      ) : isProtected ? (
+        focusedBody
       ) : undefined}
     </ReadingPane>
   );
+}
+
+/**
+ * Is `m` earlier in the conversation than the opened message?
+ *
+ * The comparison is on the ORDER `threadOf` already sorted by — date, id as the tiebreak —
+ * rather than on dates alone, so a thread whose messages share a timestamp (a seeded or
+ * imported chain) still splits at exactly one place and never renders a message twice or
+ * not at all. The opened message itself is never "before" itself.
+ */
+function before(m: EngineMessage, focused: EngineMessage): boolean {
+  const tm = m.date ? Date.parse(m.date) : 0;
+  const tf = focused.date ? Date.parse(focused.date) : 0;
+  if (tm !== tf) return tm < tf;
+  return m.id < focused.id;
 }

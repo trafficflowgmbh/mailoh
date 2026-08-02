@@ -24,6 +24,27 @@ export interface MessageRowProps {
   /** The unread dot fades in place after being marked seen. */
   justSeen?: boolean;
   selected?: boolean;
+  /**
+   * MULTI-SELECT MEMBERSHIP, and why it changes the row's ROLE (slice U1d).
+   *
+   * Measured live on 2026-08-02: picking rows in the Ohbox set `aria-selected` on zero of
+   * them. The pick was a class name and nothing else, so a screen reader could not tell a
+   * picked row from any other and the bulk action operated on a set the user could not
+   * perceive.
+   *
+   * `aria-selected` is only meaningful on `option`/`row`/`gridcell`/`tab` — putting it on a
+   * `button` is invalid ARIA that some readers ignore — so a row that participates in a
+   * multi-select declares `role="option"` and its container declares `role="listbox"`
+   * (`ListRows`). The element stays a focusable `<button>`; only the role changes, and the
+   * row has no interactive descendants, which is what `option` requires.
+   *
+   * `aria-pressed` was the alternative and it describes the wrong action: clicking a row
+   * moves the CURSOR, `x` picks. A toggle button would announce the click as the toggle.
+   *
+   * Undefined ⇒ this list has no multi-select and the row stays a plain button. Every list
+   * but the Ohbox is untouched.
+   */
+  picked?: boolean;
   /** Spam-grade rendering — less ink. */
   dull?: boolean;
   threadCount?: number;
@@ -69,6 +90,7 @@ export function MessageRow(props: MessageRowProps) {
     seen,
     justSeen,
     selected,
+    picked,
     dull,
     threadCount,
     hasAttachment,
@@ -111,11 +133,19 @@ export function MessageRow(props: MessageRowProps) {
     seen ? "seen" : null,
     justSeen ? "justseen" : null,
     selected ? "sel" : null,
+    picked ? "picked" : null,
     dull ? "dull" : null,
     className,
   ]
     .filter(Boolean)
     .join(" ");
+
+  // See `picked` above: opting into the multi-select changes the role, because that is the
+  // only role `aria-selected` is defined on.
+  const selection =
+    picked === undefined
+      ? {}
+      : ({ role: "option", "aria-selected": picked ? "true" : "false" } as const);
 
   const chips: ReactNode[] = [];
   if (aiSuggestion)
@@ -155,6 +185,7 @@ export function MessageRow(props: MessageRowProps) {
       data-id={id}
       data-unseen={unread ? "1" : undefined}
       aria-label={`${from}: ${subject}`}
+      {...selection}
       onClick={onClick}
     >
       {avatarInitial !== undefined ? (

@@ -24,6 +24,7 @@ import {
   readsPartition,
   receiptsByDay,
   tagsCrossView,
+  threadOf,
   triagePiles,
   type EngineDraft,
   type EngineMessage,
@@ -772,9 +773,24 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
   const frFinished = fr != null && fr.step >= fr.items.length;
   const frItem = fr && !frFinished ? fr.items[fr.step] : undefined;
 
+  /**
+   * THE CONVERSATION, for whichever message a pane is rendering (slice P6b).
+   *
+   * `engine.read()` is called at INVOCATION time, not closed over, so the callback is
+   * stable across version bumps — the chrome context below would otherwise churn for every
+   * consumer on every delta — while what it returns is always the current mirror, including
+   * the optimistic overlay. A `useMemo` keyed on `version` would give the same freshness and
+   * a new identity every bump; a `useMemo` that forgot `version` would go stale, which is
+   * exactly the bug `senderMenuFor` carries a `version` dep to avoid.
+   */
+  const conversationOf = useCallback(
+    (messageId: string) => threadOf(engine.read(), messageId),
+    [engine],
+  );
+
   const chrome = useMemo(
-    () => ({ replyTo, replyBody, onReplyBody, closeReply, sendReply, openSenderMenu }),
-    [replyTo, replyBody, onReplyBody, closeReply, sendReply, openSenderMenu],
+    () => ({ replyTo, replyBody, onReplyBody, closeReply, sendReply, openSenderMenu, conversationOf }),
+    [replyTo, replyBody, onReplyBody, closeReply, sendReply, openSenderMenu, conversationOf],
   );
 
   // Resolved here rather than inside the popover so a sender whose last message has just

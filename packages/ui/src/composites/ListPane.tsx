@@ -70,9 +70,33 @@ export function ListGroupLabel({ children }: { children: ReactNode }) {
   return <div className="grouplabel">{children}</div>;
 }
 
-/** Row container with the shadow-safe gutter. */
-export function ListRows({ children }: { children: ReactNode }) {
-  return <div className="rows">{children}</div>;
+/**
+ * Row container with the shadow-safe gutter.
+ *
+ * `multiSelectable` turns it into the listbox that `MessageRow`'s `role="option"` rows need
+ * — `aria-selected` on an orphaned option means nothing. Opt-in, and only the Ohbox opts
+ * in: a list with no multi-select must not announce itself as one. Give it a label, because
+ * a view is normally several of these ("New", "Earlier") and an unlabelled pair of listboxes
+ * is worse than none.
+ */
+export function ListRows({
+  children,
+  multiSelectable,
+  ariaLabel,
+}: {
+  children: ReactNode;
+  multiSelectable?: boolean;
+  ariaLabel?: string;
+}) {
+  return (
+    <div
+      className="rows"
+      {...(multiSelectable ? ({ role: "listbox", "aria-multiselectable": "true" } as const) : {})}
+      {...(ariaLabel ? { "aria-label": ariaLabel } : {})}
+    >
+      {children}
+    </div>
+  );
 }
 
 export type { SeenObserver };

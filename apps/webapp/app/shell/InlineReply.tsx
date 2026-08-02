@@ -13,14 +13,18 @@
  * `<article class="msg">`, so the subject, the sender line and the body stay where they
  * were and the quoted original sits directly above the editor.
  *
- * ── THE CONVERSATION ABOVE IT IS ONE MESSAGE, AND THAT IS NOT A DESIGN CHOICE ───────────
+ * ── THE CONVERSATION ABOVE IT ───────────────────────────────────────────────────────────
  *
- * "Scroll through the actual email conversation" needs threads, and threads do not exist
- * yet: ingestion never sets `thread_id`, so it is NULL on all 301 production rows and no
- * two messages in the mirror share one (gap C3, measured 2026-08-02 by `P6-THREAD`).
- * `context` is therefore a LIST that today holds exactly one entry — the message being
- * answered — and C3 fills it with the rest of the chain without touching this component.
- * Faking a thread from subject prefixes would be a different feature wearing C3's name.
+ * "Scroll through the actual email conversation" needed threads. When this shipped they did
+ * not exist — `thread_id` was NULL on every production row (gap C3) — so `context` was a
+ * LIST holding exactly one entry, the message being answered, with a note on screen saying
+ * so. C3 landed on 2026-08-02 and `threadOf` reads it, so `MessagePane` now passes the whole
+ * chain and this renders it, oldest first, in its own 190px scroller: the editor never gets
+ * pushed off the bottom of the reading pane however deep the conversation runs.
+ *
+ * It still shows one side. `Sent` is not watched (gap U4c), so the user's own replies are
+ * not in `messages` at all; `ConversationLimit` states that rather than letting the list
+ * imply the user never answered.
  *
  * The draft is kept in `localStorage`, per message: this is the client's own scratch
  * buffer, not an IMAP draft. Drafts on the server are P3 and the owner has ruled they must
@@ -30,7 +34,8 @@ import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage } from "@ohmail/client-engine";
 import { Button, Kbd } from "@ohmail/ui";
-import { displayTime, rowAddress, senderName } from "./format";
+import { ConversationEntries, ConversationHead, ConversationLimit } from "./Conversation";
+import { rowAddress, senderName } from "./format";
 
 /** `localStorage` key for a per-message reply draft. */
 export const replyDraftKey = (messageId: string): string => `ohmail.ui.reply:${messageId}`;
@@ -63,8 +68,8 @@ export function InlineReply({
 }: {
   message: EngineMessage;
   /**
-   * The conversation, oldest first, rendered above the editor. One entry today — see the
-   * header. Whatever C3 puts in here renders without further work.
+   * The conversation, oldest first, rendered above the editor — `threadOf`. Holds exactly
+   * one entry (the message being answered) when there is no conversation to show.
    */
   context: EngineMessage[];
   now: Date;
@@ -88,19 +93,13 @@ export function InlineReply({
         {rowAddress(message) ? <small>{rowAddress(message)}</small> : null}
       </div>
 
-      {/* The context, scrollable in its own right so a long conversation never pushes the
-          editor off the bottom of the reading pane. */}
-      <div className="reply-context">
-        {context.map((m) => (
-          <article key={m.id} className="reply-quoted">
-            <div className="rq-line">
-              <b>{senderName(m)}</b>
-              <span className="t num">{displayTime(m, now)}</span>
-            </div>
-            <div className="rq-body">{m.protected ? t("quotedProtected") : (m.body ?? m.snippet)}</div>
-          </article>
-        ))}
-        {context.length <= 1 ? <p className="reply-note">{t("singleMessage")}</p> : null}
+      {/* The conversation, scrollable in its own right so a deep one never pushes the
+          editor off the bottom of the reading pane. Same component, same order and same
+          honest limit as the copy `MessagePane` renders when this editor is closed. */}
+      <div className="reply-context" role="group" aria-label={t("conversationAria")}>
+        {context.length > 1 ? <ConversationHead count={context.length} /> : null}
+        <ConversationEntries messages={context} focusedId={message.id} now={now} variant="quote" />
+        {context.length > 1 ? <ConversationLimit /> : <p className="reply-note">{t("singleMessage")}</p>}
       </div>
 
       <textarea

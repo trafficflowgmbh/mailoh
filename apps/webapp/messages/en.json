@@ -204,6 +204,7 @@
     "keyTag": "tag the message",
     "keyPick": "select the message",
     "keyUnread": "mark read / unread",
+    "keyMarkPicked": "mark the selection read",
     "keyClear": "clear the selection"
   },
   "reads": {
@@ -980,7 +981,11 @@
     "cancel": "Cancel",
     "hintEsc": "closes the editor",
     "quotedProtected": "Verification code ······ (redacted)",
-    "singleMessage": "This is the only message ohmail has on this conversation. Threading is not built yet, so earlier replies are not listed here.",
+    "singleMessage": "This is the only message ohmail has on this conversation.",
+    "conversationAria": "Conversation",
+    "conversationCount": "{count, plural, one {1 message} other {# messages}} on this conversation",
+    "conversationHere": "replying to this",
+    "onlyTheirSide": "Your own replies are not here: ohmail does not watch your Sent folder yet, so a conversation shows the other side only.",
     "sendTitle": "Sending is not connected yet.",
     "toastSendUnwired": "Sending is not connected yet — the draft is kept on this device."
   }

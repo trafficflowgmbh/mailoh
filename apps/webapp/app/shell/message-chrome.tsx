@@ -14,6 +14,7 @@
  * takes fifteen would make the seam harder to see, not easier.
  */
 import { createContext, useContext, type ReactNode } from "react";
+import type { EngineMessage } from "@ohmail/client-engine";
 
 export interface MessageChrome {
   /** The message id whose inline reply editor is open, if any. */
@@ -24,6 +25,19 @@ export interface MessageChrome {
   sendReply: () => void;
   /** Open the screening popover for `messageId`, anchored on `anchor`. */
   openSenderMenu: (messageId: string, anchor: HTMLElement | null) => void;
+  /**
+   * The conversation this message belongs to, oldest first — `threadOf`, wired to the live
+   * engine (slice P6b). Empty when there is no conversation; see the selector.
+   *
+   * It arrives through the chrome rather than as a prop for the reason this whole context
+   * exists: `MessagePane` is mounted in TWO places at once (the Ohbox read column and the
+   * reader sheet), one of them three components deep inside a view that already takes
+   * fifteen props. A FUNCTION rather than a resolved array because the two mounts hold
+   * different messages, and because `MessagePane` must not acquire an engine hook of its
+   * own — `useEngine()` throws outside `EngineProvider` and `ohbox-read-state.test.ts`
+   * mounts `OhboxView` without one.
+   */
+  conversationOf: (messageId: string) => EngineMessage[];
 }
 
 const noop = (): void => {};
@@ -40,6 +54,7 @@ const MessageChromeContext = createContext<MessageChrome>({
   closeReply: noop,
   sendReply: noop,
   openSenderMenu: noop,
+  conversationOf: () => [],
 });
 
 export function MessageChromeProvider({

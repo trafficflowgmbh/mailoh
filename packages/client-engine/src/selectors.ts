@@ -59,6 +59,47 @@ function byDateDesc(a: EngineMessage, b: EngineMessage): number {
   return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
 
+/** Reading order for a conversation — the exact reverse of `byDateDesc`, undated rows first. */
+function byDateAsc(a: EngineMessage, b: EngineMessage): number {
+  return -byDateDesc(a, b);
+}
+
+// ── Conversations ──────────────────────────────────────────────────────────
+
+/**
+ * THE CONVERSATION a message belongs to, oldest first (slice P6b).
+ *
+ * `threadId` is populated by C3 — 2 319 threads on the owner's mailbox, largest 18 — and
+ * nothing rendered it. This is the one place the grouping is computed.
+ *
+ * ── THE EMPTY ARRAY IS A CONTRACT, NOT A DEGENERATE CASE ────────────────────────────────
+ *
+ * A message with no `threadId`, and a message that is the SOLE member of its thread, both
+ * answer `[]`. They are the same fact to a reader — there is no conversation here — and
+ * collapsing them means a caller cannot accidentally render "1 message" chrome around a
+ * message that has no conversation. Every consumer's condition is `length > 0`; none of
+ * them has to know that a thread of one exists in the mirror.
+ *
+ * NO FOLDER FILTER. A conversation legitimately spans folders: a stranger's first mail sits
+ * in `ohmail/Screener` while their accepted follow-ups land in the Ohbox, and hiding the
+ * held one would be the reader lying about what it has. The `Sent` folder is the other
+ * side of that coin and is NOT watched (gap U4c) — the user's own replies are not in
+ * `messages` at all, so this can only ever return the counterpart's half. Callers say so;
+ * see `Conversation.tsx`.
+ *
+ * O(n) over the mirror, like every selector here. Do NOT call it per row to build list
+ * badges — that is O(n²) at 8 800 messages and wants a one-pass count selector instead.
+ */
+export function threadOf(reader: EntityReader, messageId: string): EngineMessage[] {
+  const self = reader.get<EngineMessage>("message", messageId);
+  if (!self?.threadId) return [];
+  const members = reader
+    .list<EngineMessage>("message")
+    .filter((m) => m.threadId === self.threadId)
+    .sort(byDateAsc);
+  return members.length > 1 ? members : [];
+}
+
 export function messagesIn(reader: EntityReader, folder: Folder): EngineMessage[] {
   return reader
     .list<EngineMessage>("message")

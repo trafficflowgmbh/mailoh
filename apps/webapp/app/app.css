@@ -111,16 +111,28 @@ body.reading .shell {
    primitive built for one caller encodes a guess about the second.
    Accent-soft + an accent rail, the same language the demo ribbon and the
    selected row already speak — no new colour enters the system. */
+/* U1d: it sits ABOVE the scroller now (ListPane's `header` slot), aligned with the
+   doorbell's 26px gutter, so a selection made forty rows down is still legible. Wraps,
+   because "12 selected · Mark read ⇧U · Clear esc" does not fit one line at 390px. */
 .pick-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
-  margin: 0 18px 8px;
+  margin: 12px 26px 0;
   padding: 7px 12px;
   border-radius: 10px;
   font-size: 12px;
   color: var(--ink2);
   background: var(--accent-soft);
+}
+@media (max-width: 900px) {
+  .pick-bar {
+    margin: 10px 14px 0;
+  }
+}
+.pick-bar button kbd {
+  margin-left: 3px;
 }
 .pick-bar span {
   font-weight: 600;
@@ -1596,8 +1608,69 @@ body.reading .shell {
   color: var(--ink3);
 }
 
+/* ================= the conversation (slice P6b) =================
+   The rest of the thread, oldest first, inside the open message. Siblings reuse the Blanc
+   `.hmail` card — the same card the Screener uses for held mail, so "a message inside a
+   message" looks the same wherever the product does it — one shade quieter, because a
+   lift-1 card sitting inside the lift-1 reading pane reads as two competing surfaces.
+
+   NO INNER SCROLLER. `.read-col` and `.reader` already scroll; nesting a second scroller
+   inside them is a trap on a phone and for a keyboard, and the conversation is not a
+   sidebar — it IS the message you are reading. The reply editor's `.reply-context` keeps
+   its own 190px scroller because there the editor must stay reachable below it. */
+.conv {
+  margin: 0 0 4px;
+}
+.conv-head {
+  font-size: 11px;
+  color: var(--ink3);
+  margin: 0 0 13px;
+}
+.conv .hmail {
+  box-shadow: var(--lift-0);
+  border-radius: 16px;
+  padding: 15px 19px 16px;
+  margin-bottom: 14px;
+}
+.conv .hmail h3 {
+  font-size: 14.5px;
+  margin: 5px 0 8px;
+}
+.conv .hmail .hm-body {
+  font-size: 13px;
+  color: var(--ink2);
+}
+/* The message you opened keeps full-weight prose and takes the accent rule, so which one
+   is focused needs no legend and no colour-only cue. */
+.conv > .conv-focus {
+  margin: 0 0 16px;
+  padding: 2px 0 2px 15px;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.conv-note {
+  font-size: 10.5px;
+  color: var(--ink3);
+  line-height: 1.5;
+  margin: 2px 0 0;
+  max-width: 62ch;
+}
+.reply-quoted.conv-focus {
+  box-shadow: inset 2px 0 0 var(--accent);
+  padding-left: 11px;
+}
+.conv-here {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-ink);
+}
+@media (max-width: 560px) {
+  .conv .hmail {
+    padding: 13px 15px 14px;
+  }
+}
+
 /* ================= inline reply (slice U4) =================
-   Inside <article class="msg">, under the actions: the quoted conversation in
+   Inside <article class="msg">, under the actions: the conversation above in
    its own scroller so a long chain never pushes the editor off the pane, then
    the editor, then the row of controls. */
 .reply {

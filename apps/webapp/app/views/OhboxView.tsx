@@ -21,6 +21,7 @@ import {
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useEngineVersion, useReader, useSyncStatus } from "../shell/engine";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { useMessageChrome } from "../shell/message-chrome";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 
 /**
@@ -72,6 +73,8 @@ export function OhboxView({
   onAttachment: () => void;
 }) {
   const t = useTranslations("ohbox");
+  /** Only for Escape precedence — see the binding. Inert outside the shell. */
+  const chrome = useMessageChrome();
 
   const all = useMemo(
     () => [...newForYou, ...previouslySeen],
@@ -118,6 +121,13 @@ export function OhboxView({
       return next;
     });
   }, [all, togglePick]);
+
+  /** Mark everything picked read, in ONE mutation — one request, one transaction, one intent. */
+  const markPicked = useCallback(() => {
+    const ids = all.filter((m) => picked.has(m.id)).map((m) => m.id);
+    onMarkSeen(ids, false);
+    clearPicked();
+  }, [all, picked, onMarkSeen, clearPicked]);
 
   // Ids that vanished from the list (moved, filed, deleted) leave with it — a count that
   // outlives its rows is a count that acts on nothing.
@@ -247,11 +257,48 @@ export function OhboxView({
       run: () => selected && toggleUnread(selected),
     },
     {
-      // Innermost Escape in the product: a picked set is closer than the reader is.
+      /**
+       * THE BULK ACTION, ON THE KEYBOARD (slice U1d).
+       *
+       * The owner's complaint was "I can't select multiple emails and mark them seen", and
+       * the half that shipped could only be finished with a mouse: the bar's buttons are
+       * reachable by Tab, but there was no way to say "mark what I picked" from the keys
+       * that made the pick, and nothing in the `?` sheet mentioned that marking a selection
+       * was possible at all. Declaring it here documents it — the sheet is generated from
+       * this registry and cannot list a key that does nothing.
+       *
+       * `⇧U` and not a fresh letter: `u` is already "mark read / unread" at the cursor, so
+       * the shifted twin is the same verb over the selection. `chordMatches` keeps plain
+       * `u` from swallowing it.
+       */
+      chord: "shift+u",
+      group: "message",
+      label: t("keyMarkPicked"),
+      disabled: picked.size === 0,
+      run: () => markPicked(),
+    },
+    {
+      /**
+       * Innermost Escape in the product: a picked set is closer than the reader is.
+       *
+       * NOT closer than the reply editor, though, and that cost a live journey to find.
+       * `U4-REPLY` went red the moment a selection survived into it — "r opened an inline
+       * editor but Esc did not close it" — because this VIEW binding outranks the shell's
+       * cascade unconditionally and cleared the selection instead. The typing guard hides
+       * this most of the time (this binding is not `inInput`, so it is dormant while the
+       * caret is in the textarea) and that is exactly why it is worth stating: the editor
+       * does not always hold focus, and a guard that only works when the caret is in the
+       * right place is not the guarantee U4 makes.
+       *
+       * SAME CLASS, NOT FIXED HERE: the `?` sheet, the ⌘K palette and the screening
+       * popover are also inner to a picked set and also lose to it. They are the shell's
+       * overlays, this view cannot see them, and the fix is precedence in the cascade
+       * rather than a growing condition here — filed, not silently patched.
+       */
       chord: "Escape",
       group: "message",
       label: t("keyClear"),
-      disabled: picked.size === 0,
+      disabled: picked.size === 0 || chrome.replyTo != null,
       run: clearPicked,
     },
   ];
@@ -275,12 +322,6 @@ export function OhboxView({
     pickRangeTo(id);
   }, [pickRangeTo]);
 
-  const markPicked = useCallback(() => {
-    const ids = all.filter((m) => picked.has(m.id)).map((m) => m.id);
-    onMarkSeen(ids, false);
-    clearPicked();
-  }, [all, picked, onMarkSeen, clearPicked]);
-
   const row = (m: EngineMessage) => (
     <MessageRow
       key={m.id}
@@ -298,7 +339,10 @@ export function OhboxView({
       hasAttachment={m.hasAttachments}
       protected={m.protected != null}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
-      className={picked.has(m.id) ? "picked" : undefined}
+      /* `picked` carries BOTH the styling and the ARIA now (slice U1d) — it used to be a
+         class name only, so `aria-selected` was set on zero rows and the selection existed
+         for sighted mouse users and nobody else. See `MessageRow`. */
+      picked={picked.has(m.id)}
       onClick={() => {
         if (window.matchMedia("(max-width: 900px)").matches) {
           // Mobile: a tap IS the open — there is no reading column to preview into.
@@ -323,17 +367,41 @@ export function OhboxView({
           total: all.length,
         })}
         header={
-          <Doorbell
-            initials={doorbellInitials}
-            hues={doorbellHues}
-            gone={doorbellCount === 0}
-            message={
-              <DoorbellMessage count={doorbellCount} />
-            }
-            actionLabel={t("doorbellAction")}
-            ariaLabel={t("doorbellAria", { count: doorbellCount })}
-            onPress={onDoorbell}
-          />
+          <>
+            <Doorbell
+              initials={doorbellInitials}
+              hues={doorbellHues}
+              gone={doorbellCount === 0}
+              message={
+                <DoorbellMessage count={doorbellCount} />
+              }
+              actionLabel={t("doorbellAction")}
+              ariaLabel={t("doorbellAria", { count: doorbellCount })}
+              onPress={onDoorbell}
+            />
+            {/* THE SELECTION AFFORDANCE, ABOVE THE SCROLLER (slice U1d).
+                It used to be the scroller's first child, so the count and the bulk action
+                scrolled off the moment you picked something forty rows down — the state was
+                unknowable exactly when it mattered most. `ListPane`'s `header` slot is
+                documented for a bulk bar; this is the bulk bar.
+
+                Still a plain bar in this view rather than a `@ohmail/ui` primitive: nothing
+                else in the product has a multi-select, and a component invented for one
+                caller is a guess about the second one.
+
+                `role="status"` so the count is ANNOUNCED as it changes, not merely present. */}
+            {picked.size > 0 ? (
+              <div className="pick-bar" role="status">
+                <span>{t("picked", { count: picked.size })}</span>
+                <button type="button" onClick={markPicked}>
+                  {t("pickedMarkSeen")} <Kbd>⇧U</Kbd>
+                </button>
+                <button type="button" className="quiet" onClick={clearPicked}>
+                  {t("pickedClear")} <Kbd>esc</Kbd>
+                </button>
+              </div>
+            ) : null}
+          </>
         }
         hints={
           <>
@@ -358,20 +426,13 @@ export function OhboxView({
           </>
         }
       >
-        {/* The selection affordance. A plain bar in this view, not a `@ohmail/ui` primitive:
-            nothing else in the product has a multi-select yet, and a component invented for one
-            caller is a guess about the second one. */}
-        {picked.size > 0 ? (
-          <div className="pick-bar" role="status">
-            <span>{t("picked", { count: picked.size })}</span>
-            <button type="button" onClick={markPicked}>{t("pickedMarkSeen")}</button>
-            <button type="button" className="quiet" onClick={clearPicked}>{t("pickedClear")}</button>
-          </div>
-        ) : null}
+        {/* TWO listboxes, not one: "New" and "Earlier" are separated by a group label, and
+            an option's listbox has to be its actual container. Each is labelled, because an
+            unnamed pair of listboxes is worse than none. */}
         <ListGroupLabel>{t("newForYou")}</ListGroupLabel>
-        <ListRows>{newForYou.map(row)}</ListRows>
+        <ListRows multiSelectable ariaLabel={t("newForYou")}>{newForYou.map(row)}</ListRows>
         <ListGroupLabel>{t("previouslySeen")}</ListGroupLabel>
-        <ListRows>{previouslySeen.map(row)}</ListRows>
+        <ListRows multiSelectable ariaLabel={t("previouslySeen")}>{previouslySeen.map(row)}</ListRows>
         {all.length === 0 ? <SyncState /> : null}
         {/* DEMO ONLY, and it was not. "Older mail stays on your server — find it in Search."
             is true of Mila's fixture world, which holds a hand-made slice of a mailbox. It is
