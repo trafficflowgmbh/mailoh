@@ -127,16 +127,20 @@ export function EngineProvider({
     if (binding.status === "ready" ? desired === binding.demo : !desired) return;
     // TWO TEARDOWNS, and only one of them is this line's.
     //
-    // The ENGINE still owns no timers and no open sockets — `syncOnce()` is a drain and
-    // nothing schedules it from inside, and `attachWakeSignal()` is a hook this app does not
-    // use. That property is unchanged by P16 and it is why replacing the reference is safe:
-    // there is nothing running inside the object being dropped.
+    // The engine owns no TIMERS — nothing schedules a drain from inside it, and
+    // `attachWakeSignal()` is a hook this app does not use. It can nevertheless be BUSY: a
+    // drain pages until `hasMore` is false, which on a cold account is ~37 requests over ten
+    // seconds or more. So "replacing the reference is safe because there is nothing running
+    // inside the object being dropped" — which is what stood here — was false, and it is
+    // exactly how a live→demo navigation kept issuing live `/sync` calls from behind a page
+    // that promises zero egress (invariants #6 and #8).
     //
-    // The SCHEDULER is where the timer and the two window listeners now live, and it is torn
-    // down by the effect below rather than by this assignment. Its dependency is `engine`, so
-    // React runs that cleanup before the new engine's scheduler starts. A live→demo
-    // navigation therefore cancels the poll on the way out; it does not merely stop caring
-    // about it.
+    // The SCHEDULER is where the timer and the two window listeners live, and it is torn down
+    // by the effect below rather than by this assignment. Its dependency is `engine`, so React
+    // runs that cleanup before the new engine's scheduler starts — and that cleanup now closes
+    // the engine's per-page abort gate (`sync-scheduler.ts`), so the in-flight drain stops at
+    // its next page boundary. A live→demo navigation cancels the poll AND the drain on the way
+    // out; it does not merely stop caring about them.
     setBinding(
       desired ? { status: "ready", demo: true, engine: createEngine(true) } : { status: "resolving" },
     );

@@ -5,6 +5,7 @@ import {
   OhmailEngine,
   purgeLegacyMirror,
 } from "@ohmail/client-engine";
+import { createSyncGate, registerSyncGate } from "./sync-scheduler";
 
 /**
  * Stage-2 S12 — THE ENGINE DECISION, extracted so it can be TESTED rather than described.
@@ -127,8 +128,25 @@ export function createEngine(
       /* blocked by another tab, or storage refused — hygiene, not an invariant */
     });
   }
-  return new OhmailEngine({
-    adapter: new HttpAdapter({ baseUrl: apiBase }),
-    ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),
-  });
+  /**
+   * THE LIVE TRANSPORT IS GATED, and only the live one.
+   *
+   * `engine.syncOnce()` pages internally until `hasMore` is false, so the scheduler's
+   * visibility gate could decide whether a drain STARTED and never whether it continued — a
+   * hidden or closed tab kept issuing the remaining pages of a bootstrap. The gate wraps the
+   * adapter here because `adapter.sync()` IS the page boundary; the scheduler claims it and
+   * refuses the next page while the tab is hidden or its loop has been torn down. Read
+   * `sync-scheduler.ts` for why the association goes through a `WeakMap` rather than this
+   * function's return type.
+   *
+   * The demo returns above, so it never gets one: it has no transport to gate.
+   */
+  const gate = createSyncGate();
+  return registerSyncGate(
+    new OhmailEngine({
+      adapter: gate.guard(new HttpAdapter({ baseUrl: apiBase })),
+      ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),
+    }),
+    gate,
+  );
 }
