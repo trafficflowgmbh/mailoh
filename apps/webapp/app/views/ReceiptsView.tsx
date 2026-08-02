@@ -3,9 +3,9 @@
 /**
  * Receipts — the same two-pane pattern as Reads with amounts on the
  * right and day-grouped rows over the engine's receiptsByDay selector.
- * Seen-marking is a client overlay in Stage 1: the mutation vocabulary
- * covers the Reads feed only, so receipts keep their seen state per tab
- * until the Stage 2 wire lands.
+ * Seen-marking goes through the shell's `mark_seen` mutation (slice U1),
+ * so it reaches `\Seen` on the user's own IMAP server; the local
+ * `justSeen` set below is only the fade, not the state.
  */
 import { useEffect, useMemo, useRef, useState, Fragment } from "react";
 import { useTranslations } from "next-intl";

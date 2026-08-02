@@ -321,6 +321,21 @@ export type EngineMutation =
       /** Filled by the engine at mutate() time: the unread Reads ids to flip. */
       messageIds?: string[];
     }
+  /**
+   * FOLDER-AGNOSTIC read-state (slice U1) — the mutation `feed_mark_seen` could not be.
+   *
+   * `feed_mark_seen` is the Reads WATERLINE, and its optimistic effect drops every id outside
+   * `ohmail/Reads` by construction while its wire side would PATCH anything. Outside Reads the
+   * two halves therefore disagree — the server flips a message the local overlay did not — so
+   * reusing it for the Ohbox or Receipts would have produced a row that stays bold until the
+   * next drain and then silently changes under the cursor. This one flips exactly the ids it is
+   * given, wherever they live, and its wire side sends exactly the same list.
+   *
+   * `unread` and not a `seen` verb: it is the field the mutation sets, on the wire and in the
+   * mirror, so `u` (toggle unread) and "mark selection read" are one mutation with two values
+   * rather than two mutations that must be kept in agreement.
+   */
+  | { kind: "mark_seen"; messageIds: string[]; unread: boolean }
   | { kind: "draft_accept"; draftId: string };
 
 // ── errors ─────────────────────────────────────────────────────────────────

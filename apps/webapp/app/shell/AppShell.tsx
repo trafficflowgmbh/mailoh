@@ -175,7 +175,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
   const [picker, setPicker] = useState<TagPickerState | null>(null);
   const [chipState, setChipState] = useState<ReadsChipState>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [receiptsSeen, setReceiptsSeen] = useState<Set<string>>(() => new Set());
   const [jump, setJump] = useState<{ view: "reads" | "receipts"; id: string } | null>(null);
   const [fr, setFr] = useState<{ step: number; items: TriagePileEntry[] } | null>(null);
   const [frValues, setFrValues] = useState<Record<number, string>>({});
@@ -199,10 +198,27 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
 
   const waitingLive = screener.waiting.filter((w) => !screener.isExiting(w.id));
 
-  const receiptsIsUnread = useCallback(
-    (m: EngineMessage) => m.unread && !receiptsSeen.has(m.id),
-    [receiptsSeen],
+  /**
+   * READ-STATE, for every view (slice U1).
+   *
+   * One call site for one mutation. Before this, "seen" meant three different things depending
+   * on where you were standing: Reads dispatched `feed_mark_seen`, Receipts kept an unpersisted
+   * React `Set` that a reload erased, and the Ohbox dispatched nothing at all — opening a
+   * message left it bold forever. All three now write the same row, and the worker puts `\Seen`
+   * on the user's own IMAP server, which is what makes the state survive the product.
+   */
+  const markSeen = useCallback(
+    (ids: string[], unread: boolean) => {
+      if (ids.length === 0) return;
+      void engine.mutate({ kind: "mark_seen", messageIds: ids, unread });
+    },
+    [engine],
   );
+
+  // The engine's `unread` IS the answer now — the client-side overlay that used to sit on top of
+  // it is gone. The optimistic overlay already makes the flip instant, and unlike the `Set` it
+  // survives a reload, because it is backed by a row.
+  const receiptsIsUnread = useCallback((m: EngineMessage) => m.unread, []);
   const receiptsUnread =
     receiptGroups.flatMap((g) => g.items).filter(receiptsIsUnread).length;
   const readsUnread = [...partition.fresh, ...partition.seen].filter((m) => m.unread).length;
@@ -593,6 +609,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
                 selectedId={selectedOhbox?.id ?? null}
                 onSelect={setOhboxSel}
                 onEnterReader={() => setReaderOpen(true)}
+                onMarkSeen={markSeen}
                 doorbellInitials={waitingLive.map((w) => w.initial)}
                 doorbellCount={screener.waitingCount}
                 onDoorbell={() => go("screener")}
@@ -630,7 +647,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
                 onCur={setReceiptsCur}
                 unreadCount={receiptsUnread}
                 isUnread={receiptsIsUnread}
-                markSeen={(id) => setReceiptsSeen((s) => new Set(s).add(id))}
+                markSeen={(id) => markSeen([id], false)}
                 jumpTo={jump?.view === "receipts" ? jump.id : null}
                 onJumped={() => setJump(null)}
                 typingGuard={typingGuard}

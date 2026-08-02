@@ -208,6 +208,25 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       return effects;
     }
 
+    case "mark_seen": {
+      // NO FOLDER FILTER, and that is the entire difference from `feed_mark_seen` above. The
+      // wire side PATCHes exactly `m.messageIds`; this flips exactly `m.messageIds`. Any
+      // predicate here that the wire does not also apply is a divergence between the optimistic
+      // view and the server — which is the bug that made `feed_mark_seen` unusable outside
+      // Reads, and it is the reason this branch looks boringly literal.
+      //
+      // An id the mirror does not know is dropped (there is no entity to produce), so a
+      // selection of entirely unknown ids yields [] and the engine reports it as a rejection
+      // rather than pretending to have applied something.
+      const effects: MutationEffect[] = [];
+      for (const id of m.messageIds) {
+        const msg = reader.get<EngineMessage>("message", id);
+        if (!msg) continue;
+        effects.push({ type: "message", id, entity: { ...msg, unread: m.unread, updatedAt: iso } });
+      }
+      return effects;
+    }
+
     case "draft_accept": {
       const draft = reader.get<EngineDraft>("draft", m.draftId);
       if (!draft) return [];
