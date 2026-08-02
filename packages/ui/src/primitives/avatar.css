@@ -3,3 +3,17 @@
   font-size:11.5px;font-weight:650;color:var(--ink2);background:var(--float);box-shadow:var(--lift-0);
   font-style:normal;user-select:none}
 .av.s{width:26px;height:26px;font-size:10.5px}
+
+/* Per-sender tint (F10). Only the HUE varies: lightness and chroma are pinned here, per
+   theme, so no derived colour can land outside the legible band. Chroma stays inside the
+   Blanc tag-hue range (.07–.09) — muted, never candy — and there is no gradient. */
+.av.tinted{background:oklch(0.62 0.075 var(--av-h) / .16);color:oklch(0.40 0.085 var(--av-h))}
+[data-theme="dark"] .av.tinted{
+  background:oklch(0.70 0.085 var(--av-h) / .20);color:oklch(0.86 0.070 var(--av-h))}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .av.tinted{
+    background:oklch(0.70 0.085 var(--av-h) / .20);color:oklch(0.86 0.070 var(--av-h))}
+}
+/* Overflow counter in a capped stack ("+82"). Reads as a count, not as a person. */
+.av.more{background:var(--tint2);color:var(--ink3);font-weight:600;letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;box-shadow:none}

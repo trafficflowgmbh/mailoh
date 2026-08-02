@@ -33,8 +33,14 @@ export interface MessageRowProps {
   tags?: MessageRowTag[];
   /** Cross-view badge naming the message's home (Tag view). */
   place?: string;
-  /** Screener variant: initial avatar. */
+  /**
+   * The sender's initial circle. Started as the Screener's own variant and is now the
+   * lead of every mail row (slice F10) — one row language, so the Ohbox and the Screener
+   * do not describe the same person two different ways.
+   */
   avatarInitial?: string;
+  /** Deterministic per-sender hue for the circle; see `Avatar`. */
+  avatarHue?: number;
   /** Screener variant: AI suggestion chip ("→ Reads 0.88"). */
   aiSuggestion?: { destLabel: string; confidence: number };
   /** Screener variant: held-mail count chip. */
@@ -69,6 +75,7 @@ export function MessageRow(props: MessageRowProps) {
     tags,
     place,
     avatarInitial,
+    avatarHue,
     aiSuggestion,
     heldCount,
     detection,
@@ -152,7 +159,7 @@ export function MessageRow(props: MessageRowProps) {
     >
       {avatarInitial !== undefined ? (
         <>
-          <Avatar initials={avatarInitial} />
+          <Avatar initials={avatarInitial} hue={avatarHue} />
           <span className="sr-main">{body}</span>
         </>
       ) : (

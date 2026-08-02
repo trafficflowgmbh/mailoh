@@ -11,7 +11,8 @@ import { useEffect, useMemo, useRef, useState, Fragment } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage, ReceiptsDayGroup, TagDTO } from "@ohmail/client-engine";
 import { Kbd, ListGroupLabel, ListPane, ListRows, MessageRow, StreamCard } from "@ohmail/ui";
-import { displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { StreamShell, type StreamHandle } from "../shell/StreamShell";
 
 export function ReceiptsView({
@@ -25,7 +26,6 @@ export function ReceiptsView({
   markSeen,
   jumpTo,
   onJumped,
-  typingGuard,
 }: {
   groups: ReceiptsDayGroup[];
   tags: TagDTO[];
@@ -38,7 +38,6 @@ export function ReceiptsView({
   markSeen: (id: string) => void;
   jumpTo: string | null;
   onJumped: () => void;
-  typingGuard: (e: KeyboardEvent) => boolean;
 }) {
   const t = useTranslations("receipts");
   const tr = useTranslations("reads");
@@ -78,32 +77,47 @@ export function ReceiptsView({
       ?.scrollIntoView({ block: "nearest" });
   }, [current]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (typingGuard(e) || e.metaKey || e.ctrlKey || e.altKey) return;
-      const order = all.map((m) => m.id);
-      const i = current ? order.indexOf(current) : -1;
-      if (e.key === "j" && i < order.length - 1) jump(order[i + 1]!);
-      else if (e.key === "k" && i > 0) jump(order[i - 1]!);
-      else if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "BUTTON" && current) {
+  const order = all.map((m) => m.id);
+  const at = current ? order.indexOf(current) : -1;
+  const keys: KeyBinding[] = [
+    {
+      chord: "j",
+      group: "navigate",
+      label: tr("keyNext"),
+      disabled: at >= order.length - 1,
+      run: () => at < order.length - 1 && jump(order[at + 1]!),
+    },
+    {
+      chord: "k",
+      group: "navigate",
+      label: tr("keyPrev"),
+      disabled: at <= 0,
+      run: () => at > 0 && jump(order[at - 1]!),
+    },
+    {
+      chord: "Enter",
+      group: "message",
+      label: tr("keyExpand"),
+      disabled: current == null,
+      when: (e) => (e.target as HTMLElement).tagName !== "BUTTON",
+      run: () =>
+        current &&
         document
           .querySelector<HTMLButtonElement>(
             `.view-receipts .scast[data-sid="${CSS.escape(current)}"] .sc-x`,
           )
-          ?.click();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [all, current, typingGuard]);
+          ?.click(),
+    },
+  ];
+  useKeyBindings(keys);
 
   const row = (m: EngineMessage) => (
     <MessageRow
       key={m.id}
       id={m.id}
       from={senderName(m)}
-      address={m.from.address}
+      address={rowAddress(m)}
+      {...avatarOf(m)}
       time={displayTime(m, now)}
       subject={m.subject}
       preview={m.snippet}

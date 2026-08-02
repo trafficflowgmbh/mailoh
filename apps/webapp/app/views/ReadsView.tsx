@@ -23,7 +23,8 @@ import {
   StreamCard,
   Waterline,
 } from "@ohmail/ui";
-import { displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { FoldTableArt, StreamShell, type StreamHandle } from "../shell/StreamShell";
 
 export type ReadsChipState = null | "approved" | "corrected";
@@ -48,7 +49,6 @@ export function ReadsView({
   isSeen,
   jumpTo,
   onJumped,
-  typingGuard,
 }: {
   partition: ReadsPartition;
   tags: TagDTO[];
@@ -63,7 +63,6 @@ export function ReadsView({
   isSeen: (m: EngineMessage) => boolean;
   jumpTo: string | null;
   onJumped: () => void;
-  typingGuard: (e: KeyboardEvent) => boolean;
 }) {
   const t = useTranslations("reads");
   const streamRef = useRef<StreamHandle>(null);
@@ -108,33 +107,49 @@ export function ReadsView({
       ?.scrollIntoView({ block: "nearest" });
   }, [current]);
 
-  // j/k step cards; ↵ toggles the current card's clamp.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (typingGuard(e) || e.metaKey || e.ctrlKey || e.altKey) return;
-      const order = all.map((m) => m.id);
-      const i = current ? order.indexOf(current) : -1;
-      if (e.key === "j" && i < order.length - 1) jump(order[i + 1]!);
-      else if (e.key === "k" && i > 0) jump(order[i - 1]!);
-      else if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "BUTTON" && current) {
+  // j/k step cards; ↵ toggles the current card's clamp. Declared into the registry so
+  // the `?` sheet knows they exist and so the shell's global map yields to them here.
+  const order = all.map((m) => m.id);
+  const at = current ? order.indexOf(current) : -1;
+  const keys: KeyBinding[] = [
+    {
+      chord: "j",
+      group: "navigate",
+      label: t("keyNext"),
+      disabled: at >= order.length - 1,
+      run: () => at < order.length - 1 && jump(order[at + 1]!),
+    },
+    {
+      chord: "k",
+      group: "navigate",
+      label: t("keyPrev"),
+      disabled: at <= 0,
+      run: () => at > 0 && jump(order[at - 1]!),
+    },
+    {
+      chord: "Enter",
+      group: "message",
+      label: t("keyExpand"),
+      disabled: current == null,
+      when: (e) => (e.target as HTMLElement).tagName !== "BUTTON",
+      run: () =>
+        current &&
         document
           .querySelector<HTMLButtonElement>(
             `.view-reads .scast[data-sid="${CSS.escape(current)}"] .sc-x`,
           )
-          ?.click();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [all, current, typingGuard]);
+          ?.click(),
+    },
+  ];
+  useKeyBindings(keys);
 
   const row = (m: EngineMessage) => (
     <MessageRow
       key={m.id}
       id={m.id}
       from={senderName(m)}
-      address={m.from.address}
+      address={rowAddress(m)}
+      {...avatarOf(m)}
       time={displayTime(m, now)}
       subject={m.subject}
       preview={m.snippet}

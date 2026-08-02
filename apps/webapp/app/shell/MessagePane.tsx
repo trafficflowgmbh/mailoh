@@ -9,7 +9,9 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, ProtectedBlock, ReadingPane } from "@ohmail/ui";
-import { PLACE_LABEL, displayTime, hueOf, senderName, tagsOfMessage } from "./format";
+import { PLACE_LABEL, avatarHue, displayTime, hueOf, initialsOf, rowAddress, senderName, tagsOfMessage } from "./format";
+import { InlineReply } from "./InlineReply";
+import { useMessageChrome } from "./message-chrome";
 
 /**
  * MOVE CARRIES ITS DESTINATION (gap C4).
@@ -56,10 +58,12 @@ export function MessagePane({
   onAttachment: () => void;
 }) {
   const t = useTranslations("ohbox");
+  const tr = useTranslations("screening");
   const addRef = useRef<HTMLSpanElement>(null);
   const isProtected = message.protected != null;
   const mine = tagsOfMessage(message, tags);
   const [moving, setMoving] = useState(false);
+  const chrome = useMessageChrome();
 
   // A half-open destination row must not carry over to the next message.
   useEffect(() => setMoving(false), [message.id]);
@@ -67,7 +71,11 @@ export function MessagePane({
   return (
     <ReadingPane
       from={senderName(message)}
-      address={message.from.address}
+      address={rowAddress(message)}
+      avatarInitial={initialsOf(senderName(message))}
+      avatarHue={avatarHue(message.from.address)}
+      onSender={(anchor) => chrome.openSenderMenu(message.id, anchor)}
+      senderTitle={tr("openFor", { sender: message.from.address })}
       time={`${message.threadCount ? t("threadMeta", { count: message.threadCount }) : ""}${displayTime(message, now)}`}
       subject={message.subject}
       onEnterReader={onEnterReader}
@@ -128,6 +136,20 @@ export function MessagePane({
             <Button onClick={() => onAction("later")}>{t("actionReplyLater")}</Button>
             <Button onClick={() => onAction("aside")}>{t("actionSetAside")}</Button>
             <Button onClick={() => onAction("resurface")}>{t("actionResurface")}</Button>
+            {/* U3. "Move" relocates THIS message; screening decides where this SENDER's
+                mail goes, which is a different question and had no control anywhere
+                outside the Screener. */}
+            <Button
+              kbdHint="s"
+              onClick={(e) =>
+                chrome.openSenderMenu(
+                  message.id,
+                  (e.currentTarget as HTMLElement | null) ?? null,
+                )
+              }
+            >
+              {tr("action")}
+            </Button>
             <Button variant="ghost" onClick={() => setMoving(true)}>
               {t("actionMove")}
             </Button>
@@ -141,6 +163,22 @@ export function MessagePane({
             </Button>
           </>
         )
+      }
+      reply={
+        chrome.replyTo === message.id ? (
+          <InlineReply
+            message={message}
+            /* ONE entry, and `InlineReply`'s header says why: threading does not exist
+               yet (C3 — `thread_id` is NULL on every row), so the conversation this can
+               honestly show is the message being answered. */
+            context={[message]}
+            now={now}
+            value={chrome.replyBody}
+            onChange={chrome.onReplyBody}
+            onClose={chrome.closeReply}
+            onSend={chrome.sendReply}
+          />
+        ) : undefined
       }
     >
       {isProtected ? (

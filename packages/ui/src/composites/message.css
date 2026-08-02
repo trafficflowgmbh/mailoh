@@ -4,9 +4,18 @@
   background:var(--panel);border-radius:20px;box-shadow:var(--lift-1);
 }
 .msg{max-width:640px;width:100%;margin:0 auto;padding:26px 34px 48px}
-.msg-from{display:flex;align-items:baseline;gap:9px;font-size:12.5px}
+.msg-from{display:flex;align-items:center;gap:9px;font-size:12.5px}
 .msg-from b{font-weight:600}
 .msg-from small{color:var(--ink3);font-size:12px}
+.msg-from .av{margin-right:1px}
+/* the from-line as a control — clicking the sender opens their screening (U3) */
+.msg-sender{display:inline-flex;align-items:center;gap:9px;min-width:0;
+  border:0;background:none;padding:3px 8px 3px 3px;margin-left:-3px;border-radius:99px;
+  font:inherit;font-size:12.5px;color:inherit;text-align:left;cursor:pointer;
+  transition:background .15s var(--swift)}
+.msg-sender:hover{background:var(--tint)}
+.msg-sender:hover small{color:var(--accent-ink)}
+.msg-sender small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .msg-from .t{margin-left:auto;font-size:11.5px;color:var(--ink3);font-variant-numeric:tabular-nums;flex:none;display:flex;gap:10px;align-items:center}
 .msg h2{font-size:24px;font-weight:600;letter-spacing:-.025em;margin:14px 0 14px;line-height:1.25}
 .chips{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 22px;align-items:center}

@@ -18,8 +18,9 @@ import {
   MessageRow,
   ReadColumn,
 } from "@ohmail/ui";
-import { displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useEngineVersion, useReader, useSyncStatus } from "../shell/engine";
+import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 
 /**
@@ -43,12 +44,12 @@ export function OhboxView({
   onEnterReader,
   onMarkSeen,
   doorbellInitials,
+  doorbellHues,
   doorbellCount,
   onDoorbell,
   onAction,
   onAddTag,
   onAttachment,
-  typingGuard,
 }: {
   /** Fixture world or a real mailbox — decides the "older mail" tail. See its use below. */
   demo: boolean;
@@ -62,12 +63,13 @@ export function OhboxView({
   /** The shell's `mark_seen` mutation — the one read-state writer (slice U1). */
   onMarkSeen: (ids: string[], unread: boolean) => void;
   doorbellInitials: string[];
+  /** Per-sender tint hues for the doorbell stack, index-aligned with `doorbellInitials`. */
+  doorbellHues?: number[];
   doorbellCount: number;
   onDoorbell: () => void;
   onAction: (action: MessageAction, message: EngineMessage) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
   onAttachment: () => void;
-  typingGuard: (e: KeyboardEvent) => boolean;
 }) {
   const t = useTranslations("ohbox");
 
@@ -137,6 +139,30 @@ export function OhboxView({
   }, [onMarkSeen, onEnterReader]);
 
   /**
+   * THE MESSAGE `u` JUST PUT BACK TO UNREAD, and why the dwell must not undo it.
+   *
+   * Pressing `u` on the row under the cursor marks it unread — and in the split pane the
+   * cursor is still on it, so the 2 s dwell below arms and marks it read again two seconds
+   * later. The mutation fires, the server agrees, and the user's explicit act is reverted
+   * by a heuristic while they watch. That is not a subtle bug; it makes `u` useless in the
+   * one view whose keyboard map advertises it, and the U2 overlay would be documenting a
+   * key that does not do what it says.
+   *
+   * An explicit "unread" therefore pins the message until the cursor MOVES. A ref rather
+   * than state: it must be readable by the dwell effect in the same commit, and it should
+   * not cause a render of its own.
+   */
+  const pinnedUnread = useRef<string | null>(null);
+  useEffect(() => {
+    if (pinnedUnread.current && pinnedUnread.current !== selected?.id) pinnedUnread.current = null;
+  }, [selected?.id]);
+
+  const toggleUnread = useCallback((m: EngineMessage) => {
+    pinnedUnread.current = m.unread ? null : m.id;
+    onMarkSeen([m.id], !m.unread);
+  }, [onMarkSeen]);
+
+  /**
    * THE 2 s DWELL, and why j/k alone must commit nothing.
    *
    * In the split pane the reading column already shows whatever the cursor is on, so a strict
@@ -152,47 +178,84 @@ export function OhboxView({
    */
   useEffect(() => {
     if (!selected || !selected.unread) return;
+    if (pinnedUnread.current === selected.id) return;
     if (typeof window === "undefined" || !window.matchMedia) return;
     if (window.matchMedia("(max-width: 900px)").matches) return;
     const timer = window.setTimeout(() => onMarkSeen([selected.id], false), DWELL_MS);
     return () => window.clearTimeout(timer);
   }, [selected, onMarkSeen]);
 
-  // j/k selection + ↵ reader + t tag picker + x pick + u unread (this view only —
-  // it unmounts with the route, so the binding scopes itself). ONE listener: a second
-  // global in AppShell would fire in every view and fight this one for the same keys.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (typingGuard(e) || e.metaKey || e.ctrlKey || e.altKey) return;
-      const order = all.map((m) => m.id);
-      const i = selected ? order.indexOf(selected.id) : -1;
-      if (e.key === "j" && i < order.length - 1) onSelect(order[i + 1]!);
-      else if (e.key === "k" && i > 0) onSelect(order[i - 1]!);
-      else if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "BUTTON") {
-        if (selected) open(selected);
-        else onEnterReader();
-      } else if (e.key === "t" && selected) {
-        e.preventDefault();
-        const row = document.querySelector<HTMLElement>(
-          `.view-ohbox .row[data-id="${CSS.escape(selected.id)}"]`,
-        );
-        onAddTag(selected.id, row);
-      } else if (e.key === "x" && selected) {
-        e.preventDefault();
-        togglePick(selected.id);
-      } else if (e.key === "u" && selected) {
-        e.preventDefault();
-        onMarkSeen([selected.id], !selected.unread);
-      } else if (e.key === "Escape" && picked.size > 0) {
-        // Escape clears the selection BEFORE the shell's own Escape handling closes anything —
-        // a picked set is the innermost thing on screen.
-        e.preventDefault();
-        clearPicked();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [all, selected, onSelect, onEnterReader, onAddTag, onMarkSeen, open, togglePick, clearPicked, picked.size, typingGuard]);
+  /**
+   * The Ohbox's keys, DECLARED (slice U2).
+   *
+   * These were a sixth `document` listener with the shell's and four other views'; they are
+   * now a view layer in the registry, which means two things: they win over the global map
+   * while this view is mounted (and disappear with it), and the `?` sheet lists them
+   * because they exist, not because someone remembered to write them down.
+   */
+  const order = all.map((m) => m.id);
+  const at = selected ? order.indexOf(selected.id) : -1;
+  const keys: KeyBinding[] = [
+    {
+      chord: "j",
+      group: "navigate",
+      label: t("keyNext"),
+      disabled: at >= order.length - 1,
+      run: () => at < order.length - 1 && onSelect(order[at + 1]!),
+    },
+    {
+      chord: "k",
+      group: "navigate",
+      label: t("keyPrev"),
+      disabled: at <= 0,
+      run: () => at > 0 && onSelect(order[at - 1]!),
+    },
+    {
+      chord: "Enter",
+      group: "message",
+      label: t("keyOpen"),
+      // ↵ on a focused button presses the button; that is the browser's and it stays so.
+      when: (e) => (e.target as HTMLElement).tagName !== "BUTTON",
+      run: () => (selected ? open(selected) : onEnterReader()),
+    },
+    {
+      chord: "t",
+      group: "message",
+      label: t("keyTag"),
+      disabled: selected == null,
+      run: () =>
+        selected &&
+        onAddTag(
+          selected.id,
+          document.querySelector<HTMLElement>(
+            `.view-ohbox .row[data-id="${CSS.escape(selected.id)}"]`,
+          ),
+        ),
+    },
+    {
+      chord: "x",
+      group: "message",
+      label: t("keyPick"),
+      disabled: selected == null,
+      run: () => selected && togglePick(selected.id),
+    },
+    {
+      chord: "u",
+      group: "message",
+      label: t("keyUnread"),
+      disabled: selected == null,
+      run: () => selected && toggleUnread(selected),
+    },
+    {
+      // Innermost Escape in the product: a picked set is closer than the reader is.
+      chord: "Escape",
+      group: "message",
+      label: t("keyClear"),
+      disabled: picked.size === 0,
+      run: clearPicked,
+    },
+  ];
+  useKeyBindings(keys);
 
   /**
    * SHIFT-CLICK RANGES, intercepted in the CAPTURE phase.
@@ -223,7 +286,8 @@ export function OhboxView({
       key={m.id}
       id={m.id}
       from={senderName(m)}
-      address={m.from.address}
+      address={rowAddress(m)}
+      {...avatarOf(m)}
       time={displayTime(m, now)}
       subject={m.subject}
       preview={m.protected ? t("protectedPreview") : m.snippet}
@@ -261,6 +325,7 @@ export function OhboxView({
         header={
           <Doorbell
             initials={doorbellInitials}
+            hues={doorbellHues}
             gone={doorbellCount === 0}
             message={
               <DoorbellMessage count={doorbellCount} />
@@ -288,7 +353,7 @@ export function OhboxView({
               <Kbd>u</Kbd> {t("hintUnread")}
             </span>
             <span>
-              <Kbd>esc</Kbd> {t("hintBack")}
+              <Kbd>?</Kbd> {t("hintAllKeys")}
             </span>
           </>
         }

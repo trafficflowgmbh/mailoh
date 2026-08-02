@@ -6,39 +6,36 @@
  * a message in a Reply Run clears its reply_later state through the
  * engine, so pile counts stay live everywhere.
  */
-import { useEffect } from "react";
 import { useTranslations } from "next-intl";
 import type { TriagePiles } from "@ohmail/client-engine";
 import { Button, PilesStack } from "@ohmail/ui";
 import { resurfaceLabel } from "../shell/format";
+import { useKeyBindings } from "../shell/keymap";
 
 export function TriageView({
   piles,
   frDone,
   onStartFR,
-  typingGuard,
 }: {
   piles: TriagePiles;
   /** Message ids / titles completed in the Reply Run this session. */
   frDone: Set<string>;
   onStartFR: () => void;
-  typingGuard: (e: KeyboardEvent) => boolean;
 }) {
   const t = useTranslations("triage");
   const total =
     piles.replyLater.length + piles.setAside.length + piles.resurface.length;
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (typingGuard(e) || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === "f") {
-        e.preventDefault();
-        onStartFR();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onStartFR, typingGuard]);
+  // `f` starts the Reply Run from here without the shell's "go to Triage first" hop.
+  useKeyBindings([
+    {
+      chord: "f",
+      group: "message",
+      label: t("keyReplyRun"),
+      disabled: piles.replyLater.length === 0,
+      run: onStartFR,
+    },
+  ]);
 
   return (
     <section className="view col view-triage">

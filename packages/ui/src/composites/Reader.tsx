@@ -9,6 +9,13 @@ export interface ReaderProps {
   children: ReactNode;
   /** The fading top hint; null disables it. */
   hint?: ReactNode | null;
+  /**
+   * Escape returns from reading mode. Pass `false` while something INSIDE the sheet owns
+   * Escape — the inline reply editor does (slice U4). Without the opt-out both handlers
+   * fire on one keypress: the editor closes and the message it was quoting disappears
+   * from under it in the same frame, which reads as Esc having lost the draft.
+   */
+  closeOnEscape?: boolean;
   ariaLabel?: string;
 }
 
@@ -17,19 +24,26 @@ export interface ReaderProps {
  * app chrome using the .shell / .dock classes recedes exactly like the
  * prototype. Escape and a backdrop click both return.
  */
-export function Reader({ open, onClose, children, hint, ariaLabel = "Reading" }: ReaderProps) {
+export function Reader({
+  open,
+  onClose,
+  children,
+  hint,
+  closeOnEscape = true,
+  ariaLabel = "Reading",
+}: ReaderProps) {
   useEffect(() => {
     if (!open) return;
     document.body.classList.add("reading");
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && closeOnEscape) onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => {
       document.body.classList.remove("reading");
       document.removeEventListener("keydown", onKey);
     };
-  }, [open, onClose]);
+  }, [open, onClose, closeOnEscape]);
 
   if (!open) return null;
   return (

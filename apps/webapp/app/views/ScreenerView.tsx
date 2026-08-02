@@ -16,14 +16,18 @@ import {
   Button,
   DecisionBar,
   DECISION_DONE_LABEL,
+  DECISION_KEY,
   Icon,
   Kbd,
   ListPane,
   ListRows,
   MessageRow,
   SegmentedControl,
+  type DecisionDestination,
   type DecisionScope,
 } from "@ohmail/ui";
+import { avatarHue } from "../shell/format";
+import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { goScreener, type ScreenerSegmentId } from "../shell/routing";
 import type { ScreenerState, SpamRow } from "../shell/screener-state";
 
@@ -46,7 +50,6 @@ export function ScreenerView({
   onSelect,
   full,
   onFull,
-  typingGuard,
 }: {
   state: ScreenerState;
   segment: ScreenerSegmentId;
@@ -54,7 +57,6 @@ export function ScreenerView({
   onSelect: (segment: ScreenerSegmentId, id: string | null) => void;
   full: boolean;
   onFull: (full: boolean) => void;
-  typingGuard: (e: KeyboardEvent) => boolean;
 }) {
   const t = useTranslations("screener");
   const [scopes, setScopes] = useState<Map<string, DecisionScope>>(() => new Map());
@@ -102,43 +104,96 @@ export function ScreenerView({
     onSelect("waiting", next[0] ?? null);
   };
 
-  // j/k selection · a/s bulk · ↵ accepts the AI suggestion · esc leaves
-  // the mobile full-screen preview. y/o/r/c/n/x live on the DecisionBar.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && full) {
-        onFull(false);
-        return;
-      }
-      if (typingGuard(e) || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === "j" || e.key === "k") {
-        const selectable =
-          segment === "waiting" ? ids.filter((id) => !state.isExiting(id)) : ids;
-        if (!selectable.length) return;
-        let i = activeId ? selectable.indexOf(activeId) : 0;
-        if (i < 0) i = 0;
-        i = e.key === "j" ? Math.min(i + 1, selectable.length - 1) : Math.max(i - 1, 0);
-        onSelect(segment, selectable[i]!);
-        document
-          .querySelector(`.view-screener .row[data-id="${CSS.escape(selectable[i]!)}"]`)
-          ?.scrollIntoView({ block: "nearest" });
-        return;
-      }
-      if (segment === "waiting") {
-        if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "BUTTON") {
-          if (current && !("pinned" in current)) {
-            decideCurrent((current.ai?.dest ?? "ohbox") as never, e.shiftKey);
-          }
-          return;
-        }
-        if (e.key === "a") state.applyAll(scopeOf);
-        if (e.key === "s") state.markAllSpam(scopeOf);
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segment, ids.join(","), activeId, full, state, typingGuard]);
+  /**
+   * The Screener's keys, DECLARED (slice U2).
+   *
+   * y/o/r/c/n/x used to live inside `DecisionBar`'s own `document` listener, which meant
+   * the shell could not know that `c` is Receipts here and Compose everywhere else — it
+   * carried a `screenerOwnsC` special case that reached into this view's state to guess.
+   * The bar keeps its `keyboard` prop for other consumers; this view no longer passes it,
+   * and the same six keys are a view layer that wins by the registry's own precedence
+   * rule. They are also, for the first time, in the `?` sheet.
+   */
+  const waiting = segment === "waiting";
+  const selectable = waiting ? ids.filter((id) => !state.isExiting(id)) : ids;
+  const at = activeId ? Math.max(0, selectable.indexOf(activeId)) : 0;
+  const step = (next: number) => {
+    const id = selectable[next];
+    if (!id) return;
+    onSelect(segment, id);
+    document
+      .querySelector(`.view-screener .row[data-id="${CSS.escape(id)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  };
+  const decidable = waiting && current != null && !("pinned" in current);
+
+  const keys: KeyBinding[] = [
+    {
+      chord: "j",
+      group: "navigate",
+      label: t("keyNext"),
+      disabled: at >= selectable.length - 1,
+      run: () => step(at + 1),
+    },
+    {
+      chord: "k",
+      group: "navigate",
+      label: t("keyPrev"),
+      disabled: at <= 0,
+      run: () => step(at - 1),
+    },
+    {
+      chord: "Escape",
+      group: "screener",
+      label: t("keyLeaveFull"),
+      disabled: !full,
+      run: () => onFull(false),
+    },
+    {
+      chord: "Enter",
+      group: "screener",
+      label: t("keyAccept"),
+      disabled: !decidable,
+      when: (e) => (e.target as HTMLElement).tagName !== "BUTTON",
+      run: (e) =>
+        decidable &&
+        decideCurrent(((current as ScreenerSenderDTO).ai?.dest ?? "ohbox") as never, e.shiftKey),
+    },
+    {
+      chord: "a",
+      group: "screener",
+      label: t("keyApplyAll"),
+      disabled: !waiting || state.waitingCount === 0,
+      run: () => state.applyAll(scopeOf),
+    },
+    {
+      chord: "s",
+      group: "screener",
+      label: t("keyAllSpam"),
+      disabled: !waiting || state.waitingCount === 0,
+      run: () => state.markAllSpam(scopeOf),
+    },
+    // The five destinations, and their ⇧ twins that also mark the held mail read.
+    ...(["ohbox", "reads", "receipts", "screened", "spam"] as DecisionDestination[]).flatMap(
+      (dest): KeyBinding[] => [
+        {
+          chord: DECISION_KEY[dest],
+          group: "screener",
+          label: t("keyFile", { dest: DECISION_DONE_LABEL[dest] }),
+          disabled: !decidable,
+          run: () => decideCurrent(dest as never, false),
+        },
+        {
+          chord: `shift+${DECISION_KEY[dest]}`,
+          group: "screener",
+          label: t("keyFileRead", { dest: DECISION_DONE_LABEL[dest] }),
+          disabled: !decidable,
+          run: () => decideCurrent(dest as never, true),
+        },
+      ],
+    ),
+  ];
+  useKeyBindings(keys);
 
   const selectRow = (id: string) => {
     onSelect(segment, id);
@@ -162,6 +217,7 @@ export function ScreenerView({
           time={newest?.time ?? w.time}
           subject={newest?.subject ?? ""}
           avatarInitial={w.initial}
+          avatarHue={avatarHue(w.from.address)}
           dull={w.dull}
           selected={w.id === activeId}
           className={state.isExiting(w.id) ? "out" : undefined}
@@ -188,6 +244,7 @@ export function ScreenerView({
           time={screenedDate(w, t("today"))}
           subject={newestHeld(w)?.subject ?? ""}
           avatarInitial={w.initial}
+          avatarHue={avatarHue(w.from.address)}
           selected={w.id === activeId}
           heldCount={w.held.length}
           onClick={() => selectRow(w.id)}
@@ -203,6 +260,7 @@ export function ScreenerView({
         time={newestHeld(r.sender)?.time ?? r.sender.time}
         subject={newestHeld(r.sender)?.subject ?? ""}
         avatarInitial={r.sender.initial}
+        avatarHue={avatarHue(r.sender.from.address)}
         dull
         selected={r.sender.id === activeId}
         heldCount={r.sender.held.length}
@@ -410,7 +468,6 @@ function WaitingPreview({
         onScopeChange={onScopeChange}
         ruleTarget={ruleTarget}
         onDecide={onDecide}
-        keyboard
         onBack={onBack}
       />
       <div className="scn-mails">

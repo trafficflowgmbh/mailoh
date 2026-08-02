@@ -11,6 +11,8 @@ import { useTranslations } from "next-intl";
 import { composeDraft } from "@ohmail/fixtures";
 import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
 import { Button, Chip, Icon, useToast } from "@ohmail/ui";
+import { useKeyBindings } from "../shell/keymap";
+import { go } from "../shell/routing";
 
 export function ComposeView({
   engine,
@@ -25,6 +27,16 @@ export function ComposeView({
   const [discarded, setDiscarded] = useState(false);
   const [shimmerKey, setShimmerKey] = useState(0);
   const editorRef = useRef<HTMLTextAreaElement>(null);
+
+  /**
+   * Escape leaves. Owner: *"cant even esc out of it with key"* — literally true, this view
+   * had no key bindings at all. `inInput` because the editor is a textarea and is focused
+   * the moment a draft is accepted, so without it the one place you need the exit is the
+   * one place it would not work.
+   */
+  useKeyBindings([
+    { chord: "Escape", group: "app", label: t("keyLeave"), inInput: true, run: () => go("ohbox") },
+  ]);
 
   const cardVisible = draft != null && !draft.accepted && !discarded;
 

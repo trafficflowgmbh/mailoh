@@ -6,7 +6,15 @@
  * the demo ribbon. Every list, count and mutation runs through
  * @ohmail/client-engine — the shell only owns view state.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import { useTranslations } from "next-intl";
 import {
   DEMO_NOW,
@@ -46,10 +54,20 @@ import {
   useEngineVersion,
   type OwnerResolver,
 } from "./engine";
-import { PLACE_LABEL, firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
+import { PLACE_LABEL, avatarHue, firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
 import { MessagePane, type MessageAction } from "./MessagePane";
 import { useScreenerState } from "./screener-state";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
+import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
+import { ShortcutSheet } from "./ShortcutSheet";
+import { MessageChromeProvider } from "./message-chrome";
+import { readReplyDraft, writeReplyDraft } from "./InlineReply";
+import { SenderMenu, type SenderMenuState } from "./SenderMenu";
+import {
+  planScreeningChange,
+  senderScreening,
+  type ScreeningDest,
+} from "./sender-screening";
 import { go, goScreener, goTag, useHashRoute, type ScreenerSegmentId } from "./routing";
 import { OhboxView } from "../views/OhboxView";
 import { ReadsView, type ReadsChipState } from "../views/ReadsView";
@@ -69,8 +87,11 @@ interface ReadsAiChipEntity {
   correctedLabel: string;
 }
 
-const typingGuard = (e: KeyboardEvent): boolean =>
-  /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement)?.tagName ?? "");
+/*
+ * The typing guard used to live here and be threaded into five views as a prop. It is now
+ * `isTypingTarget` in `keymap.tsx`, applied once by the one listener — a guard that every
+ * caller has to remember to apply is a guard one caller will eventually forget.
+ */
 
 /**
  * `demo` here is the SERVER's answer, and it is only a floor — `EngineProvider` re-derives
@@ -107,12 +128,17 @@ export function AppShell({
 }) {
   return (
     <EngineProvider demo={demo} resolveOwner={resolveOwner}>
-      <ShellInner
-        accountSection={accountSection}
-        mailboxSection={mailboxSection}
-        billingSection={billingSection}
-        aboutSection={aboutSection}
-      />
+      {/* ONE keydown listener for the whole client (slice U2). Outside `ShellInner` so
+          every view mounted under it can declare bindings into the same table, which is
+          also the table the `?` sheet is generated from. */}
+      <KeymapProvider>
+        <ShellInner
+          accountSection={accountSection}
+          mailboxSection={mailboxSection}
+          billingSection={billingSection}
+          aboutSection={aboutSection}
+        />
+      </KeymapProvider>
     </EngineProvider>
   );
 }
@@ -131,7 +157,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
   const toast = useToast();
   const theme = useTheme();
   const route = useHashRoute();
-  const palette = useCommandPalette();
+  // The registry owns ⌘K (see `keymap.tsx`). Leaving the hook's own binding on as well
+  // would toggle twice per keypress, which cancels out and never opens the palette.
+  const palette = useCommandPalette({ bindKey: false });
   const now = useMemo(() => (demo ? DEMO_NOW : new Date()), [demo]);
 
   /* ── engine-derived world (recomputed exactly when the mirror moves) ── */
@@ -172,6 +200,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
   const [readerOpen, setReaderOpen] = useState(false);
   const [railOpen, setRailOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [senderMenu, setSenderMenu] = useState<SenderMenuState | null>(null);
+  /* The inline reply (U4). The id and the text live HERE, not in `MessagePane`, because
+     that pane is mounted twice whenever the reader is open — see `message-chrome.tsx`. */
+  const [replyTo, setReplyTo] = useState<string | null>(null);
+  const [replyBody, setReplyBody] = useState("");
   // Survives a reload; see `persisted-ui.ts` for why it is local and read after mount.
   const [tagsOpen, setTagsOpen] = usePersistedFlag(UI_KEYS.tagsOpen, true);
   const [picker, setPicker] = useState<TagPickerState | null>(null);
@@ -235,39 +269,110 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
       setPicker(null);
       setFr(null);
       setRailOpen(false);
+      setSenderMenu(null);
+      setShortcutsOpen(false);
+      setReplyTo(null);
       if (route.view !== "screener") setScreenerFull(false);
     }
     prevRoute.current = route;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route]);
 
-  /* ── global keys: / search · c compose (screener owns c while filing) ── */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (typingGuard(e) || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === "/") {
-        e.preventDefault();
-        go("search");
-        return;
-      }
-      if (e.key === "c") {
-        const screenerOwnsC =
-          route.view === "screener" &&
-          route.screenerSegment === "waiting" &&
-          waitingLive.length > 0;
-        if (!screenerOwnsC) go("compose");
-        return;
-      }
-      if (e.key === "Escape" && aboutOpen) setAboutOpen(false);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [route, waitingLive.length, aboutOpen]);
-
   /* ── shared actions ── */
   const openTagPicker = useCallback((messageId: string, anchor: HTMLElement | null) => {
     setPicker({ forId: messageId, ...placePicker(anchor) });
   }, []);
+
+  /**
+   * THE INLINE REPLY (slice U4).
+   *
+   * Opening it does NOT change the route and does not close the reader: that is the whole
+   * complaint. The draft is restored from `localStorage` on open, so a reload lands you
+   * back in the same half-written sentence.
+   */
+  const openReply = useCallback((messageId: string) => {
+    setReplyTo(messageId);
+    setReplyBody(readReplyDraft(messageId));
+    // MOBILE. Under 900px the reading column is `display:none` (app.css), so an inline
+    // reply would mount into a pane nobody can see and `r` would look broken — measured on
+    // the shipped build at 390px. There, the reader IS the open message, so open it.
+    if (typeof window !== "undefined" && window.matchMedia?.("(max-width: 900px)").matches) {
+      setReaderOpen(true);
+    }
+  }, []);
+
+  const closeReply = useCallback(() => setReplyTo(null), []);
+
+  const onReplyBody = useCallback(
+    (next: string) => {
+      setReplyBody(next);
+      if (replyTo) writeReplyDraft(replyTo, next);
+    },
+    [replyTo],
+  );
+
+  /**
+   * Sending is NOT wired. `EngineMutation` has no send verb — the gated send path exists on
+   * the server and no client vocabulary reaches it — so this says so instead of pretending.
+   * The draft stays where it is; nothing is discarded by pressing a button that cannot work.
+   */
+  const sendReply = useCallback(() => toast(t("reply.toastSendUnwired")), [toast, t]);
+
+  /**
+   * SCREENING FROM ANYWHERE (slice U3) — one call site for every surface.
+   *
+   * The plan comes from `sender-screening.ts`, which decides whether the endpoint can be
+   * used at all; this only dispatches it and tells the truth about what happened. Two
+   * different toasts because there are two different outcomes, and the difference (a rule
+   * for future mail, or no rule at all) is the thing a user needs to know.
+   */
+  const changeScreening = useCallback(
+    (messageId: string, dest: ScreeningDest) => {
+      setSenderMenu(null);
+      const sender = senderScreening(reader, messageId);
+      if (!sender) return;
+      const plan = planScreeningChange(sender, dest);
+      const place = PLACE_LABEL[dest] ?? dest;
+      if (plan.mutations.length === 0) {
+        toast(t("screening.toastAlready", { sender: sender.address, place }));
+        return;
+      }
+      for (const m of plan.mutations) void engine.mutate(m);
+      toast(
+        plan.rule
+          ? t("screening.toastRuled", { sender: sender.address, place, count: plan.moved })
+          : t("screening.toastMoved", { sender: sender.address, place, count: plan.moved }),
+      );
+    },
+    [engine, reader, toast, t],
+  );
+
+  const openSenderMenu = useCallback((messageId: string, anchor: HTMLElement | null) => {
+    setSenderMenu({ messageId, ...placePicker(anchor) });
+  }, []);
+
+  /**
+   * Clicking a sender's circle or address, in ANY list (U3).
+   *
+   * ONE capture-phase handler on the stage rather than one per view: `MessageRow` renders a
+   * `<button>`, so a second interactive control cannot be nested inside it, and every list
+   * in the product already stamps `data-id` with a message id. Capture runs before the
+   * row's own click, so this opens the screening popover INSTEAD of moving the cursor.
+   * Shift is left alone — that gesture belongs to the Ohbox's range selection.
+   */
+  const onStageClickCapture = useCallback(
+    (e: ReactMouseEvent<HTMLElement>) => {
+      if (e.shiftKey) return;
+      const el = e.target as HTMLElement;
+      if (!el.closest?.(".row .av, .row .addr")) return;
+      const id = el.closest<HTMLElement>(".row[data-id]")?.dataset.id;
+      if (!id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openSenderMenu(id, el.closest<HTMLElement>(".row"));
+    },
+    [openSenderMenu],
+  );
 
   const toggleTag = useCallback(
     (messageId: string, tagId: string, assigned: boolean) => {
@@ -282,7 +387,13 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
     (action: MessageAction, m: EngineMessage) => {
       switch (action) {
         case "reply":
+          // U4: inline, in place. This used to be `setReaderOpen(false); go("compose")` —
+          // the message you were answering left the screen as you started answering it.
+          openReply(m.id);
+          break;
         case "draft":
+          // The AI draft-review flow is still its own view (it is a card with sources and
+          // a regenerate step, not a text box). It now leaves on Escape; see ComposeView.
           setReaderOpen(false);
           go("compose");
           break;
@@ -327,7 +438,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
         }
       }
     },
-    [engine, toast, t, piles.replyLater.length, now],
+    [engine, toast, t, piles.replyLater.length, now, openReply],
   );
 
   const readsMarkSeen = useCallback(
@@ -367,6 +478,128 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
     setFrValues({});
     setFr({ step: 0, items: piles.replyLater });
   }, [piles.replyLater]);
+
+  /**
+   * The message the current view has under the cursor, whichever view that is.
+   *
+   * `s` and `e` mean the same thing everywhere or they mean nothing; without one answer to
+   * "which message?" they would have to be re-declared per view with per-view semantics,
+   * which is the state U2 exists to end.
+   */
+  const focused: EngineMessage | null =
+    route.view === "ohbox"
+      ? selectedOhbox
+      : route.view === "reads"
+        ? (readsCur ? (reader.get<EngineMessage>("message", readsCur) ?? null) : null)
+        : route.view === "receipts"
+          ? (receiptsCur ? (reader.get<EngineMessage>("message", receiptsCur) ?? null) : null)
+          : null;
+
+  /**
+   * ESCAPE HAS ONE OWNER, and this cascade is it.
+   *
+   * Before the registry, Escape was handled by `Reader` (close), `AppShell` (the (i)
+   * panel), `OhboxView` (clear the selection), `ScreenerView` (leave the mobile preview)
+   * and the palette input — five listeners with no agreed order, which is why the reply
+   * editor could not simply add a sixth. `Reader` now takes `closeOnEscape={false}` and
+   * this closes the innermost thing that is open. The Ohbox's "clear the selection" stays
+   * a VIEW binding, so it runs before this one — a picked set is innermost of all.
+   */
+  const escapeCascade = useCallback(() => {
+    if (palette.open) palette.closePalette();
+    else if (shortcutsOpen) setShortcutsOpen(false);
+    else if (senderMenu) setSenderMenu(null);
+    else if (picker) setPicker(null);
+    else if (aboutOpen) setAboutOpen(false);
+    else if (fr) setFr(null);
+    else if (replyTo) setReplyTo(null);
+    else if (readerOpen) setReaderOpen(false);
+  }, [palette, shortcutsOpen, senderMenu, picker, aboutOpen, fr, replyTo, readerOpen]);
+
+  const escapeClosesSomething =
+    palette.open || shortcutsOpen || senderMenu != null || picker != null || aboutOpen ||
+    fr != null || replyTo != null || readerOpen;
+
+  /* ── the global key map. Views declare their own; see `keymap.tsx` for precedence. ── */
+  const globalKeys: KeyBinding[] = [
+    { chord: "g o", group: "navigate", label: t("shortcuts.goOhbox"), run: () => go("ohbox") },
+    { chord: "g r", group: "navigate", label: t("shortcuts.goReads"), run: () => go("reads") },
+    { chord: "g e", group: "navigate", label: t("shortcuts.goReceipts"), run: () => go("receipts") },
+    { chord: "g s", group: "navigate", label: t("shortcuts.goScreener"), run: () => go("screener") },
+    { chord: "g t", group: "navigate", label: t("shortcuts.goTriage"), run: () => go("triage") },
+    { chord: "/", group: "navigate", label: t("shortcuts.search"), run: () => go("search") },
+    { chord: "c", group: "app", label: t("shortcuts.compose"), run: () => go("compose") },
+    {
+      chord: "f",
+      group: "message",
+      label: t("shortcuts.replyRun"),
+      disabled: piles.replyLater.length === 0,
+      run: () => {
+        go("triage");
+        setTimeout(startFR, 130);
+      },
+    },
+    {
+      chord: "r",
+      group: "message",
+      label: t("shortcuts.reply"),
+      // Only the Ohbox renders a message pane to reply INSIDE; Reads and Receipts are
+      // skim streams. Listed everywhere, inert where there is nothing to reply in.
+      disabled: route.view !== "ohbox" || selectedOhbox == null,
+      run: () => selectedOhbox && openReply(selectedOhbox.id),
+    },
+    {
+      chord: "s",
+      group: "message",
+      label: t("shortcuts.screen"),
+      disabled: focused == null,
+      run: () => {
+        if (!focused) return;
+        openSenderMenu(
+          focused.id,
+          document.querySelector<HTMLElement>(`.view .row[data-id="${CSS.escape(focused.id)}"]`),
+        );
+      },
+    },
+    {
+      chord: "e",
+      group: "message",
+      // ohmail has no Archive: "out of the way, still here" is the Park pile. Naming it
+      // Park rather than Archive is the honest mapping, not a missing feature.
+      label: t("shortcuts.park"),
+      disabled: focused == null,
+      run: () => focused && onMessageAction("aside", focused),
+    },
+    {
+      chord: "b",
+      group: "message",
+      label: t("shortcuts.resurface"),
+      disabled: focused == null,
+      run: () => focused && onMessageAction("resurface", focused),
+    },
+    {
+      chord: "mod+k",
+      group: "app",
+      label: t("shortcuts.palette"),
+      inInput: true,
+      run: () => palette.toggle(),
+    },
+    {
+      chord: "?",
+      group: "app",
+      label: t("shortcuts.sheet"),
+      run: () => setShortcutsOpen((o) => !o),
+    },
+    {
+      chord: "Escape",
+      group: "app",
+      label: t("shortcuts.escape"),
+      inInput: true,
+      disabled: !escapeClosesSomething,
+      run: escapeCascade,
+    },
+  ];
+  useKeyBindings(globalKeys, "global");
 
   /* ── the palette command map (every command from the prototype) ── */
   const commands: Command[] = useMemo(() => {
@@ -539,7 +772,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
   const frFinished = fr != null && fr.step >= fr.items.length;
   const frItem = fr && !frFinished ? fr.items[fr.step] : undefined;
 
+  const chrome = useMemo(
+    () => ({ replyTo, replyBody, onReplyBody, closeReply, sendReply, openSenderMenu }),
+    [replyTo, replyBody, onReplyBody, closeReply, sendReply, openSenderMenu],
+  );
+
+  // Resolved here rather than inside the popover so a sender whose last message has just
+  // been moved out from under it closes the popover instead of rendering an empty one.
+  const senderMenuFor = useMemo(
+    () => (senderMenu ? senderScreening(reader, senderMenu.messageId) : null),
+    [senderMenu, reader, version],
+  );
+
   return (
+    <MessageChromeProvider value={chrome}>
     <div className="app-root">
       <div className="shell">
         {demo && !ribbonGone ? (
@@ -608,7 +854,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
             ariaLabel={t("rail.ariaMain")}
           />
 
-          <main className="stage">
+          <main className="stage" onClickCapture={onStageClickCapture}>
             {effectiveView === "ohbox" ? (
               <OhboxView
                 demo={demo}
@@ -621,12 +867,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
                 onEnterReader={() => setReaderOpen(true)}
                 onMarkSeen={markSeen}
                 doorbellInitials={waitingLive.map((w) => w.initial)}
+                doorbellHues={waitingLive.map((w) => avatarHue(w.from.address))}
                 doorbellCount={screener.waitingCount}
                 onDoorbell={() => go("screener")}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
                 onAttachment={() => toast(t("ohbox.toastAttachment"))}
-                typingGuard={typingGuard}
               />
             ) : null}
 
@@ -644,7 +890,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
                 isSeen={(m) => !m.unread}
                 jumpTo={jump?.view === "reads" ? jump.id : null}
                 onJumped={() => setJump(null)}
-                typingGuard={typingGuard}
               />
             ) : null}
 
@@ -660,7 +905,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
                 markSeen={(id) => markSeen([id], false)}
                 jumpTo={jump?.view === "receipts" ? jump.id : null}
                 onJumped={() => setJump(null)}
-                typingGuard={typingGuard}
               />
             ) : null}
 
@@ -672,7 +916,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
                 onSelect={(segment, id) => setScnSel((s) => ({ ...s, [segment]: id }))}
                 full={screenerFull}
                 onFull={setScreenerFull}
-                typingGuard={typingGuard}
               />
             ) : null}
 
@@ -681,7 +924,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
                 piles={piles}
                 frDone={frDone}
                 onStartFR={startFR}
-                typingGuard={typingGuard}
               />
             ) : null}
 
@@ -742,8 +984,14 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
         />
       ) : null}
 
-      {/* READING — the exhale */}
-      <Reader open={readerOpen && selectedOhbox != null} onClose={() => setReaderOpen(false)}>
+      {/* READING — the exhale. Escape is the registry's (see `escapeCascade`): with the
+          reader owning it too, closing the inline reply would also close the message it
+          was quoting, in the same keypress. */}
+      <Reader
+        open={readerOpen && selectedOhbox != null}
+        closeOnEscape={false}
+        onClose={() => setReaderOpen(false)}
+      >
         {selectedOhbox ? (
           <MessagePane
             message={selectedOhbox}
@@ -814,6 +1062,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
         />
       ) : null}
 
+      {/* Sender screening (U3) — reachable from every list and every open message. */}
+      {senderMenuFor ? (
+        <SenderMenu
+          state={senderMenu!}
+          sender={senderMenuFor}
+          onChoose={(dest) => changeScreening(senderMenu!.messageId, dest)}
+          onClose={() => setSenderMenu(null)}
+        />
+      ) : null}
+
+      {/* The `?` sheet (U2) — generated from the registry above, never hand-written. */}
+      <ShortcutSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+
       {/* (i) — AND IT MUST KNOW WHICH MODE IT IS IN.
           This panel used to be unconditional: every signed-in customer opened it and read
           "ohmail — demo / This is the real ohmail client running on a fixture mailbox…".
@@ -844,6 +1105,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
           ) : (
             aboutSection
           )}
+          {/* This used to be a hand-typed key list ("Keyboard: j/k, ↵, y + o/r/c/n/x…")
+              which is a SECOND copy of the bindings and had already drifted from them.
+              It points at the sheet, which is generated from the registry. */}
           <p>{t("about.keys")}</p>
         </div>
       ) : null}
@@ -860,5 +1124,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
         />
       </Dock>
     </div>
+    </MessageChromeProvider>
   );
 }

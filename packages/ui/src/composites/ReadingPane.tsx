@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Icon } from "../icons.js";
+import { Avatar } from "../primitives/Avatar.js";
 import "./message.css";
 
 export interface ReadingPaneAttachment {
@@ -25,6 +26,35 @@ export interface ReadingPaneProps {
   actions?: ReactNode;
   /** Renders the small open-reader affordance in the from-line. */
   onEnterReader?: () => void;
+  /** The sender's initial circle in the from-line. */
+  avatarInitial?: string;
+  /** Deterministic per-sender hue for that circle; see `Avatar`. */
+  avatarHue?: number;
+  /**
+   * Makes the from-line a CONTROL — avatar and address together (slice U3).
+   *
+   * The owner's words: "needing to be able to directly click a mail adress and change its
+   * screener mode even on ohbox etc". A row cannot carry this affordance (`.row` is itself
+   * a `<button>`, and nesting interactive content in one is invalid), so the open message
+   * is where the address becomes clickable for real, with a focusable, keyboard-reachable
+   * control rather than a span with a mouse handler.
+   *
+   * Receives the control itself so a popover can be anchored on it — this pane is mounted
+   * twice while the reader is open (read column and sheet) and the caller must be able to
+   * hang the popover off the copy that was clicked.
+   */
+  onSender?: (anchor: HTMLElement) => void;
+  /** Tooltip/aria for that control — supplied by the app, which owns the copy. */
+  senderTitle?: string;
+  /**
+   * Rendered INSIDE the message, after the actions: the inline reply editor (slice U4).
+   *
+   * A slot rather than a component so the app owns the editor's behaviour, drafts and
+   * copy, and so this file stays the anatomy of a message and nothing more. What matters
+   * structurally is that it lives inside `<article class="msg">` — a reply that is not in
+   * the message is the compose route the owner rejected.
+   */
+  reply?: ReactNode;
   className?: string;
 }
 
@@ -41,13 +71,38 @@ export function ReadingPane({
   attachment,
   actions,
   onEnterReader,
+  avatarInitial,
+  avatarHue,
+  onSender,
+  senderTitle,
+  reply,
   className,
 }: ReadingPaneProps) {
+  const who = (
+    <>
+      {avatarInitial !== undefined ? (
+        <Avatar initials={avatarInitial} hue={avatarHue} size="s" />
+      ) : null}
+      <b>{from}</b>
+      {address ? <small>{address}</small> : null}
+    </>
+  );
   return (
     <article className={className ? `msg ${className}` : "msg"}>
       <div className="msg-from">
-        <b>{from}</b>
-        {address ? <small>{address}</small> : null}
+        {onSender ? (
+          <button
+            type="button"
+            className="msg-sender"
+            title={senderTitle}
+            aria-label={senderTitle}
+            onClick={(e) => onSender(e.currentTarget)}
+          >
+            {who}
+          </button>
+        ) : (
+          who
+        )}
         <span className="t num">
           {threadCount ? `thread (${threadCount}) · ` : ""}
           {time}
@@ -74,6 +129,7 @@ export function ReadingPane({
         </button>
       ) : null}
       {actions ? <div className="msg-actions">{actions}</div> : null}
+      {reply}
     </article>
   );
 }

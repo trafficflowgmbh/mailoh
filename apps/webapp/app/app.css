@@ -1501,3 +1501,308 @@ body.reading .shell {
 .bill-plan-price { font-size: 18px; color: var(--accent-ink); font-variant-numeric: tabular-nums; }
 .bill-plan-meta { font-size: 11px; color: var(--ink2); }
 .bill-plan-cur { font-size: 10.5px; color: var(--ink3); text-transform: uppercase; letter-spacing: .06em; }
+
+/* ================= the sender affordance in a row (slice U3) =================
+   Clicking a row's circle or address opens that sender's screening. The handler
+   is ONE capture-phase listener on <main class="stage"> (AppShell), so the hint
+   below is true in every list — Ohbox, Reads, Receipts, Screener, Tags, Search —
+   and it ships in the same file as the claim. */
+.view .row .av,
+.view .row .addr {
+  cursor: pointer;
+}
+.view .row .addr:hover {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.view .row .av:hover {
+  box-shadow: var(--lift-2);
+}
+
+/* ================= sender screening popover (slice U3) ================= */
+.senderm {
+  position: fixed;
+  z-index: var(--z-pal);
+  width: 252px;
+  border-radius: 18px;
+  background: var(--float);
+  box-shadow: var(--lift-3);
+  overflow: hidden;
+  animation: rise 0.2s var(--spring);
+}
+.sm-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 15px 9px;
+}
+.sm-who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.sm-who b {
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sm-who small {
+  font-size: 11px;
+  color: var(--ink3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sm-now {
+  padding: 0 15px 9px;
+  font-size: 11px;
+  color: var(--ink3);
+}
+.senderm ul {
+  list-style: none;
+  padding: 6px;
+  margin: 0;
+}
+.senderm li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 11px;
+  border-radius: 11px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.senderm li:hover {
+  background: var(--tint);
+}
+.senderm li.sel {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.senderm li .ck {
+  margin-left: auto;
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 650;
+}
+.sm-foot {
+  padding: 8px 15px 11px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--ink3);
+}
+
+/* ================= inline reply (slice U4) =================
+   Inside <article class="msg">, under the actions: the quoted conversation in
+   its own scroller so a long chain never pushes the editor off the pane, then
+   the editor, then the row of controls. */
+.reply {
+  margin-top: 22px;
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: var(--lift-1);
+  padding: 15px 17px 14px;
+  animation: rise 0.22s var(--spring);
+}
+.reply-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+  margin-bottom: 10px;
+}
+.reply-head b {
+  font-weight: 600;
+}
+.reply-head small {
+  color: var(--ink3);
+  font-size: 11.5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reply-context {
+  max-height: 190px;
+  overflow-y: auto;
+  border-radius: 12px;
+  background: var(--tint);
+  padding: 11px 13px;
+  margin-bottom: 11px;
+}
+.reply-quoted + .reply-quoted {
+  margin-top: 12px;
+}
+.rq-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--ink2);
+}
+.rq-line b {
+  font-weight: 600;
+  color: var(--ink);
+}
+.rq-line .t {
+  margin-left: auto;
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+}
+.rq-body {
+  font-size: 12.5px;
+  line-height: 1.62;
+  color: var(--ink2);
+  white-space: pre-line;
+  margin-top: 4px;
+}
+.reply-note {
+  font-size: 10.5px;
+  color: var(--ink3);
+  line-height: 1.5;
+  margin: 9px 0 0;
+}
+.reply-editor {
+  width: 100%;
+  min-height: 128px;
+  resize: vertical;
+  border: 0;
+  border-radius: 12px;
+  background: var(--float);
+  box-shadow: inset 0 0 0 1px var(--hair-soft);
+  padding: 12px 13px;
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.62;
+  color: var(--ink);
+}
+.reply-editor:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px var(--accent-hair);
+}
+.reply-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 11px;
+  flex-wrap: wrap;
+}
+.reply-hint {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--ink3);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* ================= the ? shortcut sheet (slice U2) =================
+   Generated from the keyboard registry; see shell/ShortcutSheet.tsx. Two
+   columns on a desk, one on a phone, and it scrolls rather than growing. */
+.ks-bg {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-pal);
+  background: var(--scrim);
+}
+.ks {
+  position: fixed;
+  z-index: var(--z-pal);
+  left: 50%;
+  top: 12vh;
+  transform: translateX(-50%);
+  width: min(620px, calc(100vw - 32px));
+  max-height: 74vh;
+  overflow-y: auto;
+  border-radius: 22px;
+  background: var(--float);
+  box-shadow: var(--lift-3);
+  padding: 20px 24px 18px;
+  animation: rise 0.22s var(--spring);
+}
+.ks-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ks-head h3 {
+  font-size: 13px;
+  font-weight: 650;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ks-head h3 svg {
+  color: var(--accent-ink);
+}
+.ks-head .x {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 99px;
+  color: var(--ink3);
+}
+.ks-head .x:hover {
+  background: var(--tint);
+  color: var(--ink);
+}
+.ks-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 6px 26px;
+  margin-top: 14px;
+}
+.ks-cols h4 {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  margin: 10px 0 4px;
+}
+.ks-cols ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ks-cols li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+/* Declared but inert here — still listed, because a key that vanishes from the
+   documentation when the list is empty is a key nobody learns. */
+.ks-cols li.off {
+  color: var(--ink3);
+}
+.ks-keys {
+  display: inline-flex;
+  gap: 3px;
+  flex: none;
+  min-width: 62px;
+}
+.ks-lab {
+  min-width: 0;
+}
+.ks-foot {
+  margin: 16px 0 0;
+  font-size: 10.5px;
+  color: var(--ink3);
+}
+@media (max-width: 640px) {
+  .ks {
+    top: 6vh;
+    max-height: 86vh;
+    padding: 18px 18px 16px;
+  }
+}

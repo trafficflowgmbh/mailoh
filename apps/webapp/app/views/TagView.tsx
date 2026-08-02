@@ -8,7 +8,7 @@
 import { useTranslations } from "next-intl";
 import { type EngineMessage, type TagDTO } from "@ohmail/client-engine";
 import { Kbd, ListPane, ListRows, MessageRow } from "@ohmail/ui";
-import { displayTime, placeLabel, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { avatarOf, displayTime, placeLabel, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
 
 export function TagView({
   tag,
@@ -34,7 +34,8 @@ export function TagView({
                 key={m.id}
                 id={m.id}
                 from={senderName(m)}
-                address={m.from.address}
+                address={rowAddress(m)}
+                {...avatarOf(m)}
                 time={displayTime(m, now)}
                 subject={m.subject}
                 preview={m.snippet}
