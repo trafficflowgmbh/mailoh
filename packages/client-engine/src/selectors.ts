@@ -29,26 +29,49 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
+/** UTC midnights apart. Positive = in the past; negative = dated in the future. */
+function daysAgo(d: Date, now: Date): number {
+  const day = (x: Date) => Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate());
+  return Math.round((day(now) - day(d)) / 86_400_000);
+}
+
 /**
- * The prototype's row stamp for a message: "09:12" today, "Mon" this week.
+ * The prototype's row stamp for a message: "09:12" today, "Mon" this week, "2 Aug" beyond it.
  *
  * Fixture rows carry the prototype's own string in `time`; server-fed rows carry only
  * `date`, so every surface that shows a stamp has to derive one. It lives here — beside
  * the selectors that build display DTOs — rather than in the web app, because
  * `screenerSegments()` mints `ScreenerSenderDTO.time` and `ScreenerHeldMail.time` for
  * senders that have no fixture row at all.
+ *
+ * ── A WEEKDAY NAME ONLY MEANS SOMETHING FOR SIX DAYS ────────────────────────────────────
+ *
+ * This used to answer `WEEKDAY_SHORT[d.getUTCDay()]` for EVERY message that was not from
+ * today, so a message from March rendered as "Tue" — indistinguishable from one sent
+ * yesterday, in a list sorted by date, which is the one place the reader is relying on the
+ * stamp to tell things apart. Owner-reported.
+ *
+ * Seven bands would be over-thinking it; the rule is just that a label may not be reused
+ * before it has stopped being unambiguous. "Tue" is unique within a six-day window and
+ * repeats on the seventh, so that is exactly where it stops. Past that, the day-and-month
+ * carries the year implicitly for the current year and explicitly outside it — a bare
+ * "2 Aug" on a message from 2025 would be the same lie in a slower form.
+ *
+ * A FUTURE date (a resurfaced or scheduled row) takes the dated branch too: `daysAgo` goes
+ * negative, and "Fri" for something that has not happened yet reads as the past.
  */
 export function messageDisplayTime(m: Pick<EngineMessage, "time" | "date">, now: Date): string {
   if (m.time) return m.time;
   if (!m.date) return "";
   const d = new Date(m.date);
-  const clock = `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
-  const sameDay =
-    d.getUTCFullYear() === now.getUTCFullYear() &&
-    d.getUTCMonth() === now.getUTCMonth() &&
-    d.getUTCDate() === now.getUTCDate();
-  if (sameDay) return clock;
-  return WEEKDAY_SHORT[d.getUTCDay()] ?? clock;
+  if (Number.isNaN(d.getTime())) return "";
+
+  const ago = daysAgo(d, now);
+  if (ago === 0) return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+  if (ago >= 1 && ago <= 6) return WEEKDAY_SHORT[d.getUTCDay()]!;
+
+  const stamp = `${d.getUTCDate()} ${MONTH_SHORT[d.getUTCMonth()]}`;
+  return d.getUTCFullYear() === now.getUTCFullYear() ? stamp : `${stamp} ${d.getUTCFullYear()}`;
 }
 
 /** Server list order (contract §5.2): date desc, id desc. */
