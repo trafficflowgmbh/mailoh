@@ -985,7 +985,6 @@
     "conversationAria": "Conversation",
     "conversationCount": "{count, plural, one {1 message} other {# messages}} on this conversation",
     "conversationHere": "replying to this",
-    "onlyTheirSide": "Your own replies are not here: ohmail does not watch your Sent folder yet, so a conversation shows the other side only.",
     "sendTitle": "Sending is not connected yet.",
     "toastSendUnwired": "Sending is not connected yet — the draft is kept on this device."
   }

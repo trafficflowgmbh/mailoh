@@ -22,9 +22,9 @@
  * chain and this renders it, oldest first, in its own 190px scroller: the editor never gets
  * pushed off the bottom of the reading pane however deep the conversation runs.
  *
- * It still shows one side. `Sent` is not watched (gap U4c), so the user's own replies are
- * not in `messages` at all; `ConversationLimit` states that rather than letting the list
- * imply the user never answered.
+ * It shows BOTH sides since U4c: the worker watches the mailbox's own Sent folder, so the
+ * user's replies are in `messages` and on the thread. The `ConversationLimit` note that used
+ * to say otherwise is gone with the condition it described — see `Conversation.tsx`.
  *
  * The draft is kept in `localStorage`, per message: this is the client's own scratch
  * buffer, not an IMAP draft. Drafts on the server are P3 and the owner has ruled they must
@@ -34,7 +34,7 @@ import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage } from "@ohmail/client-engine";
 import { Button, Kbd } from "@ohmail/ui";
-import { ConversationEntries, ConversationHead, ConversationLimit } from "./Conversation";
+import { ConversationEntries, ConversationHead } from "./Conversation";
 import { rowAddress, senderName } from "./format";
 
 /** `localStorage` key for a per-message reply draft. */
@@ -94,12 +94,12 @@ export function InlineReply({
       </div>
 
       {/* The conversation, scrollable in its own right so a deep one never pushes the
-          editor off the bottom of the reading pane. Same component, same order and same
-          honest limit as the copy `MessagePane` renders when this editor is closed. */}
+          editor off the bottom of the reading pane. Same component and same order as the
+          copy `MessagePane` renders when this editor is closed. */}
       <div className="reply-context" role="group" aria-label={t("conversationAria")}>
         {context.length > 1 ? <ConversationHead count={context.length} /> : null}
         <ConversationEntries messages={context} focusedId={message.id} now={now} variant="quote" />
-        {context.length > 1 ? <ConversationLimit /> : <p className="reply-note">{t("singleMessage")}</p>}
+        {context.length > 1 ? null : <p className="reply-note">{t("singleMessage")}</p>}
       </div>
 
       <textarea

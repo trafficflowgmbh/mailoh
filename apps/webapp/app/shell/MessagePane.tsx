@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, ProtectedBlock, ReadingPane } from "@ohmail/ui";
-import { ConversationEntries, ConversationHead, ConversationLimit } from "./Conversation";
+import { ConversationEntries, ConversationHead } from "./Conversation";
 import { PLACE_LABEL, avatarHue, displayTime, hueOf, initialsOf, rowAddress, senderName, tagsOfMessage } from "./format";
 import { InlineReply } from "./InlineReply";
 import { useMessageChrome } from "./message-chrome";
@@ -250,7 +250,6 @@ export function MessagePane({
             now={now}
             variant="pane"
           />
-          <ConversationLimit />
         </div>
       ) : isProtected ? (
         focusedBody

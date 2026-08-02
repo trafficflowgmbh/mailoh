@@ -16,18 +16,23 @@
  * held mail, so "a message rendered inside another message" looks the same wherever the
  * product does it. `variant="quote"` renders the tighter `.reply-quoted` block that lives
  * in `InlineReply`'s 190px scroller. Two densities of ONE list, not two features: the
- * order, the count, the focus marker and the honest limit are decided here, once.
+ * order, the count and the focus marker are decided here, once.
  *
  * Exactly one of them is on screen at a time — see `MessagePane`, which stands its own copy
  * down while the reply editor below it is showing the same list.
  *
- * ── WHAT IT DOES NOT CLAIM ──────────────────────────────────────────────────────────────
+ * ── BOTH SIDES, SINCE U4c ───────────────────────────────────────────────────────────────
  *
- * `Sent` is not in `WATCHED_FOLDERS` (gap U4c), so nothing the user sends ever enters
- * `messages`, and this can only ever show the counterpart's half of a conversation.
- * `ConversationLimit` says so on screen rather than leaving the user to work it out from
- * their own replies being missing. When U4c lands, this component fills out and the note
- * goes with the condition that produced it.
+ * This used to render a `ConversationLimit` note saying the user's own replies were not in
+ * `messages` at all, because `Sent` was unwatched. Slice U4c watches it, so the note and the
+ * string behind it are gone: they became false the moment the worker shipped, and a claim
+ * that has stopped being true is not a caveat, it is an error.
+ *
+ * The residual limit is a HISTORY DEPTH, not a missing half: the worker ingests the newest
+ * `DEFAULT_SENT_HISTORY_MESSAGES` (2 000) of Sent, so a conversation whose outbound half is
+ * older than that still shows one side. It is not stated on screen — a permanent caveat on
+ * every conversation, for a case that needs two thousand sent messages to reach, is noise —
+ * and it is recorded in `packages/core/src/adapters/imap-types.ts` and BETA-GAPS instead.
  *
  * ── BOUNDING, AND WHY THERE IS NO ACCORDION ─────────────────────────────────────────────
  *
@@ -72,15 +77,6 @@ function subjectKey(subject: string): string {
 export function ConversationHead({ count }: { count: number }) {
   const t = useTranslations("reply");
   return <p className="conv-head num">{t("conversationCount", { count })}</p>;
-}
-
-/**
- * The limit, stated. It is not a disclaimer bolted on: without it the view IMPLIES that a
- * conversation with no replies from you is one you never answered.
- */
-export function ConversationLimit() {
-  const t = useTranslations("reply");
-  return <p className="conv-note">{t("onlyTheirSide")}</p>;
 }
 
 export function ConversationEntries({
