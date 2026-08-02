@@ -70,12 +70,18 @@ export function ReceiptsView({
     return () => cancelAnimationFrame(timer);
   }, [jumpTo, onCur, onJumped]);
 
+  /**
+   * Keep the row the USER selected in view — `cur`, never `current` (slice U1f).
+   * `current` on line 48 falls back to the first unread message, so keying this effect on
+   * it made an untouched view scroll itself on mount and re-scroll every time a commit
+   * moved the fallback. Same reasoning, and the same defect, as `ReadsView`.
+   */
   useEffect(() => {
-    if (!current) return;
+    if (!cur) return;
     document
-      .querySelector(`.view-receipts .row[data-id="${CSS.escape(current)}"]`)
+      .querySelector(`.view-receipts .row[data-id="${CSS.escape(cur)}"]`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [current]);
+  }, [cur]);
 
   const order = all.map((m) => m.id);
   const at = current ? order.indexOf(current) : -1;

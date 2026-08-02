@@ -99,13 +99,24 @@ export function ReadsView({
     return () => cancelAnimationFrame(timer);
   }, [jumpTo, onCur, onJumped]);
 
-  // Keep the selected row in view when the stream drives the selection.
+  /**
+   * Keep the row the USER selected in view — `cur`, never `current` (slice U1f).
+   *
+   * `current` on line 76 is `cur` OR, when nothing has been selected, whichever message
+   * happens to be the first unread one. Keyed on that, this effect scrolled the list on
+   * MOUNT, to a row nobody had asked for, while the reading stream beside it stayed at the
+   * top — and it re-ran every time the fallback re-resolved, which happens whenever a
+   * message is marked read. A fallback may decide what is DISPLAYED (the highlight below
+   * still follows `current`); it may not move the viewport and it may not be the thing that
+   * drives a scroller into the seen-on-scroll machinery, which writes `\Seen` to the user's
+   * own IMAP server. See `useSeenOnScroll` for the other half of this.
+   */
   useEffect(() => {
-    if (!current) return;
+    if (!cur) return;
     document
-      .querySelector(`.view-reads .row[data-id="${CSS.escape(current)}"]`)
+      .querySelector(`.view-reads .row[data-id="${CSS.escape(cur)}"]`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [current]);
+  }, [cur]);
 
   // j/k step cards; ↵ toggles the current card's clamp. Declared into the registry so
   // the `?` sheet knows they exist and so the shell's global map yields to them here.
