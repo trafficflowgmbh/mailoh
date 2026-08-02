@@ -17,6 +17,16 @@ import { useTranslations } from "next-intl";
 import { Icon, Kbd } from "@ohmail/ui";
 import { chordKeys, groupedBindings, useKeymap, type BindingGroup } from "./keymap";
 
+/**
+ * `KeyboardEvent.key` values that are a modifier being held, not a keystroke being made.
+ * `AltGraph` and `CapsLock` are here for the same reason as the four obvious ones: a user
+ * reaching for a chord on a non-US layout presses them on the way to a character.
+ */
+const MODIFIER_KEYS = new Set([
+  "Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock", "NumLock", "ScrollLock",
+  "Fn", "FnLock", "Hyper", "Super", "Symbol", "SymbolLock",
+]);
+
 export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const t = useTranslations("shortcuts");
   const { bindings } = useKeymap();
@@ -25,7 +35,27 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
     if (!open) return;
     // Any keypress dismisses. The registry's own listener still runs the binding for that
     // key — the sheet is in the way of nothing.
-    const onKey = () => onClose();
+    //
+    // ── EXCEPT A BARE MODIFIER, AND THAT EXCEPTION IS THE WHOLE OF U2-TOGGLE ────────────
+    //
+    // "Any key dismisses and then does its normal job" is the peek design, and a modifier
+    // held down on its own has no normal job — it is the first half of a chord the user has
+    // not finished typing. Counting it as a dismissal broke `?` on every layout where `?`
+    // needs Shift, which is most of them: the chord arrives as TWO keydowns, `Shift` closed
+    // the sheet, and `?` then reached the registry toggle, found it closed, and re-opened
+    // it. Pressing `?` to close the sheet left the sheet open.
+    //
+    // Not cosmetic — the sheet is `position: fixed` over the whole deck, so a sheet that
+    // will not close swallows the click the user makes next. It ate U1-BULK's "Mark read"
+    // for weeks and was read as a bulk-selection bug.
+    //
+    // With modifiers ignored the chord behaves: `Shift` does nothing, then `?` both
+    // dismisses here and toggles in the registry — and those AGREE, because both are
+    // closing an open sheet.
+    const onKey = (e: KeyboardEvent) => {
+      if (MODIFIER_KEYS.has(e.key)) return;
+      onClose();
+    };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
