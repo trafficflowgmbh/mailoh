@@ -28,7 +28,13 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
  */
 export const SHELL_MESSAGE_NAMESPACES = [
   "about", "compose", "dock", "ohbox", "palette", "rail", "reads", "receipts",
-  "ribbon", "screener", "search", "session", "settings", "tag", "triage",
+  // `reply`, `screening` and `shortcuts` arrived with the 2026-08-02 frontend slice
+  // (inline reply, sender screening, the `?` overlay). They are listed here because the
+  // desktop shell renders all three; without them the binary shows `reply.send` where a
+  // word belongs, which is exactly the failure the abort below exists to prevent — and
+  // `desktop-messages.test.ts` caught the omission rather than a user finding it.
+  "reply", "ribbon", "screener", "screening", "search", "session", "settings",
+  "shortcuts", "tag", "triage",
 ] as const;
 
 /**
