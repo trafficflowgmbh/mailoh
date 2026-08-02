@@ -228,11 +228,14 @@ export function OhboxView({
    * than state: it must be readable by the dwell effect in the same commit, and it should
    * not cause a render of its own.
    *
-   * KEYED TO `dwellOn`, NOT to `selected`. The pin and the dwell have to agree on what "the
-   * cursor" is, and only one of the two candidates is the user's: `selected` also moves when
-   * the list re-partitions underneath them, and an un-pin driven by a reorder would hand a
-   * still-pending timer permission to revert an explicit `u`. Keying both to the deliberate
-   * cursor means the pin can only ever be released by the act it names.
+   * KEYED TO `dwellOn`, NOT to `selected`, so that the pin and the timer it exists to block
+   * agree on what "the cursor" means — `selected` also moves when the list re-partitions
+   * underneath the user, which is not a cursor move and must not release a pin.
+   *
+   * NO GUARD BELOW FAILS IF THIS IS PUT BACK TO `selected?.id`, and that is stated rather
+   * than hidden: with `dwellOn` set, `onSelect` has set the shell's `ohboxSel` to the same
+   * id, so the two only diverge once the message leaves the Ohbox — and the dwell's
+   * fire-time re-read already drops that case. This is coherence, not a fixed bug.
    */
   const pinnedUnread = useRef<string | null>(null);
   useEffect(() => {
@@ -287,10 +290,10 @@ export function OhboxView({
     const timer = window.setTimeout(() => {
       if (pinnedUnread.current === id) return;
       if (!allRef.current.find((m) => m.id === id)?.unread) return;
-      onMarkSeen([id], false);
+      markSeenRef.current([id], false);
     }, DWELL_MS);
     return () => window.clearTimeout(timer);
-  }, [dwellOn, onMarkSeen]);
+  }, [dwellOn]);
 
   /**
    * The Ohbox's keys, DECLARED (slice U2).
