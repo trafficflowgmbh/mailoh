@@ -21,7 +21,7 @@ import {
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useEngineVersion, useReader, useSyncStatus } from "../shell/engine";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
-import { useMessageChrome } from "../shell/message-chrome";
+import { SYNC_FAILURE_STREAK } from "../shell/sync-scheduler";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 
 /**
@@ -73,8 +73,6 @@ export function OhboxView({
   onAttachment: () => void;
 }) {
   const t = useTranslations("ohbox");
-  /** Only for Escape precedence — see the binding. Inert outside the shell. */
-  const chrome = useMessageChrome();
 
   const all = useMemo(
     () => [...newForYou, ...previouslySeen],
@@ -142,11 +140,79 @@ export function OhboxView({
 
   /* ── read-state ────────────────────────────────────────────────────────── */
 
-  /** Opening a message IS reading it — Enter, click-into-reader, mobile tap. */
+  /**
+   * THE LIST, READABLE FROM INSIDE A TIMER.
+   *
+   * The dwell below fires two seconds after the render that armed it and has to judge the
+   * list as it is THEN — still present, still unread — without putting `all` in its
+   * dependency array (see the dwell for why that would be fatal). Assigned in render rather
+   * than refreshed by an effect: an effect would make the dwell's correctness depend on
+   * effect DECLARATION ORDER, an invariant nothing states and a reorder would silently
+   * break, with this bug as the failure mode. Same shape as `StreamShell` and
+   * `useSeenOnScroll` in `@ohmail/ui`.
+   */
+  const allRef = useRef(all);
+  allRef.current = all;
+
+  /**
+   * THE WRITER, held the same way, so the dwell's deps are ONE value.
+   *
+   * `onMarkSeen` was a dependency of the dwell until this slice, which made the dwell's
+   * correctness depend on a caller keeping its callback identity stable: `AppShell` does
+   * (`markSeen` is a `useCallback`), but a caller that did not would restart the two seconds
+   * on every render and the dwell would never fire at all — silently, with no error. That is
+   * too much load on a memo somebody else owns. Behind a ref, the effect depends on exactly
+   * one thing: the cursor the user put here.
+   */
+  const markSeenRef = useRef(onMarkSeen);
+  markSeenRef.current = onMarkSeen;
+
+  /**
+   * THE CURSOR THE USER PUT HERE — and the only value in this file that can arm the dwell.
+   *
+   * `selectedId` cannot answer this question, and that is what shipped the runaway. It
+   * arrives already resolved through TWO implicit fallbacks — `AppShell`'s
+   * `?? allOhbox[0]` and this view's on line 83 — so before anything has been picked it
+   * means "the newest unread message", and it silently RE-RESOLVES onto a different message
+   * every time the list re-partitions. Since the list is partitioned BY `unread`
+   * (`ohboxView`), marking one message read is itself a re-partition, so a dwell keyed on
+   * `selected` fed itself: commit → the row leaves "New for you" → the fallback lands on the
+   * next unread message → the effect sees a selection it never asked for and arms again.
+   * Two seconds per message, straight through the Ohbox, onto a real IMAP server.
+   *
+   * The fix is not a flag consulted inside the effect — it is that the effect's dependencies
+   * can no longer EXPRESS a reorder. `dwellOn` is written in exactly two places:
+   * `selectByUser`, which is reachable only from j, k and a click, and `open`, which clears
+   * it. Nothing derived from the list can produce it.
+   */
+  const [dwellOn, setDwellOn] = useState<string | null>(null);
+
+  /** Move the cursor because the USER moved it — j, k, and a click on an unselected row. */
+  const selectByUser = useCallback((id: string) => {
+    setDwellOn(id);
+    onSelect(id);
+  }, [onSelect]);
+
+  /**
+   * Opening a message IS reading it — Enter, click-into-reader, mobile tap.
+   *
+   * It also PINS the selection, and that is not housekeeping. A click on the top row of a
+   * fresh Ohbox takes the "already selected" branch below, because the implicit fallback had
+   * made it `selected` without anyone choosing it — so the open committed and `ohboxSel`
+   * stayed null. The moment the commit moved that row into "Previously seen", the fallback
+   * re-resolved to the next unread message and the reader sheet, which renders
+   * `selectedOhbox`, swapped to a message the user had not opened. That is the owner's
+   * "triggering the view to load the latest mail".
+   *
+   * And an open SUPERSEDES a dwell: the commit has already happened, so the timer armed by
+   * whichever click selected this row has nothing left to do.
+   */
   const open = useCallback((m: EngineMessage) => {
+    setDwellOn(null);
+    onSelect(m.id);
     if (m.unread) onMarkSeen([m.id], false);
     onEnterReader();
-  }, [onMarkSeen, onEnterReader]);
+  }, [onSelect, onMarkSeen, onEnterReader]);
 
   /**
    * THE MESSAGE `u` JUST PUT BACK TO UNREAD, and why the dwell must not undo it.
@@ -161,11 +227,17 @@ export function OhboxView({
    * An explicit "unread" therefore pins the message until the cursor MOVES. A ref rather
    * than state: it must be readable by the dwell effect in the same commit, and it should
    * not cause a render of its own.
+   *
+   * KEYED TO `dwellOn`, NOT to `selected`. The pin and the dwell have to agree on what "the
+   * cursor" is, and only one of the two candidates is the user's: `selected` also moves when
+   * the list re-partitions underneath them, and an un-pin driven by a reorder would hand a
+   * still-pending timer permission to revert an explicit `u`. Keying both to the deliberate
+   * cursor means the pin can only ever be released by the act it names.
    */
   const pinnedUnread = useRef<string | null>(null);
   useEffect(() => {
-    if (pinnedUnread.current && pinnedUnread.current !== selected?.id) pinnedUnread.current = null;
-  }, [selected?.id]);
+    if (pinnedUnread.current && pinnedUnread.current !== dwellOn) pinnedUnread.current = null;
+  }, [dwellOn]);
 
   const toggleUnread = useCallback((m: EngineMessage) => {
     pinnedUnread.current = m.unread ? null : m.id;
@@ -183,17 +255,42 @@ export function OhboxView({
    * on every change, so a sweep of ten rows arms and cancels ten times and commits nothing,
    * while stopping on one for two seconds commits that one.
    *
+   * IT ARMS ON `dwellOn` AND ON NOTHING ELSE, which is the whole of the runaway fix. The
+   * dependency array is the guarantee, not a condition in the body: a list that re-partitions
+   * — which is exactly what a read commit does to a list grouped by `unread` — cannot change
+   * `dwellOn`, so the effect does not re-run and a commit can never arm the next one. The
+   * previous version depended on `selected`, which the implicit fallback re-pointed at the
+   * next unread message after every commit, and the Ohbox marked itself read at one message
+   * per two seconds, on the user's own IMAP server.
+   *
+   * `all` IS DELIBERATELY NOT A DEPENDENCY. It changes on every sync delta, and a dependency
+   * on it would restart the two seconds each time — on a live mailbox the dwell would never
+   * reach the end of its own clock. The current list is read through `allRef` instead, at the
+   * two moments that need it.
+   *
+   * THE TARGET IS FROZEN AT ARM TIME. It commits the id the user was standing on, never
+   * "whatever is selected now", so a list that reorders mid-dwell cannot redirect the write
+   * onto a message nobody looked at. The fire-time re-read covers the three ways the world
+   * can have moved on: the message left the Ohbox (filed, moved), it is already read (an
+   * open, a `⇧U`, another device), or `u` has pinned it since.
+   *
    * Split pane only. On mobile there is no reading column beside the list, so a selection shows
    * nothing and dwelling on it means nothing; there, only `open` counts.
    */
   useEffect(() => {
-    if (!selected || !selected.unread) return;
-    if (pinnedUnread.current === selected.id) return;
+    if (dwellOn == null) return;
+    const id = dwellOn;
+    if (pinnedUnread.current === id) return;
+    if (!allRef.current.find((m) => m.id === id)?.unread) return;
     if (typeof window === "undefined" || !window.matchMedia) return;
     if (window.matchMedia("(max-width: 900px)").matches) return;
-    const timer = window.setTimeout(() => onMarkSeen([selected.id], false), DWELL_MS);
+    const timer = window.setTimeout(() => {
+      if (pinnedUnread.current === id) return;
+      if (!allRef.current.find((m) => m.id === id)?.unread) return;
+      onMarkSeen([id], false);
+    }, DWELL_MS);
     return () => window.clearTimeout(timer);
-  }, [selected, onMarkSeen]);
+  }, [dwellOn, onMarkSeen]);
 
   /**
    * The Ohbox's keys, DECLARED (slice U2).
@@ -211,14 +308,14 @@ export function OhboxView({
       group: "navigate",
       label: t("keyNext"),
       disabled: at >= order.length - 1,
-      run: () => at < order.length - 1 && onSelect(order[at + 1]!),
+      run: () => at < order.length - 1 && selectByUser(order[at + 1]!),
     },
     {
       chord: "k",
       group: "navigate",
       label: t("keyPrev"),
       disabled: at <= 0,
-      run: () => at > 0 && onSelect(order[at - 1]!),
+      run: () => at > 0 && selectByUser(order[at - 1]!),
     },
     {
       chord: "Enter",
@@ -279,26 +376,27 @@ export function OhboxView({
     },
     {
       /**
-       * Innermost Escape in the product: a picked set is closer than the reader is.
+       * Escape clears the selection — when nothing is open on top of it (slice S24).
        *
-       * NOT closer than the reply editor, though, and that cost a live journey to find.
-       * `U4-REPLY` went red the moment a selection survived into it — "r opened an inline
-       * editor but Esc did not close it" — because this VIEW binding outranks the shell's
-       * cascade unconditionally and cleared the selection instead. The typing guard hides
-       * this most of the time (this binding is not `inInput`, so it is dormant while the
-       * caret is in the textarea) and that is exactly why it is worth stating: the editor
-       * does not always hold focus, and a guard that only works when the caret is in the
-       * right place is not the guarantee U4 makes.
+       * This used to read `picked.size === 0 || chrome.replyTo != null`, and the second
+       * clause is the whole story. `U4-REPLY` went red the moment a selection survived
+       * into the reply editor — "r opened an inline editor but Esc did not close it" —
+       * because this VIEW binding outranked the shell's Escape cascade unconditionally and
+       * cleared the selection instead. The patch taught this view to name ONE of the
+       * shell's overlays, which left the `?` sheet, the ⌘K palette and the screening
+       * popover broken in exactly the same way and put the next overlay one line from
+       * joining them.
        *
-       * SAME CLASS, NOT FIXED HERE: the `?` sheet, the ⌘K palette and the screening
-       * popover are also inner to a picked set and also lose to it. They are the shell's
-       * overlays, this view cannot see them, and the fix is precedence in the cascade
-       * rather than a growing condition here — filed, not silently patched.
+       * The condition is gone because the precedence is stated where precedence lives: the
+       * shell's Escape is registered in the `overlay` scope, which outranks every view
+       * layer while something is open and stands down when nothing is (`keymap.tsx`). So
+       * this binding is once again only about this view — a picked set is the innermost
+       * thing the OHBOX has — and it knows nothing about what the shell may be showing.
        */
       chord: "Escape",
       group: "message",
       label: t("keyClear"),
-      disabled: picked.size === 0 || chrome.replyTo != null,
+      disabled: picked.size === 0,
       run: clearPicked,
     },
   ];
@@ -345,14 +443,16 @@ export function OhboxView({
       picked={picked.has(m.id)}
       onClick={() => {
         if (window.matchMedia("(max-width: 900px)").matches) {
-          // Mobile: a tap IS the open — there is no reading column to preview into.
-          onSelect(m.id);
+          // Mobile: a tap IS the open — there is no reading column to preview into. `open`
+          // selects as well as commits, so the cursor lands here exactly once.
           open(m);
         } else if (selected?.id === m.id) {
-          // Second click on the already-selected row: into the reader, so it is read.
+          // Second click on the already-selected row: into the reader, so it is read. Also
+          // the FIRST click on the top row of an untouched Ohbox, which the implicit fallback
+          // had already made `selected` — see `open` for what that used to do to the reader.
           open(m);
         } else {
-          onSelect(m.id);
+          selectByUser(m.id);
         }
       }}
     />
@@ -474,29 +574,26 @@ export function OhboxView({
  * every message in the MIRROR — Screener, Reads and Receipts included — not the ohbox rows
  * above, so the wording says "messages", not "in your Ohbox".
  *
- * Three consecutive failures replaces it with the failure, because by then the count has
- * stopped moving and a frozen counter is the same lie in a new font. It says the loop is still
- * retrying because it is: the scheduler backs off to a minute and never gives up while the tab
- * is visible.
+ * Three consecutive failures SILENCE it, because by then the count has stopped moving and a
+ * frozen counter is the same lie in a new font.
  *
- * The demo and the desktop never reach either branch — `useSyncStatus()` is permanently
- * settled for a fixtures engine.
+ * It used to replace the counter with "Sync failed. Retrying." — and that sentence, rendered
+ * only here, was the whole of P17: the one mailbox that could be told its sync was broken was
+ * the one that had never loaded anything. The failure is the shell's strip now (`SyncBar.tsx`),
+ * which says it in every view and with rows present, so repeating it here would be the same
+ * words twice on one screen. What is left for this pane is only to stop counting.
+ *
+ * The demo and the desktop never reach any of it — `useSyncStatus()` is permanently settled
+ * for a fixtures engine.
  */
 function SyncState() {
   const t = useTranslations("ohbox");
-  const { bootstrapping, failures } = useSyncStatus();
+  const { bootstrapping, failures, terminal } = useSyncStatus();
   const reader = useReader();
   const version = useEngineVersion();
   const mirrored = useMemo(() => reader.list("message").length, [reader, version]);
 
-  if (failures >= 3) {
-    return (
-      <div className="empty" role="status">
-        <span className="glyph" aria-hidden="true">⚠</span>
-        <b>{t("syncFailed")}</b>
-      </div>
-    );
-  }
+  if (terminal || failures >= SYNC_FAILURE_STREAK) return null;
   if (!bootstrapping) return null;
   return (
     <div className="empty" role="status">

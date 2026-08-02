@@ -68,6 +68,23 @@ export const SYNC_SETTLED: SyncStatus = { bootstrapping: false, failures: 0, ter
 export const SYNC_BOOTSTRAPPING: SyncStatus = { bootstrapping: true, failures: 0, terminal: false };
 
 /**
+ * How many consecutive failures the user hears about (P17).
+ *
+ * One is a blip — a dropped packet, a cold serverless function, a wifi handover — and the
+ * loop is back inside two seconds; saying so would train people to ignore the strip. Three
+ * is ~7 s at the 1 s/2 s/4 s ceilings and well inside one backoff cap, which is the promise
+ * the gap was written against: with the network down, the UI SAYS so within a cap.
+ *
+ * It lives here rather than in the surface because two surfaces read it — the strip that
+ * reports the failure and the bootstrap counter that has to stop claiming progress at the
+ * same moment. Two literals would let those drift into a window where the count is frozen
+ * and nothing explains why.
+ *
+ * `terminal` is NOT subject to it. A refusal no retry can fix is reported on the first one.
+ */
+export const SYNC_FAILURE_STREAK = 3;
+
+/**
  * Eight seconds, and only while the tab is visible.
  *
  * Short enough that mail arriving while somebody is reading feels present, long enough that

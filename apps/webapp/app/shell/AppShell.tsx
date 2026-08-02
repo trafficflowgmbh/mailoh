@@ -61,6 +61,7 @@ import { useScreenerState } from "./screener-state";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
 import { ShortcutSheet } from "./ShortcutSheet";
+import { SyncBar } from "./SyncBar";
 import { MessageChromeProvider } from "./message-chrome";
 import { readReplyDraft, writeReplyDraft } from "./InlineReply";
 import { SenderMenu, type SenderMenuState } from "./SenderMenu";
@@ -497,29 +498,82 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
           : null;
 
   /**
-   * ESCAPE HAS ONE OWNER, and this cascade is it.
+   * ESCAPE HAS ONE OWNER, and this ORDERED LIST is it (slices U2, S24).
    *
    * Before the registry, Escape was handled by `Reader` (close), `AppShell` (the (i)
    * panel), `OhboxView` (clear the selection), `ScreenerView` (leave the mobile preview)
    * and the palette input — five listeners with no agreed order, which is why the reply
    * editor could not simply add a sixth. `Reader` now takes `closeOnEscape={false}` and
-   * this closes the innermost thing that is open. The Ohbox's "clear the selection" stays
-   * a VIEW binding, so it runs before this one — a picked set is innermost of all.
+   * this closes the innermost thing that is open.
+   *
+   * ── IT USED TO BE TWO LISTS, AND THAT WAS THE BUG UNDERNEATH S24 ────────────────────
+   *
+   * An `if/else if` cascade decided WHAT Escape closes, and a parallel boolean expression
+   * beside it decided WHETHER Escape was live at all. Two enumerations of the same eight
+   * overlays, and every new overlay had to be added to both — a drift the type system
+   * cannot see, in the binding whose whole job is precedence. One array now answers both
+   * questions: `find` gives the innermost open overlay, and its absence IS "nothing is
+   * open". Adding an overlay is one line in one place, and forgetting it makes Escape
+   * inert for that overlay, which is visible on first use rather than subtly wrong.
+   *
+   * Order is innermost-first and is the list's own order — the palette sits over the sheet,
+   * which sits over a popover, which sits over the reader.
    */
-  const escapeCascade = useCallback(() => {
-    if (palette.open) palette.closePalette();
-    else if (shortcutsOpen) setShortcutsOpen(false);
-    else if (senderMenu) setSenderMenu(null);
-    else if (picker) setPicker(null);
-    else if (aboutOpen) setAboutOpen(false);
-    else if (fr) setFr(null);
-    else if (replyTo) setReplyTo(null);
-    else if (readerOpen) setReaderOpen(false);
-  }, [palette, shortcutsOpen, senderMenu, picker, aboutOpen, fr, replyTo, readerOpen]);
+  const escapeLayers: Array<[open: boolean, close: () => void]> = [
+    [palette.open, palette.closePalette],
+    [shortcutsOpen, () => setShortcutsOpen(false)],
+    [senderMenu != null, () => setSenderMenu(null)],
+    [picker != null, () => setPicker(null)],
+    [aboutOpen, () => setAboutOpen(false)],
+    [fr != null, () => setFr(null)],
+    [replyTo != null, () => setReplyTo(null)],
+    [readerOpen, () => setReaderOpen(false)],
+  ];
+  const closeInnermost = escapeLayers.find(([open]) => open)?.[1] ?? null;
 
-  const escapeClosesSomething =
-    palette.open || shortcutsOpen || senderMenu != null || picker != null || aboutOpen ||
-    fr != null || replyTo != null || readerOpen;
+  /**
+   * AN OPEN OVERLAY OWNS ESCAPE WHILE IT IS OPEN (slice S24).
+   *
+   * ── WHAT WAS WRONG ─────────────────────────────────────────────────────────────────
+   *
+   * The Ohbox's "clear the selection" is a VIEW binding and Escape's cascade was a GLOBAL
+   * one, so a picked set outranked the cascade UNCONDITIONALLY: with two rows selected,
+   * Escape cleared the selection instead of closing the `?` sheet, the ⌘K palette or the
+   * screening popover the user was actually looking at. It had been patched once, for the
+   * reply editor only, by teaching the Ohbox's binding to stand down when
+   * `chrome.replyTo != null` — a predicate in a view, naming one shell overlay out of
+   * eight. That is the shape that rots: the view cannot see the other seven, and the next
+   * overlay added would not be in the condition either.
+   *
+   * ── THE RULE ───────────────────────────────────────────────────────────────────────
+   *
+   * A third scope, ABOVE view layers (`keymap.tsx`), holding exactly one binding: Escape,
+   * live only while something is open. So the precedence is stated as what it actually is
+   * — an open overlay is inner to a selection — instead of being re-derived per case:
+   *
+   *   · nothing open  ⇒ this is disabled, the registry falls through to the view layer,
+   *                     and Escape clears the selection exactly as before;
+   *   · anything open ⇒ this wins over every view binding there will ever be, closes the
+   *                     innermost overlay, and the selection survives untouched.
+   *
+   * It cannot rot the way the per-case predicate did, because no view names an overlay any
+   * more and this binding names none either: it is gated by `escapeLayers` above, the same
+   * single list that decides what Escape closes. An overlay that Escape can close is
+   * therefore an overlay that outranks a selection, by construction and not by memory.
+   */
+  useKeyBindings(
+    [
+      {
+        chord: "Escape",
+        group: "app",
+        label: t("shortcuts.escape"),
+        inInput: true,
+        disabled: closeInnermost == null,
+        run: () => closeInnermost?.(),
+      },
+    ],
+    "overlay",
+  );
 
   /* ── the global key map. Views declare their own; see `keymap.tsx` for precedence. ── */
   const globalKeys: KeyBinding[] = [
@@ -591,14 +645,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
       label: t("shortcuts.sheet"),
       run: () => setShortcutsOpen((o) => !o),
     },
-    {
-      chord: "Escape",
-      group: "app",
-      label: t("shortcuts.escape"),
-      inInput: true,
-      disabled: !escapeClosesSomething,
-      run: escapeCascade,
-    },
+    /* Escape is NOT here. It is registered above, in the `overlay` scope, because an open
+       overlay has to outrank a view's bindings and a global one does not. */
   ];
   useKeyBindings(globalKeys, "global");
 
@@ -824,6 +872,13 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
             </button>
           </div>
         ) : null}
+
+        {/* A FAILING SYNC, IN EVERY VIEW (P17). Renders nothing while the loop is healthy,
+            and nothing at all in the demo or on the desktop. A sibling of the deck rather
+            than a child of any view, so it is outside every list's scroller and no view can
+            forget it — see `SyncBar.tsx` for why that placement is the fix and the sentence
+            is not. */}
+        <SyncBar />
 
         <div className="topbar">
           <button

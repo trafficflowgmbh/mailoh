@@ -34,7 +34,10 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // word belongs, which is exactly the failure the abort below exists to prevent — and
   // `desktop-messages.test.ts` caught the omission rather than a user finding it.
   "reply", "ribbon", "screener", "screening", "search", "session", "settings",
-  "shortcuts", "tag", "triage",
+  // `sync` arrived with P17 — the shell's failing-sync strip. The desktop compiles it and
+  // can never render it (a fixtures engine is permanently settled), but the guard compares
+  // this list against what the sources READ, not against what they display.
+  "shortcuts", "sync", "tag", "triage",
 ] as const;
 
 /**

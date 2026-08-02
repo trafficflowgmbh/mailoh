@@ -201,11 +201,21 @@ export function EngineProvider({
    * micro-optimisation: a healthy tab settles a drain every eight seconds forever, and
    * without it every one of those would re-render the whole shell to publish a value
    * identical to the one already on screen.
+   *
+   * ALL THREE FIELDS ARE COMPARED. `terminal` was missing, and it survived only by luck:
+   * the scheduler happens to increment `failures` in the same publish that sets it, so the
+   * value did get through. Nothing enforced that coincidence, and the field exists precisely
+   * so a surface can render "this session has stopped" differently from "still retrying" —
+   * a dedup that cannot see the difference is one refactor away from swallowing it.
    */
   const [sync, setSync] = useState<SyncStatus>(SYNC_BOOTSTRAPPING);
   const onSyncStatus = useCallback((next: SyncStatus) => {
     setSync((prev) =>
-      prev.bootstrapping === next.bootstrapping && prev.failures === next.failures ? prev : next,
+      prev.bootstrapping === next.bootstrapping
+      && prev.failures === next.failures
+      && prev.terminal === next.terminal
+        ? prev
+        : next,
     );
   }, []);
 
@@ -313,12 +323,13 @@ export function useEngine(): OhmailEngine {
 }
 
 /**
- * What the sync loop is doing, for the one view that has to say so.
+ * What the sync loop is doing, for the surfaces that have to say so.
  *
  * A hook rather than a prop threaded through `AppShell` for the same reason the scheduler is
- * not a prop: `OhboxView` is the only consumer today, and passing this down four levels would
- * make forgetting it the default. The demo and the desktop read a permanently settled value,
- * so neither renders anything new.
+ * not a prop: passing this down four levels would make forgetting it the default. Two
+ * consumers now — `SyncBar`, which reports a failing loop above the deck in every view, and
+ * the Ohbox's empty state, which uses it to stop counting. The demo and the desktop read a
+ * permanently settled value, so neither renders anything new.
  */
 export function useSyncStatus(): SyncStatus {
   return useBinding().sync;

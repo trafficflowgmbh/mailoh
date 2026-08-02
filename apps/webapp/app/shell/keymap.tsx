@@ -91,8 +91,29 @@ export interface KeyBinding {
   when?: (e: KeyboardEvent) => boolean;
 }
 
-/** Registration scope. View layers win over global ones; see the header. */
-export type BindingScope = "view" | "global";
+/**
+ * Registration scope, in precedence order: `overlay` beats `view` beats `global`.
+ *
+ * ── WHY THERE ARE THREE AND NOT TWO (slice S24) ─────────────────────────────────────────
+ *
+ * Two scopes said "the innermost VIEW wins", which is right for `c` (Compose everywhere,
+ * Receipts in the Screener) and wrong for Escape. Escape's owner is not a view, it is
+ * whatever is OPEN ON TOP of one — the `?` sheet, the ⌘K palette, a popover, the reader —
+ * and all of those are the shell's, registered from a component that is an ANCESTOR of the
+ * view. So the shell's cascade could only ever be `global`, and a view binding beat it
+ * unconditionally: with rows selected in the Ohbox, Escape cleared the selection instead of
+ * closing the sheet the user was reading.
+ *
+ * It had been patched once, per-case, by teaching the Ohbox to stand down when the reply
+ * editor was open — a predicate in a view, naming one of the shell's eight overlays. Three
+ * surfaces stayed broken and the fourth was one new overlay away from breaking again.
+ *
+ * `overlay` states the missing rank instead: a layer that is open is inner to any view,
+ * whatever the component tree says about who mounted whom. It is deliberately narrow — the
+ * shell registers ONE binding into it — and it is a scope rather than a flag on a binding
+ * because precedence is a property of the LAYER, which is the thing that comes and goes.
+ */
+export type BindingScope = "overlay" | "view" | "global";
 
 interface Layer {
   id: number;
@@ -177,17 +198,20 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
-   * Dispatch order — view layers innermost-first, then global layers innermost-first.
+   * Dispatch order — overlay layers, then view layers, then global ones, each
+   * innermost-first, and the FIRST match runs.
    *
    * It cannot be plain registration order: React runs a CHILD's effects before its
    * parent's, so the view registers before `AppShell` does and a naive "last wins" would
-   * hand every contested key to the shell. The scope split states the intent instead of
-   * depending on a mount order nobody can see.
+   * hand every contested key to the shell. Worse for the overlays, which the SHELL owns:
+   * by mount order they are the outermost thing in the app, and by intent they are the
+   * innermost. The scope split states that intent instead of depending on a tree shape
+   * that says the opposite. See {@link BindingScope}.
    */
   const ordered = useCallback((): KeyBinding[] => {
     const of = (scope: BindingScope) =>
       layers.current.filter((l) => l.scope === scope).reverse().flatMap((l) => l.get());
-    return [...of("view"), ...of("global")];
+    return [...of("overlay"), ...of("view"), ...of("global")];
   }, []);
 
   /** The half-typed sequence (`g`, waiting for `o`), and its expiry. */

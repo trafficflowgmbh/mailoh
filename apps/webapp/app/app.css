@@ -100,6 +100,57 @@ body.reading .shell {
   background: oklch(1 0 0 / 0.08);
 }
 
+/* ================= sync status strip (P17) =================
+   A sibling of the deck, not a child of any view: it is `flex: none` inside
+   .shell, so it is outside every list's scroller by construction rather than by
+   a position:sticky that a future overflow context could quietly break. It is
+   absent from the DOM whenever the loop is healthy — see SyncBar.tsx.
+
+   No new colour enters the system. RETRYING borrows the demo ribbon's language
+   (accent-soft ground, accent ink) because it is a condition, not an event, and
+   it may sit there for minutes. STOPPED is the accent at full strength, the same
+   weight as a primary button, because the loop has ended and there is one thing
+   to do about it. Both are flat fills: zero backdrop-filter, zero gradients. */
+.sync-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  padding: 5px 14px;
+  font-size: 11.5px;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+.sync-bar b {
+  font-weight: 600;
+}
+.sync-bar .glyph {
+  font-size: 12px;
+  line-height: 1;
+}
+.sync-bar.stopped {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+.sync-bar.stopped a {
+  font-weight: 600;
+  color: var(--on-accent);
+  border-radius: 99px;
+  padding: 1px 9px;
+  background: oklch(1 0 0 / 0.18);
+}
+.sync-bar.stopped a:hover {
+  background: oklch(1 0 0 / 0.3);
+}
+[data-theme="dark"] .sync-bar.stopped a {
+  background: oklch(0 0 0 / 0.12);
+}
+[data-theme="dark"] .sync-bar.stopped a:hover {
+  background: oklch(0 0 0 / 0.2);
+}
+
 /* ================= reads pending-AI chip row ================= */
 .reads-chip-row {
   padding: 2px 18px 14px;
