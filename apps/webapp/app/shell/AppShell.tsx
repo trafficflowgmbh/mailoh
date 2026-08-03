@@ -215,6 +215,21 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
   const [searchQuery, setSearchQuery] = useState("");
   const [jump, setJump] = useState<{ view: "reads" | "receipts"; id: string } | null>(null);
   const [fr, setFr] = useState<{ step: number; items: TriagePileEntry[] } | null>(null);
+  /**
+   * U7 — "start a Reply Run once we are on Triage", as an INTENT rather than a race.
+   *
+   * `f` and the palette both did `go("triage"); setTimeout(startFR, 130)`. The route-transition
+   * effect below clears every overlay — `setFr(null)` included — whenever the view changes, so
+   * that 130 ms was a bet that the effect would run first. Any extra render moves the deadline:
+   * with a row selected the effect landed AFTER the timeout and wiped the state that had just
+   * opened the overlay, so `f` navigated to Triage and then silently did nothing. It was filed
+   * as "a selection blocks the Reply Run"; the selection was only the cheapest way to buy
+   * enough renders to lose the race.
+   *
+   * A flag the effect itself honours cannot lose it: the clear and the re-arm are one pass, in
+   * that order, however many times React re-renders on the way.
+   */
+  const [frPending, setFrPending] = useState(false);
   const [frValues, setFrValues] = useState<Record<number, string>>({});
   const [frDone, setFrDone] = useState<Set<string>>(() => new Set());
   const [ribbonGone, setRibbonGone] = useState(false);
@@ -275,6 +290,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
       setShortcutsOpen(false);
       setReplyTo(null);
       if (route.view !== "screener") setScreenerFull(false);
+      // …and only then honour a pending Reply Run, so the clear above cannot undo it (U7).
+      if (route.view === "triage" && frPending) {
+        setFrPending(false);
+        setFrValues({});
+        setFr({ step: 0, items: piles.replyLater });
+      }
     }
     prevRoute.current = route;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -590,8 +611,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
       label: t("shortcuts.replyRun"),
       disabled: piles.replyLater.length === 0,
       run: () => {
+        setFrPending(true);
         go("triage");
-        setTimeout(startFR, 130);
       },
     },
     {
@@ -679,8 +700,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
         label: t("palette.startFR"),
         keys: ["f"],
         run: () => {
+          setFrPending(true);
           go("triage");
-          setTimeout(startFR, 130);
         },
       },
       { id: "search", label: t("palette.search"), keys: ["/"], run: () => go("search") },
