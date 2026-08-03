@@ -14,6 +14,19 @@ import {
 } from "./types.js";
 
 /**
+ * The reply subject for a parent subject — `Re: ` exactly once.
+ *
+ * CASE-INSENSITIVE, because the prefix arrives in whatever case the sender's client used
+ * and a case-sensitive test yields `Re: RE: …` on the second exchange with an Outlook
+ * correspondent. Only the leading prefix is stripped: `Re: Re: x` collapses to one, and a
+ * subject that merely CONTAINS "re:" is untouched.
+ */
+export function replySubject(parentSubject: string): string {
+  const bare = parentSubject.replace(/^(?:\s*re\s*:\s*)+/i, "").trim();
+  return bare ? `Re: ${bare}` : "Re:";
+}
+
+/**
  * The ONE source of truth for what each mutation MEANS locally. Both consumers
  * share it, so the optimistic view and the demo "server" can never disagree:
  *
@@ -285,6 +298,38 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         effects.push({ type: "message", id, entity: { ...msg, unread: m.unread, updatedAt: iso } });
       }
       return effects;
+    }
+
+    case "reply_send": {
+      // The parent is the whole mutation: it supplies the recipient, the mailbox and the
+      // thread. An id the mirror does not know yields [], which the engine reports as a
+      // rejection — better than composing a reply to nobody and discovering it on the wire.
+      const parent = reader.get<EngineMessage>("message", m.messageId);
+      if (!parent) return [];
+
+      // ONE `draft` row at `sending`, complete in every field of `EngineDraft` so any future
+      // consumer that lists drafts gets a whole entity rather than a half one. It carries a
+      // CLIENT uuid; the server's row arrives under its own id on the next drain, and this
+      // overlay is dropped the moment the mutation resolves, so the two never coexist.
+      //
+      // NOTE for the demo world: `FixturesAdapter` replays this same effect AUTHORITATIVELY,
+      // so a demo send leaves a draft parked at `sending` forever. Harmless while nothing
+      // renders drafts; revisit if an Outbox ever does.
+      const draft: EngineDraft = {
+        id: ctx.uuid(),
+        mailboxId: m.mailboxId ?? parent.mailboxId,
+        threadId: m.threadId ?? parent.threadId,
+        inReplyToMessageId: parent.id,
+        subject: m.subject ?? replySubject(parent.subject),
+        body: m.body,
+        to: m.to ?? [parent.from],
+        cc: [],
+        rationale: null,
+        status: "sending",
+        createdAt: iso,
+        updatedAt: iso,
+      };
+      return [{ type: "draft", id: draft.id, entity: draft }];
     }
 
     case "draft_accept": {

@@ -87,7 +87,7 @@ export {
 export { SearchIndex, type LocalSearchResult, type SearchFacets, type SearchHit, type SearchMatch } from "./search.js";
 
 // Mutation semantics (shared optimistic/demo source of truth).
-export { mutationEffects, type EffectContext, type MutationEffect } from "./mutations.js";
+export { mutationEffects, replySubject, type EffectContext, type MutationEffect } from "./mutations.js";
 
 // Adapters.
 export type { EngineAdapter, MutationOutcome, SyncParams } from "./adapters/adapter.js";

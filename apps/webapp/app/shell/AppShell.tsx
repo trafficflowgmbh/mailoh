@@ -58,6 +58,7 @@ import {
 import { PLACE_LABEL, avatarHue, firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
 import { MessagePane, type MessageAction } from "./MessagePane";
 import { useScreenerState } from "./screener-state";
+import { useReplySend } from "./reply-send";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
 import { ShortcutSheet } from "./ShortcutSheet";
@@ -335,11 +336,30 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
   );
 
   /**
-   * Sending is NOT wired. `EngineMutation` has no send verb — the gated send path exists on
-   * the server and no client vocabulary reaches it — so this says so instead of pretending.
-   * The draft stays where it is; nothing is discarded by pressing a button that cannot work.
+   * SENDING (slice U4b). The state machine, the retry driver and the U4e triage clear all
+   * live in `reply-send.ts`; this only says what "the send settled" means to the shell —
+   * close the editor, but ONLY if it is still open on that same message. A confirmation can
+   * arrive from a retry long after the user moved on, and closing whatever editor happens to
+   * be open then would discard a different half-written reply.
    */
-  const sendReply = useCallback(() => toast(t("reply.toastSendUnwired")), [toast, t]);
+  const onSendSettled = useCallback((messageId: string) => {
+    setReplyTo((cur) => (cur === messageId ? null : cur));
+  }, []);
+  const replySend = useReplySend(engine, toast, onSendSettled);
+  /**
+   * The body comes from REACT STATE, not from `readReplyDraft`. Private mode refuses the
+   * `localStorage` write, so re-reading the scratch buffer at press time would send an empty
+   * reply — or, with the empty guard in place, refuse to send at all — for anyone browsing
+   * privately. The editor is only reachable while `replyTo` is this message, so the guard
+   * below is a belt on the same waistband.
+   */
+  const sendReply = useCallback(
+    (messageId: string) => {
+      if (messageId !== replyTo) return;
+      replySend.send(messageId, replyBody);
+    },
+    [replySend, replyTo, replyBody],
+  );
 
   /**
    * SCREENING FROM ANYWHERE (slice U3) — one call site for every surface.
@@ -625,6 +645,25 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
       run: () => selectedOhbox && openReply(selectedOhbox.id),
     },
     {
+      // SENDING FROM THE KEYBOARD (slice U4b). `inInput` is not optional: the editor takes
+      // focus the moment it opens, so without it the one place the shortcut is for is the one
+      // place it would not fire — the same reasoning Escape's binding already carries.
+      //
+      // `mod+Enter` and not bare `Enter`, because the field is a multi-line textarea where
+      // Enter is a newline. The four views bind bare `Enter` as "open the row" and none of
+      // them sets `inInput`, so the typing guard already keeps them out of this editor; this
+      // chord does not collide with any of them.
+      //
+      // It calls the same `sendReply` the button does, so the send lock, the empty-body guard
+      // and the whole failure surface apply identically — there is no second path to SMTP.
+      chord: "mod+Enter",
+      group: "message",
+      label: t("shortcuts.sendReply"),
+      inInput: true,
+      disabled: replyTo == null,
+      run: () => replyTo && sendReply(replyTo),
+    },
+    {
       chord: "s",
       group: "message",
       label: t("shortcuts.screen"),
@@ -873,8 +912,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
   );
 
   const chrome = useMemo(
-    () => ({ replyTo, replyBody, onReplyBody, closeReply, sendReply, openSenderMenu, conversationOf }),
-    [replyTo, replyBody, onReplyBody, closeReply, sendReply, openSenderMenu, conversationOf],
+    () => ({
+      replyTo, replyBody, onReplyBody, closeReply, sendReply,
+      replySendState: replySend.stateOf,
+      openSenderMenu, conversationOf,
+    }),
+    [replyTo, replyBody, onReplyBody, closeReply, sendReply, replySend, openSenderMenu, conversationOf],
   );
 
   // Resolved here rather than inside the popover so a sender whose last message has just

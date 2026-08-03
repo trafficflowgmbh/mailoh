@@ -1,5 +1,5 @@
 import type { EngineAdapter } from "./adapters/adapter.js";
-import { mutationEffects, type MutationEffect } from "./mutations.js";
+import { mutationEffects, replySubject, type MutationEffect } from "./mutations.js";
 import { SearchIndex, type LocalSearchResult } from "./search.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
 import {
@@ -220,6 +220,24 @@ export class OhmailEngine {
         .filter((msg) => msg.folder === "ohmail/Reads" && msg.unread)
         .map((msg) => msg.id);
       return { ...m, messageIds: ids };
+    }
+    if (m.kind === "reply_send") {
+      // FREEZE THE ENVELOPE HERE, and nowhere else. The overlay effect and the wire body are
+      // both computed from this one object, so they cannot disagree — and because the
+      // enriched mutation is what goes on the queue, a retry after a network failure sends
+      // the SAME envelope rather than re-deriving it from a mirror that has since drained.
+      const parent = this.read().get<EngineMessage>("message", m.messageId);
+      if (!parent) return m; // unknown parent ⇒ no effects ⇒ mutate() rejects it below
+      return {
+        ...m,
+        mailboxId: m.mailboxId ?? parent.mailboxId,
+        threadId: m.threadId ?? parent.threadId,
+        subject: m.subject ?? replySubject(parent.subject),
+        // The reply goes to the sender of the message being answered. `Reply-To` is not in
+        // the mirror (the DTO has no field for it), so a sender who set one is answered at
+        // their From — filed as owed rather than silently approximated.
+        to: m.to ?? [parent.from],
+      };
     }
     return m;
   }

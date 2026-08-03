@@ -10,5 +10,15 @@
 .btn.primary:hover{filter:brightness(1.07);background:var(--accent)}
 .btn.ghost{background:transparent;box-shadow:none;color:var(--ink2)}
 .btn.ghost:hover{background:var(--tint);color:var(--ink);transform:none;box-shadow:none}
+/* DISABLED. There was no rule for it at all, so a `disabled` primary kept the terracotta
+   fill and the hover lift and read as the live control it is not — first needed by the
+   reply Send button (U4b), where "you cannot press this yet" and "pressing this sends mail
+   to a person" must not look alike. Flat, unlit, no cursor promise; opacity is deliberately
+   NOT used, because it would drop the label below contrast on the accent fill. */
+.btn:disabled{background:var(--tint2);color:var(--ink3);box-shadow:none;cursor:default}
+.btn:disabled:hover{transform:none;box-shadow:none;filter:none;background:var(--tint2)}
+.btn:disabled:active{transform:none}
+.btn.primary:disabled{background:var(--tint2);color:var(--ink3)}
+.btn.primary:disabled:hover{background:var(--tint2)}
 .btn kbd{background:transparent;border-color:var(--hair-soft)}
 .btn.primary kbd{border-color:oklch(1 0 0/.32);color:inherit}

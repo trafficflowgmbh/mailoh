@@ -218,9 +218,10 @@ export function MessagePane({
             context={conversation.length > 0 ? conversation : [message]}
             now={now}
             value={chrome.replyBody}
+            send={chrome.replySendState(message.id)}
             onChange={chrome.onReplyBody}
             onClose={chrome.closeReply}
-            onSend={chrome.sendReply}
+            onSend={() => chrome.sendReply(message.id)}
           />
         ) : undefined
       }

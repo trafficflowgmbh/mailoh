@@ -348,6 +348,40 @@ export type EngineMutation =
    * rather than two mutations that must be kept in agreement.
    */
   | { kind: "mark_seen"; messageIds: string[]; unread: boolean }
+  /**
+   * SEND A REPLY (slice U4b) — the one mutation whose effect leaves the building.
+   *
+   * ── WHY IT HAS NO REVERSIBLE OPTIMISTIC EFFECT ─────────────────────────────────────────
+   *
+   * Every other verb here is a local edit the server later agrees with, and a rejection
+   * rolls the overlay back with nothing lost. A send is not that: a message that reached
+   * SMTP cannot be un-sent, so the overlay must never assert that it arrived. The effect is
+   * therefore ONE `draft` row at `status: "sending"` — the same state the server writes on
+   * its reservation — and deliberately NOT a Sent-folder message row. The real copy lands
+   * when the worker's Sent-folder watch ingests it (slice U4c), minutes later; fabricating
+   * one here would be a claim the mirror contradicts on the next drain.
+   *
+   * The three non-delivered outcomes are distinguishable at the call site and MUST stay
+   * that way — `send_unverified` (SMTP threw and the Sent probe found nothing: genuinely
+   * ambiguous), `send_failed` (a terminal prior attempt under this key), and a retryable
+   * `in_flight`/network rejection that keeps the intent queued. A queued send that looks
+   * like a delivered one is the failure this vocabulary exists to prevent.
+   *
+   * The optional fields are filled by `Engine.enrich()` from the parent message, exactly as
+   * `tag_assign.labels` is, so the overlay and the wire body are computed once from the same
+   * state and cannot disagree.
+   */
+  | {
+      kind: "reply_send";
+      /** The message being answered — the reply's parent. */
+      messageId: string;
+      /** Exactly what the user typed. No quoted original: see the http adapter. */
+      body: string;
+      mailboxId?: string;
+      threadId?: string | null;
+      subject?: string;
+      to?: EmailAddress[];
+    }
   | { kind: "draft_accept"; draftId: string };
 
 // ── errors ─────────────────────────────────────────────────────────────────

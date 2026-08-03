@@ -951,6 +951,7 @@
     "search": "Search",
     "compose": "Write a new message",
     "reply": "Reply inside the message",
+    "sendReply": "Send the reply",
     "replyRun": "Start the Reply Run",
     "screen": "Change this sender's screening",
     "answerLater": "Queue it for the Reply Run",
@@ -990,7 +991,12 @@
     "conversationAria": "Conversation",
     "conversationCount": "{count, plural, one {1 message} other {# messages}} on this conversation",
     "conversationHere": "replying to this",
-    "sendTitle": "Sending is not connected yet.",
-    "toastSendUnwired": "Sending is not connected yet — the draft is kept on this device."
+    "sending": "Sending…",
+    "statusSending": "Sending your reply.",
+    "statusQueued": "Not sent yet. ohmail is still trying.",
+    "statusUnverified": "We couldn't confirm this send. Check your Sent folder before sending it again.",
+    "statusFailed": "Not sent: {reason}",
+    "reasonUnknown": "the server refused it.",
+    "toastSent": "Reply sent."
   }
 }

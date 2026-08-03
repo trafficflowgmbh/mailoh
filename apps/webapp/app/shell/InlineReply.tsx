@@ -36,6 +36,7 @@ import type { EngineMessage } from "@ohmail/client-engine";
 import { Button, Kbd } from "@ohmail/ui";
 import { ConversationEntries, ConversationHead } from "./Conversation";
 import { rowAddress, senderName } from "./format";
+import type { ReplySendState } from "./reply-send";
 
 /** `localStorage` key for a per-message reply draft. */
 export const replyDraftKey = (messageId: string): string => `ohmail.ui.reply:${messageId}`;
@@ -57,11 +58,31 @@ export function writeReplyDraft(messageId: string, body: string): void {
   }
 }
 
+/**
+ * MAY THIS REPLY BE SENT RIGHT NOW? — ONE predicate, two consumers.
+ *
+ * The button's `disabled` and the state machine's own refusal used to be two copies of the
+ * same rule, and a mutation test proved what that costs: deleting the guard inside
+ * `useReplySend.send` left every assertion green, because they all went through the button.
+ * A rule with two implementations has one that nothing watches.
+ *
+ * `sending`/`queued` are locked because a second press mints a second Idempotency-Key, which
+ * is a second reservation, which is a second delivery to a real person. Empty is locked
+ * because the server accepts a blank body (`drafts-service.ts:167-171`) and would post it.
+ * `unverified` and `failed` are NOT locked: both are terminal on the server for that draft,
+ * so the only way forward is a fresh send the user deliberately chooses.
+ */
+export function canSend(send: ReplySendState, body: string): boolean {
+  if (send.phase === "sending" || send.phase === "queued") return false;
+  return body.trim().length > 0;
+}
+
 export function InlineReply({
   message,
   context,
   now,
   value,
+  send = { phase: "idle" },
   onChange,
   onClose,
   onSend,
@@ -74,6 +95,8 @@ export function InlineReply({
   context: EngineMessage[];
   now: Date;
   value: string;
+  /** How the send is going — see `reply-send.ts`. Defaults to idle for panes with no shell. */
+  send?: ReplySendState;
   onChange: (next: string) => void;
   onClose: () => void;
   onSend: () => void;
@@ -84,6 +107,31 @@ export function InlineReply({
   useEffect(() => {
     editor.current?.focus();
   }, [message.id]);
+
+  const inFlight = send.phase === "sending" || send.phase === "queued";
+  // LOCKED, not merely styled: `disabled` is what stops a second key being minted. Shared
+  // with the state machine — see `canSend`.
+  const locked = !canSend(send, value);
+
+  /**
+   * The line under the buttons, and the reason it is `role="status"` with `aria-live`: a
+   * send resolves out of band, sometimes minutes later on a retry, so the outcome has to
+   * reach a screen reader without the focus being anywhere near it.
+   *
+   * `queued` and `unverified` deliberately do NOT say "sent". They are the two states a
+   * hurried reader is most likely to misread as success, and the copy is written against
+   * that: one says it has not gone yet, the other says we cannot tell.
+   */
+  const status: { tone: "pending" | "warn" | "error"; text: string } | null =
+    send.phase === "sending"
+      ? { tone: "pending", text: t("statusSending") }
+      : send.phase === "queued"
+        ? { tone: "pending", text: t("statusQueued") }
+        : send.phase === "unverified"
+          ? { tone: "warn", text: t("statusUnverified") }
+          : send.phase === "failed"
+            ? { tone: "error", text: t("statusFailed", { reason: send.reason ?? t("reasonUnknown") }) }
+            : null;
 
   return (
     <div className="reply" data-reply-for={message.id}>
@@ -108,12 +156,20 @@ export function InlineReply({
         aria-label={t("editorAria")}
         placeholder={t("placeholder")}
         value={value}
+        /* The text is never taken away from the author, not even mid-send: a failed send
+           whose draft had been cleared would be a reply the user has to write twice. */
+        readOnly={inFlight}
         onChange={(e) => onChange(e.target.value)}
       />
 
       <div className="reply-actions">
-        <Button variant="primary" aria-disabled="true" title={t("sendTitle")} onClick={onSend}>
-          {t("send")}
+        <Button
+          variant="primary"
+          disabled={locked}
+          aria-busy={send.phase === "sending" || undefined}
+          onClick={() => onSend()}
+        >
+          {send.phase === "sending" ? t("sending") : t("send")}
         </Button>
         <Button variant="ghost" onClick={onClose}>
           {t("cancel")}
@@ -122,6 +178,12 @@ export function InlineReply({
           <Kbd>esc</Kbd> {t("hintEsc")}
         </span>
       </div>
+
+      {status ? (
+        <p className={`reply-status ${status.tone}`} role="status" aria-live="polite">
+          {status.text}
+        </p>
+      ) : null}
     </div>
   );
 }

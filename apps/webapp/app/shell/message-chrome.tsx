@@ -15,6 +15,7 @@
  */
 import { createContext, useContext, type ReactNode } from "react";
 import type { EngineMessage } from "@ohmail/client-engine";
+import type { ReplySendState } from "./reply-send";
 
 export interface MessageChrome {
   /** The message id whose inline reply editor is open, if any. */
@@ -22,7 +23,14 @@ export interface MessageChrome {
   replyBody: string;
   onReplyBody: (next: string) => void;
   closeReply: () => void;
-  sendReply: () => void;
+  /**
+   * Send the open reply to `messageId` (slice U4b). It takes the id rather than closing over
+   * `replyTo` because a confirmation can arrive long after the editor moved on, and the
+   * outcome belongs to the message that was answered, not to whatever is on screen now.
+   */
+  sendReply: (messageId: string) => void;
+  /** Where that message's send has got to — see `reply-send.ts` for why it has four states. */
+  replySendState: (messageId: string) => ReplySendState;
   /** Open the screening popover for `messageId`, anchored on `anchor`. */
   openSenderMenu: (messageId: string, anchor: HTMLElement | null) => void;
   /**
@@ -53,6 +61,7 @@ const MessageChromeContext = createContext<MessageChrome>({
   onReplyBody: noop,
   closeReply: noop,
   sendReply: noop,
+  replySendState: () => ({ phase: "idle" }),
   openSenderMenu: noop,
   conversationOf: () => [],
 });
