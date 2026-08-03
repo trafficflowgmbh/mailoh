@@ -64,4 +64,26 @@ export class HttpAdapter {
   async mutate(_mutation: unknown, _opts: unknown): Promise<never> {
     throw new Error(REFUSAL);
   }
+
+  /**
+   * `GET /messages/:id/body` (slice U5-BODY) — the third method the real adapter has, and
+   * therefore the third this must declare.
+   *
+   * It is not optional decoration. `EngineAdapter` requires `fetchBody`, and this file is
+   * published OVER `packages/client-engine/src/adapters/http-adapter.ts` in the desktop
+   * mirror (`scripts/publish-desktop.mjs`'s `DEST_ALIASES`) — so in that repository this IS
+   * `HttpAdapter`, and omitting a required method breaks the mirror's typecheck while the
+   * private tree stays green, because `tsc` here resolves the real file. The header's claim
+   * that a change to the interface "would still fail if this could not satisfy it" is only
+   * true of the mirror, and only if this keeps pace. `desktop-shell.test.ts` now asserts the
+   * method set rather than trusting it.
+   *
+   * The desktop never reaches it: it runs on `FixturesAdapter`, whose rows carry `body`
+   * already, so `hydrateBody` short-circuits before any adapter is consulted. Refusing rather
+   * than answering `null` keeps this file's one rule — a Cloud call in this build is a bug,
+   * not a degraded feature.
+   */
+  async fetchBody(_messageId: unknown): Promise<never> {
+    throw new Error(REFUSAL);
+  }
 }

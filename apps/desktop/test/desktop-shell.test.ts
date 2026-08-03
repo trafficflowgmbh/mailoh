@@ -205,6 +205,40 @@ describe("the UI bundle's build config", () => {
     expect(read("src/no-http-adapter.ts")).toMatch(/throw new Error\(REFUSAL\)/);
   });
 
+  it("the stub declares EVERY method EngineAdapter requires — the mirror IS this file", () => {
+    /**
+     * THE GAP THIS CLOSES, found by slice U5-BODY adding `fetchBody` to `EngineAdapter`.
+     *
+     * `no-http-adapter.ts` is published OVER
+     * `packages/client-engine/src/adapters/http-adapter.ts` in the desktop mirror
+     * (`scripts/publish-desktop.mjs`'s `DEST_ALIASES`). In THAT repository the stub is
+     * `HttpAdapter`, so a method the real interface requires and the stub omits is a
+     * typecheck failure there — while `pnpm typecheck` here stays green, because `tsc` reads
+     * no Vite aliases and resolves the real file. The stub's own header claimed the interface
+     * changing "would still fail if this could not satisfy it"; that was true of the mirror
+     * and unobservable from here, which is the worst combination.
+     *
+     * So the method set is compared against the interface's own declaration rather than
+     * remembered. Red by deleting `fetchBody` from the stub, or by adding a method to
+     * `EngineAdapter` without mirroring it.
+     */
+    const iface = fs.readFileSync(
+      path.resolve(APP, "../../packages/client-engine/src/adapters/adapter.ts"),
+      "utf8",
+    );
+    const body = iface.slice(iface.indexOf("export interface EngineAdapter"));
+    const required = [...body.matchAll(/^\s{2}(\w+)\(/gm)].map((m) => m[1]);
+    // The harness bites only if it found something to compare.
+    expect(required.length).toBeGreaterThanOrEqual(3);
+    expect(required).toContain("fetchBody");
+
+    const stub = read("src/no-http-adapter.ts");
+    for (const method of required) {
+      expect(stub, `no-http-adapter.ts is missing EngineAdapter.${method}`)
+        .toMatch(new RegExp(`^\\s{2}(?:async )?${method}\\(`, "m"));
+    }
+  });
+
   it("emits origin-agnostic relative URLs", () => {
     expect(vite).toMatch(/base: "\.\/"/);
   });

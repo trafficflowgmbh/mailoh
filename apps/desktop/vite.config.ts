@@ -27,7 +27,13 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
  * here fails the suite rather than the app.
  */
 export const SHELL_MESSAGE_NAMESPACES = [
-  "about", "compose", "dock", "ohbox", "palette", "rail", "reads", "receipts",
+  // `body` arrived with U5-BODY — the two sentences a reading surface says when the message
+  // text is being fetched or could not be. The desktop compiles them and can never render
+  // them (its `FixturesAdapter` serves no bodies, so `hydrateBody` short-circuits and no
+  // surface ever sees `loading`/`failed`), and it is listed for the reason `sync` is: the
+  // guard compares this array against what the sources READ, not against what they display.
+  // Omitting it would put `body.loading` in the binary where a sentence belongs.
+  "about", "body", "compose", "dock", "ohbox", "palette", "rail", "reads", "receipts",
   // `reply`, `screening` and `shortcuts` arrived with the 2026-08-02 frontend slice
   // (inline reply, sender screening, the `?` overlay). They are listed here because the
   // desktop shell renders all three; without them the binary shows `reply.send` where a
