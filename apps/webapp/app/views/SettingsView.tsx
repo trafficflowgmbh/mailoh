@@ -34,7 +34,7 @@ import {
 } from "@ohmail/ui";
 import { hueOf } from "../shell/format";
 
-type PaneId = "general" | "notifications" | "mailboxes" | "billing" | "tags" | "account";
+type PaneId = "general" | "notifications" | "mailboxes" | "billing" | "tags" | "security" | "account";
 
 /**
  * The notification channels, and why this list is here rather than in the fixtures.
@@ -95,6 +95,7 @@ export function SettingsView({
   accountSection,
   mailboxSection,
   billingSection,
+  securitySection,
 }: {
   /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
   notifications: NotificationsMeta | null;
@@ -114,6 +115,14 @@ export function SettingsView({
   mailboxSection?: ReactNode;
   /** The Cloud client's Subscription pane — plan, the AI switch, and Stripe's portal. */
   billingSection?: ReactNode;
+  /**
+   * The Cloud client's Security pane — recovery codes and the authenticator.
+   *
+   * Same seam and same reason as {@link accountSection}: every control in it is a step-up
+   * ceremony against `auth`, which the Desktop mirror does not have and `?demo=1` must never
+   * reach. Absent ⇒ the pane is not offered at all, rather than offered and dead.
+   */
+  securitySection?: ReactNode;
 }) {
   const t = useTranslations("settings");
   const toast = useToast();
@@ -136,6 +145,7 @@ export function SettingsView({
     // LAST, and only where there is an account to act on. Last because the pane's only
     // content is irreversible, and a destructive control at the top of a list is one
     // mis-click away from the thing above it.
+    ...(securitySection ? [["security", t("security")] as [PaneId, string]] : []),
     ...(accountSection ? [["account", t("account")] as [PaneId, string]] : []),
   ];
 
@@ -302,6 +312,7 @@ export function SettingsView({
             </SettingsSection>
           ) : null}
 
+          {pane === "security" ? securitySection : null}
           {pane === "account" ? accountSection : null}
         </div>
       </div>

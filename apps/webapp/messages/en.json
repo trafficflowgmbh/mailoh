@@ -431,7 +431,8 @@
     "tagNote": "A tag groups messages across Ohbox, Reads and Receipts without moving them.",
     "toastTagEditing": "Renaming and deleting tags isn't wired up yet.",
     "account": "Account",
-    "billing": "Subscription"
+    "billing": "Subscription",
+    "security": "Security"
   },
   "palette": {
     "placeholder": "Type a command…",
@@ -877,6 +878,31 @@
     "signedOutBody": "Deleting an account needs a live session on that account.",
     "signIn": "Sign in",
     "unavailableBody": "This copy of ohmail has no server attached, so there is no account to delete."
+  },
+  "security": {
+    "title": "Security",
+    "intro": "Your second factor and the codes that get you back in if you lose it.",
+    "working": "Working…",
+    "cancel": "Cancel",
+    "stepUpExpired": "Your confirmation window has closed. Sign in again, then retry.",
+    "codesTitle": "Recovery codes",
+    "codesHeld": "You still hold unused recovery codes. Each one works once.",
+    "codesNone": "You have no unused recovery codes. Without them, losing your authenticator locks you out.",
+    "codesGenerate": "Generate recovery codes",
+    "codesReplace": "Replace recovery codes",
+    "codesReplaceWarning": "This replaces every code you have. Any you saved before stop working.",
+    "codesConfirm": "Replace them",
+    "codesShownOnce": "Save these now. They are not shown again.",
+    "codesDone": "Done",
+    "totpTitle": "Authenticator app",
+    "totpOn": "An authenticator app is set up.",
+    "totpOff": "No authenticator app is set up.",
+    "totpAdd": "Set up an authenticator",
+    "totpReplace": "Replace authenticator",
+    "totpRemove": "Remove authenticator",
+    "totpScan": "Scan this in your authenticator, or type the key in by hand:",
+    "totpCodeLabel": "Enter the 6-digit code",
+    "totpActivate": "Turn it on"
   },
   "providerPicker": {
     "label": "Provider",

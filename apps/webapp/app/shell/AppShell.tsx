@@ -116,6 +116,7 @@ export function AppShell({
   accountSection,
   mailboxSection,
   billingSection,
+  securitySection,
   aboutSection,
 }: {
   demo: boolean;
@@ -130,6 +131,7 @@ export function AppShell({
   mailboxSection?: ReactNode;
   /** The Cloud client's Settings → Subscription pane (plan, AI switch, Stripe portal). */
   billingSection?: ReactNode;
+  securitySection?: ReactNode;
   /**
    * The BODY of the (i) panel for a live account. Same seam again, and it has to be: the
    * facts worth showing there — which mailbox is connected and when it last synced — come
@@ -147,6 +149,7 @@ export function AppShell({
           accountSection={accountSection}
           mailboxSection={mailboxSection}
           billingSection={billingSection}
+          securitySection={securitySection}
           aboutSection={aboutSection}
         />
       </KeymapProvider>
@@ -154,10 +157,11 @@ export function AppShell({
   );
 }
 
-function ShellInner({ accountSection, mailboxSection, billingSection, aboutSection }: {
+function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection }: {
   accountSection?: ReactNode;
   mailboxSection?: ReactNode;
   billingSection?: ReactNode;
+  securitySection?: ReactNode;
   aboutSection?: ReactNode;
 }) {
   const demo = useDemoMode();
@@ -1229,6 +1233,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
                    AppShell): `?demo=1` runs on fixtures with no session and no account, so
                    an Account pane there would offer to erase something that does not
                    exist. */
+                /* Same demo rule again: Security is nothing but step-up ceremonies against a
+                   session `?demo=1` does not have. */
+                securitySection={demo ? undefined : securitySection}
                 accountSection={demo ? undefined : accountSection}
                 /* Same rule: `?demo=1` has no session, so "connect a mailbox" there would
                    be a form posting to a server this tab is not talking to. The demo keeps
