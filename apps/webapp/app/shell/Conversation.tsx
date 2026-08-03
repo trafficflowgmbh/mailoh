@@ -10,16 +10,19 @@
  * elevation", one of THREE messages on thread `d3901e85`, rendered one body and no thread
  * count. The data half shipped; the UI half was never in scope.
  *
- * ── ONE LIST, TWO DENSITIES, ONE SURFACE AT A TIME ──────────────────────────────────────
+ * ── ONE LIST, ONE DENSITY, ONE PLACE (narrowed by slice U5-REPLY) ────────────────────────
  *
- * `variant="pane"` renders the Blanc `.hmail` card — the same card the Screener uses for
- * held mail, so "a message rendered inside another message" looks the same wherever the
- * product does it. `variant="quote"` renders the tighter `.reply-quoted` block that lives
- * in `InlineReply`'s 190px scroller. Two densities of ONE list, not two features: the
- * order, the count and the focus marker are decided here, once.
+ * A sibling renders as the Blanc `.hmail` card — the same card the Screener uses for held
+ * mail, so "a message rendered inside another message" looks the same wherever the product
+ * does it.
  *
- * Exactly one of them is on screen at a time — see `MessagePane`, which stands its own copy
- * down while the reply editor below it is showing the same list.
+ * There was a second density until U5-REPLY: `variant="quote"`, a tighter `.reply-quoted`
+ * block for `InlineReply`'s 190px scroller, with a `focusedId` marker because that copy
+ * included the message being answered. Both are gone with that scroller. The pane now keeps
+ * the conversation while the editor is open (the owner: *"replying repeats the message which
+ * is already visible"*), so there is exactly one rendering of a sibling in the product and
+ * this is it. A parameterised variant with one caller is a fork nobody is walking; if a
+ * second surface ever needs its own density, it comes back with that surface, tested.
  *
  * ── BOTH SIDES, SINCE U4c ───────────────────────────────────────────────────────────────
  *
@@ -54,14 +57,19 @@
  * — and eighteen full bodies (the largest thread on the owner's mailbox) in one scrolling
  * column is not a reading surface either. The expand-on-click affordance that was designed
  * and dropped here was dropped because on Cloud it revealed the identical text it hid; that
- * reason is gone, so a per-sibling expand is now a REAL option and is filed as owed for
- * U5-REPLY, which is the slice that owns this column's layout.
+ * reason is gone, so a per-sibling expand is a REAL option.
+ *
+ * U5-REPLY, which owns this column's layout, is the slice that was to answer it — and its
+ * answer is NO, not yet, stated here rather than left as an open "owed" pointing at a slice
+ * that has landed. That slice's whole job was to stop the reader being shown the same mail
+ * twice; adding a per-sibling fetch-and-expand in the same breath would have put a second,
+ * billed, failable interaction into the column under test. Siblings stay snippets. The
+ * affordance is owed to whichever slice next has a reason to open a sibling, and it inherits
+ * `bodyOf` and `hydrateBody` ready-made.
  */
 import { useTranslations } from "next-intl";
 import type { EngineMessage } from "@ohmail/client-engine";
 import { displayTime, rowAddress, senderName } from "./format";
-
-export type ConversationVariant = "pane" | "quote";
 
 /**
  * What a SIBLING entry shows for a body — never a protected message's contents.
@@ -99,23 +107,18 @@ export function ConversationHead({ count }: { count: number }) {
 
 export function ConversationEntries({
   messages,
-  focusedId,
   threadSubject,
   now,
-  variant,
 }: {
-  /** The entries to render, OLDEST FIRST. */
-  messages: EngineMessage[];
   /**
-   * The message the reader opened, marked `aria-current` when it appears in `messages`.
-   * The pane variant renders the focused message with the full message anatomy instead and
-   * passes only its siblings, so nothing here is marked; the quote variant includes it.
+   * The entries to render, OLDEST FIRST — the SIBLINGS only. The opened message keeps the
+   * full message anatomy and is rendered by `MessagePane` itself, between the two halves of
+   * this list, which is what makes "which one am I reading" answerable without a legend.
    */
-  focusedId?: string;
+  messages: EngineMessage[];
   /** The subject already on screen as the message's own heading — see `subjectKey`. */
   threadSubject?: string;
   now: Date;
-  variant: ConversationVariant;
 }) {
   const t = useTranslations("reply");
   if (messages.length === 0) return null;
@@ -123,40 +126,17 @@ export function ConversationEntries({
 
   return (
     <>
-      {messages.map((m) => {
-        const focused = m.id === focusedId;
-        const current = focused ? ({ "aria-current": "true" } as const) : {};
-        return variant === "pane" ? (
-          <article
-            key={m.id}
-            className={focused ? "hmail conv-focus" : "hmail"}
-            data-conv-id={m.id}
-            {...current}
-          >
-            <div className="hm-line">
-              <b>{senderName(m)}</b>
-              {rowAddress(m) ? <span className="addr">{rowAddress(m)}</span> : null}
-              <span className="t num">{displayTime(m, now)}</span>
-            </div>
-            {alreadySaid === subjectKey(m.subject) ? null : <h3>{m.subject}</h3>}
-            <div className="hm-body">{entryBody(m, t("quotedProtected"))}</div>
-          </article>
-        ) : (
-          <article
-            key={m.id}
-            className={focused ? "reply-quoted conv-focus" : "reply-quoted"}
-            data-conv-id={m.id}
-            {...current}
-          >
-            <div className="rq-line">
-              <b>{senderName(m)}</b>
-              {focused ? <span className="conv-here">{t("conversationHere")}</span> : null}
-              <span className="t num">{displayTime(m, now)}</span>
-            </div>
-            <div className="rq-body">{entryBody(m, t("quotedProtected"))}</div>
-          </article>
-        );
-      })}
+      {messages.map((m) => (
+        <article key={m.id} className="hmail" data-conv-id={m.id}>
+          <div className="hm-line">
+            <b>{senderName(m)}</b>
+            {rowAddress(m) ? <span className="addr">{rowAddress(m)}</span> : null}
+            <span className="t num">{displayTime(m, now)}</span>
+          </div>
+          {alreadySaid === subjectKey(m.subject) ? null : <h3>{m.subject}</h3>}
+          <div className="hm-body">{entryBody(m, t("quotedProtected"))}</div>
+        </article>
+      ))}
     </>
   );
 }

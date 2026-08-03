@@ -10,21 +10,31 @@
  *
  * Reply used to navigate `#/ohbox` → `#/compose`: the message you were answering left the
  * screen at the exact moment you started answering it. This renders inside
- * `<article class="msg">`, so the subject, the sender line and the body stay where they
- * were and the quoted original sits directly above the editor.
+ * `<article class="msg">`, so the subject, the sender line and the body stay exactly where
+ * they were and the editor opens underneath them.
  *
- * ── THE CONVERSATION ABOVE IT ───────────────────────────────────────────────────────────
+ * ── THE CONVERSATION IS ABOVE IT, AND IT IS NOT THIS COMPONENT'S (slice U5-REPLY) ───────
  *
- * "Scroll through the actual email conversation" needed threads. When this shipped they did
- * not exist — `thread_id` was NULL on every production row (gap C3) — so `context` was a
- * LIST holding exactly one entry, the message being answered, with a note on screen saying
- * so. C3 landed on 2026-08-02 and `threadOf` reads it, so `MessagePane` now passes the whole
- * chain and this renders it, oldest first, in its own 190px scroller: the editor never gets
- * pushed off the bottom of the reading pane however deep the conversation runs.
+ * Owner, verbatim: *"replying repeats the message which is already visible, this is
+ * redundant.."*
  *
- * It shows BOTH sides since U4c: the worker watches the mailbox's own Sent folder, so the
- * user's replies are in `messages` and on the thread. The `ConversationLimit` note that used
- * to say otherwise is gone with the condition it described — see `Conversation.tsx`.
+ * This used to render a `.reply-context` scroller of its own — the whole conversation,
+ * oldest first, 190px tall, including the message being answered. `MessagePane` stood its
+ * own copy down while that was up, so the LIST was never doubled; the focused message's body
+ * was, once as the pane's `.msg-body` and once inside the quote. The reader got the same mail
+ * twice in one scrolling column and had to scroll past a duplicate to reach the textarea.
+ *
+ * So the ownership inverted: the pane keeps the conversation in full message anatomy and
+ * this is head + textarea + actions + status, scrolled into view on open. "Scroll through
+ * the actual email conversation" is answered by the actual conversation — which is what the
+ * request said — rather than by a quote of it in a nested scroller.
+ *
+ * NOTHING ABOUT THE PAYLOAD CHANGED. Sending was, and is, `{inReplyTo, body}` with `body`
+ * exactly what was typed (`http-adapter.ts` `mailSend`). There has never been a quoted
+ * original in outgoing mail and this slice did not add one: the parent's text in the payload
+ * is how a `no_forward` message's redacted body would leave the account (invariant #1).
+ * What the editor shows and what it sends are two different questions, and only the first
+ * one moved.
  *
  * The draft is kept in `localStorage`, per message: this is the client's own scratch
  * buffer, not an IMAP draft. Drafts on the server are P3 and the owner has ruled they must
@@ -34,7 +44,6 @@ import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage } from "@ohmail/client-engine";
 import { Button, Kbd } from "@ohmail/ui";
-import { ConversationEntries, ConversationHead } from "./Conversation";
 import { rowAddress, senderName } from "./format";
 import { canSend, type SendState } from "./mail-send";
 import { SendStatus } from "./SendStatus";
@@ -49,8 +58,6 @@ import { SendStatus } from "./SendStatus";
 
 export function InlineReply({
   message,
-  context,
-  now,
   value,
   send = { phase: "idle" },
   onChange,
@@ -58,12 +65,6 @@ export function InlineReply({
   onSend,
 }: {
   message: EngineMessage;
-  /**
-   * The conversation, oldest first, rendered above the editor — `threadOf`. Holds exactly
-   * one entry (the message being answered) when there is no conversation to show.
-   */
-  context: EngineMessage[];
-  now: Date;
   value: string;
   /** How the send is going — see `mail-send.ts`. Defaults to idle for panes with no shell. */
   send?: SendState;
@@ -72,9 +73,31 @@ export function InlineReply({
   onSend: () => void;
 }) {
   const t = useTranslations("reply");
+  const box = useRef<HTMLDivElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
 
+  /**
+   * BRING THE EDITOR TO THE READER (slice U5-REPLY).
+   *
+   * The conversation above is no longer a bounded 190px quote — it is the real thread, as
+   * tall as it is, inside the column that scrolls (`.read-col` / `.reader`; the conversation
+   * deliberately has no scroller of its own, see `app.css`). On a deep thread the editor can
+   * therefore open below the fold, and an editor nobody can see is the compose dialog's
+   * failure wearing different clothes.
+   *
+   * `focus()` alone already scrolls in a browser, which is exactly why the scroll is stated
+   * separately: that is a side effect of focusing rather than an intent, and what it brings
+   * into view is the CARET — so a tall editor could arrive with its head and its `to` line
+   * still above the fold. The BOX is scrolled, `block: "nearest"`, so a column that is
+   * already showing it does not jump.
+   *
+   * `scrollIntoView` is optional-chained on the METHOD, not only the node: jsdom does not
+   * implement it (see `body-open.test.ts`, which stubs it for the views that call it
+   * unguarded), and the suites that drive the whole shell must not have to patch the DOM in
+   * order to open a reply editor.
+   */
   useEffect(() => {
+    box.current?.scrollIntoView?.({ block: "nearest" });
     editor.current?.focus();
   }, [message.id]);
 
@@ -87,22 +110,15 @@ export function InlineReply({
   const locked = !canSend(send, { kind: "mail_send", inReplyTo: message.id, body: value });
 
   return (
-    <div className="reply" data-reply-for={message.id}>
+    <div className="reply" data-reply-for={message.id} ref={box}>
       <div className="reply-head">
         <b>{t("to", { name: senderName(message) })}</b>
         {/* Only when it adds something — see `rowAddress`. */}
         {rowAddress(message) ? <small>{rowAddress(message)}</small> : null}
       </div>
 
-      {/* The conversation, scrollable in its own right so a deep one never pushes the
-          editor off the bottom of the reading pane. Same component and same order as the
-          copy `MessagePane` renders when this editor is closed. */}
-      <div className="reply-context" role="group" aria-label={t("conversationAria")}>
-        {context.length > 1 ? <ConversationHead count={context.length} /> : null}
-        <ConversationEntries messages={context} focusedId={message.id} now={now} variant="quote" />
-        {context.length > 1 ? null : <p className="reply-note">{t("singleMessage")}</p>}
-      </div>
-
+      {/* NO QUOTED CONTEXT HERE. It was a `.reply-context` scroller between the head and the
+          textarea; the conversation it held is the pane's, above — see the header. */}
       <textarea
         ref={editor}
         className="reply-editor"

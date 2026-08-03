@@ -85,14 +85,29 @@ export function MessagePane({
   const conversation = chrome.conversationOf(message.id);
   const replying = chrome.replyTo === message.id;
   /**
-   * ONE COPY OF THE CONVERSATION ON SCREEN, EVER.
+   * ONE COPY OF THE CONVERSATION ON SCREEN, EVER — AND IT IS THIS ONE (slice U5-REPLY).
    *
-   * The reply editor mounts INSIDE this same `<article class="msg">`, three inches below,
-   * and its `.reply-context` scroller shows the same list. Rendering both would put the
-   * conversation twice in one scrolling column, which reads as a bug. The pane stands its
-   * copy down while its own editor is open; nothing is hidden, it moved.
+   * Owner, verbatim: *"replying repeats the message which is already visible, this is
+   * redundant.."*
+   *
+   * This read `conversation.length > 0 && !replying` until U5-REPLY, because the editor
+   * below carried its own `.reply-context` scroller over the same list. The two copies of
+   * the LIST were never up at once — but the copy that mattered was the focused message's
+   * body, and that one was: once here as `.msg-body`, once again inside the editor's quote,
+   * in one scrolling column, with the textarea pushed below a duplicate of the text the
+   * reader had just finished. Redundant is exactly the word.
+   *
+   * The ownership is inverted now. The pane keeps the conversation, in full message anatomy,
+   * whether or not the editor is open; `InlineReply` renders no mail at all. So "scroll
+   * through the actual email conversation" is answered by the actual conversation instead of
+   * by a 190px quote of it.
+   *
+   * NOTHING HERE TOUCHES THE WIRE. The payload is still `{inReplyTo, body}` with `body`
+   * exactly what was typed (`http-adapter.ts` `mailSend`); quoting the parent would put its
+   * text into outgoing mail, and a sensitive parent carries `no_forward` with a redacted
+   * stored body (invariant #1). This slice changed what the SCREEN shows and nothing else.
    */
-  const showConversation = conversation.length > 0 && !replying;
+  const showConversation = conversation.length > 0;
   /**
    * The from-line count. Real on Cloud now; the fixture fallback stays because the demo
    * world sets `threadId: null` on every row (`fixtures-adapter.ts`) and carries a curated
@@ -260,13 +275,12 @@ export function MessagePane({
       reply={
         replying ? (
           <InlineReply
+            /* NO `context` AND NO `now` SINCE U5-REPLY. The editor was handed the whole
+               conversation (or `[message]`) to render in its own scroller; the pane above
+               owns that job now, so the editor takes the message it is answering and
+               nothing else — the `to` line, the draft key and `canSend` are all it needs
+               a message FOR. */
             message={message}
-            /* THE CONVERSATION, not one entry. It used to be `[message]` with a comment
-               saying C3 would fill it; C3 landed, `threadOf` reads it, and this is the
-               list. Falls back to the message being answered when there is no
-               conversation — a reply still quotes what it answers. */
-            context={conversation.length > 0 ? conversation : [message]}
-            now={now}
             value={chrome.replyBody}
             send={chrome.replySendState(message.id)}
             onChange={chrome.onReplyBody}
@@ -290,7 +304,6 @@ export function MessagePane({
             messages={conversation.filter((m) => before(m, message))}
             threadSubject={message.subject}
             now={now}
-            variant="pane"
           />
           <div className="conv-focus" data-conv-id={message.id} aria-current="true">
             {focusedBody}
@@ -299,7 +312,6 @@ export function MessagePane({
             messages={conversation.filter((m) => m.id !== message.id && !before(m, message))}
             threadSubject={message.subject}
             now={now}
-            variant="pane"
           />
         </div>
       ) : isProtected ? (

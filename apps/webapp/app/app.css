@@ -1723,10 +1723,13 @@ body.reading .shell {
    message" looks the same wherever the product does it — one shade quieter, because a
    lift-1 card sitting inside the lift-1 reading pane reads as two competing surfaces.
 
-   NO INNER SCROLLER. `.read-col` and `.reader` already scroll; nesting a second scroller
-   inside them is a trap on a phone and for a keyboard, and the conversation is not a
-   sidebar — it IS the message you are reading. The reply editor's `.reply-context` keeps
-   its own 190px scroller because there the editor must stay reachable below it. */
+   NO INNER SCROLLER, ANYWHERE (settled by U5-REPLY). `.read-col` and `.reader` already
+   scroll; nesting a second scroller inside them is a trap on a phone and for a keyboard, and
+   the conversation is not a sidebar — it IS the message you are reading. The one exception
+   used to be the reply editor's own 190px `.reply-context`, which existed so the editor could
+   stay reachable below a deep chain. That copy of the conversation is gone (the owner:
+   *"replying repeats the message which is already visible"*) and the editor scrolls itself
+   into view on open instead — see `InlineReply`. So the rule has no exceptions left. */
 .conv {
   margin: 0 0 4px;
 }
@@ -1756,32 +1759,17 @@ body.reading .shell {
   padding: 2px 0 2px 15px;
   box-shadow: inset 2px 0 0 var(--accent);
 }
-.conv-note {
-  font-size: 10.5px;
-  color: var(--ink3);
-  line-height: 1.5;
-  margin: 2px 0 0;
-  max-width: 62ch;
-}
-.reply-quoted.conv-focus {
-  box-shadow: inset 2px 0 0 var(--accent);
-  padding-left: 11px;
-}
-.conv-here {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--accent-ink);
-}
 @media (max-width: 560px) {
   .conv .hmail {
     padding: 13px 15px 14px;
   }
 }
 
-/* ================= inline reply (slice U4) =================
-   Inside <article class="msg">, under the actions: the conversation above in
-   its own scroller so a long chain never pushes the editor off the pane, then
-   the editor, then the row of controls. */
+/* ================= inline reply (slices U4, U5-REPLY) =================
+   Inside <article class="msg">, under the actions: head, editor, controls, status. Nothing
+   else — the conversation it used to quote in a 190px `.reply-context` scroller (with
+   `.reply-quoted` / `.rq-*` entries and a `.reply-note` caveat, all deleted with it) is the
+   pane's copy above, which is the mail the reader was already looking at. */
 .reply {
   margin-top: 22px;
   border-radius: 18px;
@@ -1807,46 +1795,6 @@ body.reading .shell {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.reply-context {
-  max-height: 190px;
-  overflow-y: auto;
-  border-radius: 12px;
-  background: var(--tint);
-  padding: 11px 13px;
-  margin-bottom: 11px;
-}
-.reply-quoted + .reply-quoted {
-  margin-top: 12px;
-}
-.rq-line {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 11.5px;
-  color: var(--ink2);
-}
-.rq-line b {
-  font-weight: 600;
-  color: var(--ink);
-}
-.rq-line .t {
-  margin-left: auto;
-  color: var(--ink3);
-  font-variant-numeric: tabular-nums;
-}
-.rq-body {
-  font-size: 12.5px;
-  line-height: 1.62;
-  color: var(--ink2);
-  white-space: pre-line;
-  margin-top: 4px;
-}
-.reply-note {
-  font-size: 10.5px;
-  color: var(--ink3);
-  line-height: 1.5;
-  margin: 9px 0 0;
 }
 .reply-editor {
   width: 100%;
