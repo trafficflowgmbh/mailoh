@@ -304,7 +304,8 @@
     "keyApplyAll": "apply every suggestion",
     "keyAllSpam": "mark every waiting sender spam",
     "keyFile": "file this sender to {dest}",
-    "keyFileRead": "file to {dest} and mark read"
+    "keyFileRead": "file to {dest} and mark read",
+    "retry": "Retry"
   },
   "triage": {
     "title": "Triage",
@@ -472,6 +473,11 @@
   },
   "reader": {
     "hint": "to return"
+  },
+  "body": {
+    "loading": "Loading the full message…",
+    "failed": "Couldn't load the full message — showing the preview.",
+    "retry": "Retry"
   },
   "nav": {
     "skip": "Skip to content",

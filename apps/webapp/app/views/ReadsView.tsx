@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type {
   EngineMessage,
+  MessageBody,
   ReadsPartition,
   TagDTO,
 } from "@ohmail/client-engine";
@@ -47,6 +48,8 @@ export function ReadsView({
   onChipState,
   markSeen,
   isSeen,
+  bodyOf,
+  hydrateBody,
   jumpTo,
   onJumped,
 }: {
@@ -61,10 +64,18 @@ export function ReadsView({
   /** Mark one Reads message seen through the engine. */
   markSeen: (id: string) => void;
   isSeen: (m: EngineMessage) => boolean;
+  /** The card's text and what it is — `bodyOf` over the live mirror (slice U5-BODY). */
+  bodyOf: (m: EngineMessage) => MessageBody;
+  /**
+   * Ask for one message's body. Idempotent and single-flight; `retry` is what distinguishes
+   * a human asking again from an effect re-running — see `OhmailEngine.hydrateBody`.
+   */
+  hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   jumpTo: string | null;
   onJumped: () => void;
 }) {
   const t = useTranslations("reads");
+  const tb = useTranslations("body");
   const streamRef = useRef<StreamHandle>(null);
   const [justSeen, setJustSeen] = useState<Set<string>>(() => new Set());
 
@@ -117,6 +128,28 @@ export function ReadsView({
       .querySelector(`.view-reads .row[data-id="${CSS.escape(cur)}"]`)
       ?.scrollIntoView({ block: "nearest" });
   }, [cur]);
+
+  /**
+   * BECOMING CURRENT IS THE INTENT (slice U5-BODY).
+   *
+   * The card under the cursor is the one being read — put there by a click, by j/k, or by
+   * the scroll-spy as somebody scrolls the stream — so that is where the body is asked for.
+   * It is also what breaks a circle: a card holding only a snippet measures short, and
+   * before `bodyState` existed a short card hid its Expand pill, so "hydrate on expand"
+   * alone would have had no first move.
+   *
+   * ONE id, never the pile. `partition.fresh` plus `partition.seen` is the whole of Reads,
+   * and a mount that fetched all of it would be a pile-wide prefetch billed per message for
+   * mail nobody looked at — GOALS #11's posture is explicit-intent fetches, and a cursor
+   * landing on a card is the smallest honest unit of that.
+   *
+   * Keyed on `current` rather than on the version, so a delta landing mid-read does not
+   * re-ask; `hydrateBody` would short-circuit anyway, and depending on the mirror here would
+   * make the effect run on every drain.
+   */
+  useEffect(() => {
+    if (current) hydrateBody(current);
+  }, [current, hydrateBody]);
 
   // j/k step cards; ↵ toggles the current card's clamp. Declared into the registry so
   // the `?` sheet knows they exist and so the shell's global map yields to them here.
@@ -173,7 +206,9 @@ export function ReadsView({
     />
   );
 
-  const card = (m: EngineMessage) => (
+  const card = (m: EngineMessage) => {
+    const body = bodyOf(m);
+    return (
     <StreamCard
       key={m.id}
       id={m.id}
@@ -181,11 +216,17 @@ export function ReadsView({
       address={m.from.address}
       time={displayTime(m, now)}
       subject={m.subject}
-      body={m.body ?? m.snippet}
+      body={body.text}
+      bodyState={body.state}
+      loadingLabel={tb("loading")}
+      failedLabel={tb("failed")}
       unread={m.unread || justSeen.has(m.id)}
       justSeen={justSeen.has(m.id)}
       current={current === m.id}
       onSelect={(id) => onCur(id)}
+      /* Expanding a card that holds only a snippet IS the request for the rest of it — and
+         the retry after a failure, which is why the failed copy says to expand again. */
+      onToggle={(open) => open && hydrateBody(m.id, { retry: true })}
       art={
         m.art ? (
           <StreamArt ariaLabel={m.art.ariaLabel} caption={m.art.caption}>
@@ -194,7 +235,8 @@ export function ReadsView({
         ) : undefined
       }
     />
-  );
+    );
+  };
 
   const chipRow =
     aiChip && partition.fresh.some((m) => m.id === aiChip.afterId) ? (

@@ -20,6 +20,7 @@ import {
   DEMO_NOW,
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
+  bodyOf,
   ohboxView,
   readsPartition,
   receiptsByDay,
@@ -298,6 +299,48 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
     },
     [engine],
   );
+
+  /**
+   * BODY HYDRATION, WIRED ONCE (slice U5-BODY).
+   *
+   * Two callbacks, both stable across version bumps and both reading `engine.read()` at
+   * INVOCATION time — the same discipline `conversationOf` documents below. A `useMemo` keyed
+   * on `version` would give the same freshness and a new identity every bump, which for
+   * `hydrateBody` means every view effect that depends on it re-firing once per delta.
+   *
+   * `hydrateBody` swallows nothing: `OhmailEngine.hydrateBody` never rejects, because its
+   * outcome is a record the UI renders rather than an exception thrown at a React effect. The
+   * `void` is therefore a statement that there is no promise worth awaiting here, not a
+   * discarded error.
+   */
+  const hydrateBody = useCallback(
+    (messageId: string) => {
+      void engine.hydrateBody(messageId);
+    },
+    [engine],
+  );
+  const bodyOfMessage = useCallback(
+    (m: EngineMessage) => bodyOf(engine.read(), m),
+    [engine],
+  );
+
+  /**
+   * THE OHBOX'S SPLIT-PANE SELECTION IS THE INTENT.
+   *
+   * Selecting a row IS opening the message here — the reading column renders it in full
+   * message anatomy, which is precisely why the snippet-only bug was hardest to see in this
+   * pile: a truncation inside that anatomy reads as a short email rather than as a missing
+   * body. So the selected message's body is fetched, one id, on selection.
+   *
+   * It lives in the shell rather than in `OhboxView` for the reason `message-chrome.tsx`
+   * gives: the pane is mounted twice while the reader is open, `ohbox-read-state.test.ts`
+   * mounts the view with no `EngineProvider`, and the dwell machinery in that view is not
+   * something this slice may reach into. The reader sheet shows the same message, so opening
+   * it needs no second trigger.
+   */
+  useEffect(() => {
+    if (selectedOhbox) hydrateBody(selectedOhbox.id);
+  }, [selectedOhbox?.id, hydrateBody]);
 
   // The engine's `unread` IS the answer now — the client-side overlay that used to sit on top of
   // it is gone. The optimistic overlay already makes the flip instant, and unlike the `Set` it
@@ -972,8 +1015,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
       replyTo, replyBody, onReplyBody, closeReply, sendReply,
       replySendState: mailSend.stateOf,
       openSenderMenu, conversationOf,
+      bodyOf: bodyOfMessage, hydrateBody,
     }),
-    [replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, openSenderMenu, conversationOf],
+    [replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, openSenderMenu,
+      conversationOf, bodyOfMessage, hydrateBody],
   );
 
   // Resolved here rather than inside the popover so a sender whose last message has just
@@ -1094,6 +1139,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
                 onChipState={setChipState}
                 markSeen={readsMarkSeen}
                 isSeen={(m) => !m.unread}
+                bodyOf={bodyOfMessage}
+                hydrateBody={hydrateBody}
                 jumpTo={jump?.view === "reads" ? jump.id : null}
                 onJumped={() => setJump(null)}
               />
@@ -1109,6 +1156,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
                 unreadCount={receiptsUnread}
                 isUnread={receiptsIsUnread}
                 markSeen={(id) => markSeen([id], false)}
+                bodyOf={bodyOfMessage}
+                hydrateBody={hydrateBody}
                 jumpTo={jump?.view === "receipts" ? jump.id : null}
                 onJumped={() => setJump(null)}
               />
@@ -1120,6 +1169,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
                 segment={route.screenerSegment}
                 selection={scnSel}
                 onSelect={(segment, id) => setScnSel((s) => ({ ...s, [segment]: id }))}
+                hydrateBody={hydrateBody}
                 full={screenerFull}
                 onFull={setScreenerFull}
               />

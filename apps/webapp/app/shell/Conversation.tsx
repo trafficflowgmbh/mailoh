@@ -39,12 +39,23 @@
  * Every message on the thread renders in full. Not "the newest five and a count": a count
  * standing in for mail nobody can open is the collapse invariant #6 forbids, and it is the
  * exact shape of the "N archived" placeholder the owner rejected. The cost is bounded by
- * what the mirror actually holds, which is SNIPPETS — the wire `MessageDTO` carries
- * `snippet`, not `body`, so a server-fed entry is one short paragraph (the same degradation
- * `heldOf()` documents for the Screener). An expand-on-click affordance was designed and
- * dropped: on Cloud it would reveal the identical text it hides, i.e. a primary-looking
- * control that does nothing, which is what gap U4b is already filed for. If a future slice
- * mirrors full bodies, the bound to add is here — and it is a real decision then, not now.
+ * what the mirror actually holds, which for a SIBLING is the snippet.
+ *
+ * ── AND THAT IS NOW A CHOICE RATHER THAN A LIMIT (slice U5-BODY) ─────────────────────────
+ *
+ * This paragraph used to say "the same degradation `heldOf()` documents for the Screener",
+ * and that sentence has stopped being true: `heldOf` hydrates. `GET /messages/:id/body` is
+ * reachable from the client now, so the siblings COULD be filled — and they are deliberately
+ * not.
+ *
+ * The FOCUSED message is hydrated (`MessagePane` reads `bodyOf`); its siblings are context
+ * around it. Fetching a whole thread because one message was opened is per-message billed
+ * reads for mail nobody asked to read, which is the pile-wide prefetch the U5 ruling refuses
+ * — and eighteen full bodies (the largest thread on the owner's mailbox) in one scrolling
+ * column is not a reading surface either. The expand-on-click affordance that was designed
+ * and dropped here was dropped because on Cloud it revealed the identical text it hid; that
+ * reason is gone, so a per-sibling expand is now a REAL option and is filed as owed for
+ * U5-REPLY, which is the slice that owns this column's layout.
  */
 import { useTranslations } from "next-intl";
 import type { EngineMessage } from "@ohmail/client-engine";
@@ -52,8 +63,15 @@ import { displayTime, rowAddress, senderName } from "./format";
 
 export type ConversationVariant = "pane" | "quote";
 
-/** What an entry shows for a body — never a protected message's contents. */
-function bodyOf(m: EngineMessage, protectedLabel: string): string {
+/**
+ * What a SIBLING entry shows for a body — never a protected message's contents.
+ *
+ * Named `entryBody` rather than `bodyOf` since U5-BODY: `bodyOf` is now the engine selector
+ * every open-context surface uses, and two functions with one name meaning different things
+ * in one app is how the wrong one gets called. This one deliberately does NOT consult a
+ * `message_body` record — see the header for why siblings are not hydrated.
+ */
+function entryBody(m: EngineMessage, protectedLabel: string): string {
   return m.protected ? protectedLabel : (m.body ?? m.snippet);
 }
 
@@ -121,7 +139,7 @@ export function ConversationEntries({
               <span className="t num">{displayTime(m, now)}</span>
             </div>
             {alreadySaid === subjectKey(m.subject) ? null : <h3>{m.subject}</h3>}
-            <div className="hm-body">{bodyOf(m, t("quotedProtected"))}</div>
+            <div className="hm-body">{entryBody(m, t("quotedProtected"))}</div>
           </article>
         ) : (
           <article
@@ -135,7 +153,7 @@ export function ConversationEntries({
               {focused ? <span className="conv-here">{t("conversationHere")}</span> : null}
               <span className="t num">{displayTime(m, now)}</span>
             </div>
-            <div className="rq-body">{bodyOf(m, t("quotedProtected"))}</div>
+            <div className="rq-body">{entryBody(m, t("quotedProtected"))}</div>
           </article>
         );
       })}

@@ -32,6 +32,24 @@ export interface MirrorStore extends EntityReader {
   applyResponse(resp: SyncResponse): Promise<void>;
   /** Apply changes without touching the cursor (optimistic echo, §3.4). */
   applyChanges(changes: SyncChange[]): Promise<void>;
+  /**
+   * Write — or, with `entity: null`, tombstone — ONE CLIENT-LOCAL record: a record whose
+   * type `/sync` has no vocabulary for, so the server can neither send it nor contradict it.
+   * `message_body` (slice U5-BODY) is the first.
+   *
+   * It bypasses `applyToRecords` on purpose. That function's job is the seq contract —
+   * ordering, replay, "never let an older-or-equal seq overwrite" — and a client-local
+   * record has no seq to order it by: it did not come from the log. Pushing one through
+   * with a synthetic seq would either be refused by the guard on the second write (same id,
+   * same seq) or move `maxSeq()` past deltas the mirror never applied. So these records sit
+   * at `seq: 0` and are simply overwritten, which is what "local, latest wins" means.
+   *
+   * There is no risk of collision with the log: `applyToRecords` only ever writes types the
+   * server sent, and the server has never heard of this one. If `/sync` ever DOES learn a
+   * type written here, its `create` carries a real seq and wins over the 0 — which is the
+   * right outcome and needs no special case.
+   */
+  putLocal(type: string, id: string, entity: unknown | null): Promise<void>;
   getMeta<T = unknown>(key: string): T | undefined;
   setMeta(key: string, value: unknown): Promise<void>;
   /** Discard all local state and reset the cursor to "0" (410 re-bootstrap, §3.2). */
@@ -106,8 +124,42 @@ export abstract class BaseMirrorStore implements MirrorStore {
     await this.persist([], null, [[key, value]]);
   }
 
+  /**
+   * A DELETED MESSAGE TAKES ITS HYDRATED BODY WITH IT.
+   *
+   * `message_body` is client-local, so `/sync` can never delete one — which is exactly the
+   * property that makes a delta unable to wipe a body mid-read, and exactly the property
+   * that would otherwise leave the FULL TEXT of a deleted message sitting in IndexedDB
+   * forever. A `message` delete tombstones `message:id`, so the DTO is gone and nothing
+   * renders it; `message_body:id` would survive, unreferenced, un-evicted and undeletable
+   * through any path the product offers. GOALS #5 says Cloud data is deletable, and residue
+   * nobody can see is the hardest kind to honour that with.
+   *
+   * So the cascade is structural rather than a cleanup somebody runs: the tombstones join
+   * the page's own dirty set and land in the SAME `persist` flush, which is the atomicity
+   * contract §3.3 step 3 already gives the cursor. A crash between the two is not a state
+   * this can be in.
+   *
+   * It is one pass over the changes, and it touches the map only for ids that actually have
+   * a live body — on the ordinary drain (no deletes, or deletes for messages nobody opened)
+   * it allocates nothing.
+   */
+  private cascadeLocalDeletes(changes: SyncChange[]): MirrorRecord[] {
+    const out: MirrorRecord[] = [];
+    for (const ch of changes) {
+      if (ch.op !== "delete" || ch.type !== "message") continue;
+      const key = recordKey("message_body", ch.id);
+      const held = this.records.get(key);
+      if (!held || held.entity === null) continue;
+      const tombstone: MirrorRecord = { type: "message_body", id: ch.id, seq: 0, entity: null };
+      this.records.set(key, tombstone);
+      out.push(tombstone);
+    }
+    return out;
+  }
+
   async applyChanges(changes: SyncChange[]): Promise<void> {
-    const dirty = applyToRecords(this.records, changes);
+    const dirty = [...applyToRecords(this.records, changes), ...this.cascadeLocalDeletes(changes)];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
     if (dirty.length > 0) {
       this.ver++;
@@ -115,9 +167,18 @@ export abstract class BaseMirrorStore implements MirrorStore {
     }
   }
 
+  /** See {@link MirrorStore.putLocal} — seq 0, latest wins, never through the seq guard. */
+  async putLocal(type: string, id: string, entity: unknown | null): Promise<void> {
+    const rec: MirrorRecord = { type, id, seq: 0, entity };
+    this.records.set(recordKey(type, id), rec);
+    this.ver++;
+    await this.persist([rec], null, []);
+  }
+
   async applyResponse(resp: SyncResponse): Promise<void> {
     const changes = flattenResponse(resp);
-    const dirty = applyToRecords(this.records, changes);
+    // The body cascade rides in this page's dirty set — see `cascadeLocalDeletes`.
+    const dirty = [...applyToRecords(this.records, changes), ...this.cascadeLocalDeletes(changes)];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
     this.cursor = resp.cursor;
     this.ver++;

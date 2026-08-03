@@ -60,12 +60,13 @@ export type SyncEntityType =
 /**
  * Everything the LOCAL mirror stores. Beyond the synced types, the engine keeps
  * client-local entities for the demo/fixture world (`tag`, `screener_sender`,
- * `triage_item`, `mailbox`) and view metadata (`view_meta`, e.g. the Reads
- * waterline). Unknown strings are tolerated by design.
+ * `triage_item`, `mailbox`), view metadata (`view_meta`, e.g. the Reads
+ * waterline) and hydrated message bodies (`message_body`, slice U5-BODY).
+ * Unknown strings are tolerated by design.
  */
 export type MirrorEntityType =
   | SyncEntityType
-  | "tag" | "screener_sender" | "triage_item" | "mailbox" | "view_meta"
+  | "tag" | "screener_sender" | "triage_item" | "mailbox" | "view_meta" | "message_body"
   | (string & {});
 
 // ── /sync wire shapes (contract §3.1) ──────────────────────────────────────
@@ -158,6 +159,78 @@ export interface EngineMessage extends EngineMessageExtras {
   updatedAt: ISODateTime;
 }
 
+// ── message bodies (slice U5-BODY) ─────────────────────────────────────────
+
+/**
+ * `GET /messages/:id/body`, as much of it as this client reads.
+ *
+ * The endpoint answers `{messageId, text, html, headers, loadedRemoteContent}`. Only `text`
+ * is declared, because only `text` is rendered — contract §8's forward-compatible parsing
+ * means an unread field is not an error. Two of the omissions are deliberate rather than
+ * pending:
+ *
+ *  · `html` is NOT read. Rendering sender-authored HTML would need a sanitiser, and it is
+ *    also where a tracking pixel re-enters a product whose spy-pixel blocker is a feature.
+ *    Filed as owed; `text` is what every surface clamps today anyway.
+ *  · `text` is ALREADY sensitivity-redacted server-side (invariant #1, `message-service.ts`
+ *    `getBody`: "returned as-is, never re-derived"). This client stores exactly what it was
+ *    given and never attempts a redaction of its own — a second implementation of that rule
+ *    is a second place for it to be wrong.
+ */
+export interface MessageBodyWire {
+  text: string;
+}
+
+/**
+ * THE HYDRATED BODY, AS A CLIENT-LOCAL RECORD — and why it is not on the message.
+ *
+ * `message_body` is in {@link MirrorEntityType} and deliberately NOT in
+ * {@link SyncEntityType}: `/sync`'s vocabulary has no such type, so no delta can ever
+ * carry one and no delta can ever overwrite one. That absence is the whole mechanism.
+ *
+ * Writing the fetched text onto the `message` row instead would look simpler and would be
+ * broken in a way no fixture test can see. `applyToRecords` REPLACES the entity on
+ * `create|update` (`apply.ts:56-58`), and opening a message emits `mark_seen`, whose echo
+ * is an update carrying a server DTO — which has `snippet` and no `body`. So the body the
+ * user is reading would be wiped by the read-receipt of the act of reading it, live only,
+ * timing-dependent, and invisible in the demo because the FixturesAdapter's message rows
+ * carry `body` already. Keeping the two in separate records makes the failure unreachable
+ * rather than unlikely.
+ *
+ * `state` is on the record rather than derived, because "we asked and the server refused"
+ * has to be distinguishable from "we never asked" — see {@link BodyState}.
+ */
+export interface MessageBodyRecord {
+  messageId: string;
+  state: "loading" | "ready" | "failed";
+  /** The endpoint's already-redacted text. Empty while loading and after a failure. */
+  text: string;
+  /** Why the fetch failed, for the console — never rendered to the user. */
+  error?: string;
+}
+
+/**
+ * What a surface knows about the text it is about to render.
+ *
+ * The four values exist because ONE of them — `snippet` — is how U5a shipped: `body ??
+ * snippet` renders a one-line truncation as though it were the whole message, with no
+ * signal anywhere that there is more. A surface that cannot tell these apart cannot show
+ * the difference, so the distinction is in the type rather than in each caller's guesswork.
+ *
+ *  · `full`    — this IS the whole message. Clamp it, offer the pill, say nothing.
+ *  · `snippet` — a preview; the body has not been asked for. The pill must still be
+ *                offered, or there is no way to ask.
+ *  · `loading` — asked, in flight. Say so.
+ *  · `failed`  — asked, refused. Say so, and differently.
+ */
+export type BodyState = "full" | "snippet" | "loading" | "failed";
+
+/** The text to render plus what it actually is. See {@link BodyState}. */
+export interface MessageBody {
+  text: string;
+  state: BodyState;
+}
+
 export interface RuleDTO {
   id: string;
   kind: "sender" | "domain" | "header";
@@ -205,6 +278,14 @@ export interface ScreenerHeldMail {
   subject: string;
   time: string;
   body: string;
+  /**
+   * WHAT `body` ACTUALLY IS (slice U5-BODY). Absent ⇒ `full`, which is the fixture world:
+   * a `screener_sender` entity carries its held bodies verbatim and there is nothing to
+   * hydrate. A DERIVED row — every row on a Cloud account — starts at `snippet` and moves
+   * through `loading` to `full` or `failed`, and the preview has to say which, because a
+   * consent decision taken on a truncation is the risk the Screener exists to remove.
+   */
+  bodyState?: BodyState;
   trackerNote?: string;
 }
 

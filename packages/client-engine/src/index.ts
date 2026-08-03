@@ -31,6 +31,10 @@ export {
   type Folder,
   type ISODateTime,
   type OhmailView,
+  type BodyState,
+  type MessageBody,
+  type MessageBodyRecord,
+  type MessageBodyWire,
   type MessageStateDTO,
   type MirrorEntityType,
   type RuleDTO,
@@ -62,6 +66,7 @@ export {
 
 // Selectors.
 export {
+  bodyOf,
   messageDisplayTime,
   messagesIn,
   ohboxView,

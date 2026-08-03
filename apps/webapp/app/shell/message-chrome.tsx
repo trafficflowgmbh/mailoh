@@ -14,7 +14,7 @@
  * takes fifteen would make the seam harder to see, not easier.
  */
 import { createContext, useContext, type ReactNode } from "react";
-import type { EngineMessage } from "@ohmail/client-engine";
+import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
 import type { SendState } from "./mail-send";
 
 export interface MessageChrome {
@@ -46,6 +46,36 @@ export interface MessageChrome {
    * mounts `OhboxView` without one.
    */
   conversationOf: (messageId: string) => EngineMessage[];
+  /**
+   * THE MESSAGE'S TEXT, AND WHAT THAT TEXT IS — `bodyOf` wired to the live mirror
+   * (slice U5-BODY).
+   *
+   * It travels with `conversationOf` and for the identical reason: `MessagePane` is mounted
+   * TWICE while the reader is open, one of those mounts is three components deep inside a
+   * view that already takes fifteen props, and the pane must not acquire an engine hook of
+   * its own — `useEngine()` throws outside `EngineProvider`, and `ohbox-read-state.test.ts`
+   * mounts `OhboxView` without one.
+   *
+   * A FUNCTION, so the two mounts can hold different messages and so the answer is read at
+   * render time from the current mirror. What it must NOT be is a resolved string: `state`
+   * is the whole point, and a pane that received only text could not tell a fetch in flight
+   * from a completed one — which is the failure U5a shipped.
+   */
+  bodyOf: (message: EngineMessage) => MessageBody;
+  /**
+   * ASK AGAIN — the reading pane's only way out of a failed body.
+   *
+   * Reads and Receipts recover for free: collapsing and re-expanding a card fires
+   * `onToggle(true)`, and scrolling back to it makes it current again. The Ohbox pane has
+   * neither — the shell hydrates on the SELECTED id, so a message whose body 500'd stays
+   * failed until the user selects something else and comes back. That is a dead end reachable
+   * by one transient server error, so the failed note carries a control rather than only a
+   * sentence.
+   *
+   * It goes through the chrome for the same reason `bodyOf` does: the pane must not hold an
+   * engine hook.
+   */
+  hydrateBody: (messageId: string, opts?: { retry?: boolean }) => void;
 }
 
 const noop = (): void => {};
@@ -64,6 +94,18 @@ const MessageChromeContext = createContext<MessageChrome>({
   replySendState: () => ({ phase: "idle" }),
   openSenderMenu: noop,
   conversationOf: () => [],
+  /**
+   * The inert default is the PRE-HYDRATION expression, `body ?? snippet`, reported honestly:
+   * a mount with no engine behind it has no way to fetch anything, so a message that carries
+   * its own body is `full` (the fixture world, and the desktop shell) and one that does not
+   * is a `snippet` — never `full`, which would be this default quietly re-introducing the
+   * exact claim the slice exists to remove.
+   */
+  bodyOf: (message) =>
+    message.body !== undefined
+      ? { text: message.body, state: "full" }
+      : { text: message.snippet, state: "snippet" },
+  hydrateBody: noop,
 });
 
 export function MessageChromeProvider({

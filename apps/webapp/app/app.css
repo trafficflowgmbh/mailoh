@@ -333,6 +333,17 @@ body.reading .shell {
   white-space: pre-line;
   max-width: 62ch;
 }
+/* U5-BODY — whether the text above is the whole held message. Set apart from `.hm-body` and
+   quieter than it: the product speaking about the mail, never mistakable for the mail. */
+.hm-state {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  color: var(--ink3);
+  max-width: 62ch;
+}
+.hm-state.warn {
+  color: var(--accent);
+}
 /* spam-grade mail renders quieter and duller — less light, less ink */
 .hmail.dull {
   box-shadow: var(--lift-0);

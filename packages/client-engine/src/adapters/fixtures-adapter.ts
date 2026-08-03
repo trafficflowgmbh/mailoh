@@ -340,6 +340,23 @@ export class FixturesAdapter implements EngineAdapter {
     };
   }
 
+  /**
+   * NO BODIES TO FETCH — and that is the demo's correct answer, not a missing feature.
+   *
+   * `toMessage` copies the fixture's `body` straight onto the mirror row, so every message
+   * in Mila's world already holds its full text and `bodyOf` answers `full` from the
+   * message itself, before the engine ever reaches an adapter. The one fixture message with
+   * no body is the protected verification code, which has none by design (invariant #1) and
+   * whose surface renders `ProtectedBlock` rather than any text at all.
+   *
+   * `null` rather than `{text: ""}`: an empty string is a claim about the mail ("this
+   * message is blank"), and the engine writes no record for a `null`, so a demo tab holds
+   * no `message_body` rows and performs no requests (invariants #6 and #8).
+   */
+  async fetchBody(): Promise<null> {
+    return null;
+  }
+
   async mutate(m: EngineMutation, opts: { idempotencyKey: string }): Promise<MutationOutcome> {
     // Contract §1.6: same key ⇒ the stored outcome is replayed verbatim, never
     // re-executed — a retry after a lost response cannot double-apply.

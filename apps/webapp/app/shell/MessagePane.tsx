@@ -62,6 +62,8 @@ export function MessagePane({
   const tr = useTranslations("screening");
   /** The conversation's copy lives with the reply's — one namespace owns the thread. */
   const tc = useTranslations("reply");
+  /** Hydration state copy, shared with the Reads/Receipts cards and the Screener preview. */
+  const tb = useTranslations("body");
   const addRef = useRef<HTMLSpanElement>(null);
   const isProtected = message.protected != null;
   const mine = tagsOfMessage(message, tags);
@@ -98,6 +100,27 @@ export function MessagePane({
    */
   const threadCount = conversation.length >= 2 ? conversation.length : message.threadCount;
 
+  /**
+   * THE BODY, HYDRATED (slice U5-BODY).
+   *
+   * This pane used to render `message.body ?? message.snippet` — and it was the surface that
+   * made the defect hardest to see, because a snippet inside full message anatomy LOOKS like
+   * a short email rather than like a truncation. `bodyOf` reaches the `message_body` record
+   * the shell hydrated on selection, and carries the state so the two failure modes can say
+   * so beneath the text instead of passing as the mail.
+   */
+  const body = chrome.bodyOf(message);
+
+  /**
+   * INVARIANT #1, AND IT IS THIS BRANCH.
+   *
+   * `isProtected` is checked FIRST and `body` is not consulted inside it: a protected
+   * message renders the block and no text at all, whatever the mirror or a hydration
+   * happens to hold for it. The endpoint's own text is already redacted server-side
+   * (`message-service.ts` `getBody`), so hydration cannot introduce a secret here — but
+   * "the text we were given is safe" and "this pane does not render a protected message's
+   * text" are two different guarantees, and the second is the one a reader can see.
+   */
   const focusedBody = isProtected ? (
     <ProtectedBlock
       label={message.protected!.label}
@@ -105,8 +128,33 @@ export function MessagePane({
       policy={<ProtectedPolicy text={message.protected!.policy} />}
     />
   ) : (
-    <p className="msg-body">{message.body ?? message.snippet}</p>
+    <p className="msg-body">{body.text}</p>
   );
+
+  /**
+   * Said only for the two states that are not the mail. `snippet` — asked for nothing yet —
+   * is a sub-frame state in this pane, because the shell hydrates on selection; and a
+   * protected message has no body to be waiting for.
+   *
+   * THE FAILURE CARRIES A CONTROL, not only a sentence. The stream cards recover on their
+   * own (re-expand, or scroll back and become current again); this pane's hydration is keyed
+   * on the selected id, so without a button a single 500 leaves the body unreachable until
+   * the user selects away and returns — a dead end nobody would guess the exit from.
+   */
+  const bodyNote =
+    isProtected || body.state === "full" || body.state === "snippet" ? undefined : body.state ===
+      "loading" ? (
+      tb("loading")
+    ) : (
+      <>
+        {tb("failed")}{" "}
+        {/* `retry` because this IS a human asking again. An automatic trigger deliberately
+            does not re-ask a server that already refused — see `hydrateBody`. */}
+        <Button variant="ghost" onClick={() => chrome.hydrateBody(message.id, { retry: true })}>
+          {tb("retry")}
+        </Button>
+      </>
+    );
 
   return (
     <ReadingPane
@@ -144,7 +192,9 @@ export function MessagePane({
         // whole middle section itself. A message with no conversation keeps exactly the
         // shape it had before this slice: the `body` prop, or the protected block.
         ? {}
-        : { body: message.body ?? message.snippet })}
+        : { body: body.text })}
+      bodyNote={bodyNote}
+      bodyNoteFailed={body.state === "failed"}
       attachment={
         message.attachment
           ? {

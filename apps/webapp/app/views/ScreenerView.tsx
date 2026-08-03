@@ -10,7 +10,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import type { ScreenerSenderDTO } from "@ohmail/client-engine";
+import type { BodyState, ScreenerSenderDTO } from "@ohmail/client-engine";
 import {
   Button,
   DecisionBar,
@@ -57,6 +57,7 @@ export function ScreenerView({
   segment,
   selection,
   onSelect,
+  hydrateBody,
   full,
   onFull,
 }: {
@@ -64,6 +65,8 @@ export function ScreenerView({
   segment: ScreenerSegmentId;
   selection: Record<ScreenerSegmentId, string | null>;
   onSelect: (segment: ScreenerSegmentId, id: string | null) => void;
+  /** Ask for one held message's body. `retry` marks a human asking again (slice U5-BODY). */
+  hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   full: boolean;
   onFull: (full: boolean) => void;
 }) {
@@ -105,6 +108,43 @@ export function ScreenerView({
     document.body.classList.toggle("scn-full-open", full);
     return () => document.body.classList.remove("scn-full-open");
   }, [full]);
+
+  /**
+   * THE SELECTED SENDER'S HELD MAIL, IN FULL (slice U5-BODY).
+   *
+   * `ScreenerSenderDTO.held` has claimed "every held message, in full" since it was written,
+   * and on a live account the claim was false: every row is derived, so every body was the
+   * snippet and the consent decision was being taken on one line of text. Hydrating the
+   * selected sender's held list is what makes the claim true — and it reduces the chance of
+   * deciding WRONGLY, which is the only reason this pile gets its bodies by default while
+   * Reads and Receipts stay collapsed.
+   *
+   * ── BOUNDED BY `held.length`, AND BY THE SELECTION ─────────────────────────────────────
+   *
+   * One sender at a time, never the queue. A waiting Screener holds one sender per stranger
+   * and typically one to three messages each; the whole segment could be hundreds. The
+   * `.join` in the dep list keys on the exact ids, so the effect re-runs when the selection
+   * moves and not when a body lands — the record write bumps the mirror version, and a
+   * dependency on that would re-enter this loop once per arriving body.
+   *
+   * ── AND IT IS THE ONLY THING SELECTION DOES ────────────────────────────────────────────
+   *
+   * Reading held mail stays SIDE-EFFECT-FREE: no `mark_seen`, no dwell timer, no waterline.
+   * `hydrateBody` is a GET and writes nothing but a client-local record. The ⇧-twins in the
+   * decision keys exist precisely because plain filing does not mark held mail read, and a
+   * preview that marked it read on sight would make that distinction meaningless.
+   */
+  const heldIds = current && !("pinned" in current)
+    ? current.held.map((h) => h.id)
+    : current
+      ? current.sender.held.map((h) => h.id)
+      : [];
+  const heldKey = heldIds.join(",");
+  useEffect(() => {
+    for (const id of heldKey ? heldKey.split(",") : []) hydrateBody(id);
+  }, [heldKey, hydrateBody]);
+  /** A human asking again — the only path allowed to re-ask a server that refused. */
+  const retryBody = (id: string) => hydrateBody(id, { retry: true });
 
   const decideCurrent = (dest: Parameters<ScreenerState["decide"]>[1], read: boolean) => {
     if (!current || "pinned" in current) return;
@@ -366,6 +406,7 @@ export function ScreenerView({
               setScopes((m) => new Map(m).set(id, scope));
             }}
             onDecide={(dest, opts) => decideCurrent(dest, opts.markRead)}
+            onRetryBody={retryBody}
             onBack={() => onFull(false)}
           />
         ) : segment === "screened" ? (
@@ -378,6 +419,7 @@ export function ScreenerView({
               state.allowScreened(current as ScreenerSenderDTO, dest);
               setChoosing(null);
             }}
+            onRetryBody={retryBody}
             onBack={() => onFull(false)}
           />
         ) : (
@@ -395,6 +437,7 @@ export function ScreenerView({
               setChoosing(null);
             }}
             onDelete={() => state.deleteSpam(current as SpamRow)}
+            onRetryBody={retryBody}
             onBack={() => onFull(false)}
           />
         )}
@@ -419,6 +462,8 @@ function HeldMail({
   subject,
   time,
   body,
+  bodyState,
+  onRetry,
   trackerNote,
   dull,
 }: {
@@ -427,9 +472,42 @@ function HeldMail({
   subject: string;
   time?: string;
   body: string;
+  /** Absent ⇒ full, which is a fixture row. See `ScreenerHeldMail.bodyState`. */
+  bodyState?: BodyState;
+  /** Ask for this held message's body again. Rendered only in the `failed` state. */
+  onRetry?: () => void;
   trackerNote?: string;
   dull?: boolean;
 }) {
+  const t = useTranslations("body");
+  /**
+   * A CONSENT DECISION MUST NOT BE TAKEN ON TEXT THAT SILENTLY ISN'T THE MAIL.
+   *
+   * Every other pile can afford to say nothing while a body is in flight — the reader has a
+   * pill and can ask again. Here the reader is about to decide whether a stranger may write
+   * to them, and the difference between "this is all they said" and "this is the first line
+   * of what they said" is the whole basis of that decision. `snippet` is included for that
+   * reason, where the stream cards leave it silent: in this preview there is no pill standing
+   * in for the same fact.
+   *
+   * AND IT CARRIES A CONTROL, for the reason the reading pane's does: the selection effect
+   * above is an AUTOMATIC trigger, and `hydrateBody` deliberately refuses to re-ask a server
+   * that already refused unless a human says so — otherwise a failing endpoint under an open
+   * view is a request loop billed per attempt (invariant #10). Reselecting the sender
+   * therefore does NOT retry, so without this button a held message whose body 500'd could
+   * only be recovered by reloading the tab. In the one pile where the text is the basis of a
+   * consent decision, that is not an acceptable dead end.
+   */
+  const note =
+    bodyState === undefined || bodyState === "full"
+      ? null
+      : bodyState === "failed"
+        ? t("failed")
+        // `snippet` says "loading" and not "this is a preview", because in THIS view it is a
+        // sub-frame state: selecting a sender hydrates its whole held list unconditionally,
+        // so a snippet on screen is a body already on its way. Elsewhere `snippet` can mean
+        // "nobody has asked", which is why the mapping is per-surface and not in `bodyOf`.
+        : t("loading");
   return (
     <article className={dull ? "hmail dull" : "hmail"}>
       <div className="hm-line">
@@ -446,6 +524,16 @@ function HeldMail({
         </div>
       ) : null}
       <div className="hm-body">{body}</div>
+      {note ? (
+        <p className={bodyState === "failed" ? "hm-state warn" : "hm-state"} role="status">
+          {note}{" "}
+          {bodyState === "failed" && onRetry ? (
+            <Button variant="ghost" onClick={onRetry}>
+              {t("retry")}
+            </Button>
+          ) : null}
+        </p>
+      ) : null}
     </article>
   );
 }
@@ -455,12 +543,15 @@ function WaitingPreview({
   scope,
   onScopeChange,
   onDecide,
+  onRetryBody,
   onBack,
 }: {
   sender: ScreenerSenderDTO;
   scope: DecisionScope;
   onScopeChange: (scope: DecisionScope) => void;
   onDecide: Parameters<typeof DecisionBar>[0]["onDecide"];
+  /** Ask for one held message's body again (slice U5-BODY). */
+  onRetryBody: (id: string) => void;
   onBack: () => void;
 }) {
   const t = useTranslations("screener");
@@ -510,6 +601,8 @@ function WaitingPreview({
             subject={h.subject}
             time={h.time}
             body={h.body}
+            bodyState={h.bodyState}
+            onRetry={() => onRetryBody(h.id)}
             trackerNote={h.trackerNote}
             dull={sender.dull}
           />
@@ -525,6 +618,7 @@ function ScreenedPreview({
   onChoose,
   onCancel,
   onAllow,
+  onRetryBody,
   onBack,
 }: {
   sender: ScreenerSenderDTO;
@@ -532,6 +626,7 @@ function ScreenedPreview({
   onChoose: () => void;
   onCancel: () => void;
   onAllow: (dest: "ohbox" | "reads") => void;
+  onRetryBody: (id: string) => void;
   onBack: () => void;
 }) {
   const t = useTranslations("screener");
@@ -576,6 +671,8 @@ function ScreenedPreview({
             subject={h.subject}
             time={h.time}
             body={h.body}
+            bodyState={h.bodyState}
+            onRetry={() => onRetryBody(h.id)}
             trackerNote={h.trackerNote}
             dull
           />
@@ -593,6 +690,7 @@ function SpamPreview({
   onToWaiting,
   onToOhbox,
   onDelete,
+  onRetryBody,
   onBack,
 }: {
   row: SpamRow;
@@ -602,6 +700,7 @@ function SpamPreview({
   onToWaiting: () => void;
   onToOhbox: () => void;
   onDelete: () => void;
+  onRetryBody: (id: string) => void;
   onBack: () => void;
 }) {
   const t = useTranslations("screener");
@@ -657,6 +756,8 @@ function SpamPreview({
             subject={h.subject}
             time={h.time}
             body={h.body}
+            bodyState={h.bodyState}
+            onRetry={() => onRetryBody(h.id)}
             trackerNote={h.trackerNote}
             dull
           />

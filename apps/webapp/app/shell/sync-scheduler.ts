@@ -1,6 +1,7 @@
 import {
   MutationRejectedError,
   type EngineAdapter,
+  type MessageBodyWire,
   type MutationOutcome,
   type OhmailEngine,
   type SyncParams,
@@ -220,6 +221,22 @@ export function createSyncGate(): SyncGate {
           return adapter.sync(params);
         },
         mutate: (m, opts): Promise<MutationOutcome> => adapter.mutate(m, opts),
+        /**
+         * FORWARDED, AND NOT GATED — the same rule `mutate` follows, for the same reason.
+         *
+         * A body fetch happens because somebody selected a message, expanded a card, or
+         * opened a Screener row. It is the user's own intent, in a tab they are looking at,
+         * and it is bounded by that act: one request per message opened. The gate exists to
+         * stop a HIDDEN tab paging through a thirty-seven page bootstrap nobody asked for
+         * (invariant #10), which is a different shape of cost entirely.
+         *
+         * It must be forwarded rather than omitted: a wrapper that dropped it would leave
+         * the engine with `adapter.fetchBody` undefined on the LIVE path only — the demo is
+         * unwrapped — so every live account would render snippets again while the whole
+         * suite stayed green. This is exactly the class of wiring bug the `transport` field
+         * below exists to keep visible.
+         */
+        fetchBody: (messageId: string): Promise<MessageBodyWire | null> => adapter.fetchBody(messageId),
       } satisfies EngineAdapter & { transport: EngineAdapter };
     },
   };

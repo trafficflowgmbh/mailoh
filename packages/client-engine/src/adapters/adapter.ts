@@ -1,4 +1,4 @@
-import type { EngineMutation, SyncChange, SyncResponse } from "../types.js";
+import type { EngineMutation, MessageBodyWire, SyncChange, SyncResponse } from "../types.js";
 
 /**
  * ONE interface, two implementations (FixturesAdapter for ?demo/UI tests,
@@ -34,4 +34,23 @@ export interface EngineAdapter {
    * Throws MutationRejectedError (retryable or not) on failure.
    */
   mutate(m: EngineMutation, opts: { idempotencyKey: string }): Promise<MutationOutcome>;
+  /**
+   * Fetch one message's body text (slice U5-BODY), or `null` when this adapter serves no
+   * bodies at all.
+   *
+   * `null` is the FixturesAdapter's answer and it is not a stub: the demo world's message
+   * rows carry `body` in the mirror already, so there is nothing to fetch and nothing that
+   * may touch the network (invariant #6). The engine writes no record for a `null`, which
+   * keeps `?demo=1` at exactly zero requests — `demo-zero-network.test.ts` asserts it.
+   *
+   * It is on the ADAPTER rather than beside the surfaces because there are four surfaces
+   * and one protocol. `GET /messages/:id/body` existed, spend-gated and contract-tested,
+   * with zero callers for the whole of Stage 2; the reason every pile rendered a one-line
+   * snippet was that nothing in the client had ever asked.
+   *
+   * A rejection MUST throw rather than resolve empty — the engine turns a throw into a
+   * `failed` record and the surface says so. Resolving `{text: ""}` on a 500 would render
+   * an empty message as though that were the mail.
+   */
+  fetchBody(messageId: string): Promise<MessageBodyWire | null>;
 }

@@ -35,8 +35,31 @@ export interface StreamCardProps {
   clampHeight?: number;
   expandLabel?: string;
   collapseLabel?: string;
+  /**
+   * WHAT `body` ACTUALLY IS (slice U5-BODY). Omitted ⇒ `"full"`, the shape every existing
+   * caller had.
+   *
+   * It is here rather than in the app because it changes the CARD'S OWN measurement, and
+   * that measurement is what hid the affordance. `short` is computed from `scrollHeight`, so
+   * a card holding a one-line snippet measures short, `.scast.short .sc-x{display:none}`
+   * hides the Expand pill, and there is no way left to ask for the rest — on a live account
+   * that was every card in Reads and Receipts. Anything other than `"full"` therefore keeps
+   * the pill reachable however short the text is, because the text being short is precisely
+   * the symptom.
+   */
+  bodyState?: "full" | "snippet" | "loading" | "failed";
+  /** Shown in place of the body while it is being fetched. App-owned copy. */
+  loadingLabel?: string;
+  /** Shown when the fetch failed — distinct from "this is the whole message". */
+  failedLabel?: string;
   onSelect?: (id: string) => void;
-  /** Called after the expand state flips (collapse-keeping-in-view etc.). */
+  /**
+   * Called after the expand state flips (collapse-keeping-in-view etc.).
+   *
+   * `open: true` is also the point at which a caller should hydrate: a card that has only a
+   * snippet is expanded FIRST and filled afterwards, because the body is what the expand was
+   * asking for.
+   */
   onToggle?: (open: boolean) => void;
 }
 
@@ -60,6 +83,9 @@ export function StreamCard({
   clampHeight = SC_CLAMP,
   expandLabel = "Expand",
   collapseLabel = "Collapse",
+  bodyState = "full",
+  loadingLabel,
+  failedLabel,
   onSelect,
   onToggle,
 }: StreamCardProps) {
@@ -75,11 +101,35 @@ export function StreamCard({
     const clip = clipRef.current;
     if (!card || !clip || card.offsetHeight === 0) return;
     setShort(clip.scrollHeight <= clampHeight + 28); // no point clamping a few lines
-  }, [clampHeight, body]);
+    /**
+     * RE-PIN AN OPEN CARD WHEN ITS TEXT CHANGES (slice U5-BODY).
+     *
+     * `toggle` opens by pinning `max-height` to the content height MEASURED AT THAT MOMENT.
+     * Before hydration that moment holds a two-line snippet, so an expand-then-fill card
+     * would clip the fetched body at the snippet's height — the pill would work, the request
+     * would succeed, and the mail would still be one line. `scrollHeight` ignores the
+     * constraint, so re-reading it here is enough.
+     */
+    if (open) clip.style.maxHeight = `${clip.scrollHeight}px`;
+  }, [clampHeight, body, open]);
+
+  /**
+   * THE BODY IS NOT (YET) THE WHOLE MESSAGE.
+   *
+   * `short` is a fact about the text on screen; this is a fact about whether that text is
+   * the mail. They come apart exactly where U5a shipped — a snippet is short AND incomplete
+   * — and the card must keep its affordance in that case rather than concluding from the
+   * height that there is nothing more to show. `.pend` in `stream.css` re-enables the pill
+   * and drops the fade for a card that is both short and pending.
+   */
+  const pending = bodyState !== "full";
+  const note = bodyState === "loading" ? loadingLabel : bodyState === "failed" ? failedLabel : null;
 
   const toggle = () => {
     const clip = clipRef.current;
-    if (short) return;
+    // `short` alone used to gate this, so a pill made reachable by `pending` would have been
+    // a button that did nothing when clicked.
+    if (short && !pending) return;
     const next = !open;
     if (clip) {
       if (next) {
@@ -98,6 +148,7 @@ export function StreamCard({
   const cls = [
     "scast",
     short ? "short" : null,
+    pending ? "pend" : null,
     open ? "open" : null,
     current ? "cur" : null,
     justSeen ? "justseen" : null,
@@ -130,6 +181,16 @@ export function StreamCard({
             <p className="sc-body">{chunk.trim()}</p>
           </Fragment>
         ))}
+        {/* The one line of chrome hydration adds, and only for the two states that need it:
+            "we are fetching this" and "we could not". A card whose body has not been asked
+            for says nothing — the Expand pill IS that signal — and a complete body says
+            nothing either, which is the Blanc card unchanged. It sits INSIDE `.sc-clip`
+            beside the text it qualifies, above the fade. */}
+        {note ? (
+          <p className={bodyState === "failed" ? "sc-state warn" : "sc-state"} role="status">
+            {note}
+          </p>
+        ) : null}
         <div className="sc-fade" />
       </div>
       <button

@@ -8,6 +8,7 @@ import {
   MutationRejectedError,
   type EngineMessage,
   type EngineMutation,
+  type MessageBodyRecord,
 } from "./types.js";
 
 /**
@@ -117,6 +118,8 @@ export class OhmailEngine {
   private readonly readerView: OverlayReader;
   private searchCache: { version: number; index: SearchIndex } | null = null;
   private syncing: Promise<void> | null = null;
+  /** In-flight body fetches by message id — see {@link OhmailEngine.hydrateBody}. */
+  private readonly bodyRequests = new Map<string, Promise<void>>();
 
   constructor(opts: EngineOptions) {
     this.adapter = opts.adapter;
@@ -200,6 +203,119 @@ export class OhmailEngine {
 
   private notify(): void {
     for (const l of this.listeners) l();
+  }
+
+  // ── message bodies (slice U5-BODY) ───────────────────────────────────────
+
+  /**
+   * FETCH ONE MESSAGE'S BODY, ON EXPLICIT INTENT (slice U5-BODY).
+   *
+   * The one capability behind every reading surface. Before it, the wire `MessageDTO`
+   * carried `snippet` and never `body`, so on a live account `m.body ?? m.snippet` rendered
+   * a single line in the Ohbox, in Reads, in Receipts and in the Screener; every
+   * `StreamCard` measured "short"; and `.scast.short .sc-x{display:none}` hid the Expand
+   * pill. There was no pill because there was nothing to expand.
+   *
+   * ── THE RESULT DOES NOT GO ON THE MESSAGE ROW ──────────────────────────────────────────
+   *
+   * It goes into a client-local `message_body` record — see {@link MessageBodyRecord} for
+   * the mechanism and for the live-only bug that shape makes unreachable. Nothing here
+   * touches `message`.
+   *
+   * ── IDEMPOTENT, SINGLE-FLIGHT ──────────────────────────────────────────────────────────
+   *
+   * Two surfaces can want the same body at once — the Ohbox read column and the reader sheet
+   * render the same message simultaneously — so concurrent callers join one request. A body
+   * already `ready` is never re-fetched.
+   *
+   * A `loading` record with no promise behind it — a tab that died mid-request; the record
+   * persists, the promise does not — IS re-fetched. That cannot loop, because a `loading`
+   * record written by THIS engine always has an entry in the in-flight map above it. The map
+   * is the dedup that matters; deciding from the record's state alone would make a zombie
+   * `loading` a permanent spinner with no way out.
+   *
+   * ── `retry` — WHY A FAILURE IS NOT RETRIED BY DEFAULT ───────────────────────────────────
+   *
+   * Most callers are React effects: "the card became current", "this sender was selected".
+   * They re-run whenever their inputs change, and a failed fetch writes a record, which bumps
+   * the mirror version, which re-renders — so a `failed` state that re-fetched on the default
+   * path would be a request loop against a server that is already refusing, billed per
+   * attempt, for as long as the view stays open (invariant #10). Found by exactly that: a
+   * 500-ing adapter under a view whose callback identity changed per render spun until the
+   * test timed out.
+   *
+   * So the rule is about WHO is asking, not about the state. An automatic trigger asks once
+   * and reports the failure; a HUMAN act — re-expanding a card, pressing Retry — passes
+   * `retry` and asks again. That also makes the failed state's exit a thing the user chose,
+   * which is what a control on screen is for.
+   *
+   * ── WHY IT NEVER REJECTS ───────────────────────────────────────────────────────────────
+   *
+   * Every caller is a React effect or a click handler; a rejection there is an unhandled
+   * promise and, at worst, an error boundary over somebody's mailbox. The outcome is the
+   * RECORD — `ready` or `failed` — which is a thing the UI can render. The failure is
+   * reported on screen, not thrown at the DOM.
+   */
+  async hydrateBody(messageId: string, opts: { retry?: boolean } = {}): Promise<void> {
+    const inFlight = this.bodyRequests.get(messageId);
+    if (inFlight) return inFlight;
+
+    const msg = this.read().get<EngineMessage>("message", messageId);
+    // Not in the mirror at all — a fixture `screener_sender`'s held id, or a row that has
+    // since been drained away. Nothing to ask about.
+    if (!msg) return;
+    /**
+     * ALREADY WHOLE. The demo's message rows carry `body` (`fixtures-adapter.ts` →
+     * `toMessage`), and `bodyOf` answers `full` from exactly this field — so the two agree
+     * by construction rather than by both being remembered. This is also what keeps the
+     * demo at zero requests without the demo being a special case here.
+     */
+    if (msg.body !== undefined) return;
+    /**
+     * A PROTECTED MESSAGE HAS NO BODY TO ASK FOR.
+     *
+     * Its surface renders `ProtectedBlock` and no text whatever the mirror holds
+     * (invariant #1, and `MessagePane` is where that decision lives), so a request here
+     * could only ever produce a record nothing reads. Not a safety check — the endpoint's
+     * text is already redacted server-side and asking would be harmless — it is simply the
+     * one case where the answer cannot change the screen. Skipping it also keeps the demo's
+     * one body-less fixture from churning a loading record and a tombstone every time it is
+     * selected.
+     */
+    if (msg.protected != null) return;
+    const held = this.read().get<MessageBodyRecord>("message_body", messageId);
+    if (held?.state === "ready") return;
+    // See `retry` above: an automatic trigger must not re-ask a server that already refused.
+    if (held?.state === "failed" && !opts.retry) return;
+
+    const request = this.fetchBodyInto(messageId).finally(() => {
+      this.bodyRequests.delete(messageId);
+    });
+    this.bodyRequests.set(messageId, request);
+    return request;
+  }
+
+  private async fetchBodyInto(messageId: string): Promise<void> {
+    await this.putBody(messageId, { messageId, state: "loading", text: "" });
+    try {
+      const wire = await this.adapter.fetchBody(messageId);
+      // `null` ⇒ this adapter serves no bodies (the fixtures world). Tombstone the loading
+      // marker rather than leaving a surface saying "loading…" forever; `bodyOf` then falls
+      // back to the snippet, which is the honest answer for an adapter with no endpoint.
+      await this.putBody(messageId, wire === null ? null : { messageId, state: "ready", text: wire.text });
+    } catch (err) {
+      await this.putBody(messageId, {
+        messageId,
+        state: "failed",
+        text: "",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private async putBody(messageId: string, record: MessageBodyRecord | null): Promise<void> {
+    await this.store.putLocal("message_body", messageId, record);
+    this.notify();
   }
 
   // ── optimistic mutations ─────────────────────────────────────────────────

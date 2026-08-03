@@ -21,6 +21,18 @@ export interface ReadingPaneProps {
   body?: string;
   /** Rich body (e.g. a ProtectedBlock). */
   children?: ReactNode;
+  /**
+   * A statement ABOUT the body, immediately under it (slice U5-BODY): the message text is
+   * being fetched, or the fetch failed.
+   *
+   * A sibling rather than something folded into `body`, because the two must not be
+   * confusable: `body` is the sender's words and this is the product's. It also keeps
+   * `.msg-body` holding exactly the mail and nothing else, which is what `conversation.test.ts`
+   * asserts about the pane and what a reader is entitled to assume.
+   */
+  bodyNote?: ReactNode;
+  /** Carries the accent on {@link ReadingPaneProps.bodyNote}: a failure, not a quiet aside. */
+  bodyNoteFailed?: boolean;
   attachment?: ReadingPaneAttachment;
   /** Action buttons row. */
   actions?: ReactNode;
@@ -68,6 +80,8 @@ export function ReadingPane({
   chips,
   body,
   children,
+  bodyNote,
+  bodyNoteFailed,
   attachment,
   actions,
   onEnterReader,
@@ -122,6 +136,11 @@ export function ReadingPane({
       <h2>{subject}</h2>
       {chips ? <div className="chips">{chips}</div> : null}
       {children ?? (body !== undefined ? <p className="msg-body">{body}</p> : null)}
+      {bodyNote ? (
+        <p className={bodyNoteFailed ? "msg-body-state warn" : "msg-body-state"} role="status">
+          {bodyNote}
+        </p>
+      ) : null}
       {attachment ? (
         <button type="button" className="attach" onClick={attachment.onPress}>
           <Icon name="clip" /> {attachment.filename}

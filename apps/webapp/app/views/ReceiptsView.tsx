@@ -9,7 +9,7 @@
  */
 import { useEffect, useMemo, useRef, useState, Fragment } from "react";
 import { useTranslations } from "next-intl";
-import type { EngineMessage, ReceiptsDayGroup, TagDTO } from "@ohmail/client-engine";
+import type { EngineMessage, MessageBody, ReceiptsDayGroup, TagDTO } from "@ohmail/client-engine";
 import { Kbd, ListGroupLabel, ListPane, ListRows, MessageRow, StreamCard } from "@ohmail/ui";
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
@@ -24,6 +24,8 @@ export function ReceiptsView({
   unreadCount,
   isUnread,
   markSeen,
+  bodyOf,
+  hydrateBody,
   jumpTo,
   onJumped,
 }: {
@@ -36,11 +38,16 @@ export function ReceiptsView({
   unreadCount: number;
   isUnread: (m: EngineMessage) => boolean;
   markSeen: (id: string) => void;
+  /** The card's text and what it is — `bodyOf` over the live mirror (slice U5-BODY). */
+  bodyOf: (m: EngineMessage) => MessageBody;
+  /** Ask for one message's body. `retry` marks a human asking again — see `ReadsView`. */
+  hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   jumpTo: string | null;
   onJumped: () => void;
 }) {
   const t = useTranslations("receipts");
   const tr = useTranslations("reads");
+  const tb = useTranslations("body");
   const streamRef = useRef<StreamHandle>(null);
   const [justSeen, setJustSeen] = useState<Set<string>>(() => new Set());
 
@@ -82,6 +89,11 @@ export function ReceiptsView({
       .querySelector(`.view-receipts .row[data-id="${CSS.escape(cur)}"]`)
       ?.scrollIntoView({ block: "nearest" });
   }, [cur]);
+
+  /** The card under the cursor asks for its body. One id, never the pile — see `ReadsView`. */
+  useEffect(() => {
+    if (current) hydrateBody(current);
+  }, [current, hydrateBody]);
 
   const order = all.map((m) => m.id);
   const at = current ? order.indexOf(current) : -1;
@@ -192,22 +204,30 @@ export function ReceiptsView({
           </span>
           <span>{tr("hintSeen")}</span>
         </div>
-        {all.map((m) => (
-          <StreamCard
-            key={m.id}
-            id={m.id}
-            from={senderName(m)}
-            address={m.from.address}
-            amount={m.amount}
-            time={displayTime(m, now)}
-            subject={m.subject}
-            body={m.body ?? m.snippet}
-            unread={isUnread(m) || justSeen.has(m.id)}
-            justSeen={justSeen.has(m.id)}
-            current={current === m.id}
-            onSelect={(id) => onCur(id)}
-          />
-        ))}
+        {all.map((m) => {
+          const body = bodyOf(m);
+          return (
+            <StreamCard
+              key={m.id}
+              id={m.id}
+              from={senderName(m)}
+              address={m.from.address}
+              amount={m.amount}
+              time={displayTime(m, now)}
+              subject={m.subject}
+              body={body.text}
+              bodyState={body.state}
+              loadingLabel={tb("loading")}
+              failedLabel={tb("failed")}
+              unread={isUnread(m) || justSeen.has(m.id)}
+              justSeen={justSeen.has(m.id)}
+              current={current === m.id}
+              onSelect={(id) => onCur(id)}
+              /* Expanding is the request for the rest of the receipt, and the retry. */
+              onToggle={(open) => open && hydrateBody(m.id, { retry: true })}
+            />
+          );
+        })}
         <div className="tail-row">{t("tail")}</div>
       </StreamShell>
     </section>

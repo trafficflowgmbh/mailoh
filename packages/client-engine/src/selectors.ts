@@ -4,6 +4,8 @@ import {
   VIEW_OF_FOLDER,
   type EngineMessage,
   type Folder,
+  type MessageBody,
+  type MessageBodyRecord,
   type MessageStateDTO,
   type OhmailView,
   type ScreenerHeldMail,
@@ -85,6 +87,61 @@ function byDateDesc(a: EngineMessage, b: EngineMessage): number {
 /** Reading order for a conversation — the exact reverse of `byDateDesc`, undated rows first. */
 function byDateAsc(a: EngineMessage, b: EngineMessage): number {
   return -byDateDesc(a, b);
+}
+
+// ── Bodies (slice U5-BODY) ─────────────────────────────────────────────────
+
+/**
+ * THE TEXT A SURFACE RENDERS, AND WHAT THAT TEXT ACTUALLY IS.
+ *
+ * Every reading surface used to write `m.body ?? m.snippet`, and on a live account that
+ * expression has exactly one branch: `body` is a fixture-only extra, so a Cloud message
+ * always fell through to the snippet and every pile rendered one line of every message as
+ * though it were the whole thing. This is the one place that question is answered, and it
+ * answers it with a {@link BodyState} so no caller has to guess.
+ *
+ * ── READ-TIME MERGE, NOT A WRITE ───────────────────────────────────────────────────────
+ *
+ * The hydrated text lives in a separate `message_body` record precisely so that a `/sync`
+ * delta for the message cannot replace it (see {@link MessageBodyRecord}). The cost of that
+ * is one join, here, and it is the reason a body survives the `mark_seen` echo that opening
+ * the message emits.
+ *
+ * ── PRECEDENCE, AND WHY `m.body` IS FIRST ──────────────────────────────────────────────
+ *
+ * The fixture world's rows carry their full text already. Checking the message first means
+ * the demo never consults a record, never has one, and `hydrateBody` short-circuits on the
+ * same field — so "the demo performs zero requests" is one fact in two places that read the
+ * same source, rather than two rules that have to be kept in agreement.
+ *
+ * ── PROTECTED MAIL IS NOT SPECIAL-CASED HERE, DELIBERATELY ─────────────────────────────
+ *
+ * A sensitive message's stored body is redacted server-side (invariant #1), so the text
+ * this returns for one is already safe — and `message.protected` is routed through
+ * `ProtectedBlock` by the SURFACE, unchanged, which is where that decision has always
+ * lived. Moving it in here would mean two places deciding what a protected message shows,
+ * and the surface would still need its branch for the fixture case.
+ *
+ * ── `ready` WITH EMPTY TEXT IS STILL `full` ────────────────────────────────────────────
+ *
+ * `getBody` answers `text: ""` for a message whose body row was never ingested. That is
+ * reported as `full` rather than falling back to the snippet, because the snippet is
+ * DERIVED from the body at ingest — the two arrive together — so "an empty body next to a
+ * populated snippet" is not a state the pipeline produces, and inventing a fallback for it
+ * would mean rendering a preview while claiming it is the whole message. The empty case
+ * renders empty, which is what the server has.
+ */
+export function bodyOf(
+  reader: EntityReader,
+  m: Pick<EngineMessage, "id" | "snippet"> & { body?: string },
+): MessageBody {
+  if (m.body !== undefined) return { text: m.body, state: "full" };
+  const rec = reader.get<MessageBodyRecord>("message_body", m.id);
+  if (!rec) return { text: m.snippet, state: "snippet" };
+  if (rec.state === "ready") return { text: rec.text, state: "full" };
+  // Loading and failed both keep the snippet on screen — it is the only text there is — and
+  // differ in what the surface says about it. Neither may read as "this is the whole mail".
+  return { text: m.snippet, state: rec.state === "loading" ? "loading" : "failed" };
 }
 
 // ── Conversations ──────────────────────────────────────────────────────────
@@ -264,15 +321,24 @@ export function senderKey(address: string): string {
   return address.trim().toLowerCase();
 }
 
-function heldOf(m: EngineMessage, now: Date): ScreenerHeldMail {
+/**
+ * One held message, with its body RESOLVED rather than degraded (slice U5-BODY).
+ *
+ * This used to be `body: m.body ?? m.snippet` with a comment calling the snippet a stated
+ * degradation. It was stated, and it was also the thing that made `ScreenerSenderDTO.held`'s
+ * own promise — "every held message, in full" — false on every live account: the preview a
+ * consent decision is taken on showed one line. `bodyOf` returns the hydrated text once
+ * `hydrateBody` has run for this id, and `bodyState` tells the preview which of the four
+ * situations it is in so it can never present a truncation as the mail.
+ */
+function heldOf(reader: EntityReader, m: EngineMessage, now: Date): ScreenerHeldMail {
+  const body = bodyOf(reader, m);
   return {
     id: m.id,
     subject: m.subject,
     time: messageDisplayTime(m, now),
-    // DEGRADATION, stated rather than hidden: server-fed rows never carried bodies
-    // into the mirror (`MessageDTO` has `snippet`, not `body`), so a derived held
-    // message shows the snippet. Fixture rows keep their full `body`.
-    body: m.body ?? m.snippet,
+    body: body.text,
+    bodyState: body.state,
     ...(m.trackerNote ? { trackerNote: m.trackerNote } : {}),
   };
 }
@@ -344,7 +410,7 @@ export function screenerSegments(reader: EntityReader, now: Date = new Date()): 
           // `aiSuggestion` for desktop/native and for enrichment later.
           ai: null,
           // Oldest first — the order every preview renders, and ALL of them.
-          held: [...newestFirst].reverse().map((m) => heldOf(m, now)),
+          held: [...newestFirst].reverse().map((m) => heldOf(reader, m, now)),
           ...(segment === "screened_out" && repDate
             ? { screenedOn: `${repDate.getUTCDate()} ${MONTH_SHORT[repDate.getUTCMonth()]}` }
             : {}),
