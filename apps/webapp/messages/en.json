@@ -186,7 +186,7 @@
     "moveLabel": "move to",
     "moveCancel": "Cancel",
     "toastMoved": "Moved to {place}.",
-    "toastAttachment": "Demo — attachments aren't downloadable.",
+    "toastAttachment": "Downloading attachments isn't wired up yet.",
     "doorbell": "{count, plural, one {<b>1 new sender</b> waiting} other {<b># new senders</b> waiting}}",
     "doorbellAction": "Screener ›",
     "doorbellAria": "{count} new senders waiting — open the Screener",
@@ -236,6 +236,23 @@
     "segScreened": "Screened out",
     "segSpam": "Spam",
     "segAria": "Screener sections",
+    "empty": {
+      "waiting": {
+        "glyph": "🕊",
+        "title": "No one’s waiting.",
+        "hint": "First-time senders appear here before anything reaches the Ohbox."
+      },
+      "screened": {
+        "glyph": "🚪",
+        "title": "No senders screened out.",
+        "hint": "Screening out a waiting sender lists them here — reversible any time."
+      },
+      "spam": {
+        "glyph": "🕳",
+        "title": "No spam held.",
+        "hint": "Auto-detected spam lands here for review — nothing is deleted unseen."
+      }
+    },
     "applyAll": "Apply all suggestions",
     "markAllSpam": "Mark all spam",
     "hintMove": "move",
@@ -313,7 +330,7 @@
     "toastTagged": "Tagged “{name}”.",
     "toastUntagged": "Untagged “{name}”.",
     "pickerPlaceholder": "Tag this message…",
-    "pickerNone": "No such tag — three exist in the demo.",
+    "pickerNone": "No tag by that name.",
     "pickerFoot": "↵ toggles",
     "pickerAria": "Add tag"
   },
@@ -326,7 +343,7 @@
     "fuzzyNote": "fuzzy match — “{term}”",
     "emptyTitle": "No local results.",
     "emptyHint": "Press ↵ to search the server archive.",
-    "toastServer": "Demo — the server archive isn't connected. Local results are complete.",
+    "toastServer": "Searching the server archive isn't wired up yet. These local results are complete.",
     "facetFrom": "From",
     "facetFolder": "Folder",
     "facetRefine": "Refine",
@@ -339,20 +356,29 @@
   "compose": {
     "title": "Compose",
     "to": "To",
+    "toPlaceholder": "name@example.com, separated by commas",
+    "toInvalid": "Not an address: {entries}",
     "subject": "Subject",
-    "toValue": "{name} ‹{address}›",
+    "noSubject": "No subject",
+    "draftNote": "Kept in this browser until you send it",
+    "editorAria": "Message body",
+    "editorPlaceholder": "Write your message…",
+    "draftTag": "AI draft — not sent",
     "useDraft": "Use draft",
     "edit": "Edit",
-    "regenerate": "Regenerate",
     "discard": "Discard",
     "send": "Send",
-    "sendTooltip": "Sending is disabled in the demo — no mail leaves this tab.",
+    "sending": "Sending…",
+    "statusSending": "Sending your message.",
+    "statusQueued": "Not sent yet. ohmail is still trying.",
+    "statusUnverified": "We couldn't confirm this send. Check your Sent folder before sending it again.",
+    "statusFailed": "Not sent: {reason}",
+    "reasonUnknown": "the server refused it.",
+    "toastSent": "Message sent.",
     "toastUseDraft": "Draft moved to the editor.",
-    "toastRegen": "Draft regenerated from the same sources.",
     "toastDiscard": "Draft discarded.",
-    "toastEmpty": "Message is empty.",
-    "toastSendDemo": "Demo — sending is disabled.",
-    "keyLeave": "leave Compose"
+    "keyLeave": "leave Compose",
+    "keySend": "Send the message"
   },
   "settings": {
     "title": "Settings",
@@ -370,6 +396,29 @@
     "themeSystem": "System",
     "themeDark": "Dark",
     "themeAria": "Theme",
+    "channel": {
+      "people": {
+        "label": "People in Ohbox",
+        "description": "Mail from people you said Yes to"
+      },
+      "known": {
+        "label": "Known senders",
+        "description": "Anyone your rules already file"
+      },
+      "reads": {
+        "label": "Reads",
+        "description": "New newsletter issues"
+      },
+      "receipts": {
+        "label": "Receipts",
+        "description": "Orders, invoices, tickets"
+      },
+      "screener": {
+        "label": "Screener holds",
+        "description": "Weekly digest instead of alerts"
+      }
+    },
+    "notificationPrivacy": "Notifications carry no mail content — your device fetches privately.",
     "vipTitle": "VIP — always notifies",
     "learnedYes": "Yes",
     "learnedNo": "No",
@@ -379,7 +428,7 @@
     "tagRename": "Rename",
     "tagDelete": "Delete",
     "tagNote": "A tag groups messages across Ohbox, Reads and Receipts without moving them.",
-    "toastTagEditing": "Demo — tag editing isn't wired yet.",
+    "toastTagEditing": "Renaming and deleting tags isn't wired up yet.",
     "account": "Account",
     "billing": "Subscription"
   },

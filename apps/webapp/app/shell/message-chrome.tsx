@@ -15,7 +15,7 @@
  */
 import { createContext, useContext, type ReactNode } from "react";
 import type { EngineMessage } from "@ohmail/client-engine";
-import type { ReplySendState } from "./reply-send";
+import type { SendState } from "./mail-send";
 
 export interface MessageChrome {
   /** The message id whose inline reply editor is open, if any. */
@@ -29,8 +29,8 @@ export interface MessageChrome {
    * outcome belongs to the message that was answered, not to whatever is on screen now.
    */
   sendReply: (messageId: string) => void;
-  /** Where that message's send has got to — see `reply-send.ts` for why it has four states. */
-  replySendState: (messageId: string) => ReplySendState;
+  /** Where that message's send has got to — see `mail-send.ts` for why it has four states. */
+  replySendState: (messageId: string) => SendState;
   /** Open the screening popover for `messageId`, anchored on `anchor`. */
   openSenderMenu: (messageId: string, anchor: HTMLElement | null) => void;
   /**

@@ -130,6 +130,46 @@ export function messagesIn(reader: EntityReader, folder: Folder): EngineMessage[
     .sort(byDateDesc);
 }
 
+/**
+ * WHICH MAILBOX A FRESH COMPOSE SENDS FROM (slice U4f).
+ *
+ * A reply inherits its mailbox from the message it answers. A compose has no parent, and the
+ * server will not guess: `POST /drafts` requires a `mailboxId` that belongs to the account
+ * (`drafts-service.ts` → `validMailbox`), and `SendService` uses that mailbox's own address as
+ * the `From`. So the client has to name one.
+ *
+ * ── WHY IT IS DERIVED FROM MAIL AND NOT FROM A MAILBOX LIST ─────────────────────────────
+ *
+ * There is no mailbox list to read on a Cloud account. `"mailbox"` is not an entity type in
+ * the change log (`packages/db/src/change-log.ts`), so `/sync` never emits one and the mirror
+ * holds `mailbox` rows ONLY where the FixturesAdapter seeded them — the demo and Desktop.
+ * `GET /mailboxes` exists but lives behind `app/api-client`, which the shared shell may not
+ * import (it is DENYed from the Desktop bundle). What every account DOES have is mail, and
+ * every message carries the `mailboxId` it arrived in.
+ *
+ * So: a seeded `mailbox` entity when there is one, else the mailbox holding the account's
+ * NEWEST message. Newest rather than "the first one `list()` happens to return", because the
+ * order of a mirror scan is not a fact about the user and this answer decides whose address a
+ * stranger sees in their From line.
+ *
+ * ── THE LIMIT, STATED ──────────────────────────────────────────────────────────────────
+ *
+ * With two mailboxes connected this picks one of them and offers no way to choose. A From
+ * picker needs the mailbox ADDRESSES, which means either a new `/sync` entity type or a prop
+ * threaded from the Cloud shell — both outside U4f. Filed as owed. What it does NOT do is
+ * pretend: Compose shows the address it will send from wherever the mirror can name it, and
+ * says nothing where it cannot.
+ *
+ * `null` ⇒ this account has nothing to send from yet (a mailbox that has not finished its
+ * first sync). The compose surface refuses rather than posting a draft the server will 400.
+ */
+export function sendingMailboxId(reader: EntityReader): string | null {
+  const seeded = reader.list<{ id?: string }>("mailbox")[0]?.id;
+  if (typeof seeded === "string" && seeded.length > 0) return seeded;
+  const newest = reader.list<EngineMessage>("message").sort(byDateDesc)[0];
+  return newest?.mailboxId ?? null;
+}
+
 // ── Ohbox: the read-state split (new_for_you / previously_seen, brief §4) ──
 
 export interface OhboxView {

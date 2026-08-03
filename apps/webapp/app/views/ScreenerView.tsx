@@ -10,7 +10,6 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import { screenerEmptyStates } from "@ohmail/fixtures";
 import type { ScreenerSenderDTO } from "@ohmail/client-engine";
 import {
   Button,
@@ -31,14 +30,24 @@ import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { goScreener, type ScreenerSegmentId } from "../shell/routing";
 import type { ScreenerState, SpamRow } from "../shell/screener-state";
 
+/**
+ * The three empty states.
+ *
+ * The copy used to be read from `@ohmail/fixtures` and rendered on every account, demo or not.
+ * It happened to be brand-neutral English, so nobody noticed — but the defect is the import,
+ * not the wording: the fixtures package is Mila's world, it is the ONE place in this repo where
+ * invented people and invented brands are allowed to live, and a live surface reading strings
+ * out of it has no way to stay honest as those strings change. It is app copy, so it lives with
+ * the app's copy. `demo-zero-network.test.ts` now forbids the import class outright.
+ */
 function Empty({ segment }: { segment: ScreenerSegmentId }) {
+  const t = useTranslations("screener");
   const key = segment === "screened" ? "screened" : segment;
-  const e = screenerEmptyStates[key];
   return (
     <div className="empty">
-      <span className="glyph">{e.glyph}</span>
-      <b>{e.title}</b>
-      {e.hint}
+      <span className="glyph">{t(`empty.${key}.glyph`)}</span>
+      <b>{t(`empty.${key}.title`)}</b>
+      {t(`empty.${key}.hint`)}
     </div>
   );
 }

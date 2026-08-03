@@ -17,7 +17,6 @@
  */
 import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { notificationSettings } from "@ohmail/fixtures";
 import type { TagDTO } from "@ohmail/client-engine";
 import {
   Button,
@@ -37,6 +36,49 @@ import { hueOf } from "../shell/format";
 
 type PaneId = "general" | "notifications" | "mailboxes" | "billing" | "tags" | "account";
 
+/**
+ * The notification channels, and why this list is here rather than in the fixtures.
+ *
+ * It used to be `notificationSettings` from `@ohmail/fixtures`, rendered unconditionally, which
+ * put two kinds of demo content on every live account's Settings screen (slice U4f). The
+ * channel labels were merely MISFILED — they are ordinary product copy that a live account
+ * legitimately sees, so they moved to `messages/en.json` and the ids below are their keys.
+ *
+ * The VIP list and the "you usually open Petra's mail within 5 minutes" suggestion were the
+ * real defect: those are Mila's people, invented for the demo world, and a paying customer was
+ * reading a learned pattern about someone who does not exist. They reach this view through the
+ * MIRROR now ({@link NotificationsMeta}) rather than through an import.
+ */
+const NOTIFICATION_CHANNELS: Array<{ id: string; enabled: boolean }> = [
+  { id: "people", enabled: true },
+  { id: "known", enabled: true },
+  { id: "reads", enabled: false },
+  { id: "receipts", enabled: false },
+  { id: "screener", enabled: false },
+];
+
+/**
+ * The demo world's Notifications extras, as a `view_meta` row.
+ *
+ * `/sync` has no `view_meta` entity type (`packages/db/src/change-log.ts`), so a Cloud account
+ * can never be sent one: absent ⇒ the VIP block does not render, structurally, with no boolean
+ * for a view to forget. Only `FixturesAdapter` seeds it — the demo and Desktop.
+ *
+ * There is no VIP backend and no learning loop behind either control. In the demo that is what
+ * it is — the Blanc prototype's screen, brought to life on invented mail. On a live account it
+ * would be a claim, which is exactly what this row's absence prevents.
+ */
+export interface NotificationsMeta {
+  vipLabel: string;
+  vips: string[];
+  learnedSuggestion: {
+    text: string;
+    target: string;
+    acceptedToast: string;
+    dismissedToast: string;
+  };
+}
+
 export interface MailboxEntity {
   id: string;
   address: string;
@@ -46,6 +88,7 @@ export interface MailboxEntity {
 }
 
 export function SettingsView({
+  notifications,
   mailboxes,
   tags,
   tagCounts,
@@ -53,6 +96,8 @@ export function SettingsView({
   mailboxSection,
   billingSection,
 }: {
+  /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
+  notifications: NotificationsMeta | null;
   mailboxes: MailboxEntity[];
   tags: TagDTO[];
   tagCounts: Record<string, number>;
@@ -74,9 +119,11 @@ export function SettingsView({
   const toast = useToast();
   const { preference, setTheme } = useTheme();
   const [pane, setPane] = useState<PaneId>("general");
-  const [channels, setChannels] = useState(notificationSettings.channels);
-  const [vips, setVips] = useState(notificationSettings.vips);
+  const [channels, setChannels] = useState(NOTIFICATION_CHANNELS);
+  const [vips, setVips] = useState<string[] | null>(null);
   const [learned, setLearned] = useState<"open" | "accepted" | "dismissed">("open");
+  /** The mirror's list until the user changes it; `null` (and absent) on a live account. */
+  const vipList = vips ?? notifications?.vips ?? [];
 
   const panes: Array<[PaneId, string]> = [
     ["general", t("general")],
@@ -144,12 +191,12 @@ export function SettingsView({
               {channels.map((c, i) => (
                 <SettingsRow
                   key={c.id}
-                  label={c.label}
-                  description={c.description}
+                  label={t(`channel.${c.id}.label`)}
+                  description={t(`channel.${c.id}.description`)}
                   control={
                     <Switch
                       checked={c.enabled}
-                      ariaLabel={c.label}
+                      ariaLabel={t(`channel.${c.id}.label`)}
                       onChange={(v) =>
                         setChannels((cur) =>
                           cur.map((x, xi) => (xi === i ? { ...x, enabled: v } : x)),
@@ -159,47 +206,50 @@ export function SettingsView({
                   }
                 />
               ))}
-              <SettingsSubhead>{notificationSettings.vipLabel}</SettingsSubhead>
-              <div className="viplist">
-                {vips.map((v) => (
-                  <VipChip
-                    key={v}
-                    pulse={
-                      learned === "accepted" &&
-                      v === notificationSettings.learnedSuggestion.target
-                    }
-                  >
-                    {v}
-                  </VipChip>
-                ))}
-              </div>
-              {learned === "open" ? (
-                <div className="learned">
-                  <p>{notificationSettings.learnedSuggestion.text}</p>
-                  <div style={{ display: "flex", gap: 7 }}>
-                    <Button
-                      variant="primary"
-                      onClick={() => {
-                        setLearned("accepted");
-                        const target = notificationSettings.learnedSuggestion.target;
-                        setVips((cur) => (cur.includes(target) ? cur : [...cur, target]));
-                        toast(notificationSettings.learnedSuggestion.acceptedToast);
-                      }}
-                    >
-                      {t("learnedYes")}
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        setLearned("dismissed");
-                        toast(notificationSettings.learnedSuggestion.dismissedToast);
-                      }}
-                    >
-                      {t("learnedNo")}
-                    </Button>
+              {/* THE DEMO'S VIP BLOCK (U4f). Present only where the mirror carries the row,
+                  which `/sync` can never do — see `NotificationsMeta`. */}
+              {notifications ? (
+                <>
+                  <SettingsSubhead>{notifications.vipLabel}</SettingsSubhead>
+                  <div className="viplist">
+                    {vipList.map((v) => (
+                      <VipChip
+                        key={v}
+                        pulse={learned === "accepted" && v === notifications.learnedSuggestion.target}
+                      >
+                        {v}
+                      </VipChip>
+                    ))}
                   </div>
-                </div>
+                  {learned === "open" ? (
+                    <div className="learned">
+                      <p>{notifications.learnedSuggestion.text}</p>
+                      <div style={{ display: "flex", gap: 7 }}>
+                        <Button
+                          variant="primary"
+                          onClick={() => {
+                            setLearned("accepted");
+                            const target = notifications.learnedSuggestion.target;
+                            setVips(vipList.includes(target) ? vipList : [...vipList, target]);
+                            toast(notifications.learnedSuggestion.acceptedToast);
+                          }}
+                        >
+                          {t("learnedYes")}
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            setLearned("dismissed");
+                            toast(notifications.learnedSuggestion.dismissedToast);
+                          }}
+                        >
+                          {t("learnedNo")}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                </>
               ) : null}
-              <SettingsNote>{notificationSettings.privacyNote}</SettingsNote>
+              <SettingsNote>{t("notificationPrivacy")}</SettingsNote>
             </SettingsSection>
           ) : null}
 

@@ -36,46 +36,16 @@ import type { EngineMessage } from "@ohmail/client-engine";
 import { Button, Kbd } from "@ohmail/ui";
 import { ConversationEntries, ConversationHead } from "./Conversation";
 import { rowAddress, senderName } from "./format";
-import type { ReplySendState } from "./reply-send";
+import { canSend, type SendState } from "./mail-send";
+import { SendStatus } from "./SendStatus";
 
-/** `localStorage` key for a per-message reply draft. */
-export const replyDraftKey = (messageId: string): string => `ohmail.ui.reply:${messageId}`;
-
-export function readReplyDraft(messageId: string): string {
-  try {
-    return window.localStorage.getItem(replyDraftKey(messageId)) ?? "";
-  } catch {
-    return ""; // storage blocked — the editor still works for this session
-  }
-}
-
-export function writeReplyDraft(messageId: string, body: string): void {
-  try {
-    if (body) window.localStorage.setItem(replyDraftKey(messageId), body);
-    else window.localStorage.removeItem(replyDraftKey(messageId));
-  } catch {
-    /* private mode refuses writes; the draft lives in React state only */
-  }
-}
-
-/**
- * MAY THIS REPLY BE SENT RIGHT NOW? — ONE predicate, two consumers.
- *
- * The button's `disabled` and the state machine's own refusal used to be two copies of the
- * same rule, and a mutation test proved what that costs: deleting the guard inside
- * `useReplySend.send` left every assertion green, because they all went through the button.
- * A rule with two implementations has one that nothing watches.
- *
- * `sending`/`queued` are locked because a second press mints a second Idempotency-Key, which
- * is a second reservation, which is a second delivery to a real person. Empty is locked
- * because the server accepts a blank body (`drafts-service.ts:167-171`) and would post it.
- * `unverified` and `failed` are NOT locked: both are terminal on the server for that draft,
- * so the only way forward is a fresh send the user deliberately chooses.
+/*
+ * The scratch-buffer helpers and `canSend` used to live here and now live in `mail-send.ts`,
+ * with the send machine that consumes them — clearing the buffer is part of what "the send
+ * landed" means, and `canSend` is shared with Compose since U4f. Keeping them here while
+ * `mail-send.ts` imported them would also have made a real import cycle out of what used to
+ * be a type-only one.
  */
-export function canSend(send: ReplySendState, body: string): boolean {
-  if (send.phase === "sending" || send.phase === "queued") return false;
-  return body.trim().length > 0;
-}
 
 export function InlineReply({
   message,
@@ -95,8 +65,8 @@ export function InlineReply({
   context: EngineMessage[];
   now: Date;
   value: string;
-  /** How the send is going — see `reply-send.ts`. Defaults to idle for panes with no shell. */
-  send?: ReplySendState;
+  /** How the send is going — see `mail-send.ts`. Defaults to idle for panes with no shell. */
+  send?: SendState;
   onChange: (next: string) => void;
   onClose: () => void;
   onSend: () => void;
@@ -110,28 +80,11 @@ export function InlineReply({
 
   const inFlight = send.phase === "sending" || send.phase === "queued";
   // LOCKED, not merely styled: `disabled` is what stops a second key being minted. Shared
-  // with the state machine — see `canSend`.
-  const locked = !canSend(send, value);
-
-  /**
-   * The line under the buttons, and the reason it is `role="status"` with `aria-live`: a
-   * send resolves out of band, sometimes minutes later on a retry, so the outcome has to
-   * reach a screen reader without the focus being anywhere near it.
-   *
-   * `queued` and `unverified` deliberately do NOT say "sent". They are the two states a
-   * hurried reader is most likely to misread as success, and the copy is written against
-   * that: one says it has not gone yet, the other says we cannot tell.
-   */
-  const status: { tone: "pending" | "warn" | "error"; text: string } | null =
-    send.phase === "sending"
-      ? { tone: "pending", text: t("statusSending") }
-      : send.phase === "queued"
-        ? { tone: "pending", text: t("statusQueued") }
-        : send.phase === "unverified"
-          ? { tone: "warn", text: t("statusUnverified") }
-          : send.phase === "failed"
-            ? { tone: "error", text: t("statusFailed", { reason: send.reason ?? t("reasonUnknown") }) }
-            : null;
+  // with the state machine — see `canSend`. The mutation it judges is the one this editor
+  // would send, so the button and the machine cannot reach different verdicts; a reply needs
+  // no recipient of its own (`enrich` derives it from the parent), which is why `inReplyTo`
+  // and `body` are the whole shape here.
+  const locked = !canSend(send, { kind: "mail_send", inReplyTo: message.id, body: value });
 
   return (
     <div className="reply" data-reply-for={message.id}>
@@ -179,11 +132,7 @@ export function InlineReply({
         </span>
       </div>
 
-      {status ? (
-        <p className={`reply-status ${status.tone}`} role="status" aria-live="polite">
-          {status.text}
-        </p>
-      ) : null}
+      <SendStatus send={send} scope="reply" />
     </div>
   );
 }

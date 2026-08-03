@@ -349,7 +349,24 @@ export type EngineMutation =
    */
   | { kind: "mark_seen"; messageIds: string[]; unread: boolean }
   /**
-   * SEND A REPLY (slice U4b) — the one mutation whose effect leaves the building.
+   * SEND MAIL (slices U4b, U4f) — the one mutation whose effect leaves the building.
+   *
+   * ── ONE VERB, TWO ENTRY POINTS ─────────────────────────────────────────────────────────
+   *
+   * It shipped as `reply_send` and was generalized in U4f rather than copied: Compose needed
+   * the same idempotency key, the same four-outcome failure surface, the same "a 200 is
+   * inspected, not trusted" reading of the wire and the same double-send lock. A second
+   * implementation of "send an email" is two places for invariant #2 to be true in, which is
+   * one place too many. `inReplyTo` is the ONLY difference between the two callers.
+   *
+   * ── `inReplyTo: null` IS LOAD-BEARING, NOT A DEFAULT ───────────────────────────────────
+   *
+   * A fresh compose starts a NEW conversation and must carry no `In-Reply-To` and no
+   * `References`. Those headers are minted server-side from `drafts.inReplyToMessageId`
+   * (`send-service.ts`: the whole threading block is inside `if (d.inReplyToMessageId)`), so
+   * a null here is what keeps a stranger's Message-ID out of a message that is not answering
+   * them. `null` rather than "absent" so a caller cannot forget the field and inherit
+   * whatever a previous send left in scope.
    *
    * ── WHY IT HAS NO REVERSIBLE OPTIMISTIC EFFECT ─────────────────────────────────────────
    *
@@ -367,14 +384,26 @@ export type EngineMutation =
    * `in_flight`/network rejection that keeps the intent queued. A queued send that looks
    * like a delivered one is the failure this vocabulary exists to prevent.
    *
-   * The optional fields are filled by `Engine.enrich()` from the parent message, exactly as
-   * `tag_assign.labels` is, so the overlay and the wire body are computed once from the same
-   * state and cannot disagree.
+   * ── WHAT `Engine.enrich()` FILLS, AND WHAT IT MUST NOT ─────────────────────────────────
+   *
+   * For a REPLY the optional fields are derived from the parent (recipient, subject, mailbox,
+   * thread), exactly as `tag_assign.labels` is, so the overlay and the wire body are computed
+   * once from the same state and cannot disagree. For a COMPOSE the recipient and the subject
+   * are the USER's and are never derived; only `mailboxId` is filled, from the mirror
+   * (`sendingMailboxId`), because the account's own address is not something a compose form
+   * can know.
+   *
+   * There is no `cc`. `OutboundMessage` (packages/core) has no cc field, so `SendService`
+   * stores `drafts.cc` and never delivers it — a Cc box would drop the copy silently. Filed
+   * as owed rather than offered.
    */
   | {
-      kind: "reply_send";
-      /** The message being answered — the reply's parent. */
-      messageId: string;
+      kind: "mail_send";
+      /**
+       * The message being answered, or `null` for a fresh compose — see above. A reply's
+       * recipient, subject, mailbox and thread are all derived from it.
+       */
+      inReplyTo: string | null;
       /** Exactly what the user typed. No quoted original: see the http adapter. */
       body: string;
       mailboxId?: string;

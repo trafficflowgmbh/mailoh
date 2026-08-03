@@ -300,12 +300,26 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       return effects;
     }
 
-    case "reply_send": {
-      // The parent is the whole mutation: it supplies the recipient, the mailbox and the
-      // thread. An id the mirror does not know yields [], which the engine reports as a
-      // rejection — better than composing a reply to nobody and discovering it on the wire.
-      const parent = reader.get<EngineMessage>("message", m.messageId);
-      if (!parent) return [];
+    case "mail_send": {
+      // ── A REPLY: the parent IS the mutation ───────────────────────────────────────────
+      //
+      // It supplies the recipient, the mailbox and the thread. An id the mirror does not know
+      // yields [], which the engine reports as a rejection — better than composing a reply to
+      // nobody and discovering it on the wire.
+      const parent = m.inReplyTo === null ? null : reader.get<EngineMessage>("message", m.inReplyTo);
+      if (m.inReplyTo !== null && !parent) return [];
+
+      // ── A COMPOSE: the two things it cannot be sent without ───────────────────────────
+      //
+      // `to` empty is refused HERE and not left to the server, which answers 400 "draft has
+      // no recipients" only AFTER `POST /drafts` has already written a row — an orphan draft
+      // per press. `mailboxId` empty means the mirror could not name a mailbox to send from
+      // (`sendingMailboxId`), and the server would 400 that too. Both yield [] ⇒ the engine
+      // rejects locally with nothing on the wire.
+      const mailboxId = m.mailboxId ?? parent?.mailboxId;
+      if (!mailboxId) return [];
+      const to = m.to ?? (parent ? [parent.from] : []);
+      if (to.length === 0) return [];
 
       // ONE `draft` row at `sending`, complete in every field of `EngineDraft` so any future
       // consumer that lists drafts gets a whole entity rather than a half one. It carries a
@@ -317,12 +331,16 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       // renders drafts; revisit if an Outbox ever does.
       const draft: EngineDraft = {
         id: ctx.uuid(),
-        mailboxId: m.mailboxId ?? parent.mailboxId,
-        threadId: m.threadId ?? parent.threadId,
-        inReplyToMessageId: parent.id,
-        subject: m.subject ?? replySubject(parent.subject),
+        mailboxId,
+        // NO PARENT ⇒ NO THREAD, and `?? null` rather than `?? parent?.threadId` would have
+        // been the same thing written less plainly. A compose that inherited a thread id
+        // would file a stranger's mail onto an existing conversation in our own mirror even
+        // though the outgoing headers were clean.
+        threadId: m.threadId ?? parent?.threadId ?? null,
+        inReplyToMessageId: parent?.id ?? null,
+        subject: m.subject ?? (parent ? replySubject(parent.subject) : ""),
         body: m.body,
-        to: m.to ?? [parent.from],
+        to,
         cc: [],
         rationale: null,
         status: "sending",

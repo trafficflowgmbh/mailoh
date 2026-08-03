@@ -295,6 +295,22 @@ export class FixturesAdapter implements EngineAdapter {
     this.emit("view_meta", "reads_waterline", fx.readsWaterline);
     this.emit("view_meta", "reads_ai_chip", fx.readsAiChip);
     this.emit("view_meta", "account", fx.account);
+    /**
+     * The Notifications screen's VIP list and its learned suggestion (slice U4f).
+     *
+     * They used to be imported into `SettingsView` straight from `@ohmail/fixtures` and
+     * rendered on every account, so a paying customer read a learned pattern about Petra Wyss
+     * — a person invented for the demo. They travel through the MIRROR now, exactly as the
+     * Reads waterline and the AI chip already do, which means the gate is structural: `/sync`
+     * has no `view_meta` entity type at all, so a Cloud account can never receive this row and
+     * the block simply does not render there. It is a stronger guarantee than a `demo` boolean
+     * a view has to remember to check, and it keeps Mila's people where they belong — in the
+     * fixtures package, not in the app's copy file.
+     *
+     * The channel LABELS deliberately do not travel with it: they are ordinary product copy
+     * that a live account legitimately sees, and they live in `messages/en.json`.
+     */
+    this.emit("view_meta", "notifications", fx.notificationSettings);
   }
 
   // ── EngineAdapter ────────────────────────────────────────────────────────

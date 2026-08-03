@@ -402,6 +402,52 @@ body.reading .shell {
   width: 56px;
   flex: none;
 }
+/* THE TWO HEADER FIELDS, NOW THAT THEY TAKE INPUT (slice U4f).
+   The prototype's Compose showed To and Subject as static `<span>`s — a mock of a form. They
+   are real inputs now and they had to stay inside the SAME chrome: the 56px label gutter and
+   the hairline under each row are the Blanc form-field rule, and a bordered box per field
+   would have turned one calm block into two stacked widgets. So the input carries no border
+   and no background of its own; the row's own hairline is the field, and focus moves that
+   hairline to the accent rather than drawing a second edge around it. `--ink` and not `--ink2`
+   because these are the message's own words, like the body below them. */
+.c-field {
+  transition: border-color 0.15s var(--swift);
+}
+.c-field:focus-within {
+  border-bottom-color: var(--accent);
+}
+.c-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--ink);
+}
+.c-input:focus {
+  outline: none; /* the row's hairline above IS the focus ring — see `.c-field:focus-within` */
+}
+.c-input::placeholder {
+  color: var(--ink3);
+}
+/* Mid-send both header fields are `readOnly`, like the body. Same one-ink-step recession the
+   reply editor uses, so "held" looks the same everywhere it happens. */
+.c-input:read-only {
+  color: var(--ink2);
+}
+/* A REJECTED RECIPIENT, named. Sits directly under the row it belongs to, on the accent's own
+   soft surface rather than a red the system does not have; the field's `aria-describedby`
+   points at it, so the reason reaches a screen reader with the field and not as a stray line. */
+.c-error {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--accent-soft);
+  border-radius: 10px;
+  padding: 7px 11px;
+  margin: 8px 0 0;
+}
 .draft-card {
   border-radius: 20px;
   background: var(--accent-soft);
@@ -483,21 +529,22 @@ body.reading .shell {
   align-items: center;
   gap: 12px;
   margin-top: 18px;
+  /* Two notes can sit beside Send on a narrow window; they wrap under it rather than
+     compressing the button they explain. */
+  flex-wrap: wrap;
   padding-bottom: 20px;
 }
 .send-note {
   font-size: 11.5px;
   color: var(--ink2);
 }
-.btn[aria-disabled="true"] {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.btn[aria-disabled="true"]:hover {
-  transform: none;
-  box-shadow: var(--lift-0);
-  filter: none;
-}
+/* `.btn[aria-disabled="true"]` USED TO BE HERE, and it is gone with its only consumer.
+   Compose's Send was the single element in the product that carried `aria-disabled` — a
+   control that announces itself unavailable while remaining pressable, which is how the button
+   could both look dead and fire a toast about a demo the user was not in (U4f). Send is a real
+   `disabled` button now, and `.btn:disabled` in packages/ui/src/primitives/button.css is the
+   one rule that styles it, added by U4b for exactly this pair of states. Leaving the
+   attribute selector behind would invite the next surface to reach for the attribute again. */
 
 /* ================= settings ================= */
 .set-layout {
@@ -1836,14 +1883,18 @@ body.reading .shell {
   gap: 5px;
 }
 
-/* THE SEND STATUS LINE (slice U4b).
+/* THE SEND STATUS LINE (slices U4b, U4f).
    Three tones for four states, and the split is by what the reader must DO, not by
    severity theatre: `pending` is quiet because there is nothing to do but wait, while
    `warn` (we cannot confirm it) and `error` (it did not go) both want a decision and get
    the same filled surface the account warnings and the join errors use. No red, no icons,
    no second accent — the system has one, and a status line is not the place to invent
-   another. */
-.reply-status {
+   another.
+
+   ONE rule, both surfaces. It was `.reply-status` and Compose now shows the same four
+   outcomes; a second block styled to match is a second block that stops matching. The
+   component is `shell/SendStatus.tsx`. */
+.send-status {
   font-size: 11.5px;
   line-height: 1.55;
   margin: 10px 0 0;
@@ -1854,7 +1905,7 @@ body.reading .shell {
      Reduced motion: neutralized by the global kill in base.css, instant like everything. */
   animation: rise 0.2s var(--swift);
 }
-.reply-status.pending {
+.send-status.pending {
   color: var(--ink3);
   background: var(--tint);
   /* Both `pending` states — sending, queued — are the ones where the app is still WORKING
@@ -1864,21 +1915,21 @@ body.reading .shell {
      colour. Reduced motion: the base.css kill runs it once in .01ms, resting on `--tint`. */
   animation:
     rise 0.2s var(--swift),
-    reply-working 2s ease-in-out 0.5s infinite;
+    send-working 2s ease-in-out 0.5s infinite;
 }
-@keyframes reply-working {
+@keyframes send-working {
   50% {
     background: var(--tint2);
   }
 }
-.reply-status.warn,
-.reply-status.error {
+.send-status.warn,
+.send-status.error {
   color: var(--ink);
   background: var(--accent-soft);
 }
 /* The one distinction inside the loud pair: an unconfirmed send is a standing condition the
    eye should return to, so it keeps a hairline edge; a plain failure is a fact and does not. */
-.reply-status.warn {
+.send-status.warn {
   box-shadow: inset 0 0 0 1px var(--accent-hair);
 }
 

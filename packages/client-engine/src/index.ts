@@ -69,6 +69,7 @@ export {
   receiptsByDay,
   screenerSegments,
   senderKey,
+  sendingMailboxId,
   triagePiles,
   tagsCrossView,
   threadOf,

@@ -23,6 +23,7 @@ import {
   ohboxView,
   readsPartition,
   receiptsByDay,
+  sendingMailboxId,
   tagsCrossView,
   threadOf,
   triagePiles,
@@ -58,13 +59,19 @@ import {
 import { PLACE_LABEL, avatarHue, firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
 import { MessagePane, type MessageAction } from "./MessagePane";
 import { useScreenerState } from "./screener-state";
-import { useReplySend } from "./reply-send";
+import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
+import {
+  composePlan,
+  readComposeDraft,
+  writeComposeDraft,
+  EMPTY_COMPOSE,
+  type ComposeFields,
+} from "./compose";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
 import { MessageChromeProvider } from "./message-chrome";
-import { readReplyDraft, writeReplyDraft } from "./InlineReply";
 import { SenderMenu, type SenderMenuState } from "./SenderMenu";
 import {
   planScreeningChange,
@@ -77,7 +84,7 @@ import { ReadsView, type ReadsChipState } from "../views/ReadsView";
 import { ReceiptsView } from "../views/ReceiptsView";
 import { ScreenerView } from "../views/ScreenerView";
 import { SearchView } from "../views/SearchView";
-import { SettingsView, type MailboxEntity } from "../views/SettingsView";
+import { SettingsView, type MailboxEntity, type NotificationsMeta } from "../views/SettingsView";
 import { TagView } from "../views/TagView";
 import { TriageView } from "../views/TriageView";
 import { ComposeView } from "../views/ComposeView";
@@ -188,6 +195,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
     () => reader.get<{ email: string }>("view_meta", "account") ?? null,
     [reader, version],
   );
+  /** The demo's VIP block; `/sync` cannot emit `view_meta`, so a live account gets null (U4f). */
+  const notifications = useMemo(
+    () => reader.get<NotificationsMeta>("view_meta", "notifications") ?? null,
+    [reader, version],
+  );
   const screener = useScreenerState(engine, version, toast);
 
   /* ── view state ── */
@@ -209,6 +221,24 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
      that pane is mounted twice whenever the reader is open — see `message-chrome.tsx`. */
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
+  /**
+   * THE COMPOSE FORM (U4f), and why it lives up here rather than in `ComposeView`.
+   *
+   * The view is mounted only while `#/compose` is the route, so state inside it is erased by
+   * navigating to the Ohbox and back — which is a message the user has to write twice. Holding
+   * it in the shell is the same reason the reply body is held here, and it is also what lets
+   * ONE `onSendSettled` clear whichever surface just delivered.
+   *
+   * The `localStorage` mirror on top of that is for a RELOAD, and it is read after mount for
+   * the hydration reason `persisted-ui.ts` spells out: reading storage in the initializer makes
+   * the server and client render different markup, and React resolves that by keeping the
+   * server's — so the saved draft would be read and then silently discarded.
+   */
+  const [compose, setCompose] = useState<ComposeFields>(EMPTY_COMPOSE);
+  useEffect(() => {
+    const saved = readComposeDraft();
+    if (saved.to || saved.subject || saved.body) setCompose(saved);
+  }, []);
   // Survives a reload; see `persisted-ui.ts` for why it is local and read after mount.
   const [tagsOpen, setTagsOpen] = usePersistedFlag(UI_KEYS.tagsOpen, true);
   const [picker, setPicker] = useState<TagPickerState | null>(null);
@@ -336,16 +366,25 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
   );
 
   /**
-   * SENDING (slice U4b). The state machine, the retry driver and the U4e triage clear all
-   * live in `reply-send.ts`; this only says what "the send settled" means to the shell —
-   * close the editor, but ONLY if it is still open on that same message. A confirmation can
-   * arrive from a retry long after the user moved on, and closing whatever editor happens to
-   * be open then would discard a different half-written reply.
+   * SENDING (slices U4b, U4f). The state machine, the retry driver and the U4e triage clear
+   * all live in `mail-send.ts`; this only says what "the send settled" means to the shell.
+   *
+   * For a reply: close the editor, but ONLY if it is still open on that same message. A
+   * confirmation can arrive from a retry long after the user moved on, and closing whatever
+   * editor happens to be open then would discard a different half-written reply.
+   *
+   * For a compose: empty the form. The scratch buffer in `localStorage` is cleared by the send
+   * machine itself (it must happen even if this view is long gone); this is the in-memory half,
+   * and without it the fields would still be full of a message that has already been delivered.
    */
-  const onSendSettled = useCallback((messageId: string) => {
-    setReplyTo((cur) => (cur === messageId ? null : cur));
+  const onSendSettled = useCallback((key: string) => {
+    if (key === COMPOSE_SEND_KEY) {
+      setCompose(EMPTY_COMPOSE);
+      return;
+    }
+    setReplyTo((cur) => (cur === key ? null : cur));
   }, []);
-  const replySend = useReplySend(engine, toast, onSendSettled);
+  const mailSend = useMailSend(engine, toast, onSendSettled);
   /**
    * The body comes from REACT STATE, not from `readReplyDraft`. Private mode refuses the
    * `localStorage` write, so re-reading the scratch buffer at press time would send an empty
@@ -356,10 +395,27 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
   const sendReply = useCallback(
     (messageId: string) => {
       if (messageId !== replyTo) return;
-      replySend.send(messageId, replyBody);
+      mailSend.send({ kind: "mail_send", inReplyTo: messageId, body: replyBody });
     },
-    [replySend, replyTo, replyBody],
+    [mailSend, replyTo, replyBody],
   );
+
+  /**
+   * THE COMPOSE PLAN — the mutation, the rejected recipients and the empty-subject note, all
+   * derived in one place from the form (`compose.ts`).
+   *
+   * `sendingMailboxId` is read from the mirror here rather than left to `Engine.enrich`, even
+   * though enrich would fill the same value: the BUTTON has to know whether a mailbox exists,
+   * because offering Send on an account with nothing to send from is the inert affordance this
+   * slice is closing. One derivation, two consumers — the same discipline as `canSend`.
+   */
+  const composeMailbox = useMemo(() => sendingMailboxId(reader), [reader, version]);
+  const plan = useMemo(() => composePlan(compose, composeMailbox), [compose, composeMailbox]);
+  const onComposeFields = useCallback((next: ComposeFields) => {
+    setCompose(next);
+    writeComposeDraft(next);
+  }, []);
+  const sendCompose = useCallback(() => mailSend.send(plan.mutation), [mailSend, plan]);
 
   /**
    * SCREENING FROM ANYWHERE (slice U3) — one call site for every surface.
@@ -914,10 +970,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
   const chrome = useMemo(
     () => ({
       replyTo, replyBody, onReplyBody, closeReply, sendReply,
-      replySendState: replySend.stateOf,
+      replySendState: mailSend.stateOf,
       openSenderMenu, conversationOf,
     }),
-    [replyTo, replyBody, onReplyBody, closeReply, sendReply, replySend, openSenderMenu, conversationOf],
+    [replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, openSenderMenu, conversationOf],
   );
 
   // Resolved here rather than inside the popover so a sender whose last message has just
@@ -1100,11 +1156,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, aboutSecti
             ) : null}
 
             {effectiveView === "compose" ? (
-              <ComposeView engine={engine} draft={draft} />
+              <ComposeView
+                engine={engine}
+                draft={draft}
+                fields={compose}
+                onFields={onComposeFields}
+                plan={plan}
+                send={mailSend.stateOf(COMPOSE_SEND_KEY)}
+                onSend={sendCompose}
+              />
             ) : null}
 
             {effectiveView === "settings" ? (
               <SettingsView
+                notifications={notifications}
                 mailboxes={mailboxes}
                 tags={tags}
                 tagCounts={Object.fromEntries(

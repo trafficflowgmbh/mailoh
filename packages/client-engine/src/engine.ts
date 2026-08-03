@@ -1,6 +1,7 @@
 import type { EngineAdapter } from "./adapters/adapter.js";
 import { mutationEffects, replySubject, type MutationEffect } from "./mutations.js";
 import { SearchIndex, type LocalSearchResult } from "./search.js";
+import { sendingMailboxId } from "./selectors.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
 import {
   CursorExpiredError,
@@ -221,12 +222,22 @@ export class OhmailEngine {
         .map((msg) => msg.id);
       return { ...m, messageIds: ids };
     }
-    if (m.kind === "reply_send") {
+    if (m.kind === "mail_send") {
       // FREEZE THE ENVELOPE HERE, and nowhere else. The overlay effect and the wire body are
       // both computed from this one object, so they cannot disagree — and because the
       // enriched mutation is what goes on the queue, a retry after a network failure sends
       // the SAME envelope rather than re-deriving it from a mirror that has since drained.
-      const parent = this.read().get<EngineMessage>("message", m.messageId);
+      if (m.inReplyTo === null) {
+        // A COMPOSE. The recipient and the subject are the USER's and are not derived from
+        // anything; the only unknown is which of the account's mailboxes it goes out from,
+        // and `threadId` is pinned to null so nothing downstream can wander into a thread.
+        return {
+          ...m,
+          mailboxId: m.mailboxId ?? sendingMailboxId(this.read()) ?? undefined,
+          threadId: null,
+        };
+      }
+      const parent = this.read().get<EngineMessage>("message", m.inReplyTo);
       if (!parent) return m; // unknown parent ⇒ no effects ⇒ mutate() rejects it below
       return {
         ...m,
