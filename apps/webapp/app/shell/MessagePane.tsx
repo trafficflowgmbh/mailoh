@@ -19,7 +19,7 @@ import { useMessageChrome } from "./message-chrome";
 import "./action-bar.css";
 
 /**
- * MOVE CARRIES ITS DESTINATION (gap C4).
+ * MOVE CARRIES ITS DESTINATION.
  *
  * It used to be a bare `"move"` that AppShell answered with a toast reading "Demo — Move
  * isn't wired yet." — on live, paying accounts. The mutation it needed has been on the
@@ -48,11 +48,11 @@ export type MessageAction =
 export const MOVE_TARGETS: MoveTarget[] = ["ohbox", "reads", "receipts", "screened", "spam"];
 
 /**
- * THE SAME VERBS, OVER A SELECTION (slice U5-BULK, gap U5d).
+ * THE SAME VERBS, OVER A SELECTION.
  *
  * Declared beside {@link MessageAction} rather than in the view that renders the bulk bar,
- * because the point of the slice is that there is ONE vocabulary. The owner's selection
- * offered ⇧U and Escape; what it gets is the action bar's own grouping minus the one verb
+ * because the whole point is that there is ONE vocabulary. The selection used to offer only
+ * ⇧U and Escape; what it gets is the action bar's own grouping minus the one verb
  * that cannot mean anything over a set.
  *
  *   · `later` / `aside` / `resurface` — the three horizons, unchanged in meaning.
@@ -83,15 +83,15 @@ export type BulkAction =
 type BarPanel = "move" | "more";
 
 /**
- * A verb's keycap, READ FROM THE LIVE REGISTRY (slice O13).
+ * A verb's keycap, READ FROM THE LIVE REGISTRY.
  *
  * Renders nothing when nothing is bound to `chord` here, which is the whole point: the bar
  * cannot advertise a key that does not work, and it cannot go stale when a chord moves.
  * `chordKeys` is the same notation the `?` sheet prints, so `⌘`/`⇧`/`↵` would render
  * identically in both places if a bar verb ever took a modifier.
  *
- * This replaces `kbdHint="s"` — one hand-typed hint on one of eight buttons, which is what
- * the owner saw as a stray `s` in the label row.
+ * This replaces `kbdHint="s"` — one hand-typed hint on one of eight buttons, which read as a
+ * stray `s` in the label row.
  */
 function Key({ chord }: { chord: string }) {
   const binding = useBinding(chord);
@@ -100,10 +100,10 @@ function Key({ chord }: { chord: string }) {
 }
 
 /**
- * ═══ THE ACTION BAR (slice O13) ═══════════════════════════════════════════════════════
+ * ═══ THE ACTION BAR ═══════════════════════════════════════════════════════════════════
  *
- * Owner, reading their own mail: *"it breaks a line and doesn't show shortcuts and my
- * feedback already given, allow mark read / unread in it intelligently"*.
+ * Reported from real use: the bar breaks a line, it does not show its shortcuts, and it needs
+ * to handle mark read and unread sensibly.
  *
  * ── THE GROUPING, WHICH IS THE ACTUAL FIX ─────────────────────────────────────────────
  *
@@ -117,7 +117,7 @@ function Key({ chord }: { chord: string }) {
  *                      segments, not three siblings competing with Reply for weight.
  *   · FILE IT        — Screening (this SENDER's future mail) and Move (THIS message).
  *                      One control, two scopes, which is exactly why they belong adjacent
- *                      and exactly why they must stay two buttons: U3 put Screening here
+ *                      and exactly why they must stay two buttons: Screening is here
  *                      because "where does this sender's mail go" had no control outside
  *                      the Screener, and folding it into Move would undo that.
  *
@@ -132,10 +132,10 @@ function Key({ chord }: { chord: string }) {
  *
  * Each `<Key chord>` asks the registry. Before this the bar carried exactly one hint —
  * `kbdHint="s"`, typed at the call site — while `r`, `a`, `e`, `b` and `u` were all live
- * and silent. That single hint is the stray `s` in the owner's report: not a bug in the
- * label, a bug in the label row having only one keycap in it.
+ * and silent. That single hint is the stray `s` in the report: not a bug in the label, a bug
+ * in the label row having only one keycap in it.
  *
- * ── AND THE READ SWITCH DOES NOT FIGHT THE READER (gap O9, and U1's dwell) ────────────
+ * ── AND THE READ SWITCH DOES NOT FIGHT THE READER ─────────────────────────────────────
  *
  * `u` is already bound, in `OhboxView`, and marking unread there sets a `pinnedUnread` ref
  * that the 2 s dwell checks WHEN ITS TIMER FIRES — the guard
@@ -170,9 +170,8 @@ function ActionBar({
   /**
    * A label whose key is not in `messages/en.json` yet.
    *
-   * This slice may not edit that file — another executor holds it — so the new copy is
-   * reported for the owner to apply and read through `t.has` until it lands. The fallback
-   * is the SAME wording that was reported, and en.json wins the moment the key exists, so
+   * The copy is read through `t.has` and falls back to the SAME wording here until the key
+   * lands in that file. `en.json` wins the moment the key exists, so
    * this cannot become a second source of copy: it is a shim with one exit, not a default.
    */
   const copy = (key: string, reported: string): string => (t.has(key) ? t(key) : reported);
@@ -312,8 +311,8 @@ function ActionBar({
 
         <div className="abar-g abar-read-g">
           {/*
-           * `role="switch"` and not a pair of buttons: O9 ruled the control must "state the
-           * current state", because a one-way "Mark read" leaves no way back and mislabels
+           * `role="switch"` and not a pair of buttons: the control must state the CURRENT
+           * state, because a one-way "Mark read" leaves no way back and mislabels
            * itself the moment it has been pressed. A switch labelled "Read" reports the
            * state in its label AND in `aria-checked`, and what pressing it does is in the
            * title — which is the only wording that has to change with the state.
@@ -399,7 +398,7 @@ export function MessagePane({
   useEffect(() => setPanel(null), [message.id]);
 
   /**
-   * THE CONVERSATION (slice P6b) — oldest first, empty when there is no conversation.
+   * THE CONVERSATION — oldest first, empty when there is no conversation.
    *
    * Computed on every render rather than memoised: the value it derives from is the engine
    * mirror, which has no signal reachable from here (this pane deliberately holds no engine
@@ -410,12 +409,11 @@ export function MessagePane({
   const conversation = chrome.conversationOf(message.id);
   const replying = chrome.replyTo === message.id;
   /**
-   * ONE COPY OF THE CONVERSATION ON SCREEN, EVER — AND IT IS THIS ONE (slice U5-REPLY).
+   * ONE COPY OF THE CONVERSATION ON SCREEN, EVER — AND IT IS THIS ONE.
    *
-   * Owner, verbatim: *"replying repeats the message which is already visible, this is
-   * redundant.."*
+   * A reply must not repeat the message that is already visible.
    *
-   * This read `conversation.length > 0 && !replying` until U5-REPLY, because the editor
+   * This read `conversation.length > 0 && !replying` once, because the editor
    * below carried its own `.reply-context` scroller over the same list. The two copies of
    * the LIST were never up at once — but the copy that mattered was the focused message's
    * body, and that one was: once here as `.msg-body`, once again inside the editor's quote,
@@ -441,7 +439,7 @@ export function MessagePane({
   const threadCount = conversation.length >= 2 ? conversation.length : message.threadCount;
 
   /**
-   * THE BODY, HYDRATED (slice U5-BODY).
+   * THE BODY, HYDRATED.
    *
    * This pane used to render `message.body ?? message.snippet` — and it was the surface that
    * made the defect hardest to see, because a snippet inside full message anatomy LOOKS like
@@ -461,7 +459,7 @@ export function MessagePane({
    * "the text we were given is safe" and "this pane does not render a protected message's
    * text" are two different guarantees, and the second is the one a reader can see.
    *
-   * AND SINCE O11 IT IS THE ONLY EXPRESSION THAT RENDERS THE MAIL HERE. This pane used to hand
+   * AND IT IS NOW THE ONLY EXPRESSION THAT RENDERS THE MAIL HERE. This pane used to hand
    * `ReadingPane` a `body` STRING whenever there was no conversation — a third render path, and
    * the one most messages took, which `ReadingPane` drew as its own `<p className="msg-body">`.
    * A body fix that only reached `focusedBody` would have been invisible on exactly the common
@@ -475,12 +473,12 @@ export function MessagePane({
       policy={<ProtectedPolicy text={message.protected!.policy} />}
     />
   ) : (
-    /* O11 — a `<div>` rather than the `<p>` this was, because `BodyText` emits the paragraphs
+    /* A `<div>` rather than the `<p>` this was, because `BodyText` emits the paragraphs
        now and a `<p>` may not contain one. `.msg-body` is unchanged and stays the one element
        that holds the mail and nothing else, which is what `conversation.test.ts` and
        `inline-reply.test.ts` select on and what a reader is entitled to assume. */
     <div className="msg-body">
-      {/* P2 — the consent path for remote images. `remoteImages` is ABSENT on a client that
+      {/* The consent path for remote images. `remoteImages` is ABSENT on a client that
           has no proxy (`?demo=1`, the desktop shell, a test with no API), and `MessageBody`
           answers that by offering no button at all rather than a dead one.
 
@@ -503,7 +501,7 @@ export function MessagePane({
   );
 
   /*
-   * O18 — the strip travels WITH the body, so every place that renders the focused message
+   * The strip travels WITH the body, so every place that renders the focused message
    * gets it and none of them has to remember. `isProtected` gates it for the same reason the
    * body is gated above: invariant #1 says this pane renders no protected content, and a file
    * a sender attached is content.
@@ -556,7 +554,7 @@ export function MessagePane({
       avatarHue={avatarHue(message.from.address)}
       onSender={(anchor) => chrome.openSenderMenu(message.id, anchor)}
       senderTitle={tr("openFor", { sender: message.from.address })}
-      /* UX9 — `threadMeta` used to be the literal "thread ({count}) · " and this was a
+      /* `threadMeta` used to be the literal "thread ({count}) · " and this was a
          concatenation, so a message with no `Date:` header rendered "thread (3) · " with
          nothing after the separator, and a threadless one rendered an empty stamp. The key no
          longer carries the punctuation and `metaLine` prints a separator only between two
@@ -598,7 +596,7 @@ export function MessagePane({
       reply={
         replying ? (
           <InlineReply
-            /* NO `context` AND NO `now` SINCE U5-REPLY. The editor was handed the whole
+            /* NO `context` AND NO `now` ANY MORE. The editor was handed the whole
                conversation (or `[message]`) to render in its own scroller; the pane above
                owns that job now, so the editor takes the message it is answering and
                nothing else — the `to` line, the draft key and `canSend` are all it needs
@@ -613,7 +611,7 @@ export function MessagePane({
         ) : undefined
       }
     >
-      {/* THE CONVERSATION IN THE MESSAGE (P6b).
+      {/* THE CONVERSATION IN THE MESSAGE.
           Oldest first, and the message you opened keeps the full anatomy — plain prose
           between carded siblings — so which one is focused needs no legend. Siblings older
           than it sit above and newer ones below, which means the stack reads in order
@@ -638,7 +636,7 @@ export function MessagePane({
           />
         </div>
       ) : (
-        // O11: `focusedBody`, not `isProtected ? focusedBody : undefined`. The `undefined` arm
+        // `focusedBody`, not `isProtected ? focusedBody : undefined`. The `undefined` arm
         // was what fell through to `ReadingPane`'s own `body` string; `focusedBody` already
         // answers both cases, and invariant #1 is unmoved — it is decided where it always was,
         // by the `isProtected` branch at the top of this component, which is still first and

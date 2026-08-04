@@ -33,7 +33,7 @@ body.reading .shell {
   transform: scale(0.994);
   pointer-events: none;
 }
-/* THE GHOST, AT THE WIDTHS WHERE IT IS A DUPLICATE (gap UX12).
+/* THE GHOST, AT THE WIDTHS WHERE IT IS A DUPLICATE.
    `enterReader` no longer raises the sheet where the reading column is visible, so the
    reported double-render is gone at the source. This closes the one way back to it: open
    the sheet at 390px and widen the window, and the column appears BEHIND a sheet that is
@@ -116,7 +116,7 @@ body.reading .shell {
   background: oklch(1 0 0 / 0.08);
 }
 
-/* ================= sync status strip (P17) =================
+/* ================= sync status strip =======================
    A sibling of the deck, not a child of any view: it is `flex: none` inside
    .shell, so it is outside every list's scroller by construction rather than by
    a position:sticky that a future overflow context could quietly break. It is
@@ -167,7 +167,7 @@ body.reading .shell {
   background: oklch(0 0 0 / 0.2);
 }
 
-/* A1 — the progress and impediment variants share the strip's shape and differ only in
+/* The progress and impediment variants share the strip's shape and differ only in
    emphasis, because they are all the same KIND of thing: one line about the mailbox, above
    the deck, for as long as it is true.
 
@@ -236,13 +236,13 @@ body.reading .shell {
   padding: 2px 18px 14px;
 }
 
-/* ================= ohbox multi-select (slice U1) =================
+/* ================= ohbox multi-select ============================
    The selection bar and the picked-row marker. Both live here rather than in
    @ohmail/ui: the Ohbox is the only list with a multi-select, and a shared
    primitive built for one caller encodes a guess about the second.
    Accent-soft + an accent rail, the same language the demo ribbon and the
    selected row already speak — no new colour enters the system. */
-/* U1d: it sits ABOVE the scroller now (ListPane's `header` slot), aligned with the
+/* It sits ABOVE the scroller now (ListPane's `header` slot), aligned with the
    doorbell's 26px gutter, so a selection made forty rows down is still legible. Wraps,
    because "12 selected · Mark read ⇧U · Clear esc" does not fit one line at 390px. */
 .pick-bar {
@@ -291,20 +291,21 @@ body.reading .shell {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-/* ============ ohbox doorbell: ONE compact line, never clipped (O12-COMPACT) ============
-   The owner, on O12's two-line result: *"uses up two lines now, which is way worse UI,
-   keep it compact one line."* Their call. This block is the other trade.
+/* ============ ohbox doorbell: ONE compact line, never clipped ==========================
+   The earlier fix for this bought its legibility with a second line, and two lines is worse
+   UI here than one: it has to stay compact. This block is the other trade.
 
-   ── WHAT O12 GOT RIGHT AND THIS KEEPS ───────────────────────────────────────────────
-   O12 fixed a real defect: at 390px `.db-txt` wanted 186px, was given 128px, and the 58px
-   it discarded ended exactly on the noun — the owner could not see "waiting". Its two
+   ── WHAT THAT FIX GOT RIGHT, AND THIS KEEPS ─────────────────────────────────────────
+   It answered a real defect: at 390px `.db-txt` wanted 186px, was given 128px, and the 58px
+   it discarded ended exactly on the noun, so the word "waiting" was the part that vanished.
+   Its two
    editorial fixes are untouched and must stay: each count names what it counts (messages
    versus senders), and both go through ICU so `1,240` and `1,043` are grouped alike rather
    than one raw and one formatted. `doorbellAria` keeps its plural rules and its `=0`
    branch. Nothing here reintroduces an ellipsis.
 
-   ── WHY ONE LINE FITS NOW WHEN O12 MEASURED THAT IT COULD NOT ───────────────────────
-   O12's arithmetic was right and its conclusion followed from ONE assumption: that the
+   ── WHY ONE LINE FITS NOW, WHEN IT WAS MEASURED THAT IT COULD NOT ───────────────────
+   That arithmetic was right and its conclusion followed from ONE assumption: that the
    sentence had to be "1,043 first-time senders waiting" and the faces had to stay. It
    measured `paneWidth − 210` for the sentence and got 7 lines at 320px and 8 lines four
    characters wide at 1440px. Both inputs move here instead:
@@ -315,22 +316,22 @@ body.reading .shell {
        subtree is never announced in DOM order. ~32 characters became ~13.
      · THE FACES YIELD FIRST. They are decorative by the component's own design ("a texture,
        not a census" — `Doorbell.tsx`), so `doorbell.css` drops the whole strip below a
-       309px CONTENT box. That returns the ~124px the strip costs at the owner's numbers
+       309px CONTENT box. That returns the ~124px the strip costs on a backlogged mailbox
        (four faces + a "+1039" counter) exactly where it is needed. Measured against the real
-       build: the row needs 287px of content at the owner's numbers and 303px at 99,999, and
+       build: the row needs 287px of content in that case and 303px at 99,999, and
        the app gives it 246px at a 320px viewport (faces drop), 316px at 390px and 322px in
        the desktop split column (faces stay). The full table is in `doorbell.css`.
 
    The measurement instrument changed too, and that is the part worth keeping: the drop is a
-   CONTAINER query on the doorbell, not a media query — O12's inversion is real, a 390px
+   CONTAINER query on the doorbell, not a media query — the inversion is real, a 390px
    phone gives the doorbell LESS room (316px of content) than the desktop split column
    (322px), so no viewport breakpoint can express "is there room".
 
-   One correction to O12 while re-measuring, because it changes where the narrow case lives:
+   One correction to the earlier note, because it changes where the narrow case lives:
    the desktop column is 400px, not 320px. `.view.split` collapses to `1fr` below 900px, and
    above it the `1fr` sibling always leaves the first track room for its 400px MAXIMUM, so the
    `minmax(320px,400px)` floor is unreachable. The narrowest doorbell in the product is the
-   SMALL PHONE. Verified in Chrome against `next build` with the owner's numbers in the live
+   SMALL PHONE. Verified in Chrome against `next build` with four-digit counts in the live
    DOM: 320px, 390px and 1440px all render ONE line (36px or 44px tall, never the 74px a
    second row costs), 0px clipped, and zero clipping ancestors between the sentence and the
    pane.
@@ -351,16 +352,17 @@ body.reading .shell {
 }
 .view-ohbox .doorbell .db-txt {
   /* One line, and immovable. `flex:none` is the whole guard: a shrinkable sentence in a
-     flex row is a sentence that ellipsizes, which is the O12 defect by another route. */
+     flex row is a sentence that ellipsizes, which is the original defect by another route. */
   flex: none;
   white-space: nowrap;
   overflow: visible;
   text-overflow: clip;
 }
 /* The overflow counter, sized to its own digits. `.av.more` inherits `.av.s`'s fixed 26px
-   box, which was built for "+82"; the owner's mailbox holds ~1,045 waiting senders, so it
-   renders "+1039" — 34px of text measured inside a 26px box, spilling 8px onto the avatar
-   beside it. Kept from O12: wherever the strip IS shown, it must still fit its own number. */
+   box, which was built for "+82"; a backlogged mailbox holds four digits of waiting senders,
+   so it renders "+1039" — 34px of text measured inside a 26px box, spilling 8px onto the
+   avatar beside it. Kept from the earlier fix: wherever the strip IS shown, it must still fit
+   its own number. */
 .view-ohbox .doorbell .avs .av.more {
   width: auto;
   min-width: 26px;
@@ -496,7 +498,7 @@ body.reading .shell {
   white-space: pre-line;
   max-width: 62ch;
 }
-/* U5-BODY — whether the text above is the whole held message. Set apart from `.hm-body` and
+/* Whether the text above is the whole held message. Set apart from `.hm-body` and
    quieter than it: the product speaking about the mail, never mistakable for the mail. */
 .hm-state {
   margin: 10px 0 0;
@@ -576,7 +578,7 @@ body.reading .shell {
   width: 56px;
   flex: none;
 }
-/* THE TWO HEADER FIELDS, NOW THAT THEY TAKE INPUT (slice U4f).
+/* THE TWO HEADER FIELDS, NOW THAT THEY TAKE INPUT.
    The prototype's Compose showed To and Subject as static `<span>`s — a mock of a form. They
    are real inputs now and they had to stay inside the SAME chrome: the 56px label gutter and
    the hairline under each row are the Blanc form-field rule, and a bordered box per field
@@ -610,7 +612,7 @@ body.reading .shell {
 .c-input:read-only {
   color: var(--ink2);
 }
-/* FROM (gap O20). It is one of the header fields, not a banner about them, so it wears the
+/* FROM. It is one of the header fields, not a banner about them, so it wears the
    same chrome as To and Subject: the 56px label gutter, the row hairline, no box of its own.
 
    With ONE mailbox there is no control — an `<output>`, not a disabled `<select>`. A disabled
@@ -759,9 +761,9 @@ body.reading .shell {
 /* `.btn[aria-disabled="true"]` USED TO BE HERE, and it is gone with its only consumer.
    Compose's Send was the single element in the product that carried `aria-disabled` — a
    control that announces itself unavailable while remaining pressable, which is how the button
-   could both look dead and fire a toast about a demo the user was not in (U4f). Send is a real
+   could both look dead and fire a toast about a demo the user was not in. Send is a real
    `disabled` button now, and `.btn:disabled` in packages/ui/src/primitives/button.css is the
-   one rule that styles it, added by U4b for exactly this pair of states. Leaving the
+   one rule that styles it, added for exactly this pair of states. Leaving the
    attribute selector behind would invite the next surface to reach for the attribute again. */
 
 /* ================= settings ================= */
@@ -861,7 +863,7 @@ body.reading .shell {
 .tagp li.none:hover {
   background: none;
 }
-/* The create row (W6). Reads as an action rather than as one more tag in the list, because it
+/* The create row. Reads as an action rather than as one more tag in the list, because it
    is the only row here that WRITES something new. */
 .tagp li.mk {
   color: var(--accent-ink);
@@ -1068,7 +1070,7 @@ body.reading .shell {
   display: inline-flex;
 }
 
-/* ================= onboarding (S12) =================
+/* ================= onboarding =======================
    The join wizard reuses the login card. Blanc rules apply exactly as everywhere else:
    shadow-sculpted surfaces, hairlines only on real input fields, terracotta accent used
    once per view, no gradients and no backdrop-filter. */
@@ -1138,7 +1140,7 @@ body.reading .shell {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   letter-spacing: 0.06em;
 }
-/* S16 — the OPTIONAL invite on the open signup path. A `<details>` so the common case
+/* The OPTIONAL invite on the open signup path. A `<details>` so the common case
    (no code) is a three-input form and the uncommon one (an invited person who lost the
    link) is one click away rather than absent. */
 .join-invite-opt {
@@ -1299,7 +1301,7 @@ body.reading .shell {
   color: var(--ink3);
 }
 /* The action. Accent-coloured so the eye lands here rather than on the price — this is the
-   one line that answers "what happens when I click?", which the owner could not tell. */
+   one line that answers "what happens when I click?", which nothing else on the card did. */
 .join-plan-go {
   grid-column: 1 / -1;
   margin-top: 6px;
@@ -1651,7 +1653,7 @@ body.reading .shell {
   }
 }
 
-/* ================= Settings → Account (S19) =================
+/* ================= Settings → Account =======================
    The deletion control. Blanc rules apply unchanged: shadow-sculpted surface (the pane
    comes from SettingsSection), hairlines only on real input fields, no gradients. The
    accent is spent ONCE here — on the shield beside the sentence about the user's mail —
@@ -1846,7 +1848,7 @@ body.reading .shell {
 .bill-plan-meta { font-size: 11px; color: var(--ink2); }
 .bill-plan-cur { font-size: 10.5px; color: var(--ink3); text-transform: uppercase; letter-spacing: .06em; }
 
-/* ================= the sender affordance in a row (slice U3) =================
+/* ================= the sender affordance in a row ============================
    Clicking a row's circle or address opens that sender's screening. The handler
    is ONE capture-phase listener on <main class="stage"> (AppShell), so the hint
    below is true in every list — Ohbox, Reads, Receipts, Screener, Tags, Search —
@@ -1864,7 +1866,7 @@ body.reading .shell {
   box-shadow: var(--lift-2);
 }
 
-/* ================= sender screening popover (slice U3) ================= */
+/* ================= sender screening popover ========================== */
 .senderm {
   position: fixed;
   z-index: var(--z-pal);
@@ -1940,18 +1942,18 @@ body.reading .shell {
   color: var(--ink3);
 }
 
-/* ================= the conversation (slice P6b) =================
+/* ================= the conversation =============================
    The rest of the thread, oldest first, inside the open message. Siblings reuse the Blanc
    `.hmail` card — the same card the Screener uses for held mail, so "a message inside a
    message" looks the same wherever the product does it — one shade quieter, because a
    lift-1 card sitting inside the lift-1 reading pane reads as two competing surfaces.
 
-   NO INNER SCROLLER, ANYWHERE (settled by U5-REPLY). `.read-col` and `.reader` already
+   NO INNER SCROLLER, ANYWHERE. `.read-col` and `.reader` already
    scroll; nesting a second scroller inside them is a trap on a phone and for a keyboard, and
    the conversation is not a sidebar — it IS the message you are reading. The one exception
    used to be the reply editor's own 190px `.reply-context`, which existed so the editor could
-   stay reachable below a deep chain. That copy of the conversation is gone (the owner:
-   *"replying repeats the message which is already visible"*) and the editor scrolls itself
+   stay reachable below a deep chain. That copy of the conversation is gone — a reply must not
+   repeat the message that is already on screen — and the editor scrolls itself
    into view on open instead — see `InlineReply`. So the rule has no exceptions left. */
 .conv {
   margin: 0 0 4px;
@@ -1988,7 +1990,7 @@ body.reading .shell {
   }
 }
 
-/* ================= inline reply (slices U4, U5-REPLY) =================
+/* ================= inline reply =======================================
    Inside <article class="msg">, under the actions: head, editor, controls, status. Nothing
    else — the conversation it used to quote in a 190px `.reply-context` scroller (with
    `.reply-quoted` / `.rq-*` entries and a `.reply-note` caveat, all deleted with it) is the
@@ -2019,7 +2021,7 @@ body.reading .shell {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* WHICH ADDRESS IS ANSWERING (gap O20). One recessed line under the "Reply to …" head, in the
+/* WHICH ADDRESS IS ANSWERING. One recessed line under the "Reply to …" head, in the
    head's own type size — it is context for the editor, not a heading of its own. */
 .reply-from {
   display: flex;
@@ -2082,7 +2084,7 @@ body.reading .shell {
   gap: 5px;
 }
 
-/* THE SEND STATUS LINE (slices U4b, U4f).
+/* THE SEND STATUS LINE.
    Three tones for four states, and the split is by what the reader must DO, not by
    severity theatre: `pending` is quiet because there is nothing to do but wait, while
    `warn` (we cannot confirm it) and `error` (it did not go) both want a decision and get
@@ -2132,7 +2134,7 @@ body.reading .shell {
   box-shadow: inset 0 0 0 1px var(--accent-hair);
 }
 
-/* ================= the ? shortcut sheet (slice U2) =================
+/* ================= the ? shortcut sheet ============================
    Generated from the keyboard registry; see shell/ShortcutSheet.tsx. Two
    columns on a desk, one on a phone, and it scrolls rather than growing. */
 .ks-bg {
