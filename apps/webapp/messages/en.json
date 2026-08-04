@@ -427,6 +427,7 @@
     "title": "Compose",
     "from": "From",
     "to": "To",
+    "toSuggestions": "Address suggestions",
     "toPlaceholder": "name@example.com, separated by commas",
     "toInvalid": "Not an address: {entries}",
     "subject": "Subject",

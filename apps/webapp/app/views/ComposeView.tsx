@@ -42,14 +42,16 @@
  * a `draft` entity with a body to review, which is the demo world today and the AI drafter
  * (Phase 3b) on a Cloud account later. Its label is app copy now, not a fixture string.
  */
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import { addressBook } from "@ohmail/client-engine";
 import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
 import { Button, Chip, Icon, useToast } from "@ohmail/ui";
 import { useKeyBindings } from "../shell/keymap";
 import { go } from "../shell/routing";
 import { canSend, type SendState } from "../shell/mail-send";
 import { SendStatus } from "../shell/SendStatus";
+import { RecipientField } from "../shell/RecipientField";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
 import type { ResolvedFrom } from "../shell/compose-from";
 
@@ -84,6 +86,20 @@ export function ComposeView({
   const t = useTranslations("compose");
   const toast = useToast();
   const editorRef = useRef<HTMLTextAreaElement>(null);
+
+  /**
+   * EVERY ADDRESS THE MIRROR KNOWS, for the To field's suggestions.
+   *
+   * Built once per mount rather than per keystroke: it is a full pass over the message list,
+   * and the set of people the user has corresponded with does not change while they are typing
+   * a name. `from.address` is excluded because suggesting somebody their own address as a
+   * recipient is noise — the selector cannot know whose mailbox it is reading, so the caller
+   * says.
+   */
+  const book = useMemo(
+    () => addressBook(engine.read(), { exclude: from.address ? [from.address] : [] }),
+    [engine, from.address],
+  );
 
   /**
    * Escape leaves. The complaint that Compose could not be left with the keyboard was
@@ -185,20 +201,20 @@ export function ComposeView({
 
           <div className="c-field">
             <label htmlFor="compose-to">{t("to")}</label>
-            <input
+            {/* The addresses this mailbox already knows, matched as you type. `book` is a
+                pure selector over the local mirror — no request per keystroke, and nothing
+                about what is being typed leaves the tab. See `RecipientField`. */}
+            <RecipientField
               id="compose-to"
-              className="c-input"
-              type="text"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={t("toPlaceholder")}
               value={fields.to}
-              readOnly={inFlight}
+              onChange={(next) => onFields({ ...fields, to: next })}
+              book={book}
+              disabled={inFlight}
+              placeholder={t("toPlaceholder")}
               /* The error line below is the accessible name's partner: a field that is wrong
                  must SAY which entry is wrong, not merely refuse to enable Send. */
-              aria-invalid={plan.invalid.length > 0 || undefined}
-              aria-describedby={plan.invalid.length > 0 ? "compose-to-error" : undefined}
-              onChange={(e) => onFields({ ...fields, to: e.target.value })}
+              invalid={plan.invalid.length > 0}
+              describedBy={plan.invalid.length > 0 ? "compose-to-error" : undefined}
             />
           </div>
           {plan.invalid.length > 0 ? (

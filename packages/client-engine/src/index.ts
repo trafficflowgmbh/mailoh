@@ -108,6 +108,16 @@ export {
   type TriagePiles,
 } from "./selectors.js";
 
+// The address book — every correspondent the mirror knows, for the compose field.
+export {
+  addressBook,
+  formatRecipient,
+  isRobotAddress,
+  matchAddresses,
+  rankOf,
+  type AddressBookEntry,
+} from "./address-book.js";
+
 // Search.
 export { SearchIndex, type LocalSearchResult, type SearchFacets, type SearchHit, type SearchMatch } from "./search.js";
 
