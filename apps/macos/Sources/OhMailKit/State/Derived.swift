@@ -43,12 +43,17 @@ public extension AppState {
         }
     }
 
+    /// The body as a string, which is what today's cards render.
+    ///
+    /// A shim over `bodyState(for:in:)`. Against fixtures every body is
+    /// `.available`, so the fallback to the preview never fires; against a source
+    /// that fetches, this is where "not fetched yet" currently collapses into the
+    /// preview line. That collapse is the honest placeholder only until there is a
+    /// surface that can draw waiting and failure properly — the views move onto
+    /// `bodyState` in the slice that can actually reach those states.
     func body(for m: Message) -> String {
-        switch m.place {
-        case .reads: return readsBodies[m.id] ?? m.preview ?? ""
-        case .receipts: return receiptsBodies[m.id] ?? m.preview ?? ""
-        case .ohbox: return m.body ?? ""
-        }
+        if case .ohbox = m.place { return m.body ?? "" }
+        return bodyState(for: m.id, in: m.place).text ?? m.preview ?? ""
     }
 
     /// Current stream selection for a place (drives the row highlight both ways).
@@ -137,23 +142,25 @@ public extension AppState {
         }
     }
 
-    /// Decision scope is per-sender and editable from the bar.
+    /// Decision scope is per-sender and editable from the bar. It goes to the
+    /// source because it is the shape of a rule about a mailbox, not a UI toggle:
+    /// filing at domain scope is a different instruction from filing one address.
     func setScope(_ id: String, _ scope: Scope) {
-        guard let i = waiting.firstIndex(where: { $0.id == id }) else { return }
-        waiting[i].scope = scope
+        guard let sender = waiting.first(where: { $0.id == id }) else { return }
+        setScope(address: sender.addr, scope)
     }
     /// The rule target the decision bar names: one address, or the whole domain.
     func ruleTarget(_ s: WaitingSender) -> String {
         s.scope == .domain ? "@" + String(s.addr.split(separator: "@").last ?? "") : s.addr
     }
 
+    /// Whether a row's destination chooser is open. Shell state — see the
+    /// projection in `AppState`.
     func setChoosingScreened(_ id: String, _ on: Bool) {
-        guard let i = screened.firstIndex(where: { $0.id == id }) else { return }
-        screened[i].choosing = on
+        if on { choosingScreened.insert(id) } else { choosingScreened.remove(id) }
     }
     func setChoosingSpam(_ id: String, _ on: Bool) {
-        guard let i = spam.firstIndex(where: { $0.id == id }) else { return }
-        spam[i].choosing = on
+        if on { choosingSpam.insert(id) } else { choosingSpam.remove(id) }
     }
 
     // MARK: - Ohbox j / k

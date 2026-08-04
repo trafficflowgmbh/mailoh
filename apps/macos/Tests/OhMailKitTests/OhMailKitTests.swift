@@ -95,12 +95,13 @@ final class OhMailKitTests: XCTestCase {
     }
 
     func testProtectedMailSurvivesAScreenerDecisionWithoutGainingABody() {
-        let s = AppState()
         let sender = WaitingSender(
             id: "otp", from: "Cinderlock", addr: "no-reply@cinderlock.app", initial: "S", time: "09:00",
             ai: AISuggestion(dest: .ohbox, conf: "0.99", why: "verification class"),
             held: HeldMailbag(HeldMail.protected(id: "otp-1", subj: "Your code", time: "09:00")))
-        s.waiting.append(sender)
+        // The sender is put into the *world*, not into `AppState`, because the
+        // shell has no setter for mail — it projects whatever the source reports.
+        let s = AppState(source: FixtureSource { $0.waiting.append(sender) })
         s.decide(sender, to: .ohbox, read: false)
         let filed = s.ohbox.first { $0.id.hasPrefix("scn") }!
         XCTAssertTrue(filed.isProtected)
@@ -606,6 +607,9 @@ final class OhMailKitTests: XCTestCase {
         var names = Set(s.allItems.map(\.from))
         names.formUnion(s.waiting.map(\.from))
         names.formUnion(s.vips)
+        // The learned-pattern card names a person in its toast and adds them to
+        // VIP, so that name is rendered even though it starts in neither list.
+        names.insert(s.learnedSuggestionSubject)
         for name in names {
             XCTAssertTrue(registered.contains(name),
                           "‘\(name)’ is rendered but not in Fixtures.fictionalNames — add it with a review note")
@@ -682,7 +686,8 @@ final class OhMailKitTests: XCTestCase {
         out += s.railMailboxes.map(\.shortName)
         out += s.piles.flatMap { p in p.items.flatMap { [$0.title, $0.subtitle, $0.preview ?? ""] } }
         out += [s.ownerAddress, s.composeTo, s.composeSubject, s.composeDraft, s.composeGrounding,
-                s.learnedSuggestion, s.notificationsPrivacyNote, s.streamArtCaption]
+                s.learnedSuggestion, s.learnedSuggestionSubject, s.notificationsPrivacyNote,
+                s.streamArtCaption]
         out += s.vips
         // The registry's review notes are source content a reviewer reads, so they
         // are audited too — a note that names a real brand is still a real brand in
@@ -908,10 +913,107 @@ final class OhMailKitTests: XCTestCase {
         }
     }
 
-    func testViewsNeverReachForFixtures() throws {
+    // MARK: - The view boundary
+    //
+    // The claim this project makes about itself is that `AppState` is the whole
+    // seam: nothing under `Views/` reaches past it, not even for a string. That
+    // claim is only worth making if something checks it, because it is the single
+    // property that decides whether a real mail engine can ever land behind these
+    // views. A view that knows a sender's name, or opens a file, has to be found
+    // and rewritten at exactly the moment when everything else is also changing.
+    //
+    // The three audits below are that check. They read the sources rather than
+    // trusting a list: the forbidden type names are whatever `Fixtures.swift`,
+    // `MailSource.swift` and `FixtureSource.swift` happen to declare today, and the
+    // forbidden strings are whatever `Fixtures.swift` happens to spell today. A
+    // fixture added tomorrow is covered without anyone remembering these exist.
+    //
+    // The first version of this file asserted `source.contains("Fixtures.")` and
+    // passed. It passed while `SettingsView` typed a fixture person's name into
+    // three separate string literals, because that is not what a substring search
+    // for one token can see.
+
+    /// No file under `Views/` may name a type that belongs to the fixture world or
+    /// to the source layer. `AppState` is what a view is allowed to know about.
+    func testNoViewNamesAFixtureOrSourceType() throws {
+        let forbidden = try Self.declaredTypeNames(in: ["Fixtures/Fixtures.swift"] + Self.sourceLayerFiles())
+        XCTAssertTrue(forbidden.contains("Fixtures"),
+                      "the audit did not find the fixture namespace — it is reading the wrong files")
         for (name, source) in try Self.viewSources() {
-            XCTAssertFalse(source.contains("Fixtures."),
-                           "\(name) reads fixtures directly — fixture knowledge stops at AppState")
+            let code = SourceScan(source).code   // comments may discuss any of this
+            for type in forbidden {
+                XCTAssertFalse(SourceScan.namesIdentifier(type, in: code),
+                               "\(name) names `\(type)` — fixture and source knowledge stops at AppState")
+            }
+        }
+    }
+
+    /// Chrome nouns that `Fixtures` happens to spell too. Each is a route or pile
+    /// label the rail must be able to say with no mail loaded at all, so it is the
+    /// shell's own vocabulary and not a fixture leaking upward.
+    ///
+    /// Kept deliberately small, and checked below for staleness: an entry that no
+    /// longer collides is an entry nobody is reviewing.
+    static let chromeVocabulary: Set<String> = [
+        "Reads", "Receipts",              // `Place.title`
+        "Answer Later", "Parked", "Resurface",  // the three triage piles
+    ]
+
+    /// No file under `Views/` may spell a string the fixture world spells. This is
+    /// the audit that catches a view which imports nothing, names nothing, and
+    /// simply types a demo persona's name into a `Text`.
+    ///
+    /// It compares by **containment, not equality**, because the first version
+    /// compared whole literals and let the real thing through: the view did not say
+    /// `"Petra Wyss"`, it said `"Petra Wyss added to VIP."`, and a fixture identity
+    /// inside a longer sentence is exactly as much of a leak as one on its own.
+    /// Containment costs one extra benign hit across the whole view layer.
+    func testNoViewCarriesAFixtureString() throws {
+        let fixtures = Set(SourceScan(try Self.source("Fixtures/Fixtures.swift")).literals
+            .filter { $0.count >= 4 })
+        XCTAssertGreaterThan(fixtures.count, 200, "the audit did not read the fixture corpus")
+
+        var collided: Set<String> = []
+        for (name, source) in try Self.viewSources() {
+            for spoken in SourceScan(source).literals {
+                for fixture in fixtures where spoken.contains(fixture) {
+                    collided.insert(fixture)
+                    XCTAssertTrue(Self.chromeVocabulary.contains(fixture),
+                                  "\(name) says “\(spoken)”, which carries the fixture string "
+                                  + "“\(fixture)” — content reaches a view through AppState, "
+                                  + "never as a literal")
+                }
+            }
+        }
+        // A reviewed exception that no longer applies is not an exception.
+        XCTAssertEqual(Self.chromeVocabulary.subtracting(collided), [],
+                       "these chrome-vocabulary exemptions no longer collide with anything — delete them")
+    }
+
+    /// No file under `Views/` may reach a data source, a file, a process or a
+    /// second copy of the world. Whatever drives this app arrives through
+    /// `AppState`, so that swapping what drives it is not a rewrite of the views.
+    func testNoViewReachesADataSourceDirectly() throws {
+        let reaches = [
+            "URLSession": "the network",
+            "NSXPCConnection": "another process",
+            "Process": "a subprocess",
+            "FileManager": "the filesystem",
+            "Bundle": "bundle resources",
+            "UserDefaults": "stored defaults",
+            "NSWorkspace": "the workspace",
+            "AppState": "a second copy of the world",   // constructing one, see below
+        ]
+        for (name, source) in try Self.viewSources() {
+            let code = SourceScan(source).code
+            for (symbol, what) in reaches {
+                // `AppState` is a view's one dependency, so it is the *construction*
+                // that is forbidden, not the type.
+                let hit = symbol == "AppState"
+                    ? code.contains("AppState(")
+                    : SourceScan.namesIdentifier(symbol, in: code)
+                XCTAssertFalse(hit, "\(name) reaches \(what) directly via `\(symbol)`")
+            }
         }
     }
 
@@ -1325,6 +1427,34 @@ final class OhMailKitTests: XCTestCase {
                    encoding: .utf8)
     }
 
+    /// The files that make up the source layer — the seam and its one
+    /// implementation. Whatever they declare is what a view may not name.
+    static func sourceLayerFiles() -> [String] {
+        ["State/MailSource.swift", "Fixtures/FixtureSource.swift"]
+    }
+
+    /// The type names declared at any depth in the given files.
+    static func declaredTypeNames(in relativePaths: [String]) throws -> Set<String> {
+        var names: Set<String> = []
+        for path in relativePaths {
+            let code = SourceScan(try Self.source(path)).code
+            for keyword in ["enum ", "struct ", "protocol ", "class ", "actor "] {
+                var rest = Substring(code)
+                while let hit = rest.range(of: keyword) {
+                    // Not a declaration if the keyword is part of a longer word.
+                    let before = hit.lowerBound == rest.startIndex
+                        ? Character(" ")
+                        : rest[rest.index(before: hit.lowerBound)]
+                    rest = rest[hit.upperBound...]
+                    guard !before.isLetter, !before.isNumber, before != "_", before != "." else { continue }
+                    let name = String(rest.prefix { $0.isLetter || $0.isNumber || $0 == "_" })
+                    if !name.isEmpty, name.first!.isUppercase { names.insert(name) }
+                }
+            }
+        }
+        return names
+    }
+
     /// Every file under `Views/`, for the source audits.
     static func viewSources() throws -> [(String, String)] {
         let dir = repoRoot.appendingPathComponent("apps/macos/Sources/OhMailKit/Views")
@@ -1421,6 +1551,99 @@ final class OhMailKitTests: XCTestCase {
     struct Failure: Error, CustomStringConvertible {
         let description: String
         init(_ description: String) { self.description = description }
+    }
+}
+
+/// Swift source split into the part that is code and the string literals it
+/// contains, with comments dropped.
+///
+/// The audits need both halves and need them separated. Dropping comments is what
+/// lets an audit assert on a bare identifier: a file is entitled to *discuss*
+/// `Fixtures` in a doc comment — one of them does, explaining why it takes its
+/// caption as a parameter — while never naming it in code. Collecting literals
+/// separately is what lets an audit compare what a view *says* against what the
+/// fixture world says, which is the check that a substring search for one token
+/// cannot perform.
+///
+/// Deliberately small: it understands `//`, nested `/* */`, `"…"` with backslash
+/// escapes, and `"""…"""`. Raw strings (`#"…"#`) are not used in this target; if
+/// one is ever added, this must learn about it — a raw string would be scanned as
+/// code and its contents could hide a fixture name from the string audit.
+struct SourceScan {
+    /// The source with comments removed and every string literal blanked out, so
+    /// an identifier search cannot match text inside a literal.
+    let code: String
+    /// Every string literal, in order, exactly as written between the quotes.
+    let literals: [String]
+
+    init(_ source: String) {
+        var code = ""
+        var literals: [String] = []
+        let chars = Array(source)
+        var i = 0
+        var blockDepth = 0
+
+        while i < chars.count {
+            let c = chars[i]
+            let next = i + 1 < chars.count ? chars[i + 1] : "\0"
+
+            if blockDepth > 0 {
+                if c == "*", next == "/" { blockDepth -= 1; i += 2; continue }
+                if c == "/", next == "*" { blockDepth += 1; i += 2; continue }
+                if c == "\n" { code.append(c) }   // keep line structure readable
+                i += 1
+                continue
+            }
+            if c == "/", next == "/" {
+                while i < chars.count, chars[i] != "\n" { i += 1 }
+                continue
+            }
+            if c == "/", next == "*" { blockDepth += 1; i += 2; continue }
+
+            if c == "\"" {
+                let multiline = i + 2 < chars.count && chars[i + 1] == "\"" && chars[i + 2] == "\""
+                let fence = multiline ? 3 : 1
+                var j = i + fence
+                var literal = ""
+                while j < chars.count {
+                    if chars[j] == "\\", j + 1 < chars.count {
+                        literal.append(chars[j]); literal.append(chars[j + 1]); j += 2; continue
+                    }
+                    if multiline {
+                        if chars[j] == "\"", j + 2 < chars.count,
+                           chars[j + 1] == "\"", chars[j + 2] == "\"" { break }
+                    } else if chars[j] == "\"" || chars[j] == "\n" {
+                        break
+                    }
+                    literal.append(chars[j]); j += 1
+                }
+                literals.append(literal)
+                code.append(" ")
+                i = min(j + fence, chars.count)
+                continue
+            }
+
+            code.append(c)
+            i += 1
+        }
+        self.code = code
+        self.literals = literals
+    }
+
+    /// Whether `identifier` appears in `code` as a whole word — so `Fixtures` does
+    /// not match `FixturesOfSomethingElse`, and `Process` does not match
+    /// `ProcessInfo`, but `Fixtures.ohbox()` and `[Fixtures]` both do.
+    static func namesIdentifier(_ identifier: String, in code: String) -> Bool {
+        func isWordCharacter(_ c: Character) -> Bool { c.isLetter || c.isNumber || c == "_" }
+        var rest = Substring(code)
+        while let hit = rest.range(of: identifier) {
+            let beforeOK = hit.lowerBound == rest.startIndex
+                || !isWordCharacter(rest[rest.index(before: hit.lowerBound)])
+            let afterOK = hit.upperBound == rest.endIndex || !isWordCharacter(rest[hit.upperBound])
+            if beforeOK && afterOK { return true }
+            rest = rest[hit.upperBound...]
+        }
+        return false
     }
 }
 

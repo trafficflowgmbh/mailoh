@@ -20,8 +20,6 @@ public enum Fixtures {
 
     public static let ownerAddress = "mila@lichtgrat.studio"
 
-    public static func mailboxesRail() -> [MailboxAccount] { mailboxes() }
-
     public static func mailboxes() -> [MailboxAccount] {
         [
             MailboxAccount(address: "mila@lichtgrat.studio", kind: "Work · IMAP", shortName: "lichtgrat.studio"),
@@ -480,6 +478,10 @@ public enum Fixtures {
     public static func vips() -> [String] { ["Petra Wyss", "Giulia Ferrari"] }
 
     public static let learnedSuggestion = "You usually open Petra’s mail within 5 minutes — add to VIP?"
+    /// Who that card is about. It exists as its own value because the card's Yes
+    /// button has to name someone, and the alternative — the view typing the name
+    /// — put a demo persona's identity inside `SettingsView`.
+    public static let learnedSuggestionSubject = "Petra Wyss"
     public static let notificationsPrivacyNote = "Notifications carry no mail content — your device fetches privately."
 
     // MARK: Search

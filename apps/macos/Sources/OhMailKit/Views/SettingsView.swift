@@ -88,7 +88,7 @@ public struct SettingsView: View {
                 SettingsRow(label: setting.title, sub: setting.subtitle) {
                     BlancSwitch(setting.title, isOn: Binding(
                         get: { s.notificationSettings[i].on },
-                        set: { s.notificationSettings[i].on = $0 }
+                        set: { s.setNotification(setting.id, on: $0) }
                     ))
                 }
             }
@@ -137,15 +137,8 @@ public struct SettingsView: View {
             }
             .padding(.bottom, 12)
             HStack(spacing: 7) {
-                PillButton("Yes", kind: .primary) {
-                    s.learnedDismissed = true
-                    if !s.vips.contains("Petra Wyss") { s.vips.insert("Petra Wyss", at: 0) }
-                    s.showToast("Petra Wyss added to VIP.")
-                }
-                PillButton("No") {
-                    s.learnedDismissed = true
-                    s.showToast("Dismissed — no more suggestions for Petra.")
-                }
+                PillButton("Yes", kind: .primary) { s.acceptLearnedSuggestion() }
+                PillButton("No") { s.dismissLearnedSuggestion() }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

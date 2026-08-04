@@ -2,14 +2,22 @@
 
 The **free flagship native app** — Tier 1 of ohmail, built in SwiftUI on the Blanc
 design system. This is the Tier-1 *preview*: it runs entirely on Mila's fixture
-world with no network at all. The real IMAP/sync engine lands behind the same
-views later; nothing in `Views/` reaches past `AppState` — not even for a string.
+world with no network at all. A real mail engine lands behind the same views
+later, through [`MailSource`](Sources/OhMailKit/State/MailSource.swift).
+
+Nothing in `Views/` reaches past `AppState` — not even for a string. That used to
+be an assertion in this file and is now three tests: the audits in
+`OhMailKitTests` read every file under `Views/` and fail on a fixture or source
+type named, a fixture string spoken, or a reach for the network, the filesystem or
+a second copy of the world. Worth having, because the claim was **false** when it
+was first written down — a settings card typed a demo persona's name into three
+string literals — and the substring check that was guarding it could not see that.
 
 ## Run
 
 ```bash
 swift build --package-path apps/macos          # compile
-swift test  --package-path apps/macos          # 97 model/logic/fidelity tests
+swift test  --package-path apps/macos          # 114 model/logic/fidelity tests
 swift run   --package-path apps/macos OhMail   # open the app
 ```
 
@@ -77,10 +85,43 @@ testable from the command line with no Xcode project in the loop:
 |---|---|---|
 | `OhMailKit` | library | `Theme/` (Blanc tokens), `Models/`, `Fixtures/`, `State/`, `Views/`, `App/`, `Copy.swift` |
 | `OhMail` | executable | `main.swift` — dispatches `--smoke` / `--shot` / the app |
-| `OhMailKitTests` | test | 97 tests over counts, seen-semantics, lossless screener moves, undo, triage, tags, search, token fidelity, source audits, no-collapse |
+| `OhMailKitTests` | test | 114 tests over counts, seen-semantics, lossless screener moves, undo, triage, tags, search, token fidelity, the view boundary, the source seam, no-collapse |
 
 `main.swift` deliberately avoids `@main`: the `--smoke` path has to run before any
 `App` scene exists.
+
+## Where the mail comes from
+
+[`MailSource`](Sources/OhMailKit/State/MailSource.swift) is the boundary between
+the shell and whatever holds the mail. `AppState` keeps routes, selection,
+overlays, the toast and the search index; it owns no mail. Every mail property on
+it is a projection of the world the source last reported, and every change goes
+out as a typed `MailIntent` and comes back as a new world.
+[`FixtureSource`](Sources/OhMailKit/Fixtures/FixtureSource.swift) is the one
+implementation, and it is where the rules that move mail actually live — lossless
+screener moves, the "& read" semantics, what an undo puts back.
+
+The protocol is shaped by two things fixtures cannot do, both learned by asking
+what would break the first time this is pointed at a real account:
+
+- **A mailbox has states a fixture set does not.** A sync still running, a body
+  fetched later than its header, a failure with a reason worth reading. `SyncState`,
+  `BodyState` and `SourceFailure` make each of those representable, so a surface
+  cannot accidentally render "not fetched yet" as an empty message or a failed
+  sync as an empty mailbox. Fixtures only ever reach `.idle` and `.available`;
+  the tests drive the rest through a stub.
+- **Undo is a forward request, not a saved world.** It would be easy to keep a copy
+  of the state before each action and write it back. That works perfectly against
+  fixtures and is a lie against a mailbox: by the time Undo is tapped, mail has
+  arrived and another client has read something. So `apply` returns a `Receipt`,
+  Undo asks for that receipt to be reversed, and the source may answer `.refused`
+  with a reason the reader sees. An undo that can fail out loud is worth more than
+  one that silently restores a stale copy.
+
+Intents carry **mailbox identities** — a sender's address, a message's own id —
+never a row index and never an id this app minted for its own list. There is no
+wire format here and nothing is `Codable`: whatever an engine speaks, it maps into
+these types, and that mapping is its own business.
 
 ## The invariants, and where they are enforced
 
@@ -145,7 +186,52 @@ lives in `SplitPane`. Rail · list · detail is intact; only the container diffe
 
 ## Packaging
 
-This is a **dev binary**, not an app bundle. `swift run` produces a plain
-executable, which is enough for the preview and for CI. A shippable `ohmail.app`
-needs full Xcode for `Info.plist` + bundle assembly, code signing, and
-notarization — that step comes with the release pipeline, along with the app icon.
+`swift run` produces a plain executable, which is all the preview and the render
+checks need. For something double-clickable:
+
+```bash
+./scripts/package-app.sh     # → build/ohmail.app and build/ohmail.dmg
+```
+
+SwiftPM cannot make a bundle, so that script does the three things `swift build`
+leaves out: it wraps the universal (`arm64` + `x86_64`) release binary in a
+`.app` with `Info.plist` and `ohmail.icns`, signs it, and lays the bundle out in
+a compressed DMG beside a drag-install shortcut and the first-run notes. No Xcode
+project and no Xcode UI is involved — only the command-line tools it ships.
+
+`OHMAIL_ARCHS="arm64"` builds host-only and is a good deal faster while
+iterating; `OHMAIL_BUILD_VERSION` stamps `CFBundleVersion`.
+
+### What the bundle is, and is not
+
+| | |
+|---|---|
+| bundle id | `io.ohmail.desktop` |
+| minimum macOS | 15.0 |
+| architectures | `arm64` + `x86_64` |
+| signature | **ad-hoc only** |
+| notarization | **none** |
+
+**The signature is ad-hoc, which is not a weaker Developer ID — it is no
+statement of provenance at all.** On Apple silicon an unsigned Mach-O will not
+launch, so `codesign -s -` is the floor rather than a claim about who built this.
+Gatekeeper therefore blocks a plain double-click on first launch and needs a
+right-click → *Open*; the DMG's *Read me first.txt* says so and says why.
+
+Signing properly needs an Apple Developer Program membership under the company,
+a *Developer ID Application* certificate, and an app-specific password for the
+notary service. None of those exist yet. When they do, the build gains
+`codesign --options runtime --timestamp`, `xcrun notarytool submit --wait` and
+`xcrun stapler staple` — and the first-run notes get replaced rather than quietly
+left behind, because at that point they would be false.
+
+### The bundle runs on invented mail
+
+Packaging changes nothing about what the app contains. This build has no IMAP
+client, no network code and no account: it renders the whole interface on the
+small fictional mailbox compiled into it. The binary links no networking
+framework at all, which is the reason that claim can be checked rather than
+believed — `otool -L ohmail.app/Contents/MacOS/OhMail` lists Foundation, AppKit,
+SwiftUI and CoreGraphics, and nothing that opens a socket.
+
+Anyone who installs this is looking at the interface, not at their mail.

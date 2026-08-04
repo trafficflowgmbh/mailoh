@@ -139,11 +139,14 @@ public enum Smoke {
         // on the canvas and pushes the list column out of frame. This variant retires
         // all but two issues, so the waterline and the classifier chip are reviewable.
         for scheme in [ColorScheme.light, .dark] {
-            let state = AppState()
+            // Three unseen issues above the line, two seen below it. The narrowing
+            // happens in the source rather than by editing the shell afterwards —
+            // the shell has no setter for mail, which is the point of the seam.
+            let state = AppState(source: FixtureSource {
+                $0.reads = Array($0.reads.prefix(3)) + Array($0.reads.suffix(2))
+            })
             state.route = .reads
             state.themePref = scheme == .dark ? .dark : .light
-            // Three unseen issues above the line, two seen below it.
-            state.reads = Array(state.reads.prefix(3)) + Array(state.reads.suffix(2))
             state.streamReadsCur = state.reads.first?.id
             let view = RootView(state)
                 .environment(\.colorScheme, scheme)

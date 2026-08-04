@@ -1,32 +1,25 @@
 import SwiftUI
 import Observation
 
-/// A single screener decision, captured so it can be undone as a unit (bulk
-/// actions undo as one). Carries the sender *whole* — every held message, with its
-/// identity, content and read state — so an undo restores the exact prior world.
-public struct DecisionSnapshot: Sendable {
-    public let sender: WaitingSender
-    public let index: Int
-    public let dest: Destination
-    public let read: Bool
-    public var newID: String?
-}
+/// Everything the toast's Undo could put back, as one unit — a bulk screener
+/// action undoes as one gesture, not eight.
+///
+/// It holds **receipts**, not mail. What it takes to reverse an operation is the
+/// source's business; the shell only remembers what to ask for and what to say
+/// once it lands. See the note at the top of `MailSource.swift` for why the
+/// alternative — keeping a copy of the world and writing it back — cannot survive
+/// a real mailbox.
+public struct UndoOp: Sendable {
+    public let receipts: [Receipt]
+    /// What the toast says after the undo lands. Composed at the time of the
+    /// action, because that is when the shell knew what the action was.
+    public let doneMessage: String
 
-/// Every reversible operation in the app, typed. The toast's Undo runs exactly
-/// one of these and then forgets it — there is no "wired per action" placeholder
-/// and no snapshot that gets dropped on the floor.
-public enum UndoOp: Sendable {
-    case decisions([DecisionSnapshot])
-    case allow(sender: ScreenedSender, index: Int, newIDs: [String], dest: Destination)
-    case notSpam(sender: SpamSender, index: Int, newIDs: [String], backWaitingID: String?)
-    case deleteSpam(sender: SpamSender, index: Int)
+    /// How many operations the undo takes back — used by the toast's own copy.
+    public var count: Int { receipts.count }
 
-    /// How many mail items the undo puts back — used by the toast's own copy.
-    public var count: Int {
-        switch self {
-        case .decisions(let s): return s.count
-        default: return 1
-        }
+    public init(receipts: [Receipt], doneMessage: String) {
+        self.receipts = receipts; self.doneMessage = doneMessage
     }
 }
 
@@ -39,17 +32,25 @@ public struct ToastState: Equatable, Sendable {
     public let token: Int   // forces re-fire even on identical text
 }
 
-/// The whole app's live state and logic. Fixtures-only for the Tier-1 preview;
-/// the real IMAP/sync engine wires in behind this same surface later. Deliberately
-/// framework-light so `OhMailKitTests` can drive every rule without SwiftUI.
+/// The shell: routes, selection, overlays, the toast, the search index, and the
+/// copy that describes what just happened.
 ///
-/// **Views never see `Fixtures`.** Everything a view renders — mail, counts, the
-/// rail's mailbox list, the owner address, the waterline meta, the pre-filled
-/// search query, the compose draft — is a property here. Swapping fixtures for the
-/// engine is a change to `init` and nothing else.
+/// **It does not own the mail.** Every mail property below is a projection of the
+/// world `MailSource` last reported, and every change to it goes out as a
+/// `MailIntent` and comes back as a new world. Which source is behind it is the
+/// only thing that changes between this preview and an app pointed at a real
+/// account — `MailSource.swift` is where that boundary is described.
+///
+/// **Views see this and nothing else.** Not the fixtures, not the source, not a
+/// string belonging to either. That is a checked property rather than an
+/// intention: `OhMailKitTests` reads every file under `Views/` and fails on a
+/// fixture type, a fixture string, or a reach for a data source. It is worth
+/// checking because it decides whether a real engine can land behind these views
+/// without rewriting them — and because it was quietly false, a settings card
+/// knowing a demo persona by name, for as long as nobody looked.
 @Observable
 @MainActor
-public final class AppState {
+public final class AppState: MailSourceSink {
 
     // MARK: Navigation & selection
     public var route: Route = .ohbox
@@ -70,8 +71,8 @@ public final class AppState {
     public var themePref: ThemePreference = .system
     public var readsChipState: ReadsChip = .pending
     public var toast: ToastState?
-    /// What the toast's Undo will do. Cleared the moment it runs, so one toast can
-    /// never undo twice.
+    /// What the toast's Undo will ask for. Cleared the moment it runs, so one toast
+    /// can never undo twice.
     public var pendingUndo: UndoOp?
 
     // MARK: Compact (≤900pt) navigation — the drawer + the single-pane detail
@@ -82,95 +83,143 @@ public final class AppState {
 
     public enum ReadsChip: Sendable { case pending, approved, corrected }
 
-    // MARK: Mail
-    public var ohbox: [Message] { didSet { mailVersion += 1 } }
-    public var reads: [Message] { didSet { mailVersion += 1 } }
-    public var receipts: [Message] { didSet { mailVersion += 1 } }
-    public var receiptGroups: [ReceiptGroup]
-    public var readsBodies: [String: String] { didSet { mailVersion += 1 } }
-    public var receiptsBodies: [String: String] { didSet { mailVersion += 1 } }
+    // MARK: - The source
+
+    private let source: any MailSource
+    /// The mail exactly as the source last reported it. Private: anything that
+    /// could reach this could reach past the shell.
+    private var world: MailWorld
+    /// The preview's own narrative — not mail, and not the source's business.
+    private let chrome: PreviewChrome
+
+    /// Where the source stands with the mailbox behind it. Always `.idle` on
+    /// fixtures; the surfaces that draw a running sync or a failure arrive with the
+    /// source that can actually reach those states.
+    public private(set) var syncState: SyncState
+
+    // MARK: - Mail (projections — assign to none of these, send an intent)
+
+    public var ohbox: [Message] { world.ohbox }
+    public var reads: [Message] { world.reads }
+    public var receipts: [Message] { world.receipts }
+    public var receiptGroups: [ReceiptGroup] { world.receiptGroups }
+
+    /// The bodies actually in hand. A body still being fetched is *absent* here
+    /// rather than present and empty — ask `bodyState(for:in:)` when a surface has
+    /// something honest to draw for the other cases.
+    public var readsBodies: [String: String] { world.readsBodies.compactMapValues(\.text) }
+    public var receiptsBodies: [String: String] { world.receiptsBodies.compactMapValues(\.text) }
 
     // MARK: Screener
-    public var waiting: [WaitingSender]
-    public var screened: [ScreenedSender]
-    public var spam: [SpamSender]
+    public var waiting: [WaitingSender] { world.waiting }
+    /// The `choosing` flag — whether this row's destination chooser is open — is
+    /// shell state stamped onto the projection, not something the source is told
+    /// about. An open menu is not a fact about the mailbox, and it must survive a
+    /// world arriving from the source underneath it.
+    public var screened: [ScreenedSender] {
+        world.screened.map { var s = $0; s.choosing = choosingScreened.contains(s.id); return s }
+    }
+    public var spam: [SpamSender] {
+        world.spam.map { var s = $0; s.choosing = choosingSpam.contains(s.id); return s }
+    }
+    var choosingScreened: Set<String> = []
+    var choosingSpam: Set<String> = []
 
     // MARK: Cross-cutting + triage
-    public var tagsByID: [String: [TagID]]
+    public var tagsByID: [String: [TagID]] { world.tagsByID }
     /// **The single source of truth for triage.** Counts, the rail badges, the
     /// Triage cards and the Reply Run queue are all derived from this.
-    public var piles: [TriagePile]
-    /// Drafts saved from Reply Run, by the mail's id. Nothing is ever sent
-    /// here — this build has no network — so a saved draft is exactly that.
-    public var drafts: [String: String] = [:]
+    public var piles: [TriagePile] { world.piles }
+    /// Drafts saved from Reply Run, by the mail's id. Nothing is ever sent here —
+    /// this build has no mailbox — so a saved draft is exactly that.
+    public var drafts: [String: String] { world.drafts }
 
-    // MARK: Reads / Receipts stream UI (owned here so the keyboard map can drive it)
-    /// Cards the reader has expanded. Lives in state, not in `StreamView`, because
-    /// `↵` is a global key and has to reach it.
+    // MARK: - Reads / Receipts stream UI (owned here so the keyboard map can drive it)
+    /// Cards the reader has expanded. Lives in the shell, not in `StreamView`,
+    /// because `↵` is a global key and has to reach it.
     public var streamExpanded: Set<String> = []
     private var scrollRequestReads: String?
     private var scrollRequestReceipts: String?
 
     // MARK: Settings
-    public var notificationSettings: [NotificationSetting]
-    public var vips: [String]
+    public var notificationSettings: [NotificationSetting] { world.notificationSettings }
+    public var vips: [String] { world.vips }
     public var learnedDismissed = false
-    public let mailboxes: [MailboxAccount]
+    public var mailboxes: [MailboxAccount] { world.mailboxes }
+    /// The rail lists the same accounts Settings does, drawn differently.
+    public var railMailboxes: [MailboxAccount] { world.mailboxes }
+    public var ownerAddress: String { world.ownerAddress }
 
-    // MARK: Preview content the chrome renders (engine replaces these wholesale)
-    public let railMailboxes: [MailboxAccount]
-    public let ownerAddress: String
-    public let readsWaterlineMeta: String
-    public let streamArtCaption: String
-    public let initialSearchQuery: String
-    public let composeTo: String
-    public let composeSubject: String
-    public let composeDraft: String
-    public let composeGrounding: String
-    public let notificationsPrivacyNote: String
-    public let learnedSuggestion: String
+    // MARK: Preview chrome (see `PreviewChrome` — none of this is mail)
+    public var readsWaterlineMeta: String { chrome.readsWaterlineMeta }
+    public var streamArtCaption: String { chrome.streamArtCaption }
+    public var initialSearchQuery: String { chrome.initialSearchQuery }
+    public var composeTo: String { chrome.composeTo }
+    public var composeSubject: String { chrome.composeSubject }
+    public var composeDraft: String { chrome.composeDraft }
+    public var composeGrounding: String { chrome.composeGrounding }
+    public var notificationsPrivacyNote: String { chrome.notificationsPrivacyNote }
+    public var learnedSuggestion: String { chrome.learnedSuggestion }
+    public var learnedSuggestionSubject: String { chrome.learnedSuggestionSubject }
 
-    private var seq = 0
     private var toastSeq = 0
-    /// Bumped by every change to mail text; the search index rebuilds when stale.
-    private var mailVersion = 0
+    /// Bumped by every world the source reports; the search index rebuilds when stale.
+    private var worldVersion = 0
     private var indexVersion = -1
     private var cachedIndex = SearchIndex(entries: [])
 
-    public init() {
-        ohbox = Fixtures.ohbox()
-        reads = Fixtures.reads()
-        receipts = Fixtures.receipts()
-        receiptGroups = Fixtures.receiptGroups()
-        readsBodies = Fixtures.readsBodies()
-        receiptsBodies = Fixtures.receiptsBodies()
-        waiting = Fixtures.waiting()
-        screened = Fixtures.screened()
-        spam = Fixtures.spam()
-        tagsByID = Fixtures.tags()
-        piles = Fixtures.piles()
-        notificationSettings = Fixtures.notificationSettings()
-        vips = Fixtures.vips()
-        mailboxes = Fixtures.mailboxes()
-        railMailboxes = Fixtures.mailboxesRail()
-        ownerAddress = Fixtures.ownerAddress
-        readsWaterlineMeta = Fixtures.readsWaterline
-        streamArtCaption = Fixtures.readsArtCaption
-        initialSearchQuery = Fixtures.searchInitialQuery
-        composeTo = Fixtures.composeTo
-        composeSubject = Fixtures.composeSubject
-        composeDraft = Fixtures.composeDraft
-        composeGrounding = Fixtures.composeGrounding
-        notificationsPrivacyNote = Fixtures.notificationsPrivacyNote
-        learnedSuggestion = Fixtures.learnedSuggestion
-        streamReadsCur = reads.first(where: { !$0.seen })?.id ?? reads.first?.id
-        streamReceiptsCur = receipts.first?.id
-        scnSelWaiting = waiting.first?.id
-        scnSelScreened = screened.first?.id
-        scnSelSpam = spam.first?.id
+    public init(source: any MailSource = FixtureSource(), chrome: PreviewChrome = .fixtures) {
+        self.source = source
+        self.chrome = chrome
+        self.world = source.openingWorld()
+        self.syncState = .idle(lastCompleted: nil)
+        // Attached after full initialization, so `self` can be the sink.
+        self.syncState = source.start(sink: self)
+
+        streamReadsCur = world.reads.first(where: { !$0.seen })?.id ?? world.reads.first?.id
+        streamReceiptsCur = world.receipts.first?.id
+        scnSelWaiting = world.waiting.first?.id
+        scnSelScreened = world.screened.first?.id
+        scnSelSpam = world.spam.first?.id
     }
 
-    // MARK: - Derived counts (single source of truth = the arrays)
+    // MARK: - MailSourceSink — the source pushing back
+
+    public func worldDidChange(_ world: MailWorld) {
+        self.world = world
+        worldVersion += 1
+    }
+
+    public func bodyDidChange(id: String, in place: Place, to state: BodyState) {
+        switch place {
+        case .reads: world.readsBodies[id] = state
+        case .receipts: world.receiptsBodies[id] = state
+        case .ohbox: break   // Ohbox bodies ride on the message itself
+        }
+        worldVersion += 1
+    }
+
+    public func syncStateDidChange(_ state: SyncState) { syncState = state }
+
+    // MARK: - Bodies
+
+    /// Whether a body is in hand, still coming, or could not be had. `body(for:)`
+    /// in `Derived.swift` is the string shim over this; surfaces move across as
+    /// each gains something honest to draw for the other cases.
+    public func bodyState(for id: String, in place: Place) -> BodyState {
+        switch place {
+        case .reads: return world.readsBodies[id] ?? source.bodyState(for: id, in: place)
+        case .receipts: return world.receiptsBodies[id] ?? source.bodyState(for: id, in: place)
+        case .ohbox: return source.bodyState(for: id, in: place)
+        }
+    }
+
+    /// Ask the source for a body it has not fetched. A no-op against fixtures.
+    public func requestBody(for id: String, in place: Place) {
+        source.requestBody(for: id, in: place)
+    }
+
+    // MARK: - Derived counts (single source of truth = the world)
 
     /// Ohbox rail badge = unread. Reading in the Ohbox is non-destructive (the
     /// prototype never marks Ohbox mail seen on open), so this only moves on
@@ -199,152 +248,168 @@ public final class AppState {
 
     // MARK: - Seen semantics (Reads · Receipts stream + rows)
 
-    /// Marking seen fades the dot in place (no reshuffle) and ticks the "new"
-    /// count down by one. Idempotent — a message already read stays put and the
-    /// count does not double-decrement. Never touches Ohbox (its unread count is
-    /// an invariant across reading).
+    /// Idempotent: a message already read stays put, and nothing is announced.
     @discardableResult
     public func markSeen(_ id: String) -> Bool {
-        if let i = reads.firstIndex(where: { $0.id == id }), reads[i].unread {
-            reads[i].unread = false
-            return true
-        }
-        if let i = receipts.firstIndex(where: { $0.id == id }), receipts[i].unread {
-            receipts[i].unread = false
-            return true
-        }
-        return false
+        guard case .applied(let ack) = source.apply(.markSeen(message: id)) else { return false }
+        return ack.affected > 0
     }
 
     // MARK: - Screener decisions
 
-    private func nextSeq() -> Int { seq += 1; return seq }
-
-    /// File a waiting sender to a destination.
-    ///
-    /// Lossless by construction: **every** held message travels, keeping its id,
-    /// subject, time, trackers and read state. Filing to a mail place produces one
-    /// row whose `earlier` array carries the rest of the thread (so the thread
-    /// badge is derived from mail that is actually rendered); Screen out and Spam
-    /// keep the whole `HeldMailbag`.
-    ///
-    /// `read == true` (the ✓ "& read" half) marks every held message seen *before*
-    /// the move, which is what makes "& read" mean the same thing at all five
-    /// destinations — including Screen out and Spam, where there is no unread
-    /// count but there is still read state.
+    /// File a waiting sender. Returns the receipt, so a caller can undo the batch
+    /// it belongs to; the toast already can.
     @discardableResult
-    public func decide(_ sender: WaitingSender, to dest: Destination, read: Bool, quiet: Bool = false) -> DecisionSnapshot? {
+    public func decide(_ sender: WaitingSender, to dest: Destination,
+                       read: Bool, quiet: Bool = false) -> Receipt? {
         guard let idx = waiting.firstIndex(where: { $0.id == sender.id }) else { return nil }
-        waiting.remove(at: idx)
-        var snap = DecisionSnapshot(sender: sender, index: idx, dest: dest, read: read, newID: nil)
-        let bag = read ? sender.held.markingAllSeen() : sender.held
         let scopeTxt = sender.scope == .domain ? "the whole domain @" + domain(sender.addr) : sender.addr
 
-        if let place = dest.asPlace {
-            let nid = "scn\(nextSeq())-\(sender.id)"
-            snap.newID = nid
-            let rationale = "\(dest.done) — you said Yes to \(sender.addr) in the Screener"
-            let it = message(id: nid, place: place, from: sender.from, addr: sender.addr,
-                             time: sender.time, bag: bag, rationale: rationale, read: read)
-            switch place {
-            case .ohbox:
-                if read { insertSeen(&ohbox, it) } else { ohbox.insert(it, at: 0) }
-            case .reads:
-                readsBodies[nid] = bag.joinedBody(redactedNote: Copy.protectedRedactedBody)
-                if read { insertSeen(&reads, it) } else { reads.insert(it, at: 0) }
-            case .receipts:
-                receiptsBodies[nid] = bag.joinedBody(redactedNote: Copy.protectedRedactedBody)
-                receipts.insert(it, at: 0)
-                if !receiptGroups.isEmpty { receiptGroups[0].itemIDs.insert(nid, at: 0) }
-            }
-        } else if dest == .screened {
-            screened.insert(ScreenedSender(sender: sender.addr, date: "today", held: bag,
-                                           fromWaitingID: sender.id), at: 0)
-        } else {
-            spam.insert(SpamSender(from: sender.addr, det: "marked spam by you", held: bag,
-                                   fromWaitingID: sender.id), at: 0)
-        }
+        switch source.apply(.decide(sender: sender.addr, scope: sender.scope,
+                                    to: dest, markRead: read)) {
+        case .refused(let failure):
+            showToast(failure.reason)
+            return nil
 
-        // keep selection on the row that slides up into the decided one's place
-        scnSelWaiting = waiting.isEmpty ? nil : waiting[min(idx, waiting.count - 1)].id
+        case .applied(let ack):
+            // keep selection on the row that slides up into the decided one's place
+            scnSelWaiting = waiting.isEmpty ? nil : waiting[min(idx, waiting.count - 1)].id
 
-        if !quiet {
-            let readNote = read ? " Held mail marked read." : ""
-            let msg: String
-            switch dest {
-            case .screened: msg = "Screened out — \(scopeTxt).\(readNote)"
-            case .spam: msg = "Marked spam — \(sender.addr).\(readNote)"
-            default: msg = "\(dest.done) — filed\(read ? " · marked read" : ""). Future mail from \(scopeTxt) files there automatically."
-            }
-            offer(.decisions([snap]), message: msg)
-        }
-        return snap
-    }
-
-    /// One mail row standing for a whole held bag: the newest message is the row's
-    /// own content, the rest ride along in `earlier` and are all rendered.
-    private func message(id: String, place: Place, from: String, addr: String, time: String,
-                         bag: HeldMailbag, rationale: String, read: Bool) -> Message {
-        let all = bag.all
-        let newest = all[all.count - 1]
-        var it = Message(id: id, place: place, from: from, addr: addr, subj: newest.subj, time: time,
-                         content: newest.content, earlier: Array(all.dropLast()),
-                         rationale: rationale)
-        it.tracker = newest.trackers
-        if read { it.seen = true } else { it.unread = true }
-        return it
-    }
-
-    /// Apply an undo operation. Every branch is a *move back*, never a delete.
-    public func undo(_ op: UndoOp) {
-        switch op {
-        case .decisions(let snaps):
-            for s in snaps.reversed() {
-                switch s.dest {
-                case .ohbox: removeByID(&ohbox, s.newID)
-                case .reads: removeByID(&reads, s.newID); if let n = s.newID { readsBodies[n] = nil }
-                case .receipts:
-                    removeByID(&receipts, s.newID)
-                    if let n = s.newID {
-                        receiptsBodies[n] = nil
-                        if !receiptGroups.isEmpty { receiptGroups[0].itemIDs.removeAll { $0 == n } }
-                    }
-                case .screened: screened.removeAll { $0.fromWaitingID == s.sender.id }
-                case .spam: spam.removeAll { $0.fromWaitingID == s.sender.id }
-                }
-                waiting.insert(s.sender, at: min(s.index, waiting.count))
-            }
-            scnSelWaiting = waiting.first?.id
-            showToast("Undone — \(snaps.count) waiting again.")
-
-        case .allow(let sender, let index, let newIDs, let dest):
-            for id in newIDs {
+            if !quiet, let receipt = ack.receipt {
+                let readNote = read ? " Held mail marked read." : ""
+                let msg: String
                 switch dest {
-                case .ohbox: removeByID(&ohbox, id)
-                case .reads: removeByID(&reads, id); readsBodies[id] = nil
-                default: break
+                case .screened: msg = "Screened out — \(scopeTxt).\(readNote)"
+                case .spam: msg = "Marked spam — \(sender.addr).\(readNote)"
+                default: msg = "\(dest.done) — filed\(read ? " · marked read" : ""). Future mail from \(scopeTxt) files there automatically."
                 }
+                offer(UndoOp(receipts: [receipt], doneMessage: "Undone — 1 waiting again."), message: msg)
             }
-            screened.insert(sender, at: min(index, screened.count))
-            scnSelScreened = sender.id
-            showToast("Undone — \(sender.sender) is screened out again, \(sender.heldCount) held.")
-
-        case .notSpam(let sender, let index, let newIDs, let backWaitingID):
-            for id in newIDs { removeByID(&ohbox, id) }
-            if let w = backWaitingID { waiting.removeAll { $0.id == w } }
-            spam.insert(sender, at: min(index, spam.count))
-            scnSelSpam = sender.id
-            showToast("Undone — \(sender.from) is back in Spam.")
-
-        case .deleteSpam(let sender, let index):
-            spam.insert(sender, at: min(index, spam.count))
-            scnSelSpam = sender.id
-            showToast("Undone — \(sender.from) is back in Spam, \(sender.heldCount) held.")
+            return ack.receipt
         }
+    }
+
+    /// Apply the AI suggestion to every waiting sender (files unread). Returns the
+    /// receipts so a caller can undo the whole batch; the toast already can.
+    @discardableResult
+    public func applyAllSuggestions() -> [Receipt] {
+        let items = waiting
+        var receipts: [Receipt] = []
+        for it in items { if let r = decide(it, to: it.ai.dest, read: false, quiet: true) { receipts.append(r) } }
+        if !receipts.isEmpty {
+            offer(UndoOp(receipts: receipts, doneMessage: "Undone — \(receipts.count) waiting again."),
+                  message: summary(items.map(\.ai.dest)))
+        }
+        return receipts
+    }
+
+    @discardableResult
+    public func markAllSpam() -> [Receipt] {
+        let items = waiting
+        var receipts: [Receipt] = []
+        for it in items { if let r = decide(it, to: .spam, read: false, quiet: true) { receipts.append(r) } }
+        if !receipts.isEmpty {
+            offer(UndoOp(receipts: receipts, doneMessage: "Undone — \(receipts.count) waiting again."),
+                  message: "\(receipts.count) moved to Spam")
+        }
+        return receipts
+    }
+
+    private func summary(_ dests: [Destination]) -> String {
+        func n(_ d: Destination) -> Int { dests.filter { $0 == d }.count }
+        var parts: [String] = []
+        if n(.ohbox) > 0 { parts.append("\(n(.ohbox)) to Ohbox") }
+        if n(.reads) > 0 { parts.append("\(n(.reads)) to Reads") }
+        if n(.receipts) > 0 { parts.append("\(n(.receipts)) to Receipts") }
+        if n(.screened) > 0 { parts.append("\(n(.screened)) screened out") }
+        if n(.spam) > 0 { parts.append("\(n(.spam)) to Spam") }
+        return "\(dests.count) decided — \(parts.joined(separator: " · "))"
+    }
+
+    // MARK: - Screened / Spam actions
+
+    /// Allowing a screened sender **releases the held mail**: every held message
+    /// becomes a real item in the chosen view. It is a move, and it is undoable.
+    @discardableResult
+    public func allowScreened(_ s: ScreenedSender, to dest: Destination) -> [String] {
+        switch source.apply(.allow(sender: s.sender, to: dest)) {
+        case .refused(let failure):
+            showToast(failure.reason)
+            return []
+        case .applied(let ack):
+            scnSelScreened = screened.first?.id
+            if let receipt = ack.receipt {
+                offer(UndoOp(receipts: [receipt],
+                             doneMessage: "Undone — \(s.sender) is screened out again, \(s.heldCount) held."),
+                      message: "Allowed — \(s.heldCount) held message\(s.heldCount == 1 ? "" : "s") released to \(dest.label). Future mail from \(s.sender) goes there.")
+            }
+            return ack.createdIDs
+        }
+    }
+
+    /// "Not spam" is also a move: the held mail goes where you send it, whole.
+    @discardableResult
+    public func notSpam(_ s: SpamSender, to target: NotSpamTarget) -> [String] {
+        switch source.apply(.notSpam(sender: s.from, to: target)) {
+        case .refused(let failure):
+            showToast(failure.reason)
+            return []
+        case .applied(let ack):
+            if target == .screener { scnSelWaiting = scnSelWaiting ?? waiting.last?.id }
+            scnSelSpam = spam.first?.id
+            if let receipt = ack.receipt {
+                let msg = target == .ohbox
+                    ? "Not spam — \(s.heldCount) message\(s.heldCount == 1 ? "" : "s") filed to Ohbox. \(s.from) is allowed now."
+                    : "Not spam — \(s.from) is back in Waiting with \(s.heldCount) held."
+                offer(UndoOp(receipts: [receipt], doneMessage: "Undone — \(s.from) is back in Spam."),
+                      message: msg)
+            }
+            return ack.createdIDs
+        }
+    }
+
+    public func deleteSpam(_ s: SpamSender) {
+        switch source.apply(.deleteSpam(sender: s.from)) {
+        case .refused(let failure):
+            showToast(failure.reason)
+        case .applied(let ack):
+            scnSelSpam = spam.first?.id
+            if let receipt = ack.receipt {
+                offer(UndoOp(receipts: [receipt],
+                             doneMessage: "Undone — \(s.from) is back in Spam, \(s.heldCount) held."),
+                      message: "Deleted — \(s.from).")
+            }
+        }
+    }
+
+    // MARK: - Undo
+
+    /// Ask the source to take back everything the toast offered.
+    ///
+    /// Newest first: reversing in the order the operations were applied would ask
+    /// the source to put back mail a later operation has since moved again. **The
+    /// source is allowed to say no** — a mailbox moves underneath you — and when it
+    /// does, its reason is what the reader sees instead of a silent no-op.
+    @discardableResult
+    public func undo(_ op: UndoOp) -> Bool {
+        for receipt in op.receipts.reversed() {
+            if case .refused(let failure) = source.apply(.reverse(receipt)) {
+                showToast(failure.reason)
+                return false
+            }
+        }
+        scnSelWaiting = waiting.first?.id
+        scnSelScreened = screened.first?.id
+        scnSelSpam = spam.first?.id
+        showToast(op.doneMessage)
+        return true
     }
 
     /// Back-compat entry point used by the tests and the keyboard map.
-    public func undo(_ snaps: [DecisionSnapshot]) { undo(.decisions(snaps)) }
+    @discardableResult
+    public func undo(_ receipts: [Receipt]) -> Bool {
+        undo(UndoOp(receipts: receipts, doneMessage: "Undone — \(receipts.count) waiting again."))
+    }
 
     /// Run whatever the visible toast offers, exactly once.
     @discardableResult
@@ -354,125 +419,13 @@ public final class AppState {
             return false
         }
         pendingUndo = nil
-        undo(op)
-        return true
+        return undo(op)
     }
 
     /// Show a toast that offers this operation as its Undo.
     private func offer(_ op: UndoOp, message: String) {
         pendingUndo = op
         showToast(message, action: "Undo")
-    }
-
-    /// Apply the AI suggestion to every waiting sender (files unread). Returns the
-    /// snapshots so a caller can undo the whole batch; the toast already can.
-    @discardableResult
-    public func applyAllSuggestions() -> [DecisionSnapshot] {
-        let items = waiting
-        var snaps: [DecisionSnapshot] = []
-        for it in items { if let s = decide(it, to: it.ai.dest, read: false, quiet: true) { snaps.append(s) } }
-        if !snaps.isEmpty { offer(.decisions(snaps), message: summary(snaps)) }
-        return snaps
-    }
-
-    @discardableResult
-    public func markAllSpam() -> [DecisionSnapshot] {
-        let items = waiting
-        var snaps: [DecisionSnapshot] = []
-        for it in items { if let s = decide(it, to: .spam, read: false, quiet: true) { snaps.append(s) } }
-        if !snaps.isEmpty { offer(.decisions(snaps), message: "\(snaps.count) moved to Spam") }
-        return snaps
-    }
-
-    private func summary(_ snaps: [DecisionSnapshot]) -> String {
-        func n(_ d: Destination) -> Int { snaps.filter { $0.dest == d }.count }
-        var parts: [String] = []
-        if n(.ohbox) > 0 { parts.append("\(n(.ohbox)) to Ohbox") }
-        if n(.reads) > 0 { parts.append("\(n(.reads)) to Reads") }
-        if n(.receipts) > 0 { parts.append("\(n(.receipts)) to Receipts") }
-        if n(.screened) > 0 { parts.append("\(n(.screened)) screened out") }
-        if n(.spam) > 0 { parts.append("\(n(.spam)) to Spam") }
-        return "\(snaps.count) decided — \(parts.joined(separator: " · "))"
-    }
-
-    // MARK: - Screened / Spam actions
-
-    /// Allowing a screened sender **releases the held mail**: every held message
-    /// becomes a real item in the chosen view. It is a move, and it is undoable.
-    @discardableResult
-    public func allowScreened(_ s: ScreenedSender, to dest: Destination) -> [String] {
-        guard let index = screened.firstIndex(where: { $0.id == s.id }) else { return [] }
-        screened.remove(at: index)
-        var newIDs: [String] = []
-        let rationale = "\(dest.done) — you allowed \(s.sender) in the Screener"
-        // Oldest first, so the newest ends up on top of the list.
-        for h in s.held.all {
-            let nid = "allow\(nextSeq())-\(h.id)"
-            newIDs.append(nid)
-            var it = Message(id: nid, place: dest == .reads ? .reads : .ohbox,
-                             from: s.sender, addr: s.sender, subj: h.subj, time: h.time,
-                             content: h.content, rationale: rationale)
-            it.tracker = h.trackers
-            it.unread = !h.seen
-            it.seen = h.seen
-            switch dest {
-            case .reads:
-                readsBodies[nid] = h.body ?? Copy.protectedRedactedBody
-                if h.seen { insertSeen(&reads, it) } else { reads.insert(it, at: 0) }
-            default:
-                if h.seen { insertSeen(&ohbox, it) } else { ohbox.insert(it, at: 0) }
-            }
-        }
-        scnSelScreened = screened.first?.id
-        offer(.allow(sender: s, index: index, newIDs: newIDs, dest: dest),
-              message: "Allowed — \(s.heldCount) held message\(s.heldCount == 1 ? "" : "s") released to \(dest.label). Future mail from \(s.sender) goes there.")
-        return newIDs
-    }
-
-    /// "Not spam" is also a move: the held mail goes where you send it, whole.
-    @discardableResult
-    public func notSpam(_ s: SpamSender, to target: NotSpamTarget) -> [String] {
-        guard let index = spam.firstIndex(where: { $0.id == s.id }) else { return [] }
-        spam.remove(at: index)
-        var newIDs: [String] = []
-        var backWaitingID: String?
-
-        switch target {
-        case .ohbox:
-            let rationale = "Ohbox — you marked this not spam"
-            for h in s.held.all {
-                let nid = "ns\(nextSeq())-\(h.id)"
-                newIDs.append(nid)
-                var it = Message(id: nid, place: .ohbox, from: s.from, addr: s.from,
-                                 subj: h.subj, time: h.time, content: h.content, rationale: rationale)
-                it.tracker = h.trackers
-                it.unread = !h.seen
-                it.seen = h.seen
-                if h.seen { insertSeen(&ohbox, it) } else { ohbox.insert(it, at: 0) }
-            }
-            offer(.notSpam(sender: s, index: index, newIDs: newIDs, backWaitingID: nil),
-                  message: "Not spam — \(s.heldCount) message\(s.heldCount == 1 ? "" : "s") filed to Ohbox. \(s.from) is allowed now.")
-        case .screener:
-            let wid = "w\(nextSeq())"
-            backWaitingID = wid
-            waiting.append(WaitingSender(id: wid, from: s.from, addr: s.from,
-                                         initial: String(s.from.prefix(1)).uppercased(),
-                                         time: s.time, scope: .sender, dull: true,
-                                         ai: AISuggestion(dest: .screened, conf: "0.97", why: s.det),
-                                         held: s.held))
-            scnSelWaiting = scnSelWaiting ?? wid
-            offer(.notSpam(sender: s, index: index, newIDs: [], backWaitingID: backWaitingID),
-                  message: "Not spam — \(s.from) is back in Waiting with \(s.heldCount) held.")
-        }
-        scnSelSpam = spam.first?.id
-        return newIDs
-    }
-
-    public func deleteSpam(_ s: SpamSender) {
-        guard let index = spam.firstIndex(where: { $0.id == s.id }) else { return }
-        spam.remove(at: index)
-        scnSelSpam = spam.first?.id
-        offer(.deleteSpam(sender: s, index: index), message: "Deleted — \(s.from).")
     }
 
     // MARK: - Tags (cross-cutting)
@@ -487,11 +440,11 @@ public final class AppState {
     /// Toggle a tag on a message. Returns true if the message now carries it.
     @discardableResult
     public func toggleTag(_ id: String, _ tag: TagID) -> Bool {
-        var arr = tagsByID[id] ?? []
-        let nowOn: Bool
-        if let i = arr.firstIndex(of: tag) { arr.remove(at: i); nowOn = false }
-        else { arr.append(tag); nowOn = true }
-        tagsByID[id] = arr
+        let nowOn = !tags(id).contains(tag)
+        if case .refused(let failure) = source.apply(.setTag(message: id, tag: tag, on: nowOn)) {
+            showToast(failure.reason)
+            return !nowOn
+        }
         showToast(nowOn ? "Tagged “\(tag.name)”." : "Untagged “\(tag.name)”.")
         return nowOn
     }
@@ -502,9 +455,10 @@ public final class AppState {
 
     /// The index is built once per change to the mail, not once per keystroke.
     var searchIndex: SearchIndex {
-        if indexVersion != mailVersion {
-            cachedIndex = SearchIndex(items: allItems, bodies: readsBodies.merging(receiptsBodies) { a, _ in a })
-            indexVersion = mailVersion
+        if indexVersion != worldVersion {
+            cachedIndex = SearchIndex(items: allItems,
+                                      bodies: readsBodies.merging(receiptsBodies) { a, _ in a })
+            indexVersion = worldVersion
         }
         return cachedIndex
     }
@@ -535,8 +489,8 @@ public final class AppState {
         guard focusReplyIndex < focusReplyQueue.count else { return false }
         let item = focusReplyQueue[focusReplyIndex]
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { drafts[item.id] = trimmed }
-        removeFromPile(.replyLater, id: item.id)
+        source.apply(.saveDraft(message: item.id, text: text))
+        source.apply(.removeFromPile(.replyLater, message: item.id))
         // The pile shrank under the cursor, so the index already points at the next
         // item — advancing here would skip one.
         showToast(trimmed.isEmpty
@@ -549,22 +503,16 @@ public final class AppState {
 
     public func pile(_ kind: PileKind) -> TriagePile? { piles.first { $0.kind == kind } }
 
-    private func mutate(_ kind: PileKind, _ body: (inout TriagePile) -> Void) {
-        guard let i = piles.firstIndex(where: { $0.kind == kind }) else { return }
-        body(&piles[i])
-    }
-
     /// Adds an item if the pile does not already hold that mail. Returns false when
     /// it was already queued, so the caller can say so instead of double-counting.
     @discardableResult
     public func addToPile(_ kind: PileKind, _ item: TriageItem) -> Bool {
-        guard pile(kind)?.items.contains(where: { $0.id == item.id }) != true else { return false }
-        mutate(kind) { $0.items.append(item) }
-        return true
+        guard case .applied(let ack) = source.apply(.addToPile(kind, item)) else { return false }
+        return ack.affected > 0
     }
 
     public func removeFromPile(_ kind: PileKind, id: String) {
-        mutate(kind) { $0.items.removeAll { $0.id == id } }
+        source.apply(.removeFromPile(kind, message: id))
     }
 
     // MARK: - Message actions (Ohbox reading pane)
@@ -589,6 +537,35 @@ public final class AppState {
         showToast(addToPile(.resurface, item) ? "Resurfaces Fri 09:00" : "Already scheduled — Fri 09:00")
     }
 
+    // MARK: - Settings
+
+    /// Accept the learned-pattern card. Who it is about comes from the card's own
+    /// content, never from the view that draws it.
+    public func acceptLearnedSuggestion() {
+        learnedDismissed = true
+        let who = learnedSuggestionSubject
+        if case .refused(let failure) = source.apply(.addVIP(who)) {
+            showToast(failure.reason)
+            return
+        }
+        showToast("\(who) added to VIP.")
+    }
+
+    public func dismissLearnedSuggestion() {
+        learnedDismissed = true
+        let first = learnedSuggestionSubject.split(separator: " ").first.map(String.init)
+            ?? learnedSuggestionSubject
+        showToast("Dismissed — no more suggestions for \(first).")
+    }
+
+    public func setNotification(_ id: String, on: Bool) {
+        source.apply(.setNotification(id: id, on: on))
+    }
+
+    func setScope(address: String, _ scope: Scope) {
+        source.apply(.setScope(sender: address, scope))
+    }
+
     // MARK: - Toast
 
     public func showToast(_ message: String, action: String? = nil) {
@@ -599,13 +576,6 @@ public final class AppState {
 
     // MARK: - Helpers
 
-    private func insertSeen(_ arr: inout [Message], _ it: Message) {
-        if let i = arr.firstIndex(where: { $0.seen }) { arr.insert(it, at: i) } else { arr.append(it) }
-    }
-    private func removeByID(_ arr: inout [Message], _ id: String?) {
-        guard let id else { return }
-        arr.removeAll { $0.id == id }
-    }
     private func domain(_ addr: String) -> String { String(addr.split(separator: "@").last ?? "") }
 
     // MARK: - Stream scroll requests (list column → stream)
