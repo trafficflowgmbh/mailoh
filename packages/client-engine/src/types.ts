@@ -540,11 +540,11 @@ export type EngineMutation =
        */
       labels?: string[];
       /**
-       * TAG-OR-CREATE. Present when the user typed a name that does not exist yet, which
-       * is the only way to mint a tag from this shell: the shared shell may not import
-       * `app/api-client` (`scripts/publish-desktop.mjs` DENYs it), so the engine is its only
-       * wire, and a separate `tag_create` mutation would have to be handled in
-       * `mutations.ts`'s exhaustive switch.
+       * TAG-OR-CREATE, and it is no longer the ONLY way to mint a tag — see `tag_create`
+       * below, which is the standalone verb this comment used to say did not exist. This one
+       * stays because it is a different act: tagging a message with a name that happens to be
+       * new is one gesture and one request, and splitting it into create-then-assign would put
+       * a window between them in which the tag exists on nothing.
        *
        * `tagId` is then a CLIENT-MINTED uuid and the server uses it as the new row's id — so
        * the optimistic paint names the same tag the database ends up holding. If the name
@@ -555,6 +555,56 @@ export type EngineMutation =
        */
       createName?: string;
     }
+  /**
+   * ═══ THE THREE TAG VERBS THAT HAD NO CALLER ═══════════════════════════════════════════
+   *
+   * `POST /tags`, `PATCH /tags/:id` and `DELETE /tags/:id` have been mounted and
+   * contract-tested the whole time with **zero client callers** — the same "built, tested,
+   * unreachable" shape `tag_assign`'s own comment records, and the shape the rules CRUD was
+   * in before `rule_delete`/`rule_update` existed. The Settings pane offered Rename and
+   * Delete buttons that raised a toast saying the feature was not wired up, and there was no
+   * way at all to make a tag without first finding a message to put it on.
+   *
+   * They are engine mutations rather than a Cloud-only seam for the reason the rules pane
+   * gives in `views/SettingsView.tsx`: `tag` is a real `/sync` entity, so the list comes from
+   * the mirror and the demo, the desktop shell and a live account are all correct with no
+   * special case — `FixturesAdapter` serves whatever `mutationEffects` produces.
+   *
+   * ── `tagId` IS A CLIENT-LOCAL NAME, NOT THE ROW'S ID ──────────────────────────────────
+   *
+   * Unlike tag-or-create above — where `POST /messages/:id/tags` genuinely mints under the
+   * id the client chose — `POST /tags` takes `{ name, hue? }` and the database mints the id.
+   * So `tagId` here names only the OPTIMISTIC row, which the engine deletes the instant the
+   * mutation confirms, and the server's row arrives in the change the adapter returns. This is
+   * the `rule_create` shape exactly. A name collision (the unique index is on `lower(name)`)
+   * answers 409 and the optimistic row rolls back, which is the honest outcome — the surface
+   * checks for the collision first, so 409 is the race and not the normal path.
+   */
+  | { kind: "tag_create"; tagId: string; name: string; hue?: string }
+  /**
+   * NAME ONLY, AND THE MISSING HUE IS DELIBERATE.
+   *
+   * `PATCH /tags/:id` accepts `hue` too, and offering it would ship a broken control today:
+   * `TagsService.HUES` is `moss|clay|slate|plum|amber|teal` while `packages/ui`'s
+   * `TagHueName` — and `chip.css` — know only `moss|ochre|rosewood`. Four of the six server
+   * hues have no rule to render, so a colour picker would let somebody choose an invisible
+   * dot. Renaming is the verb that was asked for; the hue sets have to be reconciled before
+   * anything offers a choice between them.
+   */
+  | { kind: "tag_rename"; tagId: string; name: string }
+  /**
+   * DELETING A TAG TAKES IT OFF EVERY MESSAGE, AND THE EFFECT SAYS SO.
+   *
+   * `TagsService.remove` deletes the `message_tags` rows in the same transaction as the tag
+   * and appends one `message` change per affected message, so the server's own answer clears
+   * the chips. `mutations.ts` mirrors that rather than only tombstoning the tag row — an
+   * effect that dropped the tag but left the ids in `labels` would paint chips for a tag the
+   * mirror no longer has until the next drain.
+   *
+   * The messages themselves are untouched. A tag is a row keyed by message, never an IMAP
+   * folder, so deleting one moves no mail — the surface has to say that before it asks.
+   */
+  | { kind: "tag_delete"; tagId: string }
   | {
       kind: "feed_mark_seen";
       /** Waterline anchor; defaults to the newest Reads message. */

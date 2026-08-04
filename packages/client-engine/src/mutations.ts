@@ -10,6 +10,7 @@ import {
   type MessageStateDTO,
   type RuleDTO,
   type ScreenerSenderDTO,
+  type TagDTO,
   type WaterlineMeta,
 } from "./types.js";
 
@@ -252,6 +253,62 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           : msg.labels.filter((l) => l !== m.tagId)
       );
       return [{ type: "message", id: msg.id, entity: { ...msg, labels, updatedAt: iso } }];
+    }
+
+    /**
+     * A tag row and nothing else. An empty name yields no effects: the server answers 400,
+     * and a nameless tag is not a thing any list can render.
+     *
+     * `hue` defaults to `moss` here and is NOT sent unless the caller chose one — the server
+     * defaults to the same value, so the optimistic row and the echo agree without the client
+     * asserting a colour it did not pick.
+     */
+    case "tag_create": {
+      const name = m.name.trim();
+      if (name === "") return [];
+      const tag: TagDTO = {
+        id: m.tagId,
+        name,
+        hue: m.hue ?? "moss",
+        createdAt: iso,
+        updatedAt: iso,
+      };
+      return [{ type: "tag", id: tag.id, entity: tag }];
+    }
+
+    /**
+     * The rename, on the row the mirror already holds. Unknown id yields [] — the engine
+     * reports that as a rejection, which is right: the tag was deleted under the cursor.
+     */
+    case "tag_rename": {
+      const tag = reader.get<TagDTO>("tag", m.tagId);
+      const name = m.name.trim();
+      if (!tag || name === "") return [];
+      return [{ type: "tag", id: tag.id, entity: { ...tag, name, updatedAt: iso } satisfies TagDTO }];
+    }
+
+    /**
+     * THE TOMBSTONE **AND** EVERY MESSAGE THAT CARRIED IT.
+     *
+     * `TagsService.remove` deletes the `message_tags` rows in the same transaction and emits
+     * one `message` change per affected message. Mirroring only the tag would leave the id in
+     * each message's `labels` until the next drain — and `tagsOfMessage` filters ids the
+     * mirror does not know, so the chip would vanish anyway while `labels` stayed wrong. Two
+     * representations of one fact, disagreeing for as long as the drain takes.
+     */
+    case "tag_delete": {
+      const tag = reader.get<TagDTO>("tag", m.tagId);
+      if (!tag) return [];
+      const effects: MutationEffect[] = reader
+        .list<EngineMessage>("message")
+        .filter((msg) => msg.labels.includes(m.tagId))
+        .map((msg) => ({
+          type: "message" as const,
+          id: msg.id,
+          entity: { ...msg, labels: msg.labels.filter((l) => l !== m.tagId), updatedAt: iso },
+        }));
+      effects.push({ type: "tag", id: tag.id, entity: null });
+      return effects;
     }
 
     case "feed_mark_seen": {
