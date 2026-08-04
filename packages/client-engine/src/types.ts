@@ -683,8 +683,25 @@ export type EngineMutation =
        * recipient, subject, mailbox and thread are all derived from it.
        */
       inReplyTo: string | null;
-      /** Exactly what the user typed. No quoted original: see the http adapter. */
+      /**
+       * Exactly what the user typed, as plain text. No quoted original: see the http adapter.
+       *
+       * When {@link html} is set this is the LOCAL plain rendering of it, used for the
+       * optimistic draft row and for deciding there is something to send. It is not what the
+       * recipient's plaintext client will read: the server derives that from the sanitized
+       * html, so the two parts of the multipart cannot be made to disagree by a client. The
+       * mirror converges on the server's rendering at the next drain, which is the ordinary
+       * optimistic-overlay contract rather than an exception to it.
+       */
       body: string;
+      /**
+       * The rich body, as the editor produced it, or absent for a plain-text send.
+       *
+       * Sent INSTEAD of `body` on the wire — `POST /drafts` refuses both in one request,
+       * because accepting both is how two clients end up disagreeing about which one the
+       * recipient sees.
+       */
+      html?: string;
       mailboxId?: string;
       threadId?: string | null;
       subject?: string;
