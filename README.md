@@ -56,8 +56,13 @@ under [Download a build](#download-a-build) before you double-click anything.
 no IMAP client and no HTTP client compiled into any of these builds. What you get
 is every screen of the product, working, on a small fictional mailbox that ships
 inside the app — so you can screen a sender, skim Reads, search, compose and
-decide whether you want the real thing. The local mail engine is what we are
-building now; it is [issue #1](https://github.com/trafficflowhq/ohmail/issues/1).
+decide whether you want the real thing. On macOS that world is asked for by name:
+
+    open -a ohmail --args --demo
+
+Launched without the flag, the app does not open it. The local mail engine is
+what we are building now; it is
+[issue #1](https://github.com/trafficflowhq/ohmail/issues/1).
 
 This is the first release under the name **ohmail**. v0.1.0-preview shipped as
 `mailoh` and its files are still named that way; it was not relabelled, because
@@ -67,7 +72,8 @@ renaming a released file invalidates every checksum published against it.
 ## Status — read this first
 
 **This is a preview of the interface, not a working mail client yet.** It runs on
-a small fictional mailbox that ships inside the app.
+a small fictional mailbox that ships inside the app — on macOS, when it is
+launched with `--demo`.
 
 | | |
 |---|---|

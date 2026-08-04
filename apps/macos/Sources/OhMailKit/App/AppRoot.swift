@@ -20,7 +20,7 @@ import OhMailEngine
 ///
 /// ── THE THREE THINGS THIS OWNS ────────────────────────────────────────────────────────────
 ///
-///  1. **The decision**, delegated to ``SourceSelection/decide(configured:status:flags:)``, which is
+///  1. **The decision**, delegated to ``SourceSelection/decide(configured:engine:status:flags:)``, which is
 ///     pure so that every state below is reachable from a test rather than only from a machine in
 ///     the right condition.
 ///  2. **The engine's lifetime.** One ``EngineBridge``, started at most once. It used to be owned by
@@ -47,6 +47,13 @@ public final class AppRootModel {
 
     private let store: EngineConfigStore
     private let inheritedEnvironment: [String: String]
+    /// Whether this build carries an engine — **read off the bundle once, at launch.**
+    ///
+    /// Read once for the same reason `configured` is: a SwiftUI body runs whenever anything it reads
+    /// changes, and this feeds the decision that every frame consults. It is also the honest lifetime
+    /// — the answer is a property of the download, and an app that noticed an engine appearing beside
+    /// its executable mid-run would be an app that could start one it never planned for.
+    private let engineInstall: EngineInstall
     private let makeEngineSource: EngineSourceFactory
     /// Injected for the same reason it is injected on the bridge: reading the shipped one mints a
     /// key into the login keychain, which a test must not do to the machine it runs on.
@@ -82,14 +89,24 @@ public final class AppRootModel {
     private(set) var passwordProblem: String?
     private(set) var submittingPassword = false
 
+    /// - Parameter install: whether this build carries an engine. `nil` means *go and look*, which
+    ///   is what a launch does; a test passes the state it is about, because the answer for a test
+    ///   process is a fact about the test runner's own directory and not about anything shipped.
+    ///   It is resolved from the `environment` this object was handed rather than from
+    ///   `ProcessInfo`, so that an `OHMAIL_ENGINE` the composition root was given is the same engine
+    ///   the check looks for and the spawn later runs.
     public init(flags: LaunchFlags = LaunchFlags.parse(CommandLine.arguments),
                 store: EngineConfigStore = EngineConfigStore(),
                 environment: [String: String] = ProcessInfo.processInfo.environment,
                 keys: KeyProvider = KeyProviderDefault(),
+                install: EngineInstall? = nil,
                 engineSource: @escaping EngineSourceFactory = { _ in nil }) {
         self.flags = flags
         self.store = store
         self.inheritedEnvironment = environment
+        self.engineInstall = install ?? EngineProcess.install(
+            environment: environment,
+            executableDirectory: EngineProcess.bundledEngineDirectory)
         self.keys = keys
         self.makeEngineSource = engineSource
         let stored = try? store.load()
@@ -113,7 +130,8 @@ public final class AppRootModel {
 
     /// The decision, before this object's own sequencing is applied to it.
     public var selection: SourceSelection {
-        SourceSelection.decide(configured: configured, status: engine.status, flags: flags)
+        SourceSelection.decide(configured: configured, engine: engineInstall,
+                               status: engine.status, flags: flags)
     }
 
     /// What the window draws right now.
@@ -121,7 +139,18 @@ public final class AppRootModel {
         // Onboarding is a sequence somebody is part-way through, so it outranks the decision: the
         // moment a configuration is written, `decide` stops saying `.setup` — and the password step
         // has not happened yet.
-        if inSetup { return .setup }
+        //
+        // **AND THE SEQUENCE DOES NOT OUTRANK THE ONE FACT THAT MAKES IT POINTLESS.** This line sits
+        // ABOVE the decision, so a guard placed only inside `decide` would not make the credential
+        // form unreachable — it would make it unreachable by the one route that happens to set this
+        // flag today. That is a property of `saveMailbox` being the only writer, not a property
+        // anybody checked, and there is already a loop behind it: `dismissSetupFailure` clears
+        // `savedMailbox` and leaves `inSetup` standing, which walks straight back to the form.
+        //
+        // So the state that must never be drawn is refused here as well as decided there. Two
+        // guards for one rule is not duplication when the rule is "a stranger is never asked for a
+        // mail password by a build that cannot use it".
+        if inSetup, case .installed = engineInstall { return .setup }
 
         let selection = self.selection
         switch selection.surface {
@@ -226,7 +255,8 @@ public final class AppRootModel {
             // Terminal for this sequence. The sentence is the one the decision would have put on a
             // full panel, so the words a start failure uses are the same on both surfaces.
             if case .engineState(let notice) = SourceSelection.decide(
-                configured: true, status: engine.status, flags: flags).surface {
+                configured: true, engine: engineInstall,
+                status: engine.status, flags: flags).surface {
                 return .failed(notice)
             }
             return .failed(Self.couldNotFinish("The local engine stopped."))

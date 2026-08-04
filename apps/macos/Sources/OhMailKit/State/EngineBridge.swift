@@ -75,7 +75,10 @@ public final class EngineBridge {
 
         let plan = EngineProcess.plan(
             environment: composed,
-            executableDirectory: Bundle.main.executableURL?.deletingLastPathComponent(),
+            // The same directory the install check looked in, spelled once — see
+            // `EngineProcess.bundledEngineDirectory`. Two spellings would be a shell that decides
+            // what to draw from one path and spawns from another.
+            executableDirectory: EngineProcess.bundledEngineDirectory,
             // The one value the shell KNOWS rather than reads, derived from the bundle identifier.
             dataDirectoryFallback: EngineProcess.defaultDataDirectory,
             keys: keys)

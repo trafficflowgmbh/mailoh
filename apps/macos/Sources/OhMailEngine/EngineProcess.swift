@@ -174,6 +174,27 @@ public enum EnginePlan: Equatable, Sendable {
     case inert(EngineStatus)
 }
 
+/// WHETHER THIS BUILD CARRIES AN ENGINE — the question that has to be answered before the app asks
+/// anybody for a mail password.
+///
+/// It exists because "there is no engine" and "there is no mailbox yet" look identical from inside a
+/// fresh install, and the app used to guess. A build with nothing to spawn opened the setup form,
+/// collected an IMAP host, a user and a password, and only at the spawn — after the credential —
+/// discovered there was no engine to hand any of it to. A download that asks a stranger for their
+/// mail password and cannot use it is the worst shape a broken claim has.
+///
+/// **Answered by looking, and never by a flag or a build constant.** A packaging change that stops
+/// copying the engine is exactly the change that would forget to flip a flag, and the flag would
+/// then be a claim about the bundle that the bundle does not support. The filesystem is asked
+/// instead, about the same path the spawn will use — see ``EngineProcess/install(environment:executableDirectory:fileManager:)``.
+public enum EngineInstall: Equatable, Sendable {
+    /// There is something runnable where the engine is looked for.
+    case installed
+    /// There is not, and this is where it was looked for. The path is the payload because it is the
+    /// only actionable thing there is to say about it.
+    case missing(lookedFor: String)
+}
+
 /// Where frames that are not `ready` go, and how the far end learns a run has ended.
 ///
 /// Held **weakly** by ``EngineProcess``: the shell owns both, and a sink that kept the engine alive
@@ -188,6 +209,78 @@ public protocol EngineFrameSink: AnyObject, Sendable {
 /// The engine, its supervisor thread, and the handle that stops both.
 public final class EngineProcess: @unchecked Sendable {
     // MARK: - Deciding what to run
+
+    /// A value that is present and is not blank. A variable set to spaces is a variable somebody
+    /// meant to unset, and treating it as supplied produces a spawn against an empty path.
+    static func present(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : value
+    }
+
+    /// Where the engine is looked for.
+    enum ProgramLocation: Equatable {
+        case at(URL)
+        /// Nowhere to look, and the sentence that says why.
+        case unresolvable(String)
+    }
+
+    /// **ONE RESOLUTION, SHARED BY THE CHECK AND THE SPAWN.**
+    ///
+    /// A second copy of these four lines would be a build that stats one path and launches another,
+    /// and it fails silently in the direction that matters: the check says the engine is installed,
+    /// the spawn says `NotFound`, and the trap the check exists to close is back with a layer on top
+    /// of it.
+    static func locate(environment env: [String: String],
+                       executableDirectory exeDir: URL?) -> ProgramLocation {
+        if let explicit = present(env[ENGINE_PATH_VAR]) {
+            return .at(URL(fileURLWithPath: explicit))
+        }
+        if let exeDir {
+            return .at(exeDir.appendingPathComponent(ENGINE_FILE_STEM))
+        }
+        return .unresolvable(
+            "\(ENGINE_PATH_VAR) is not set and this executable's own directory could not be resolved")
+    }
+
+    /// Whether this build carries an engine, asked of the filesystem.
+    ///
+    /// **THE ONE STAT, AND IT IS DELIBERATE.** ``plan(environment:executableDirectory:dataDirectoryFallback:keys:)``
+    /// touches no filesystem on purpose: whether the engine exists is answered there by trying to
+    /// start it and reading `NotFound` back, which is one syscall instead of two and cannot go stale
+    /// between a check and a spawn. That is still the authority for a launch, and nothing here
+    /// replaces it.
+    ///
+    /// This answers a different question at a different moment — *may this build put a password form
+    /// on screen at all* — and it has to be answered before anything is spawned, because the whole
+    /// point is not to have collected a credential by the time the spawn fails.
+    ///
+    /// **Runnable, not merely present.** A directory at that path, or a file without the execute bit,
+    /// is not an engine: the spawn would fail with a permission error rather than `NotFound`, which
+    /// is a *different sentence* for the same absence and re-opens a narrower version of the same
+    /// trap. What is asked is the thing that matters — is there something here this app could run.
+    public static func install(environment env: [String: String],
+                               executableDirectory exeDir: URL?,
+                               fileManager: FileManager = .default) -> EngineInstall {
+        switch locate(environment: env, executableDirectory: exeDir) {
+        case .unresolvable(let why):
+            return .missing(lookedFor: why)
+        case .at(let program):
+            var isDirectory: ObjCBool = false
+            let exists = fileManager.fileExists(atPath: program.path, isDirectory: &isDirectory)
+            let runnable = exists && !isDirectory.boolValue
+                && fileManager.isExecutableFile(atPath: program.path)
+            return runnable ? .installed : .missing(lookedFor: program.path)
+        }
+    }
+
+    /// The directory the shipped app looks in: the one its own executable is in.
+    ///
+    /// Here rather than spelled at each call site, because both the install check and the spawn's
+    /// plan need it and a second spelling is a second place for them to disagree.
+    public static var bundledEngineDirectory: URL? {
+        Bundle.main.executableURL?.deletingLastPathComponent()
+    }
 
     /// Decide whether there is an engine to start, and how — **without touching the filesystem.**
     ///
@@ -204,20 +297,12 @@ public final class EngineProcess: @unchecked Sendable {
         dataDirectoryFallback fallback: URL?,
         keys: KeyProvider = KeyProviderDefault()
     ) -> EnginePlan {
-        func present(_ value: String?) -> String? {
-            guard let value else { return nil }
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : value
-        }
-
         let program: URL
-        if let explicit = present(env[ENGINE_PATH_VAR]) {
-            program = URL(fileURLWithPath: explicit)
-        } else if let exeDir {
-            program = exeDir.appendingPathComponent(ENGINE_FILE_STEM)
-        } else {
-            return .inert(.absent(lookedFor:
-                "\(ENGINE_PATH_VAR) is not set and this executable's own directory could not be resolved"))
+        switch locate(environment: env, executableDirectory: exeDir) {
+        case .at(let resolved):
+            program = resolved
+        case .unresolvable(let why):
+            return .inert(.absent(lookedFor: why))
         }
 
         // A keystore that CANNOT BE READ is not a keystore that is empty. Minting a fresh key over a

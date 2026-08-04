@@ -29,14 +29,20 @@ final class AppRootTests: XCTestCase {
         try? FileManager.default.removeItem(at: dir)
     }
 
+    /// - Parameter install: stated rather than looked up, and there is no default for it here for
+    ///   the same reason there is none on `decide`. Left to look, this would answer a question about
+    ///   the **test runner's** own directory — which has no `ohmail-engine` beside it — so every
+    ///   setup-sequence test below would silently become a test of the no-engine panel and would
+    ///   still be green.
     private func model(demo: Bool = false,
+                       install: EngineInstall = .installed,
                        engineSource: @escaping AppRootModel.EngineSourceFactory = { _ in nil })
         -> AppRootModel {
         AppRootModel(flags: LaunchFlags(demo: demo), store: store,
                      // Empty, which is what a bundle opened from the Finder inherits. The stored
                      // mailbox is the only thing that can make a launch startable, which is the
                      // point of the composition.
-                     environment: [:], keys: NoKeys(), engineSource: engineSource)
+                     environment: [:], keys: NoKeys(), install: install, engineSource: engineSource)
     }
 
     private static let mailbox = EngineConfig(host: "imap.example.org", port: 993,
@@ -239,6 +245,95 @@ final class AppRootTests: XCTestCase {
     }
 
     // MARK: - Setup is a sequence
+
+    /// **A BUILD WITH NO ENGINE NEVER OPENS THE FORM.**
+    ///
+    /// The composition root's own half of the audit in `SourceSelectionTests`: not merely that the
+    /// decision says so, but that the object which acts on it draws the panel, builds nothing, and
+    /// starts nothing. `begin()` is called because the shape that would undo this is a launch that
+    /// spawns anyway and lands on the same panel one status later — which is the original trap with
+    /// a shorter fuse.
+    func testAnInstallWithNoEngineSaysSoAndNeverOpensTheForm() {
+        let root = model(install: .missing(lookedFor: "/Applications/ohmail.app/Contents/MacOS/ohmail-engine"))
+        defer { root.end() }
+
+        guard case .engineState(let notice) = root.surface else {
+            return XCTFail("a build with no engine opened \(root.surface)")
+        }
+        XCTAssertTrue(notice.detail.contains("/Applications/ohmail.app/Contents/MacOS/ohmail-engine"))
+        XCTAssertNil(root.mail, "a build with no engine built a world")
+
+        root.begin()
+        XCTAssertNil(root.engine.status, "a build with nothing to run started something")
+        // And the form is not one keystroke away either: the sequence that leads to the password
+        // field begins at `.mailbox`, and nothing on screen can reach it.
+        XCTAssertNotEqual(root.surface, .setup)
+    }
+
+    /// The other half, so the test above cannot be satisfied by a model that never shows the form at
+    /// all: the same install, with an engine, opens setup exactly as it did before.
+    func testAnInstallWithAnEngineStillOpensTheForm() {
+        let root = model(install: .installed)
+        XCTAssertEqual(root.surface, .setup)
+        root.end()
+    }
+
+    /// **AND THE SEQUENCE DOES NOT GET PAST IT EITHER.**
+    ///
+    /// `surface` answers `.setup` for `inSetup` *before* it consults the decision, so a guard that
+    /// lived only in `decide` would leave the credential form reachable by anything that sets that
+    /// flag. Today one method does, and `dismissSetupFailure` walks back into the form with the flag
+    /// still standing — one edit from being a way in. This drives the sequence into the state and
+    /// asserts the window still refuses.
+    ///
+    /// The mutation: restore `if inSetup { return .setup }` and this goes red naming the form.
+    func testTheOnboardingSequenceCannotShowTheFormOnAnEnginelessBuild() {
+        let root = model(install: .installed)
+        root.saveMailbox(Self.mailbox)
+        XCTAssertTrue(root.inSetup, "the sequence is not running, so this test proves nothing")
+        XCTAssertEqual(root.surface, .setup)
+        root.end()
+
+        // The same object's state, on a build with nothing to run.
+        let engineless = AppRootModel(
+            flags: LaunchFlags(demo: false), store: store, environment: [:], keys: NoKeys(),
+            install: .missing(lookedFor: "/Applications/ohmail.app/Contents/MacOS/ohmail-engine"))
+        engineless.saveMailbox(Self.mailbox)
+        XCTAssertTrue(engineless.inSetup)
+        XCTAssertNotEqual(engineless.surface, .setup,
+                          "the onboarding sequence put the password form in front of somebody on a "
+                          + "build that cannot open a mailbox")
+        engineless.end()
+    }
+
+    // MARK: - The branch a launch takes, which is the one nothing else exercises
+
+    /// **THE DEFAULT IS TO GO AND LOOK, AND THIS IS THE ONLY TEST THAT LETS IT.**
+    ///
+    /// Every case above injects `install:`, which is correct for them and leaves the resolution that
+    /// decides a stranger's first screen as the one branch nothing runs. So this passes no `install:`
+    /// at all and steers the production path with `OHMAIL_ENGINE` — the same variable the spawn
+    /// obeys — at a file this test writes and then removes.
+    func testWithNoInstallGivenTheModelLooksAtTheEngineItWouldActuallyRun() throws {
+        let engine = dir.appendingPathComponent("ohmail-engine")
+
+        let nothingThere = AppRootModel(flags: LaunchFlags(demo: false), store: store,
+                                        environment: [ENGINE_PATH_VAR: engine.path], keys: NoKeys())
+        guard case .engineState(let notice) = nothingThere.surface else {
+            return XCTFail("a launch that looked at an empty directory opened \(nothingThere.surface)")
+        }
+        XCTAssertTrue(notice.detail.contains(engine.path), notice.detail)
+        nothingThere.end()
+
+        try Data("#!/bin/sh\n".utf8).write(to: engine)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: engine.path)
+
+        let installed = AppRootModel(flags: LaunchFlags(demo: false), store: store,
+                                     environment: [ENGINE_PATH_VAR: engine.path], keys: NoKeys())
+        XCTAssertEqual(installed.surface, .setup,
+                       "the same launch, with something runnable at the same path, must open setup")
+        installed.end()
+    }
 
     func testSetupCollectsTheMailboxBeforeTheEngineExistsAndThenWaits() {
         let root = model()

@@ -67,6 +67,105 @@ final class PlanTests: XCTestCase {
         XCTAssertTrue(lookedFor.contains(ENGINE_PATH_VAR))
     }
 
+    // MARK: - Whether this build carries an engine at all
+
+    /// Every case below runs against a REAL directory rather than a stubbed `FileManager`. The thing
+    /// under test is a question about the filesystem, and a fake that answers it is a fake of the
+    /// answer.
+    private func temporaryDirectory() throws -> URL {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ohmail-install-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        return dir
+    }
+
+    @discardableResult
+    private func writeEngine(in dir: URL, named name: String = ENGINE_FILE_STEM,
+                             executable: Bool = true) throws -> URL {
+        let path = dir.appendingPathComponent(name)
+        try Data("#!/bin/sh\n".utf8).write(to: path)
+        try FileManager.default.setAttributes([.posixPermissions: executable ? 0o755 : 0o644],
+                                              ofItemAtPath: path.path)
+        return path
+    }
+
+    func testABuildWithNothingBesideItsExecutableCarriesNoEngine() throws {
+        let dir = try temporaryDirectory()
+        XCTAssertEqual(EngineProcess.install(environment: [:], executableDirectory: dir),
+                       .missing(lookedFor: dir.appendingPathComponent(ENGINE_FILE_STEM).path),
+                       "the panel this feeds has one actionable thing in it, and it is that path")
+    }
+
+    func testAnEngineBesideTheExecutableIsAnInstalledOne() throws {
+        let dir = try temporaryDirectory()
+        try writeEngine(in: dir)
+        XCTAssertEqual(EngineProcess.install(environment: [:], executableDirectory: dir), .installed)
+    }
+
+    /// **Present is not runnable, and the difference is a trap rather than a nicety.** A file without
+    /// the execute bit makes the spawn fail with a permission error instead of `NotFound` — a
+    /// different sentence for the same absence — and an install check that accepted it would put the
+    /// password form back on screen in front of a build that still cannot open a mailbox.
+    func testAFileThatCannotBeRunIsNotAnEngine() throws {
+        let dir = try temporaryDirectory()
+        try writeEngine(in: dir, executable: false)
+        XCTAssertEqual(EngineProcess.install(environment: [:], executableDirectory: dir),
+                       .missing(lookedFor: dir.appendingPathComponent(ENGINE_FILE_STEM).path))
+    }
+
+    /// `fileExists` says yes to a directory, and `isExecutableFile` says yes to a searchable one. A
+    /// folder named `ohmail-engine` is neither an engine nor a thing to tell somebody is installed.
+    func testADirectoryWithTheEnginesNameIsNotAnEngine() throws {
+        let dir = try temporaryDirectory()
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent(ENGINE_FILE_STEM),
+                                                withIntermediateDirectories: true)
+        XCTAssertEqual(EngineProcess.install(environment: [:], executableDirectory: dir),
+                       .missing(lookedFor: dir.appendingPathComponent(ENGINE_FILE_STEM).path))
+    }
+
+    func testAnExplicitEnginePathIsWhatTheInstallCheckLooksAt() throws {
+        let dir = try temporaryDirectory()
+        let elsewhere = try writeEngine(in: dir, named: "engine-somewhere-else")
+        // The bundle has nothing in it; the variable names something runnable.
+        XCTAssertEqual(EngineProcess.install(environment: [ENGINE_PATH_VAR: elsewhere.path],
+                                             executableDirectory: dir),
+                       .installed)
+        XCTAssertEqual(EngineProcess.install(environment: [ENGINE_PATH_VAR: dir.path + "/nope"],
+                                             executableDirectory: dir),
+                       .missing(lookedFor: dir.path + "/nope"),
+                       "the variable wins for the check exactly as it wins for the spawn")
+    }
+
+    func testWithNoExecutableDirectoryAndNoVariableThereIsNoEngineAndTheSentenceSaysWhy() {
+        guard case .missing(let lookedFor) = EngineProcess.install(environment: [:],
+                                                                   executableDirectory: nil) else {
+            return XCTFail("a build with nowhere to look reported an engine")
+        }
+        XCTAssertTrue(lookedFor.contains(ENGINE_PATH_VAR))
+    }
+
+    /// **THE ANTI-DRIFT ASSERTION.** The check and the spawn must resolve the same file. Two
+    /// resolutions is a build that stats one path and launches another, and it fails in the
+    /// direction that matters: the check reports an engine, the spawn reports `NotFound`, and the
+    /// trap the check exists to close is back with a layer on top of it.
+    func testTheInstallCheckLooksExactlyWhereTheSpawnWouldRun() throws {
+        let dir = try temporaryDirectory()
+        let environments: [[String: String]] = [[:], [ENGINE_PATH_VAR: dir.path + "/named-by-the-variable"]]
+        for environment in environments {
+            let launch = try spawn(EngineProcess.plan(
+                environment: fullEnvironment().merging(environment) { _, b in b },
+                executableDirectory: dir,
+                dataDirectoryFallback: dataDir,
+                keys: StubKeys(value: String(repeating: "0", count: 64), failure: nil)))
+            guard case .missing(let lookedFor) = EngineProcess.install(environment: environment,
+                                                                       executableDirectory: dir) else {
+                return XCTFail("nothing was written, so there is nothing to run")
+            }
+            XCTAssertEqual(lookedFor, launch.program.path)
+        }
+    }
+
     // MARK: - What must be set
 
     func testAMissingMailboxIsNamedAndNothingIsStarted() {

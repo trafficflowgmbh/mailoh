@@ -29,10 +29,18 @@ literals — and the substring check guarding it could not see that.
 ## Run
 
 ```bash
-swift build --package-path apps/macos          # compile
-swift test  --package-path apps/macos          # 116 model/logic/fidelity tests
-swift run   --package-path apps/macos OhMail   # open the app
+swift build --package-path apps/macos                  # compile
+swift test  --package-path apps/macos                  # 116 model/logic/fidelity tests
+swift run   --package-path apps/macos OhMail --demo    # open the app on the fixture world
+swift run   --package-path apps/macos OhMail           # open it the way a download opens
 ```
+
+The last two are different launches, and the difference is the point. A build with
+no `ohmail-engine` beside its executable — which a plain `swift build` is — cannot
+open a mailbox, so it says so and names the path it looked at. It does **not** show
+the fixture world instead, and it does not offer a form collecting a mail password
+it could never use. `--demo` is the one door to the fixture world, and it starts no
+engine.
 
 ### `--smoke` — the CI render check
 

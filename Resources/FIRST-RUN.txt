@@ -23,14 +23,22 @@ ohmail for macOS — first run
         swift build -c release --package-path apps/macos
         swift run  -c release --package-path apps/macos OhMail
 
-3.  WHAT YOU ARE OPENING IS A PREVIEW.
+3.  WHAT YOU ARE OPENING IS A PREVIEW, AND IT OPENS WITH A FLAG.
 
-    This build does not connect to a mail server. It has no IMAP client, no
-    network code, and no account: it runs entirely on a small fictional mailbox
-    that ships inside the app, so you can walk the whole interface — Ohbox,
-    Screener, Reads, Receipts, triage piles, search, compose — and judge it.
-    Your own mail is not involved and cannot be. The real sync engine lands
-    behind these same views; the repository README tracks that work.
+    This build carries no mail engine, so it cannot open a mailbox. Double-click
+    it and it says exactly that, and it does not ask you for a mail password it
+    would have no way to use.
+
+    To walk the interface, launch it with the preview flag:
+
+        open -a ohmail --args --demo
+
+    That runs on a small fictional mailbox that ships inside the app — Ohbox,
+    Screener, Reads, Receipts, triage piles, search, compose — so you can judge
+    the thing itself. This build does not connect to a mail server. It has no
+    IMAP client, no network code, and no account: your own mail is not involved
+    and cannot be. The real sync engine lands behind these same views; the
+    repository README tracks that work.
 
 Requires macOS 15 (Sequoia) or newer.
 

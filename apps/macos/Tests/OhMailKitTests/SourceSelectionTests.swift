@@ -36,6 +36,12 @@ final class SourceSelectionTests: XCTestCase {
 
     private static let live = LaunchFlags(demo: false)
 
+    /// A build that carries an engine, which is what every audit below is about unless it says
+    /// otherwise. Written out at each call rather than defaulted in `decide` itself: a default is a
+    /// parameter a future call site can forget, and what forgetting it restores is the password form
+    /// on a build with nothing to run.
+    private static let hasEngine = EngineInstall.installed
+
     /// **THE AUDIT.** No status, on a configured install, may name the invented world.
     ///
     /// This is the assertion the whole slice exists for. Mutating `decide` so that any branch below
@@ -43,7 +49,7 @@ final class SourceSelectionTests: XCTestCase {
     /// — turns it red for that status.
     func testAConfiguredLaunchNeverReachesTheInventedWorld() {
         for status in Self.everyStatus {
-            let selection = SourceSelection.decide(configured: true, status: status, flags: Self.live)
+            let selection = SourceSelection.decide(configured: true, engine: Self.hasEngine, status: status, flags: Self.live)
             XCTAssertNotEqual(selection.source, .fixtures,
                               "a configured install reached the sample world from \(describe(status))")
             XCTAssertNotEqual(selection.surface, .demo,
@@ -53,17 +59,88 @@ final class SourceSelectionTests: XCTestCase {
 
     /// And neither may an install with no mailbox, unless it was asked for by name.
     func testAnUnconfiguredLaunchShowsSetupRatherThanSamples() {
-        let selection = SourceSelection.decide(configured: false, status: nil, flags: Self.live)
+        let selection = SourceSelection.decide(configured: false, engine: Self.hasEngine, status: nil, flags: Self.live)
         XCTAssertEqual(selection.surface, .setup)
         XCTAssertNil(selection.source, "there is nothing to hold mail before a mailbox exists")
         XCTAssertFalse(selection.spawnEngine, "the engine refuses to run without a mailbox")
+    }
+
+    // MARK: - The form is not offered by a build that cannot use what it collects
+
+    /// **THE SECOND AUDIT, and the defect it is written against actually shipped.**
+    ///
+    /// A download with no engine in it opened the setup form, collected an IMAP host, a user and a
+    /// mail password, and discovered at the spawn — after the password — that there was nothing to
+    /// hand any of it to. A stranger's credential, typed into a window that could not open the
+    /// mailbox it named.
+    ///
+    /// The mutation: pin `engine` to `.installed` in the guard below — or restore the branch to a
+    /// bare `return SourceSelection(surface: .setup, …)` — and this goes red on the first assertion,
+    /// naming the form.
+    func testABuildWithNoEngineSaysSoInsteadOfCollectingAMailbox() {
+        let selection = SourceSelection.decide(
+            configured: false,
+            engine: .missing(lookedFor: "/Applications/ohmail.app/Contents/MacOS/ohmail-engine"),
+            status: nil, flags: Self.live)
+
+        XCTAssertNotEqual(selection.surface, .setup,
+                          "a build with nothing to run asked somebody for their mail password")
+        guard case .engineState(let notice) = selection.surface else {
+            return XCTFail("a build with no engine produced \(selection.surface)")
+        }
+        XCTAssertTrue(notice.detail.contains("/Applications/ohmail.app/Contents/MacOS/ohmail-engine"),
+                      "the path is the only actionable thing there is: “\(notice.detail)”")
+        XCTAssertTrue(notice.detail.contains(ENGINE_PATH_VAR),
+                      "…and the variable that overrides where it is looked for")
+        XCTAssertNil(selection.source, "a build with no engine offered a source to hold mail")
+        XCTAssertFalse(selection.spawnEngine, "there is nothing to spawn")
+    }
+
+    /// One fact, one sentence, whichever branch reached it. The unconfigured check and the
+    /// supervisor's own `absent` are two journeys to "there is nothing to run at this path", and a
+    /// second wording of it is a second thing to keep right.
+    func testTheMissingEngineSentenceIsTheSameFromBothBranches() {
+        let path = "/Applications/ohmail.app/Contents/MacOS/ohmail-engine"
+        guard case .engineState(let beforeSetup) = SourceSelection.decide(
+                configured: false, engine: .missing(lookedFor: path),
+                status: nil, flags: Self.live).surface,
+              case .engineState(let fromTheSpawn) = SourceSelection.decide(
+                configured: true, engine: Self.hasEngine,
+                status: .absent(lookedFor: path), flags: Self.live).surface else {
+            return XCTFail("one of the two missing-engine branches is not a named state")
+        }
+        XCTAssertEqual(beforeSetup, fromTheSpawn)
+    }
+
+    /// **The preview build keeps working.** `--demo` is asked before anything about the install, and
+    /// a build that carries no engine is exactly the build the flag exists for: nothing to run is
+    /// not a reason to refuse to draw the sample world, and the sample world starts no engine.
+    func testTheSampleWorldStillOpensInABuildWithNoEngine() {
+        let selection = SourceSelection.decide(
+            configured: false, engine: .missing(lookedFor: "/nowhere/ohmail-engine"),
+            status: nil, flags: LaunchFlags(demo: true))
+        XCTAssertEqual(selection.surface, .demo)
+        XCTAssertEqual(selection.source, .fixtures)
+        XCTAssertFalse(selection.spawnEngine)
+    }
+
+    /// A CONFIGURED install is not second-guessed here: the spawn is the authority on whether the
+    /// engine exists, because its answer comes from the syscall that would have started it and
+    /// cannot go stale between a check and a launch. So a stale `.missing` may not take a window
+    /// away from a mailbox that is open.
+    func testAServingEngineIsNotOverriddenByAStaleInstallCheck() {
+        let selection = SourceSelection.decide(
+            configured: true, engine: .missing(lookedFor: "/nowhere/ohmail-engine"),
+            status: .serving(mailboxID: "mbx-1"), flags: Self.live)
+        XCTAssertEqual(selection.surface, .mail)
+        XCTAssertEqual(selection.source, .engine)
     }
 
     /// The one door, and the flag is the whole of its lock.
     func testTheSampleWorldIsReachableOnlyFromTheFlag() {
         let demo = LaunchFlags(demo: true)
         for configured in [true, false] {
-            let selection = SourceSelection.decide(configured: configured, status: nil, flags: demo)
+            let selection = SourceSelection.decide(configured: configured, engine: Self.hasEngine, status: nil, flags: demo)
             XCTAssertEqual(selection.surface, .demo)
             XCTAssertEqual(selection.source, .fixtures)
             // The invariant that makes the flag safe on a machine that HAS a mailbox: nothing is
@@ -78,7 +155,7 @@ final class SourceSelectionTests: XCTestCase {
     /// Serving is the only status that produces mail, and it produces the engine's.
     func testOnlyAServingEngineProducesMail() {
         for status in Self.everyStatus {
-            let selection = SourceSelection.decide(configured: true, status: status, flags: Self.live)
+            let selection = SourceSelection.decide(configured: true, engine: Self.hasEngine, status: status, flags: Self.live)
             if case .serving = status {
                 XCTAssertEqual(selection.surface, .mail)
                 XCTAssertEqual(selection.source, .engine)
@@ -107,7 +184,7 @@ final class SourceSelectionTests: XCTestCase {
         var seen: [String: String] = [:]
         for status in actionable {
             guard case .engineState(let notice) = SourceSelection
-                .decide(configured: true, status: status, flags: Self.live).surface else {
+                .decide(configured: true, engine: Self.hasEngine, status: status, flags: Self.live).surface else {
                 return XCTFail("\(describe(status)) is not a named state at all")
             }
             let line = notice.title + " " + notice.detail
@@ -126,7 +203,7 @@ final class SourceSelectionTests: XCTestCase {
     func testARestartAfterServingReadsDifferentlyFromOneBeforeIt() {
         func line(served: Bool) -> String {
             guard case .engineState(let notice) = SourceSelection.decide(
-                configured: true,
+                configured: true, engine: Self.hasEngine,
                 status: .restarting(attempt: 2, delay: 1,
                                     last: EngineExit(code: 1, served: served, ran: 1)),
                 flags: Self.live).surface else { return "" }
@@ -138,8 +215,8 @@ final class SourceSelectionTests: XCTestCase {
 
     /// And the two transient ones agree on purpose, so that a launch does not narrate itself twice.
     func testTheFirstAttemptSaysWhatNotYetStartedSays() {
-        let before = SourceSelection.decide(configured: true, status: nil, flags: Self.live)
-        let first = SourceSelection.decide(configured: true, status: .starting(attempt: 1),
+        let before = SourceSelection.decide(configured: true, engine: Self.hasEngine, status: nil, flags: Self.live)
+        let first = SourceSelection.decide(configured: true, engine: Self.hasEngine, status: .starting(attempt: 1),
                                            flags: Self.live)
         XCTAssertEqual(before.surface, first.surface)
     }
@@ -148,7 +225,7 @@ final class SourceSelectionTests: XCTestCase {
     /// "configuration is incomplete" would send the reader looking for what.
     func testTheNamedStatesNameTheThing() {
         guard case .engineState(let absent) = SourceSelection.decide(
-            configured: true, status: .absent(lookedFor: "/Applications/ohmail.app/ohmail-engine"),
+            configured: true, engine: Self.hasEngine, status: .absent(lookedFor: "/Applications/ohmail.app/ohmail-engine"),
             flags: Self.live).surface else { return XCTFail("absent is not a named state") }
         XCTAssertTrue(absent.detail.contains("/Applications/ohmail.app/ohmail-engine"),
                       "the missing engine's own path is the only actionable thing there is")
@@ -156,7 +233,7 @@ final class SourceSelectionTests: XCTestCase {
                       "…and the variable that overrides where it is looked for")
 
         guard case .engineState(let missing) = SourceSelection.decide(
-            configured: true, status: .notConfigured(missing: ["OHMAIL_IMAP_HOST", KEK_VAR]),
+            configured: true, engine: Self.hasEngine, status: .notConfigured(missing: ["OHMAIL_IMAP_HOST", KEK_VAR]),
             flags: Self.live).surface else { return XCTFail("notConfigured is not a named state") }
         for name in ["OHMAIL_IMAP_HOST", KEK_VAR] {
             XCTAssertTrue(missing.detail.contains(name), "“\(name)” is named, not described")
@@ -170,7 +247,7 @@ final class SourceSelectionTests: XCTestCase {
             + "ohmail and open it again once the cause is fixed — if another copy of ohmail is "
             + "already running, that is the cause."
         guard case .engineState(let notice) = SourceSelection.decide(
-            configured: true, status: .failed(reason: reason, last: nil), flags: Self.live).surface
+            configured: true, engine: Self.hasEngine, status: .failed(reason: reason, last: nil), flags: Self.live).surface
         else { return XCTFail("failed is not a named state") }
         XCTAssertEqual(notice.detail, reason)
     }

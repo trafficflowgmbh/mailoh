@@ -208,8 +208,14 @@ final class EngineFallbackTests: XCTestCase {
         while !engine.isFinished && Date() < deadline { usleep(2000) }
         XCTAssertTrue(engine.isFinished, "the supervisor never settled")
 
-        let surface = SourceSelection.decide(configured: true, status: engine.status,
-                                             flags: LaunchFlags(demo: false)).surface
+        // The real check against the real path this run was given, rather than a pinned `.installed`:
+        // these are the failure journeys, and one of them IS a path with nothing at it.
+        let surface = SourceSelection.decide(
+            configured: true,
+            engine: EngineProcess.install(environment: [ENGINE_PATH_VAR: path],
+                                          executableDirectory: nil),
+            status: engine.status,
+            flags: LaunchFlags(demo: false)).surface
         return (surface, engine)
     }
 

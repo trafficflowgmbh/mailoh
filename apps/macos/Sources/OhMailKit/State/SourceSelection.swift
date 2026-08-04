@@ -23,6 +23,17 @@ import OhMailEngine
 /// named state with a sentence in it. There is no third way to reach ``MailSourceKind/fixtures``,
 /// and `SourceSelectionTests` walks a configured launch across every engine status to say so.
 ///
+/// ── THE SECOND RULE, WHICH WAS ADDED AFTER IT WAS BROKEN ──────────────────────────────────
+///
+/// **The setup form is not offered by a build that could not use what it collects.** `configured`
+/// answers whether this install has a mailbox; it never answered whether there was an engine to open
+/// one with. So a download carrying no engine opened the form, took an IMAP host, a user and a mail
+/// password, and found out at the spawn — after the password — that it had nothing to hand them to.
+///
+/// The guard is ``EngineInstall``, and it is a filesystem check rather than a build flag on purpose:
+/// the change that stops packaging the engine is exactly the change that forgets to flip a flag, and
+/// a flag would then be a claim about the bundle that the bundle does not support.
+///
 /// ── WHY THE SENTENCES LIVE HERE AND NOT IN A VIEW ─────────────────────────────────────────
 ///
 /// The words a failed start has to be able to say are the names of environment variables and the
@@ -66,9 +77,14 @@ public struct SourceSelection: Equatable, Sendable {
     /// - Parameters:
     ///   - configured: whether this install has been pointed at a mailbox. **Not** whether it can
     ///     open one — that also needs the key, and the two are different sentences on screen.
+    ///   - engine: whether this build carries an engine at all, read off the filesystem. **No
+    ///     default value, deliberately.** A defaulted `.installed` is a parameter every future call
+    ///     site may forget, and the thing it would silently restore is a form that collects a mail
+    ///     password a build cannot use.
     ///   - status: where the engine stands, or `nil` before it has been asked to start.
     ///   - flags: what the process was launched with.
     public static func decide(configured: Bool,
+                              engine: EngineInstall,
                               status: EngineStatus?,
                               flags: LaunchFlags) -> SourceSelection {
         // FIRST, AND THE ONLY DOOR TO THE INVENTED WORLD.
@@ -92,6 +108,20 @@ public struct SourceSelection: Equatable, Sendable {
             return SourceSelection(surface: .demo, source: .fixtures, spawnEngine: false)
         }
         guard configured else {
+            // THE FORM IS NOT OFFERED BY A BUILD THAT COULD NOT USE WHAT IT COLLECTS.
+            //
+            // Setup asks for an IMAP host, a user and then a mail password. All three are worth
+            // nothing without an engine to hand them to, and the password is worth less than
+            // nothing: it is a stranger's credential, typed into a window that cannot open the
+            // mailbox it names. That is what this app did — the form appeared, the details were
+            // saved, and the missing engine was discovered at the spawn, *after* the password.
+            //
+            // Asked of the bundle rather than of a flag, so it cannot drift from what was actually
+            // packaged; the check is one branch up, in `EngineProcess.install`.
+            if case .missing(let lookedFor) = engine {
+                return SourceSelection(surface: .engineState(noEngine(at: lookedFor)),
+                                       source: nil, spawnEngine: false)
+            }
             // Nothing to open and nothing to start. The engine refuses to run without a mailbox, so
             // spawning one here would buy a `notConfigured` panel in place of the form that fixes it.
             return SourceSelection(surface: .setup, source: nil, spawnEngine: false)
@@ -119,12 +149,18 @@ public struct SourceSelection: Equatable, Sendable {
                 detail: "Starting the local engine — attempt \(attempt) of \(EngineTimings.maxStarts).")
 
         case .absent(let lookedFor):
-            // The path and not a description of it: "the engine is missing" is not something
-            // anybody can act on, and this is the one line that says where to put it back.
-            return named(
-                title: "ohmail cannot find its mail engine.",
-                detail: "There is no engine at \(lookedFor). Install ohmail again, or set "
-                    + "\(ENGINE_PATH_VAR) to the engine's path and reopen ohmail.")
+            // THE SAME SENTENCE AS THE UNCONFIGURED BRANCH ABOVE, FROM THE SAME FUNCTION.
+            //
+            // Two journeys reach one fact — a build with nothing to run — and a second wording of it
+            // is a second thing to keep right. The one that drifts is always the copy.
+            //
+            // This branch is also why the install check above guards only the *unconfigured* case.
+            // Once there is a mailbox the spawn is the authority on whether the engine exists: it
+            // answers with `NotFound` from the syscall that would have started it, which cannot go
+            // stale between a check and a launch. A pre-flight stat here would be a second opinion
+            // about the same file, and the app would show whichever of the two was wrong.
+            return SourceSelection(surface: .engineState(noEngine(at: lookedFor)),
+                                   source: nil, spawnEngine: true)
 
         case .notConfigured(let missing):
             // Named, never described. These are the variables the engine refuses to start without,
@@ -159,6 +195,23 @@ public struct SourceSelection: Equatable, Sendable {
     static let opening = EngineNoticeText(
         title: "Opening your mailbox.",
         detail: "Starting the local engine.")
+
+    /// There is nothing to run, wherever that was worked out.
+    ///
+    /// The path and not a description of it: "the engine is missing" is not something anybody can
+    /// act on, and this is the one line that says where it should be. `lookedFor` is a path in every
+    /// ordinary case and a sentence in the one where no path could be worked out at all, which reads
+    /// correctly either way.
+    ///
+    /// "Nothing to run" rather than "no file": a directory at that path and a file without the
+    /// execute bit are both this state, and both would make "there is no engine at" a sentence that
+    /// contradicts what somebody is looking at in the Finder.
+    static func noEngine(at lookedFor: String) -> EngineNoticeText {
+        EngineNoticeText(
+            title: "ohmail cannot find its mail engine.",
+            detail: "There is nothing to run at \(lookedFor). Install ohmail again, or set "
+                + "\(ENGINE_PATH_VAR) to the engine's path and reopen ohmail.")
+    }
 
     private static func named(title: String, detail: String) -> SourceSelection {
         SourceSelection(surface: .engineState(EngineNoticeText(title: title, detail: detail)),
