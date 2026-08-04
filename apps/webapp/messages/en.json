@@ -371,6 +371,27 @@
     "frEmptyCta": "Back to Triage",
     "keyReplyRun": "start the Reply Run"
   },
+  "seed": {
+    "title": "You've written to {count, plural, one {1 person} other {# people}}.",
+    "lede": "Writing to someone is the clearest sign you want to hear back from them. Everyone ticked below gets through to your Ohbox from now on. Untick anyone you'd rather screen.",
+    "truncated": "Read from your {scanned, number} most recent sent messages. Anyone you wrote to before that will still reach the Screener if they write again.",
+    "filterPlaceholder": "Find someone…",
+    "wroteN": "{count, plural, one {1 message} other {# messages}}",
+    "alreadyDecided": "already decided",
+    "excludedSummary": "{count, plural, one {1 address was left out} other {# addresses were left out}}",
+    "excluded": {
+      "robot-recipient": "looks like a machine address",
+      "machine-sent": "found in an automatic reply you sent",
+      "own-address": "one of your own addresses"
+    },
+    "willDo": "This adds a rule for the {count, plural, one {1 person} other {# people}} ticked. It doesn't move any mail — everything stays where your mail server has it.",
+    "confirm": "Let {count, plural, one {1 person} other {# people}} through",
+    "confirming": "Saving…",
+    "later": "Not now",
+    "loading": "Reading your sent mail…",
+    "errorTitle": "That didn't work.",
+    "errorGeneric": "Something went wrong reading your sent mail."
+  },
   "history": {
     "title": "History",
     "metaCount": "{count, plural, one {1 message} other {# messages}}",

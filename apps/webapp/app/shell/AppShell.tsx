@@ -110,6 +110,7 @@ import {
   type ScreenerSegmentId, type TriagePileId,
 } from "./routing";
 import { HistoryView } from "../views/HistoryView";
+import { SeedReviewView } from "../views/SeedReviewView";
 import { OhboxView } from "../views/OhboxView";
 import { ReadsView, type ReadsChipState } from "../views/ReadsView";
 import { ReceiptsView } from "../views/ReceiptsView";
@@ -400,6 +401,21 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * moves; this is a filter over the same mirror.
    */
   const consent = useConsentState(!demo);
+  /**
+   * THE SEED REVIEW, OFFERED ONCE THE SERVER SAYS IT IS OWED — and dismissible.
+   *
+   * `seedConfirmedAt` is null until somebody has answered the review, which is also the state
+   * a reset puts an account back into. The screen takes over the stage rather than sitting in
+   * a corner, because it is the step that decides what the Ohbox contains and a mailbox that
+   * has not been through it presents almost everything through the Screener.
+   *
+   * "Later" is a real answer and is remembered for this tab only. Nothing about the product is
+   * gated on completing it — an account that never does simply screens every stranger, which
+   * is the old behaviour and not a broken one — so a modal nobody could leave would be a wall
+   * in front of somebody's mail for a step that is an offer.
+   */
+  const [seedDismissed, setSeedDismissed] = useState(false);
+  const seedOwed = !demo && consent.known && consent.seedConfirmedAt === null && !seedDismissed;
   /**
    * The account's OWN addresses, from `GET /mailboxes` — passed EXPLICITLY and not left to
    * the default.
@@ -2144,7 +2160,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   /* ── views ── */
   const tagGroup =
     route.view === "tag" ? tagGroups.find((g) => g.tag.id === route.tagId) : undefined;
-  const effectiveView = route.view === "tag" && !tagGroup ? "ohbox" : route.view;
+  /**
+   * `"seed"` matches no view below, which is how the review screen TAKES the stage instead of
+   * appearing above a pile. Stated here rather than by guarding each of the ten renders: a
+   * condition repeated ten times is nine chances to forget it, and the tenth view added later
+   * would render underneath the screen with nobody noticing.
+   */
+  const effectiveView = seedOwed
+    ? "seed"
+    : route.view === "tag" && !tagGroup
+      ? "ohbox"
+      : route.view;
 
   const frFinished = fr != null && fr.step >= fr.items.length;
   const frItem = fr && !frFinished ? fr.items[fr.step] : undefined;
@@ -2329,6 +2355,26 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           />
 
           <main className="stage" onClickCapture={onStageClickCapture}>
+            {/* THE SEED REVIEW TAKES THE STAGE while it is owed. It decides what the Ohbox
+                contains, so answering it before reading the piles is the order that makes the
+                piles mean something — and "Later" leaves immediately, because it is an offer
+                and not a gate. `window.location.reload()` on success rather than a local state
+                flip: the confirmation wrote rules the mirror has not seen yet, and a shell
+                that re-partitioned before the next sync drain would show the old answer with
+                a new heading over it. */}
+            {seedOwed ? (
+              <SeedReviewView
+                onDone={() => {
+                  setSeedDismissed(true);
+                  if (typeof window !== "undefined") window.location.reload();
+                }}
+                /* Nothing was written, so nothing needs re-reading. The offer stands next
+                   time this tab loads — it is not remembered on the server, because "not
+                   now" is not an answer to "shall I let these people through". */
+                onLater={() => setSeedDismissed(true)}
+              />
+            ) : null}
+
             {effectiveView === "ohbox" ? (
               <OhboxView
                 demo={demo}
@@ -2442,11 +2488,27 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 messages={history}
                 tags={tags}
                 now={now}
-                /* The SAME opener every other list uses. Opening a History message renders it
-                   in full, with its thread, and the sender sheet one press away offering the
-                   screening decision inline — the whole point of History being a presentation
-                   rather than a quarantine. */
-                onOpen={openMessage}
+                /**
+                 * The reader, IN PLACE — not `openMessage`, and the difference is a defect
+                 * rather than a preference.
+                 *
+                 * `openMessage` answers "open it where it lives", and where a History message
+                 * lives is the INBOX — so it would navigate to the Ohbox and select a row that
+                 * is not in the Ohbox's list, because the whole point of History is that this
+                 * message does not present there. The reader takes an id and reads the message
+                 * straight from the mirror, so it works for a message belonging to no pile.
+                 *
+                 * `setReaderFor` and not `enterReader`: that gate exists because the piles have
+                 * a reading COLUMN under 900px and the sheet would duplicate it. History is a
+                 * solo list with no such column, so the sheet is the only reading surface it
+                 * has, at every width.
+                 *
+                 * It is what makes decide-on-encounter work: the pane renders the full body and
+                 * thread, and the sender menu inside it offers the screening decision with the
+                 * sender's count and the explicit retro-apply — the same affordance as
+                 * everywhere else, reached from the mail that prompted the thought.
+                 */
+                onOpen={(m) => setReaderFor(m.id)}
               />
             ) : null}
 

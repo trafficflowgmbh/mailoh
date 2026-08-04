@@ -61,15 +61,19 @@ export function useConsentState(active: boolean): ConsentState {
       try {
         const wire: ConsentStateWire = await consentApi.state();
         if (!live) return;
+        // KNOWN MEANS THE SERVER ANSWERED THIS QUESTION, not that a request returned 200.
+        //
+        // The window is the one field that cannot be absent from a real answer — the route
+        // substitutes the product default rather than ever sending null — so its presence and
+        // its type ARE the check. A body that does not carry one is a stale deployment, a
+        // proxy that rewrote it, or a harness answering every url alike, and none of those
+        // are grounds to re-present somebody's whole mailbox. `known: false` leaves every
+        // message in the pile its folder names, which is the safe direction.
+        if (typeof wire.dormancyDays !== "number" || !Number.isFinite(wire.dormancyDays)) return;
         setState({
-          seedConfirmedAt: wire.seedConfirmedAt,
-          // Defended anyway. The route promises a number; a stale deployment or a proxy that
-          // rewrote the body must not be able to make the window `NaN`, which would put every
-          // sender on one side of the cutline.
-          dormancyDays:
-            typeof wire.dormancyDays === "number" && Number.isFinite(wire.dormancyDays)
-              ? wire.dormancyDays
-              : DEFAULT_DORMANCY_DAYS,
+          // Normalised: absent and null both mean "nobody has answered the review yet".
+          seedConfirmedAt: wire.seedConfirmedAt ?? null,
+          dormancyDays: wire.dormancyDays,
           activeUndecidedSenders: wire.counts?.activeUndecidedSenders ?? 0,
           known: true,
         });

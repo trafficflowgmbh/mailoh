@@ -99,6 +99,102 @@ body.reading .shell {
   border-bottom: 1px solid var(--hair-soft);
 }
 
+/* ================= the sent-mail seed review ================= */
+/* One column, scrollable, on the panel — the same furniture the gate cards use, sized for a
+   list that may hold four hundred people. Nothing here is a modal: the screen replaces the
+   stage, and "Not now" is always reachable without scrolling to the bottom of the list. */
+.view-seed {
+  overflow: auto;
+}
+
+.seed-card {
+  width: min(680px, 100%);
+  margin: 24px auto;
+  padding: 22px;
+  background: var(--panel);
+  border-radius: 14px;
+  box-shadow: var(--lift-1);
+}
+
+.seed-card h1 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.seed-card .view-note {
+  padding: 0 0 10px;
+  border-bottom: 0;
+}
+
+.seed-filter {
+  width: 100%;
+  margin: 6px 0 10px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--canvas);
+  border: 1px solid var(--hair);
+  border-radius: 9px;
+}
+
+.seed-list {
+  max-height: 46vh;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--hair-soft);
+  border-radius: 10px;
+}
+
+.seed-row {
+  border-bottom: 1px solid var(--hair-soft);
+}
+
+.seed-row:last-child {
+  border-bottom: 0;
+}
+
+.seed-row label,
+.seed-row > span {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.seed-who {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.seed-addr,
+.seed-count,
+.seed-note {
+  font-size: 11.5px;
+  color: var(--ink3);
+}
+
+/* Pushed right so the counts line up down the list rather than trailing each name. */
+.seed-count {
+  margin-left: auto;
+}
+
+.seed-excluded {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--ink3);
+}
+
+.seed-excluded summary {
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+
 /* ================= demo ribbon ================= */
 .demo-ribbon {
   flex: none;
