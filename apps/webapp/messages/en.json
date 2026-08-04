@@ -1225,7 +1225,10 @@
     "show": "Show images",
     "showing": "Images loaded for this message.",
     "frameTitle": "Message content",
-    "unsupported": "Showing the plain-text version of this message."
+    "unsupported": "Showing the plain-text version of this message.",
+    "sheetOne": "A remote stylesheet was blocked, so this message may look plain.",
+    "sheetMany": "{n} remote stylesheets were blocked, so this message may look plain.",
+    "oversize": "This message's HTML part is too large to render safely. Showing the plain-text version."
   },
   "attachments": {
     "count": "{count, plural, one {# attachment} other {# attachments}}",
