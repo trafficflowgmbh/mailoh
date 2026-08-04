@@ -151,6 +151,70 @@ body.reading .shell {
   background: oklch(0 0 0 / 0.2);
 }
 
+/* A1 — the progress and impediment variants share the strip's shape and differ only in
+   emphasis, because they are all the same KIND of thing: one line about the mailbox, above
+   the deck, for as long as it is true.
+
+   BUSY (`importing`, `awaiting`) is the quietest surface the strip has — the panel tint, ink2
+   text — because it reports work in progress and may sit there for six minutes; anything
+   louder would train people to read the strip as a problem. WARN (`blocked`, `mailboxError`)
+   keeps the accent ground of the retrying state: it is a condition, not an event, and the
+   remedy is a link rather than a klaxon. Flat fills only, no backdrop-filter, no gradients
+   (invariant #7). */
+.sync-bar.busy {
+  color: var(--ink2);
+  background: var(--tint);
+}
+.sync-bar.busy b {
+  color: var(--ink);
+}
+.sync-bar.warn {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+/* The volatile half of each sentence — a climbing count, an elapsed minute, an address. Quiet
+   and tabular so a number that changes every eight seconds does not make the line jitter or
+   re-centre; `aria-live="off"` on the same node is what stops it being read out each time. */
+.sync-bar .num {
+  color: var(--ink3);
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+.sync-bar.warn .num {
+  color: var(--accent-ink);
+  opacity: 0.75;
+}
+.sync-bar a {
+  font-weight: 600;
+  color: inherit;
+  border-radius: 99px;
+  padding: 1px 9px;
+  text-decoration: none;
+  background: oklch(1 0 0 / 0.5);
+}
+.sync-bar a:hover {
+  background: oklch(1 0 0 / 0.75);
+}
+[data-theme="dark"] .sync-bar a {
+  background: oklch(1 0 0 / 0.08);
+}
+[data-theme="dark"] .sync-bar a:hover {
+  background: oklch(1 0 0 / 0.14);
+}
+/* …and `stopped` keeps its own, louder pair, declared after so it wins. */
+.sync-bar.stopped a {
+  background: oklch(1 0 0 / 0.18);
+}
+.sync-bar.stopped a:hover {
+  background: oklch(1 0 0 / 0.3);
+}
+[data-theme="dark"] .sync-bar.stopped a {
+  background: oklch(0 0 0 / 0.12);
+}
+[data-theme="dark"] .sync-bar.stopped a:hover {
+  background: oklch(0 0 0 / 0.2);
+}
+
 /* ================= reads pending-AI chip row ================= */
 .reads-chip-row {
   padding: 2px 18px 14px;

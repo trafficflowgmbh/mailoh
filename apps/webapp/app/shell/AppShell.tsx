@@ -72,6 +72,7 @@ import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
+import { MailStateProvider, type MailboxProbe } from "./MailStateProvider";
 import { MessageChromeProvider } from "./message-chrome";
 import { SenderMenu, type SenderMenuState } from "./SenderMenu";
 import {
@@ -113,6 +114,7 @@ interface ReadsAiChipEntity {
 export function AppShell({
   demo,
   resolveOwner,
+  mailboxFacts,
   accountSection,
   mailboxSection,
   billingSection,
@@ -121,6 +123,16 @@ export function AppShell({
 }: {
   demo: boolean;
   resolveOwner?: OwnerResolver;
+  /**
+   * "What state are this account's mailboxes in?", as a function the SHELL does not know how
+   * to answer — the seventh injected prop, and the same seam as `resolveOwner` for the same
+   * reason: `scripts/publish-desktop.mjs` DENYs `app/api-client`, so this shared shell may not
+   * call `GET /mailboxes`. The Cloud client supplies one from `(product)/mailbox/CloudShell`;
+   * Desktop and the demo supply nothing, and A1's strip then withholds every mailbox-keyed
+   * state rather than guessing one. See `MailStateProvider` — a probe MUST reject on failure,
+   * because an empty array is a claim about the account.
+   */
+  mailboxFacts?: MailboxProbe;
   /**
    * The Cloud client's Settings → Account pane, injected rather than imported — the same
    * seam as `resolveOwner`, and see `views/SettingsView.tsx` for why it has to be one.
@@ -146,6 +158,7 @@ export function AppShell({
           also the table the `?` sheet is generated from. */}
       <KeymapProvider>
         <ShellInner
+          mailboxFacts={mailboxFacts}
           accountSection={accountSection}
           mailboxSection={mailboxSection}
           billingSection={billingSection}
@@ -157,7 +170,8 @@ export function AppShell({
   );
 }
 
-function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection }: {
+function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSection, securitySection, aboutSection }: {
+  mailboxFacts?: MailboxProbe;
   accountSection?: ReactNode;
   mailboxSection?: ReactNode;
   billingSection?: ReactNode;
@@ -188,6 +202,15 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     () => reader.list<MailboxEntity>("mailbox"),
     [reader, version],
   );
+  /**
+   * EVERY message in the MIRROR — Screener, Reads and Receipts included, not the Ohbox's rows.
+   *
+   * A1's progress signal, and the reason it is computed HERE rather than in the surface that
+   * renders it: `MailStateProvider` folds it into a stateful growth reducer, and two surfaces
+   * each sampling their own could disagree about whether the mirror is growing. The engine
+   * calls `notify()` once per drained page, so this is live with no extra plumbing.
+   */
+  const mirrored = useMemo(() => reader.list("message").length, [reader, version]);
   const draft = useMemo(
     () => reader.get<EngineDraft>("draft", "draft-compose") ?? null,
     [reader, version],
@@ -1033,6 +1056,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   return (
+    // A1 — the ONE place the mailbox state is derived, wrapping every surface that reports it:
+    // the strip below, the Ohbox's empty pane, and the injected Settings → Mailboxes rows.
+    // Outside `MessageChromeProvider` so the reader sheet is inside it too.
+    <MailStateProvider probe={mailboxFacts} mirrored={mirrored}>
     <MessageChromeProvider value={chrome}>
     <div className="app-root">
       <div className="shell">
@@ -1397,5 +1424,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       </Dock>
     </div>
     </MessageChromeProvider>
+    </MailStateProvider>
   );
 }

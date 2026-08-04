@@ -1,0 +1,208 @@
+"use client";
+
+/**
+ * A1 — THE OBSERVATIONS the ladder in `mail-state.ts` judges, made ONCE.
+ *
+ * `mail-state.ts` is pure: numbers in, a state out. This file is the impure half — it samples
+ * the mirror, holds the clock, and reads `GET /mailboxes` through an injected probe — and it
+ * publishes ONE answer to every surface that has something to say about a sync.
+ *
+ * ── WHY IT RUNS ONCE AND ARRIVES BY CONTEXT ─────────────────────────────────────────────
+ *
+ * The growth sampler is STATEFUL. Two consumers each running their own would eventually
+ * disagree about whether the mirror is growing, and a disagreement between two surfaces about
+ * the same fact is P17's bug with extra steps. So it is folded here, once.
+ *
+ * Three surfaces consume it: the shell's strip (`SyncBar`), the Ohbox's empty pane, and the
+ * Settings → Mailboxes rows. The third is why it cannot be a prop: `MailboxSection` is
+ * injected into `AppShell` as an opaque `ReactNode` by `(product)/mailbox/CloudShell.tsx` and
+ * rendered two levels down inside `SettingsView`, so there is no prop path from the shell to
+ * it at all. `useSyncStatus`'s header makes the same argument for the same reason.
+ *
+ * `useMailState()` THROWS without a provider rather than returning a resting value. A default
+ * would make a forgotten provider render a permanently silent strip — which is P17 exactly:
+ * the sentence exists, the wiring does not, and nothing anywhere says so.
+ *
+ * ── WHY THE MAILBOX FACTS ARRIVE AS A FUNCTION ──────────────────────────────────────────
+ *
+ * Same seam as `resolveOwner`, and it has to be: `apps/webapp/app/shell/**` is published to
+ * the Desktop mirror and `scripts/publish-desktop.mjs` DENYs `apps/webapp/app/api-client`, so
+ * this shared shell may not import `GET /mailboxes`. The Cloud client supplies a probe; the
+ * Desktop and the demo supply nothing.
+ *
+ * **A PROBE THAT REJECTS IS NOT AN EMPTY ACCOUNT.** `facts` starts `null` — "we cannot see" —
+ * and a rejection LEAVES IT ALONE rather than writing `[]`. Mapping a 503 to `[]` would render
+ * "No mailbox connected" to somebody who has five, which is a worse lie than the one this
+ * slice is fixing. The probe is therefore contracted to REJECT on failure; it must not
+ * helpfully return an empty array.
+ */
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { useDemoMode, useSyncStatus } from "./engine";
+import { SYNC_FAILURE_STREAK } from "./sync-scheduler";
+import {
+  deriveMailState,
+  growthStep,
+  seedGrowth,
+  type MailboxFacts,
+  type MailState,
+  type MirrorGrowth,
+} from "./mail-state";
+
+/**
+ * `GET /mailboxes`, narrowed to {@link MailboxFacts}. Supplied by the Cloud client only.
+ *
+ * MUST REJECT on failure. Returning `[]` from a catch would be indistinguishable from an
+ * account with no mailboxes — see the file header.
+ */
+export type MailboxProbe = () => Promise<MailboxFacts[]>;
+
+/**
+ * How often the strip's own clock beats, while a state's copy depends on elapsed time.
+ *
+ * A healthy tab publishes an IDENTICAL `SyncStatus` every eight seconds and `engine.tsx`
+ * deliberately bails out of re-rendering for it — so without a clock of its own, "syncing"
+ * would still be on screen an hour after the import finished, and the minutes in `awaiting`
+ * would be frozen at whatever they were when the mirror last moved. Five seconds, so the
+ * handover out of `importing` is not visibly late; no network, so it costs a render and
+ * nothing else.
+ *
+ * Armed ONLY while `MailState.clock` is true. A quiet mailbox holds no timer.
+ */
+export const MAIL_CLOCK_MS = 5_000;
+
+/**
+ * How often the mailbox facts are re-read.
+ *
+ * Thirty seconds, visibility-gated, and it keeps running while everything looks healthy — that
+ * is not an oversight. `blocked` and `mailboxError` are precisely the states that appear
+ * UNDERNEATH a populated, healthy-looking mirror (`dto/types.ts` says so at the column), so a
+ * poll that backed off once things looked fine would go quiet exactly when it was needed. It is
+ * a read, and reads stay open deliberately (GOALS #11); 120 requests an hour per visible tab
+ * sits inside the ~450 `/sync` budget `sync-scheduler.ts` already argued for.
+ *
+ * A hidden tab reads nothing at all, the same rule `/sync` follows (GOALS #10).
+ */
+export const FACTS_POLL_MS = 30_000;
+
+interface MailStateBinding {
+  state: MailState;
+  /** Re-read the mailbox facts now. The Settings pane calls it after a connect or a resync. */
+  refresh: () => void;
+}
+
+const MailStateContext = createContext<MailStateBinding | null>(null);
+
+export function MailStateProvider({
+  probe,
+  mirrored,
+  children,
+}: {
+  probe?: MailboxProbe;
+  /** Messages in the MIRROR — every folder. THE progress signal, once it moves. */
+  mirrored: number;
+  children: ReactNode;
+}) {
+  const sync = useSyncStatus();
+  const demo = useDemoMode();
+  const [facts, setFacts] = useState<MailboxFacts[] | null>(null);
+  const [beat, setBeat] = useState(() => Date.now());
+  const [growth, setGrowth] = useState<MirrorGrowth>(() => seedGrowth(mirrored));
+
+  /**
+   * FOLD EVERY OBSERVATION OF THE MIRROR'S SIZE IN.
+   *
+   * In an effect rather than during render, so the reducer is called once per committed count
+   * rather than once per render attempt — `growthStep` records a TIME, and a double-invoked
+   * render (StrictMode) recording two rises for one arrival would let a single message satisfy
+   * the two-rise rule.
+   */
+  useEffect(() => {
+    setGrowth((prev) => growthStep(prev, mirrored, Date.now()));
+    // The clock is re-read whenever the mirror moves, not only on the interval — otherwise a
+    // rise arriving during a quiet spell would be judged against a `beat` minutes old.
+    setBeat(Date.now());
+  }, [mirrored]);
+
+  const state = useMemo(
+    () =>
+      deriveMailState({
+        sync,
+        failureStreak: SYNC_FAILURE_STREAK,
+        mailboxes: facts,
+        mirrored,
+        growth,
+        now: beat,
+        demo,
+      }),
+    [sync, facts, mirrored, growth, beat, demo],
+  );
+
+  // The clock, armed only while something on screen depends on elapsed time.
+  useEffect(() => {
+    if (!state.clock) return;
+    const id = setInterval(() => setBeat(Date.now()), MAIL_CLOCK_MS);
+    return () => clearInterval(id);
+  }, [state.clock]);
+
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  const read = useCallback(async (): Promise<void> => {
+    if (!probe) return;
+    try {
+      const got = await probe();
+      if (alive.current) setFacts(got);
+    } catch {
+      // NOT `setFacts([])`. A refusal or a dead network is "we still cannot see", which is what
+      // `facts` already says — and if we DID see mailboxes a moment ago, the last thing we knew
+      // is a better answer than a fabricated empty account. A signed-out tab is the shell's own
+      // `SessionScreen`'s business, not this strip's.
+    }
+  }, [probe]);
+
+  useEffect(() => {
+    if (!probe) {
+      setFacts(null);
+      return;
+    }
+    void read();
+  }, [probe, read]);
+
+  useEffect(() => {
+    if (!probe) return;
+    const id = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void read();
+    }, FACTS_POLL_MS);
+    return () => clearInterval(id);
+  }, [probe, read]);
+
+  const binding = useMemo<MailStateBinding>(
+    () => ({ state, refresh: () => void read() }),
+    [state, read],
+  );
+
+  return <MailStateContext.Provider value={binding}>{children}</MailStateContext.Provider>;
+}
+
+/**
+ * What to say about this mailbox, decided once. See {@link MailStateProvider} for why this
+ * throws rather than returning a resting value when nothing provided it.
+ */
+export function useMailState(): MailStateBinding {
+  const binding = useContext(MailStateContext);
+  if (!binding) {
+    throw new Error("useMailState must be used inside <MailStateProvider>");
+  }
+  return binding;
+}

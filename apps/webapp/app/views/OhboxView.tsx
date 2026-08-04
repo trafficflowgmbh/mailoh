@@ -19,9 +19,8 @@ import {
   ReadColumn,
 } from "@ohmail/ui";
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
-import { useEngineVersion, useReader, useSyncStatus } from "../shell/engine";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
-import { SYNC_FAILURE_STREAK } from "../shell/sync-scheduler";
+import { useMailState } from "../shell/MailStateProvider";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 
 /**
@@ -536,7 +535,9 @@ export function OhboxView({
         <ListRows multiSelectable ariaLabel={t("newForYou")}>{newForYou.map(row)}</ListRows>
         <ListGroupLabel>{t("previouslySeen")}</ListGroupLabel>
         <ListRows multiSelectable ariaLabel={t("previouslySeen")}>{previouslySeen.map(row)}</ListRows>
-        {all.length === 0 ? <SyncState /> : null}
+        {/* The view's own fact — this list is empty — combined with a state derived once, up
+            in the shell. `doorbellCount` is the Screener's waiting count, already a prop. */}
+        {all.length === 0 ? <SyncState waiting={doorbellCount} /> : null}
         {/* DEMO ONLY, and it was not. "Older mail stays on your server — find it in Search."
             is true of Mila's fixture world, which holds a hand-made slice of a mailbox. It is
             FALSE of a live account: the worker syncs every folder from cursor zero, so what is
@@ -564,45 +565,55 @@ export function OhboxView({
 }
 
 /**
- * WHY AN EMPTY OHBOX IS EMPTY — a count, and never a percentage.
+ * WHY AN EMPTY OHBOX IS EMPTY — the one answer that is this VIEW's to give.
  *
- * P16. A first drain is thirty-odd pages and twelve to fifteen seconds on a real mailbox, and
- * for all of it this pane said "0 unread of 0" with no rows and no explanation, which is what
- * a broken account looks like. The engine already calls `notify()` once per page, so the
- * mirror's size is live here with no extra plumbing.
+ * ── WHAT THIS PANE USED TO DO, AND WHY IT WAS SILENT FOR THIRTY MINUTES (A1) ─────────────
  *
- * A progress bar is impossible and would have to be invented: `/sync` answers `hasMore` as a
- * boolean, so the total is unknowable until the drain ends. A count is the largest true thing
- * available, and it moves, which is the part that distinguishes working from hung. It counts
- * every message in the MIRROR — Screener, Reads and Receipts included — not the ohbox rows
- * above, so the wording says "messages", not "in your Ohbox".
+ * P16 put a live count here — "Syncing your mailbox · 3 messages so far" — gated on
+ * `SyncStatus.bootstrapping`. That gate is the defect. `bootstrapping` means "this TAB's first
+ * drain has not completed", and a fresh account's first drain completes in seconds against an
+ * empty server-side mirror. The WORKER's first import is a different clock entirely: measured
+ * at 358 s and 373 s for a 1 712-message mailbox. So the counter switched itself off within
+ * seconds and the pane then said nothing at all for the entire import — which is exactly the
+ * thirty minutes the owner spent looking at "Waiting for first sync" somewhere else.
  *
- * Three consecutive failures SILENCE it, because by then the count has stopped moving and a
- * frozen counter is the same lie in a new font.
+ * The counter therefore MOVED, and moved UP: it is `SyncBar`'s `importing` state now, keyed on
+ * the mirror actually growing (`shell/mail-state.ts`) rather than on a tab-local boolean, and
+ * rendered above the deck so it is visible in Reads, Receipts and the Screener too. This is
+ * P17's lesson a second time — a view can only speak about itself, and "your mail is arriving"
+ * is not a fact about the Ohbox.
  *
- * It used to replace the counter with "Sync failed. Retrying." — and that sentence, rendered
- * only here, was the whole of P17: the one mailbox that could be told its sync was broken was
- * the one that had never loaded anything. The failure is the shell's strip now (`SyncBar.tsx`),
- * which says it in every view and with rows present, so repeating it here would be the same
- * words twice on one screen. What is left for this pane is only to stop counting.
+ * ── WHAT IS LEFT HERE, AND WHY IT BELONGS HERE ──────────────────────────────────────────
  *
- * The demo and the desktop never reach any of it — `useSyncStatus()` is permanently settled
- * for a fixtures engine.
+ * One thing: an empty Ohbox that is CORRECT. A fresh account is mostly Screener by design, so
+ * the true sentence is "nothing has reached the Ohbox because every sender so far is new" —
+ * and that is a statement about THIS list, which no shell-level strip may make. Rendered above
+ * the deck it would tell somebody standing in the Screener that everything is in the Screener.
+ *
+ * The split is: `mail-state.ts` derives `screenerCandidate` (mail landed, mirror settled,
+ * nothing wrong), ONCE, for everybody. This pane contributes the only fact it owns — that its
+ * own list is empty — and renders. **It does not re-derive.** `bootstrapping`, `failures` and
+ * `terminal` are deliberately no longer read here: a frozen counter is the same lie in a new
+ * font, and the ladder already stops for both of them, above.
+ *
+ * The demo and the Desktop never reach it — the derivation returns the resting value for a
+ * fixtures engine before it looks at anything else.
  */
-function SyncState() {
+function SyncState({ waiting }: { waiting: number }) {
   const t = useTranslations("ohbox");
-  const { bootstrapping, failures, terminal } = useSyncStatus();
-  const reader = useReader();
-  const version = useEngineVersion();
-  const mirrored = useMemo(() => reader.list("message").length, [reader, version]);
+  const { state } = useMailState();
 
-  if (terminal || failures >= SYNC_FAILURE_STREAK) return null;
-  if (!bootstrapping) return null;
+  if (!state.screenerCandidate) return null;
   return (
     <div className="empty" role="status">
-      <span className="glyph" aria-hidden="true">✉</span>
-      <b>{t("syncingTitle")}</b>
-      {t("syncingCount", { count: mirrored })}
+      <span className="glyph" aria-hidden="true">{waiting > 0 ? "🕊" : "✉"}</span>
+      {/* Two sentences, because two different things are true. Mail is held at the door and
+          the door is one click away — or it arrived and was filed somewhere that is not here,
+          and Search is how it is found. Neither claims the Ohbox is broken. */}
+      <b>{waiting > 0 ? t("emptyScreenerTitle") : t("emptyFiledTitle")}</b>
+      {waiting > 0
+        ? t("emptyScreenerHint", { count: waiting })
+        : t("emptyFiledHint", { count: state.count })}
     </div>
   );
 }
