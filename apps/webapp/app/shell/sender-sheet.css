@@ -1,0 +1,260 @@
+/* ================= the sender sheet's O19 additions =================
+   The scope switch, the auto-unsubscribe disclosure and the audit panel.
+
+   ── WHY THIS IS ITS OWN FILE AND NOT `app/app.css` ─────────────────────────────────────
+   `app/shell` is copied into the public desktop mirror and `app/app.css` is NOT
+   (`scripts/publish-desktop.mjs` copies `apps/webapp/app/shell` with ext `.ts/.tsx/.css`, and
+   the webapp's own `app/` files are DENY'd). Rules for a shell component therefore have to
+   live beside the component or the desktop build renders it unstyled — the same reason
+   `action-bar.css` and `search-keys.css` sit where they do, imported directly by the
+   component that needs them.
+
+   The popover's own box (`.senderm`, `.sm-head`, `.sm-now`, `.sm-foot`) stays in `app.css`
+   untouched: the owner asked for the sheet to be left as it is, and moving its rules would
+   be a diff that claims to be a redesign. Everything below sits INSIDE that popover: the
+   sheet grows a little taller and nothing that was in it moved. */
+.sm-scope {
+  display: flex;
+  gap: 4px;
+  padding: 2px 9px 8px;
+}
+.sm-scope button {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-start;
+  padding: 6px 9px;
+  border-radius: 10px;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--ink2);
+  text-align: left;
+  background: var(--tint);
+}
+.sm-scope button b,
+.sm-scope button small {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sm-scope button small {
+  font-size: 10px;
+  color: var(--ink3);
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+.sm-scope button:hover {
+  color: var(--ink);
+}
+.sm-scope button.on {
+  color: var(--accent-ink);
+  font-weight: 650;
+  background: var(--accent-soft);
+}
+.sm-scope button.on small {
+  color: var(--accent-ink);
+  opacity: 0.75;
+}
+.sm-scope button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The two destinations that can send mail on your behalf, marked before you reach them. */
+.senderm li .sm-warn {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 650;
+  color: var(--accent-ink);
+  opacity: 0.8;
+}
+.senderm li .sm-warn + .ck {
+  margin-left: 5px;
+}
+.sm-confirm {
+  margin: 0 9px 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+}
+.sm-confirm p {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.sm-confirm .sm-confirm-fine {
+  margin-top: 7px;
+  font-size: 10.5px;
+  color: var(--ink2);
+}
+.sm-confirm-row {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.sm-confirm-row button {
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 99px;
+  padding: 4px 11px;
+  color: var(--ink2);
+}
+.sm-confirm-row button.go {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+.sm-confirm-row button:hover {
+  color: var(--ink);
+}
+.sm-confirm-row button.go:hover {
+  color: var(--on-accent);
+  opacity: 0.9;
+}
+.sm-detail {
+  display: block;
+  width: calc(100% - 12px);
+  margin: 0 6px 2px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  text-align: left;
+}
+.sm-detail:hover {
+  background: var(--tint);
+}
+
+/* ================= the audit panel (slice O19b) =================
+   Every message from an address or a domain, and what accounts for where each one sits.
+   Same overlay construction as the `?` sheet: a scrim, a floating card, Escape owned by
+   AppShell's single ordered layer list. */
+.sa-bg {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-pal);
+  background: var(--scrim);
+}
+.sa {
+  position: fixed;
+  left: 50%;
+  top: 10vh;
+  transform: translateX(-50%);
+  z-index: var(--z-pal);
+  width: min(620px, calc(100vw - 32px));
+  max-height: 76vh;
+  overflow-y: auto;
+  border-radius: 22px;
+  background: var(--float);
+  box-shadow: var(--lift-3);
+  padding: 20px 24px 20px;
+  animation: rise 0.22s var(--spring);
+}
+.sa-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sa-head h3 {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sa-head .x {
+  margin-left: auto;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 99px;
+  color: var(--ink3);
+}
+.sa-head .x:hover {
+  background: var(--tint);
+  color: var(--ink);
+}
+.sa-count,
+.sa-empty {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink3);
+  margin: 8px 0 0;
+}
+.sa-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+}
+.sa-list li {
+  padding: 11px 0;
+  border-top: 1px solid var(--hair-soft);
+}
+.sa-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.sa-line b {
+  font-size: 12.5px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sa-place {
+  margin-left: auto;
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-radius: 99px;
+  padding: 2px 9px;
+}
+.sa-meta {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--ink3);
+}
+.sa-meta .sa-from {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sa-meta .sa-when {
+  margin-left: auto;
+  flex: none;
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+.sa-why {
+  margin-top: 5px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink2);
+}
+.sa-why.sa-sugg {
+  color: var(--ink3);
+}
+@media (max-width: 640px) {
+  .sa {
+    top: 5vh;
+    max-height: 88vh;
+    padding: 18px 18px 16px;
+  }
+}
+

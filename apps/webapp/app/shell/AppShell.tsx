@@ -81,10 +81,13 @@ import { SyncBar } from "./SyncBar";
 import { MailStateProvider, type MailboxProbe } from "./MailStateProvider";
 import { MessageChromeProvider } from "./message-chrome";
 import { SenderMenu, type SenderMenuState } from "./SenderMenu";
+import { SenderAuditPanel, type SenderAuditState } from "./SenderAuditPanel";
+import { attributeMessages } from "./sender-audit";
 import {
   planScreeningChange,
   senderScreening,
   type ScreeningDest,
+  type ScreeningScope,
 } from "./sender-screening";
 import { go, goScreener, goTag, useHashRoute, type ScreenerSegmentId } from "./routing";
 import { OhboxView } from "../views/OhboxView";
@@ -340,6 +343,7 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
   const [aboutOpen, setAboutOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [senderMenu, setSenderMenu] = useState<SenderMenuState | null>(null);
+  const [senderAudit, setSenderAudit] = useState<SenderAuditState | null>(null);
   /* The inline reply (U4). The id and the text live HERE, not in `MessagePane`, because
      that pane is mounted twice whenever the reader is open — see `message-chrome.tsx`. */
   const [replyTo, setReplyTo] = useState<string | null>(null);
@@ -689,24 +693,48 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
    * for future mail, or no rule at all) is the thing a user needs to know.
    */
   const changeScreening = useCallback(
-    (messageId: string, dest: ScreeningDest) => {
+    (messageId: string, dest: ScreeningDest, scope: ScreeningScope = "sender") => {
       setSenderMenu(null);
       const sender = senderScreening(reader, messageId);
       if (!sender) return;
-      const plan = planScreeningChange(sender, dest);
+      const plan = planScreeningChange(sender, dest, scope);
       const place = PLACE_LABEL[dest] ?? dest;
+      // The SUBJECT of the sentence follows the scope, or a domain decision would report
+      // itself as being about the one address the user happened to click.
+      const who = scope === "domain" ? sender.domain : sender.address;
       if (plan.mutations.length === 0) {
-        toast(t("screening.toastAlready", { sender: sender.address, place }));
+        toast(t("screening.toastAlready", { sender: who, place }));
         return;
       }
       for (const m of plan.mutations) void engine.mutate(m);
       toast(
         plan.rule
-          ? t("screening.toastRuled", { sender: sender.address, place, count: plan.moved })
-          : t("screening.toastMoved", { sender: sender.address, place, count: plan.moved }),
+          ? t("screening.toastRuled", { sender: who, place, count: plan.moved })
+          : t("screening.toastMoved", { sender: who, place, count: plan.moved }),
       );
     },
     [engine, reader, toast, t],
+  );
+
+  /**
+   * O19b — open the detail view for whichever scope the sheet was showing.
+   *
+   * The rows are attributed HERE, at open time, rather than inside the panel: the panel then
+   * holds a plain snapshot and cannot re-derive a different answer on a re-render caused by a
+   * sync drain landing mid-read. The sheet closes, because the panel replaces it.
+   */
+  const openSenderAudit = useCallback(
+    (messageId: string, scope: ScreeningScope) => {
+      setSenderMenu(null);
+      const sender = senderScreening(reader, messageId);
+      if (!sender) return;
+      setSenderAudit({
+        title: scope === "domain" ? sender.domain : sender.address,
+        domain: scope === "domain",
+        rows: attributeMessages(reader, sender.scopes[scope].messages),
+      });
+    },
+    [reader],
   );
 
   const openSenderMenu = useCallback((messageId: string, anchor: HTMLElement | null) => {
@@ -1213,6 +1241,9 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
   const escapeLayers: Array<[open: boolean, close: () => void]> = [
     [palette.open, palette.closePalette],
     [shortcutsOpen, () => setShortcutsOpen(false)],
+    // Above the popover: the audit panel is opened FROM the sheet and replaces it, so it is
+    // the innermost thing on screen whenever it exists.
+    [senderAudit != null, () => setSenderAudit(null)],
     [senderMenu != null, () => setSenderMenu(null)],
     [picker != null, () => setPicker(null)],
     [aboutOpen, () => setAboutOpen(false)],
@@ -1971,11 +2002,15 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
       ) : null}
 
       {/* Sender screening (U3) — reachable from every list and every open message. */}
+      {senderAudit ? (
+        <SenderAuditPanel state={senderAudit} onClose={() => setSenderAudit(null)} />
+      ) : null}
       {senderMenuFor ? (
         <SenderMenu
           state={senderMenu!}
           sender={senderMenuFor}
-          onChoose={(dest) => changeScreening(senderMenu!.messageId, dest)}
+          onChoose={(dest, scope) => changeScreening(senderMenu!.messageId, dest, scope)}
+          onOpenDetail={(scope) => openSenderAudit(senderMenu!.messageId, scope)}
           onClose={() => setSenderMenu(null)}
         />
       ) : null}
