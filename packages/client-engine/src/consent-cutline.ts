@@ -118,6 +118,33 @@ export interface ConsentOptions {
   now?: Date;
   /** Days. Defaults to {@link DEFAULT_DORMANCY_DAYS}. */
   dormancyDays?: number;
+  /**
+   * The account's OWN mailbox addresses. Mail from these is the user writing, not a
+   * correspondent writing, so it is never a candidate for a place and never makes anybody
+   * active.
+   *
+   * Most of the user's own mail sits in a Sent folder, which is outside the presented set and
+   * therefore already ignored — but not all of it does. Mail somebody sends to themselves, and
+   * mail a provider files into the INBOX as well as into Sent, lands squarely in the presented
+   * folders. Without this the user appears in their own Screener queue.
+   *
+   * Defaults to whatever mailbox rows the mirror happens to hold. That is empty on a client
+   * whose sync feed carries no mailbox entity, so a caller that KNOWS the addresses should pass
+   * them — `consent-cutline.pg.test.ts` pins the server's answer to this one.
+   */
+  ownAddresses?: Iterable<string>;
+}
+
+function ownSet(reader: EntityReader, opts: ConsentOptions): Set<string> {
+  const explicit = opts.ownAddresses;
+  const source = explicit ?? reader.list<{ address?: unknown }>("mailbox")
+    .map((m) => (typeof m.address === "string" ? m.address : ""));
+  const out = new Set<string>();
+  for (const a of source) {
+    const key = senderKey(String(a));
+    if (key) out.add(key);
+  }
+  return out;
 }
 
 /** The domain half of an address, lower-cased, or `null` when there is not one. */
@@ -191,6 +218,7 @@ export function decidedDestination(index: ConsentIndex, address: string): Folder
 export function senderActivity(
   messages: readonly EngineMessage[],
   opts: ConsentOptions = {},
+  own: ReadonlySet<string> = new Set(),
 ): Map<string, SenderActivity> {
   const now = opts.now ?? new Date();
   const days = opts.dormancyDays ?? DEFAULT_DORMANCY_DAYS;
@@ -200,6 +228,7 @@ export function senderActivity(
   for (const m of messages) {
     if (!KNOWN_FOLDERS.has(m.folder)) continue;
     const key = senderKey(m.from.address);
+    if (own.has(key)) continue;
     if (out.get(key) === "active") continue;
     const recent = m.date !== null && new Date(m.date).getTime() >= cutoff;
     out.set(key, m.unread || recent ? "active" : "dormant");
@@ -213,7 +242,8 @@ export function senderActivity(
 export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}): ConsentPartition {
   const messages = reader.list<EngineMessage>("message");
   const index = consentIndex(rulesList(reader));
-  const activity = senderActivity(messages, opts);
+  const own = ownSet(reader, opts);
+  const activity = senderActivity(messages, opts, own);
 
   const placeOf = new Map<string, Folder | null>();
   /** Messages whose sender is consented, by thread — the anchor the thread rule uses. */
@@ -227,6 +257,9 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     if (!KNOWN_FOLDERS.has(m.folder)) { placeOf.set(m.id, m.folder); continue; }
 
     const key = senderKey(m.from.address);
+    // The user is not one of their own correspondents. Their mail keeps the place it is in —
+    // never History, which is a queue of people who have not been screened.
+    if (own.has(key)) { placeOf.set(m.id, m.folder); continue; }
     const decided = decidedDestination(index, m.from.address);
     if (decided !== null && CONSENTING_DESTINATIONS.has(decided)) consentedSenders.add(key);
 
