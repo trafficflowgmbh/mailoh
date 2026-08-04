@@ -14,8 +14,8 @@
  * `ReadsView`/`ReceiptsView` scroll the list to follow the selection, and
  * both scroll the reading stream on a cross-view jump. So a jump from
  * Search or a Tag row armed the guard and the observer then committed
- * every unread row the jump had swept past. Measured in
- * `apps/webapp/test/seen-on-scroll-runaway.test.ts` against the real view:
+ * every unread row the jump had swept past. Measured against the real
+ * view, by a regression test that reproduces the jump:
  * a jump to the 16th receipt marked ELEVEN messages read, with no user
  * scroll anywhere in the sequence, and read-state is not local — the
  * worker reconciles it onto `\Seen` on the user's own IMAP server.

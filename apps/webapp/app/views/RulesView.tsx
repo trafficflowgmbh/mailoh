@@ -5,22 +5,21 @@
  *
  * ── THE DEFECT THIS EXISTS TO CLOSE ─────────────────────────────────────────────────────
  *
- * `POST /screener/:id` writes a `rules` row on EVERY decision (`screener-service.ts:364`),
- * and four controls reach it: the DecisionBar, "apply to all", "mark all spam" and the
- * sender menu. The five endpoints in `packages/api/src/routes/rules.ts` were mounted,
- * contract-tested and referenced by nothing; `/rules` had zero occurrences across the web
- * app, `packages/client-engine` and `packages/ui`; the `rule` entity has been syncing into
- * the client mirror since Phase 1 and was read by no selector. In a product whose thesis is
- * a gate that remembers your decisions, "and you can never see or undo them" is the part
- * that compounds — the owner had four invisible rules on their account before this shipped.
+ * `POST /screener/:id` writes a `rules` row on EVERY decision, and four controls reach it: the
+ * DecisionBar, "apply to all", "mark all spam" and the sender menu. The server's five `/rules`
+ * endpoints were mounted, contract-tested and referenced by nothing; `/rules` had zero
+ * occurrences anywhere in the client; the `rule` entity had been syncing into the client mirror
+ * since the first release and was read by no selector. In a product whose thesis is a gate that
+ * remembers your decisions, "and you can never see or undo them" is the part that compounds —
+ * a real account had four invisible rules on it before this shipped.
  *
  * ── WHAT IT SAYS, AND THE THREE THINGS IT REFUSES TO SAY ────────────────────────────────
  *
  * 1. NO MESSAGE COUNT. `RuleDTO.stats` offers `hits`, `lastHitAt` and `demotions`; nothing
- *    in the repository has ever written one (`packages/db/src/schema.ts:378-380` declares
- *    them, `materialize.ts:223` reports them, and every value is the insert default). A
- *    rule that has quietly filed three thousand messages would render "0". So the note says
- *    the count is not recorded, which is true, instead of a number that is not.
+ *    anywhere has ever written one. The columns are declared and faithfully reported, and
+ *    every value is still the insert default. A rule that has quietly filed three thousand
+ *    messages would render "0". So the note says the count is not recorded, which is true,
+ *    instead of a number that is not.
  *
  * 2. NO PROMISE ABOUT WHERE FUTURE MAIL GOES. A revoked rule stops deciding — it does not
  *    put the sender back at the gate. A promoted YES also inserted a `contacts` row
@@ -51,8 +50,8 @@ import type { Folder, MutationStatus, RuleDTO } from "@ohmail/client-engine";
 import { placeLabel } from "../shell/format";
 
 /**
- * The six canonical folders a rule may file into — the same set `RulesService.validDestination`
- * enforces (`packages/services/src/rules-service.ts:13-17`), in the order the rail lists them.
+ * The six canonical folders a rule may file into — the same set the server's rule validation
+ * enforces, in the order the rail lists them.
  *
  * Named here rather than derived from `VIEW_OF_FOLDER` because this is an OFFER, not a
  * rendering: the picker must not grow a seventh option because a future folder appeared in a

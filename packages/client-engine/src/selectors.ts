@@ -218,10 +218,10 @@ export function messagesIn(reader: EntityReader, folder: Folder): EngineMessage[
  * ── WHY IT IS DERIVED FROM MAIL AND NOT FROM A MAILBOX LIST ─────────────────────────────
  *
  * There is no mailbox list to read on a Cloud account. `"mailbox"` is not an entity type in
- * the change log (`packages/db/src/change-log.ts`), so `/sync` never emits one and the mirror
+ * the change log, so `/sync` never emits one and the mirror
  * holds `mailbox` rows ONLY where the FixturesAdapter seeded them — the demo and Desktop.
- * `GET /mailboxes` exists but lives behind `app/api-client`, which the shared shell may not
- * import (it is DENYed from the Desktop bundle). What every account DOES have is mail, and
+ * `GET /mailboxes` exists but lives behind the Cloud client's API layer, which the shared shell
+ * may not import (it is not part of the Desktop bundle). What every account DOES have is mail, and
  * every message carries the `mailboxId` it arrived in.
  *
  * So: a seeded `mailbox` entity when there is one, else the mailbox holding the account's
@@ -547,8 +547,8 @@ export function tagsCrossView(reader: EntityReader): TagGroup[] {
  * per yes/no (`screener-service.ts:364`), and the DecisionBar, "apply to all", "mark all
  * spam" and the sender menu all reach that endpoint — so a product whose thesis is a
  * consent gate accumulates these faster than any other entity the user did not ask for.
- * Until this selector existed nothing in any client read them: `rule` has been an
- * `EntityType` in the change log since Phase 1 (`packages/db/src/change-log.ts:45`) and a
+ * Until this selector existed nothing in any client read them: `rule` has been an entity type
+ * in the change log since the first release and a
  * `SyncEntityType` here, the mirror has been storing them all along, and `/rules` had zero
  * references across the whole web app.
  *
@@ -557,9 +557,9 @@ export function tagsCrossView(reader: EntityReader): TagGroup[] {
  * The same argument `sendingMailboxId` makes about mailboxes, with the opposite outcome,
  * and the difference is worth stating because it is the reason this one is a selector at
  * all. A mailbox is NOT an entity type in the change log, so `/sync` can never send one and
- * a Cloud surface has to reach `app/api-client` — which the shared shell may not import
- * (`scripts/publish-desktop.mjs` DENYs it). A rule IS one. `SyncService` replays it from
- * `change_log` like any other entity (`sync-service.ts:93-116`), the webapp passes no
+ * a Cloud surface has to reach the Cloud client's API layer — which the shared shell may not
+ * import, because that layer is not part of the Desktop bundle. A rule IS one. The server
+ * replays it from `change_log` like any other entity, the webapp passes no
  * `types` filter so the drain carries every type, and nothing prunes `change_log` —
  * `minRetainedSeq` only READS the minimum — so a bootstrap re-materializes rules created
  * long before this client existed. Reading the mirror therefore costs no request, works
@@ -577,9 +577,8 @@ export function tagsCrossView(reader: EntityReader): TagGroup[] {
  * ── WHAT IS DELIBERATELY NOT COMPUTED HERE ─────────────────────────────────────────────
  *
  * "How many messages has this rule filed?" `RuleDTO.stats` carries `hits`, `lastHitAt` and
- * `demotions`, and NOTHING IN THE REPOSITORY EVER WRITES THEM — the columns exist
- * (`packages/db/src/schema.ts:378-380`), `materializeRule` faithfully reports them
- * (`materialize.ts:223`), and every one of them is the `default(0)` / `null` it was
+ * `demotions`, and NOTHING ANYWHERE EVER WRITES THEM — the columns exist, the server
+ * faithfully reports them, and every one of them is still the `default(0)` / `null` it was
  * inserted with. Surfacing that as a count would put "0 messages" beside a rule that has
  * silently filed three thousand. The surface says the count is not recorded instead; see
  * `RulesView`.

@@ -660,8 +660,8 @@ function WaitingPreview({
           * not have. "Every mail says why" is published copy; silence does not satisfy it.
           *
           * The FACT is shared with `AiSection`'s `status` line ("no live model is connected
-          * in production yet") and both change together the day a classifier is injected in
-          * `apps/api-vercel/src/deps.ts` — the same trigger `AiSection.tsx` already names.
+          * yet") and both change together the day a classifier is wired into the server's
+          * dependencies — the same trigger `AiSection.tsx` already names.
           *
           * THE WORDING IS NO LONGER SHARED, and that is the correction UX11 makes. This
           * used to end *"Pick a door."*, borrowed from the marketing page's AI-off row.

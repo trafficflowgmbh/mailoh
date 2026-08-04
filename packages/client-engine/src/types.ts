@@ -59,8 +59,8 @@ export type ChangeOp = "create" | "update" | "move" | "delete";
  * only in {@link MirrorEntityType}, among the demo-world types, and the consequence was not a
  * missing feature but an invisible one: `TagView`, `TagPicker` and the `t` shortcut were all
  * built and all worked against fixtures, while a real Cloud account drained a `/sync` feed with
- * no vocabulary for a tag and therefore rendered an empty picker forever. Mirrors
- * `EntityType` in `packages/db/src/change-log.ts`, which grew the same member in the same slice.
+ * no vocabulary for a tag and therefore rendered an empty picker forever. Mirrors the server's
+ * change-log entity type, which grew the same member at the same time.
  *
  * Tag ASSIGNMENTS are deliberately not a type here. They ride the `message` entity —
  * `MessageDTO.labels` — so a client can never hold an assignment that names a tag it has not
@@ -184,7 +184,7 @@ export interface EngineMessage extends EngineMessageExtras {
  * This interface was `{ text: string }`, with a comment saying html was not read because
  * rendering it "would need a sanitiser, and it is also where a tracking pixel re-enters a
  * product whose spy-pixel blocker is a feature". Both objections were correct and both are
- * now answered — by `apps/webapp/app/components/MessageBody.tsx`, which sanitizes with
+ * now answered — by the message-body renderer, which sanitizes with
  * DOMPurify and renders into a sandboxed frame that fetches nothing remote.
  *
  * What the narrowing COST, until 2026-08-04: the html part reached this process and was
@@ -649,8 +649,8 @@ export type EngineMutation =
    * It does not move mail. `RulesService.remove` deletes the `rules` row and appends one
    * `rule` delete to the change log; it never touches `folder_state`, so every message the
    * rule ever filed stays exactly where it is. The same is true of a destination change:
-   * `rules` is consulted when mail ARRIVES (`packages/core/src/rules.ts` → the routing
-   * pass), never retroactively. The surface is required to say so BEFORE the user commits,
+   * rules are consulted by the routing pass when mail ARRIVES, never retroactively. The
+   * surface is required to say so BEFORE the user commits,
    * because "undo the rule" silently re-sorting a backlog is a worse surprise than the rule
    * was — see `RulesView`.
    */
@@ -685,9 +685,9 @@ export type EngineMutation =
    *
    * ── IT MOVES NO MAIL, AND THAT IS THE POINT OF THE OTHER HALF ───────────────────────────
    *
-   * Same doctrine as `rule_delete` and `rule_update`: `RulesService.create` writes the `rules`
-   * row and one `rule` change, and the routing pass consults rules when mail ARRIVES
-   * (`packages/core/src/rules.ts`), never retroactively. The mail that is already filed is moved
+   * Same doctrine as `rule_delete` and `rule_update`: creating a rule writes the `rules`
+   * row and one `rule` change, and the routing pass consults rules when mail ARRIVES,
+   * never retroactively. The mail that is already filed is moved
    * by the `move` mutations the surface composes ALONGSIDE this one, from the same scope — never
    * by an effect here, which would paint a re-sort the server is not going to perform.
    *

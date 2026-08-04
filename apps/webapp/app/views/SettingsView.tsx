@@ -61,7 +61,7 @@ const NOTIFICATION_CHANNELS: Array<{ id: string; enabled: boolean }> = [
 /**
  * The demo world's Notifications extras, as a `view_meta` row.
  *
- * `/sync` has no `view_meta` entity type (`packages/db/src/change-log.ts`), so a Cloud account
+ * `/sync` has no `view_meta` entity type in its change log, so a Cloud account
  * can never be sent one: absent ⇒ the VIP block does not render, structurally, with no boolean
  * for a view to forget. Only `FixturesAdapter` seeds it — the demo and Desktop.
  *
@@ -299,13 +299,12 @@ export function SettingsView({
             </SettingsSection>
           ) : null}
 
-          {/* MAILBOXES. The Cloud client REPLACES this pane wholesale (`mailboxSection`),
-              because the list below cannot be right for it: these are the MIRROR's mailbox
-              entities, and `"mailbox"` is not an `EntityType` in the change log
-              (`packages/db/src/change-log.ts`), so `/sync` never emits one. Only the
-              FixturesAdapter seeds them — which is exactly right for Desktop and for the
-              demo, and always empty for a real account. See
-              `(product)/mailbox/MailboxSection.tsx`. */}
+          {/* MAILBOXES. The Cloud client REPLACES this pane wholesale, by passing its own
+              `mailboxSection`, because the list below cannot be right for it: these are the
+              MIRROR's mailbox entities, and `"mailbox"` is not an `EntityType` in the change
+              log, so `/sync` never emits one. Only the FixturesAdapter seeds them — which is
+              exactly right for Desktop and for the demo, and always empty for a real
+              account. */}
           {pane === "mailboxes" ? (
             mailboxSection ?? (
               <SettingsSection>

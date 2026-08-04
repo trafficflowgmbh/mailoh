@@ -160,9 +160,9 @@ export type AttachmentsOutcome =
    *
    * WHAT CAN ACTUALLY LAND HERE, because copy written for the wrong failure is a lie:
    * `GET /messages/:id/attachments` is `cost: "read"` and `AttachmentsService.listForMessage`
-   * opens no IMAP adapter, so this call NEVER touches the user's mail server. `mailbox_busy`
-   * (429, `packages/api/src/attachments-adapter.ts`) therefore cannot reach it — that refusal
-   * belongs to the two `cost: "connection"` byte routes. What reaches it is `code: "network"`
+   * opens no IMAP adapter, so this call NEVER touches the user's mail server. The 429
+   * `mailbox_busy` refusal therefore cannot reach it — that one belongs to the two
+   * `cost: "connection"` byte routes. What reaches it is `code: "network"`
    * (the fetch itself rejected — `HttpAdapter.request`), a 5xx from ohmail's own API, or a
    * definite 4xx refusal (401 after a session ends, 404 for a message this account cannot see).
    *
@@ -455,9 +455,9 @@ export class OhmailEngine {
    *
    * ## WHY "STARTED AFTER THE POST RETURNED" IS SUFFICIENT — AND WHAT WOULD BREAK IT
    *
-   * `allocateSeq` (`packages/db/src/change-log.ts:77-85`) allocates through an `UPDATE … RETURNING`
+   * The server allocates each sequence number through an `UPDATE … RETURNING`
    * on the account's `account_sync_state` row, inside the mutation's own transaction, and
-   * `recordChange` appends the `change_log` row in that same transaction. So the row lock makes
+   * appends the `change_log` row in that same transaction. So the row lock makes
    * seq order equal COMMIT order per account: seq N is durable before N+1 is ever handed out. A
    * drain issued after our POST returned therefore reads a log in which our row is already
    * visible, and no concurrent drain can move the cursor PAST our seq while our row is still
@@ -945,7 +945,7 @@ export class OhmailEngine {
    * sentence — which is a thing the UI can render. A 402 from the spend gate arrives as its
    * message, not as an error boundary.
    *
-   * `GET /search` is `cost: "read"` (`packages/api/src/routes/search.ts`), so wiring this
+   * `GET /search` is `cost: "read"` on the server, so wiring this
    * caller changes no cost class and no line of the route-cost census. It reads rows already
    * stored for the caller's own account, writes nothing, opens no socket and calls no metered
    * third party. It is not, however, free of judgement: it is one request per settled query,

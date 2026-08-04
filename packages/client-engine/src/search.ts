@@ -15,8 +15,8 @@ import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage, type MessageBodyRecord 
  *
  *  · **`body` is a fixtures-only extra.** It is declared on `EngineMessageExtras` in
  *    `types.ts`; the wire `MessageDTO` carries `snippet` and has no body field at all, so on a
- *    Cloud account `m.body` is `undefined` for every row. `snippet` is `bodySnippet()` in
- *    `packages/core/src/pipeline.ts` — whitespace-collapsed and `.slice(0, 200)`.
+ *    Cloud account `m.body` is `undefined` for every row. `snippet` is what the ingest pipeline
+ *    derives — the body, whitespace-collapsed and truncated to 200 characters.
  *  · **`/search` was not a fallback.** It was mounted, spend-classed `read`, RRF-ranked and
  *    contract-tested, with ZERO callers on any surface. Nothing had ever asked it anything.
  *
