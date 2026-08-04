@@ -99,7 +99,7 @@ const WIRE_DECIDE_FOLDER: Record<"yes" | "no", Folder> = {
 };
 
 /**
- * A DERIVED sender's decision (slice C1): `m.senderId` is the REPRESENTATIVE MESSAGE id,
+ * A DERIVED sender's decision: `m.senderId` is the REPRESENTATIVE MESSAGE id,
  * so the effect is per-message moves across everything that sender is holding, plus the
  * promoted rule the server will also create.
  *
@@ -357,7 +357,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     /**
-     * REVOKE — a tombstone, and NOTHING ELSE (gap O16).
+     * REVOKE — a tombstone, and NOTHING ELSE.
      *
      * The absent effects are the specification. `screener_decide` produces one rule effect
      * AND a `move` per held message, because deciding at the gate genuinely re-files mail.
@@ -396,13 +396,13 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     /**
-     * ONE `rule` ROW, AND NO `message` EFFECT (gap O19c).
+     * ONE `rule` ROW, AND NO `message` EFFECT.
      *
      * The absent effects are the specification, exactly as they are for `rule_delete`. A rule is
      * consulted when mail ARRIVES; nothing already filed moves because a rule was written. The
      * surface that dispatches this composes its own `move`s for the mail it can see, from the
      * same scope, so the mail that relocates and the rule that is written can never disagree
-     * about whose mail this is — which is the shape of the defect `4a3ff4f` found in `decide`.
+     * about whose mail this is — which is the shape of the defect already fixed in `decide`.
      *
      * `provenance: "manual"` is not a guess: `RulesService.create` inserts exactly that, and an
      * optimistic row claiming `promoted` would flip to "you made this one" under the user's eyes

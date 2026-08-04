@@ -296,7 +296,7 @@ export class FixturesAdapter implements EngineAdapter {
     this.emit("view_meta", "reads_ai_chip", fx.readsAiChip);
     this.emit("view_meta", "account", fx.account);
     /**
-     * The Notifications screen's VIP list and its learned suggestion (slice U4f).
+     * The Notifications screen's VIP list and its learned suggestion.
      *
      * They used to be imported into `SettingsView` straight from `@ohmail/fixtures` and
      * rendered on every account, so a paying customer read a learned pattern about Petra Wyss

@@ -82,7 +82,7 @@ final class AppRootTests: XCTestCase {
         root.end()
     }
 
-    /// The same audit at the surface the projection agent will land behind: a serving engine whose
+    /// The same audit one level down, at the surface the projection lands behind: a serving engine whose
     /// source exists produces THAT source's mail, and the sample world is still not built.
     func testAServingEngineProducesItsOwnMailAndNotTheSampleWorld() throws {
         try store.save(Self.mailbox)

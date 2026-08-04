@@ -10,7 +10,7 @@ const CURSOR_KEY = "cursor";
  * Where the mirror records WHOSE mail it is holding. Read before anything is hydrated.
  *
  * The `__` prefix keeps it out of the application's own meta namespace, and `load()`
- * strips it the same way it strips the cursor, so `getMeta` can never hand the owner back
+ * strips it the same way it strips the cursor, so `getMeta` can never hand that value back
  * to a selector as though it were product state.
  */
 const OWNER_KEY = "__owner";
@@ -230,8 +230,8 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
    *  - **unstamped** — a database this build has never opened. Claim it. (A mirror written
    *    by a pre-repair build cannot appear here: that one is called
    *    {@link LEGACY_MIRROR_DB} and {@link purgeLegacyMirror} deletes it.)
-   *  - **stamped with somebody else** — should be unreachable, because the name contains
-   *    the owner. Unreachable states are exactly the ones worth handling: WIPE, then claim.
+   *  - **stamped with somebody else** — should be unreachable, because the account is part
+   *    of the name. Unreachable states are exactly the ones worth handling: WIPE, then claim.
    *    Refusing to open instead would leave a user staring at a broken client with no way
    *    out; wiping costs a re-bootstrap from `/sync` and is invisible.
    *  - **stamped with us** — the ordinary path, one extra indexed read per session.

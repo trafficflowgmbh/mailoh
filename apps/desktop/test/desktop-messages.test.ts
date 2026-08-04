@@ -7,9 +7,9 @@ import { SHELL_MESSAGE_NAMESPACES } from "../vite.config.js";
 /**
  * The desktop binary must not contain the marketing site's copy.
  *
- * `apps/webapp/messages/en.json` serves two products from one file — since S15 it
- * holds the landing page's nav, pricing table and FAQ as well as the app's own
- * strings — and `apps/desktop/src/main.tsx` imports it whole. So the shipped
+ * `apps/webapp/messages/en.json` serves two products from one file — it holds the
+ * landing page's nav, pricing table and FAQ as well as the app's own strings —
+ * and `apps/desktop/src/main.tsx` imports it whole. So the shipped
  * `v0.2.0-preview` Linux binary answered `strings` with `$9 a month`: a price, inside
  * a build that has no account and cannot be subscribed to, which also silently dates
  * the artifact the moment the price changes.

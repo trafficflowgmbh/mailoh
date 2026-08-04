@@ -66,7 +66,7 @@ export class HttpAdapter {
   }
 
   /**
-   * `GET /messages/:id/body` (slice U5-BODY) — the third method the real adapter has, and
+   * `GET /messages/:id/body` — the third method the real adapter has, and
    * therefore the third this must declare.
    *
    * It is not optional decoration. `EngineAdapter` requires `fetchBody`, and this file is

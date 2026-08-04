@@ -35,7 +35,7 @@ export interface MirrorStore extends EntityReader {
   /**
    * Write — or, with `entity: null`, tombstone — ONE CLIENT-LOCAL record: a record whose
    * type `/sync` has no vocabulary for, so the server can neither send it nor contradict it.
-   * `message_body` (slice U5-BODY) is the first.
+   * `message_body` is the first.
    *
    * It bypasses `applyToRecords` on purpose. That function's job is the seq contract —
    * ordering, replay, "never let an older-or-equal seq overwrite" — and a client-local

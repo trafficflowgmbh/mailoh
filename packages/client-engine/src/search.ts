@@ -7,7 +7,7 @@ import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage, type MessageBodyRecord 
  * body text this device actually holds, with field weighting, plus a padded-trigram fuzzy
  * arm (pg_trgm-style) so the canonical 'invoce' → "Invoice" typo case matches.
  *
- * ── WHAT THIS INDEX CAN SEE, AND THE TWO SENTENCES THAT USED TO BE HERE (gap O14) ────────
+ * ── WHAT THIS INDEX CAN SEE, AND THE TWO SENTENCES THAT USED TO BE HERE ──────────────────
  *
  * This header used to say it indexed "subject/from/snippet/body" and that "`/search` remains
  * the full-corpus fallback". Both were false, and together they are why a live account was
@@ -20,11 +20,10 @@ import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage, type MessageBodyRecord 
  *  · **`/search` was not a fallback.** It was mounted, spend-classed `read`, RRF-ranked and
  *    contract-tested, with ZERO callers on any surface. Nothing had ever asked it anything.
  *
- * Measured against production on 2026-08-04 (Supabase, 9 339 stored bodies): 8 262 of them
- * (88.5 %) are longer than 200 characters, 9 034 (96.7 %) are longer than their own message's
- * snippet, the median body is 1 566 characters, and 1 699 803 of 27 273 952 stored body
- * characters — **6.23 %** — are inside a snippet and therefore reachable from here. 599
- * messages have an empty snippet and contribute nothing at all.
+ * The gap is structural rather than marginal. A snippet is capped at 200 characters by the
+ * ingest pipeline and a mail body is routinely many times longer, so most of the text this
+ * client is asked to search is simply not on the device — and a message whose snippet came
+ * out empty contributes nothing at all.
  *
  * So the index reports {@link SearchCoverage} with every result, and the UI states it. A
  * surface that renders these hits without saying what was searched is making the same claim
@@ -32,11 +31,11 @@ import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage, type MessageBodyRecord 
  *
  * ── HOW COVERAGE GROWS ───────────────────────────────────────────────────────────────────
  *
- * Hydrated bodies ARE indexed: slice U5-BODY stores `GET /messages/:id/body` in a client-local
- * `message_body` record, and {@link SearchIndex.build} reads them. So a message the user has
+ * Hydrated bodies ARE indexed: opening a message stores `GET /messages/:id/body` in a
+ * client-local `message_body` record, and {@link SearchIndex.build} reads them. So a message the user has
  * opened becomes fully searchable on this device, permanently, without a second request. That
  * is a real widening and it is still not the corpus — reading a message is how a body gets
- * here, and nobody has read 9 339 of them. The rest is what `OhmailEngine.searchServer` is
+ * here, and nobody has read a whole mailbox. The rest is what `OhmailEngine.searchServer` is
  * for.
  */
 
@@ -67,7 +66,7 @@ export interface SearchFacets {
  * that shows these hits is implicitly making a claim about the corpus.
  *
  * `full` counts messages whose whole text is on this device: a fixture row's own `body`, or a
- * `message_body` record slice U5-BODY hydrated. Everything else contributed its subject, its
+ * `message_body` record that opening the message hydrated. Everything else contributed its subject, its
  * sender and at most 200 characters of preview. On the demo `full === messages`; on a live
  * account it starts at 0 and grows by one every time somebody opens a message.
  */
@@ -119,11 +118,11 @@ export class SearchIndex {
   private full = 0;
 
   /**
-   * Build over the mirror — messages AND the bodies U5-BODY has hydrated.
+   * Build over the mirror — messages AND the bodies that have been hydrated.
    *
    * The `message_body` pass is what makes `add`'s second argument worth having. Reading the
    * records into a map first is not an optimisation: `reader.list` is O(n) per call, and
-   * looking one up per message would be O(n²) on a 9 339-row mirror, on every keystroke.
+   * looking one up per message would be O(n²) on a mirror of any real size, on every keystroke.
    */
   static build(reader: EntityReader): SearchIndex {
     const idx = new SearchIndex();

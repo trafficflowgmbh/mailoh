@@ -322,7 +322,7 @@ describe("the UI bundle's build config", () => {
 
   it("the stub declares EVERY method EngineAdapter requires — the mirror IS this file", () => {
     /**
-     * THE GAP THIS CLOSES, found by slice U5-BODY adding `fetchBody` to `EngineAdapter`.
+     * THE GAP THIS CLOSES, found when `fetchBody` was added to `EngineAdapter`.
      *
      * `no-http-adapter.ts` is published OVER
      * `packages/client-engine/src/adapters/http-adapter.ts` in the desktop mirror

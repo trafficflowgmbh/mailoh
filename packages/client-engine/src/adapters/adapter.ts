@@ -57,7 +57,7 @@ export interface EngineAdapter {
    */
   mutate(m: EngineMutation, opts: { idempotencyKey: string }): Promise<MutationOutcome>;
   /**
-   * Fetch one message's body text (slice U5-BODY), or `null` when this adapter serves no
+   * Fetch one message's body text, or `null` when this adapter serves no
    * bodies at all.
    *
    * `null` is the FixturesAdapter's answer and it is not a stub: the demo world's message
@@ -87,7 +87,7 @@ export interface EngineAdapter {
    */
   searchServer?(query: string, opts: { limit?: number }): Promise<ServerSearchWire | null>;
 
-  // ── attachments (gap O18) ────────────────────────────────────────────────
+  // ── attachments ──────────────────────────────────────────────────────────
   //
   // ohmail STORES NO ATTACHMENT BYTES. Metadata is synced at ingest and lives server-side; the
   // bytes are fetched from the user's own IMAP mailbox at the moment they are asked for, held for

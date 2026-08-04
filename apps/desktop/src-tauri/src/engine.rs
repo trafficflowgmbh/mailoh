@@ -439,9 +439,9 @@ struct Shared {
     /// with a transport error. `HttpAdapter` turns a thrown fetch into a retryable
     /// `MutationRejectedError`, which is the shape it already handles.
     ///
-    /// A per-request DEADLINE was considered and refused: AT8 confined its 12 s bound to
-    /// `listAttachments` on purpose, because aborting a mutation and retrying it is how one send
-    /// becomes two. The failure a timer would catch here — an engine alive but wedged — is a
+    /// A per-request DEADLINE was considered and refused. The one 12 s bound this product does
+    /// have is confined to the attachment LIST on purpose, because aborting a mutation and
+    /// retrying it is how one send becomes two. The failure a timer would catch here — an engine alive but wedged — is a
     /// residual this file accepts and the sync surface reports.
     waiting: HashMap<u64, Sender<Result<EngineResponse, String>>>,
 }
@@ -1351,7 +1351,7 @@ fn exit_status_unavailable() -> ExitStatus {
 
 // ── The one per-install key ──────────────────────────────────────────────────────────────────
 //
-// DESKTOP-DUAL-MODE §5: the native shell owns the keystore and holds exactly one per-install
+// The native shell owns the keystore and holds exactly one per-install
 // key-encryption key. The engine seals the mailbox password into its own database under that key
 // and reads it back on every later launch, so the password is typed once and the environment
 // carries the key instead of the secret.

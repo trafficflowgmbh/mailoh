@@ -10,8 +10,8 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
  * The message namespaces the SHELL actually reads — and therefore the only ones
  * that belong in a desktop binary.
  *
- * `apps/webapp/messages/en.json` is one file for two products. Since S15 it also
- * holds the marketing site's copy: the nav, the hero, the pricing table, the FAQ.
+ * `apps/webapp/messages/en.json` is one file for two products. It also holds the
+ * marketing site's copy: the nav, the hero, the pricing table, the FAQ.
  * `main.tsx` imports it whole, so all of it was ending up inside the executable —
  * `strings ohmail_0.2.0_amd64.deb`'s binary printed `$9 a month`, which is a price
  * quoted by an app that cannot be subscribed to, in a build that has no account.
@@ -27,8 +27,8 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
  * here fails the suite rather than the app.
  */
 export const SHELL_MESSAGE_NAMESPACES = [
-  // `body` arrived with U5-BODY — the two sentences a reading surface says when the message
-  // text is being fetched or could not be. The desktop compiles them and can never render
+  // `body` holds the two sentences a reading surface says when the message text is being
+  // fetched or could not be. The desktop compiles them and can never render
   // them (its `FixturesAdapter` serves no bodies, so `hydrateBody` short-circuits and no
   // surface ever sees `loading`/`failed`), and it is listed for the reason `sync` is: the
   // guard compares this array against what the sources READ, not against what they display.
@@ -40,7 +40,7 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // word belongs, which is exactly the failure the abort below exists to prevent — and
   // `desktop-messages.test.ts` caught the omission rather than a user finding it.
   "reply", "ribbon", "screener", "screening", "search", "session", "settings",
-  // `sync` arrived with P17 — the shell's failing-sync strip. The desktop compiles it and
+  // `sync` is the shell's failing-sync strip. The desktop compiles it and
   // can never render it (a fixtures engine is permanently settled), but the guard compares
   // this list against what the sources READ, not against what they display.
   // `mailboxes` is read by the shell's sync strip for its `err_<code>` lookup, so the desktop
@@ -49,7 +49,7 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // binary ships a sync strip whose error line resolves to a raw `mailboxes.err_…` key, which is
   // exactly the failure the abort below exists to prevent.
   "mailboxes",
-  // `rules` arrived with O16 — the surface that lets somebody see and revoke the rules the
+  // `rules` is the surface that lets somebody see and revoke the rules the
   // Screener writes. The desktop shell renders it (SettingsView is published), and its
   // FixturesAdapter serves both rule verbs, so unlike `body` and `sync` this one is
   // genuinely reachable there: without it the pane shows `rules.revokeExplain` where a
