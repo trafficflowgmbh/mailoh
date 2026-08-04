@@ -232,25 +232,75 @@ describe("the Rust side", () => {
     // `default` exists and is empty. A missing `[features]` block would also match "not
     // enabled", and would be a different fact.
     expect(cargo).toMatch(/^default = \[\]$/m);
-    expect(cargo).toMatch(/^local-engine = \["dep:serde_json"\]$/m);
-    // The one dependency the feature adds is optional, so the default build's graph is
-    // unchanged. Not optional would mean the preview compiles it in for nothing.
+    expect(cargo).toMatch(/^local-engine = \["dep:serde_json", "dep:keyring", "dep:getrandom"\]$/m);
+    // EVERY dependency the feature adds is optional, so the default build's graph is unchanged.
+    // Not optional would mean the preview compiles all three in for nothing — and two of them are
+    // the operating system's keystore, which the preview has no business being linked against at
+    // all: it stores nothing, so it needs nowhere to store it.
     expect(cargo).toMatch(/^serde_json = \{ version = "1", optional = true \}$/m);
+    expect(cargo).toMatch(/^keyring = \{ version = "4", optional = true \}$/m);
+    expect(cargo).toMatch(/^getrandom = \{ version = "0.3", optional = true \}$/m);
   });
 
   /**
-   * The engine's lifecycle owns exactly one thing: a child process on a private pipe.
+   * THE WINDOW'S GRANT IS A PROPERTY OF THE BUILD, NOT OF A PERMISSION LIST.
    *
-   * It opens no socket and reads no file — including no probe for whether the engine exists,
-   * which is why a missing engine is discovered by trying to start it and reading `NotFound`
-   * back. Those two absences are the whole of what the shell claims about itself, and they have
-   * to hold in the file that does the most.
+   * The local build gives the webview two commands — that is the bridge, and it is the point of
+   * the feature. What must stay true of the PUBLISHED build is that it has neither: no command is
+   * registered, and nothing exists for a capability to reference. Both halves are checked, because
+   * either one alone can be true while the other is not.
+   *
+   * `build.rs` is the harder half and the more important one: a command that is not declared there
+   * has no `allow-…` permission for any capability to name, so it is not possible to grant what was
+   * never declared. It is conditional on the same feature.
+   */
+  it("declares and registers its two commands only in the local build", () => {
+    const build = read("src-tauri/build.rs");
+    expect(build).toMatch(/CARGO_FEATURE_LOCAL_ENGINE/);
+    expect(build).toMatch(/commands\(&\["engine_status", "engine_request"\]\)/);
+
+    // Nothing in `main.rs`, still. The registration is a call into `engine.rs`, which the default
+    // build does not compile — so "the published shell registers no commands" stays a fact about a
+    // file that is ALWAYS compiled rather than about a branch inside one.
+    expect(main).not.toMatch(/invoke_handler/);
+    expect(main).not.toMatch(/#\[tauri::command/);
+
+    // Everything that reaches the webview or the keystore lives in `engine.rs`, and `engine.rs` is
+    // a module the default build does not compile — `#[cfg(feature = "local-engine")] mod engine;`
+    // is asserted just below, and it is the whole gate. Naming the two files this way is what makes
+    // the check meaningful: it is a statement about WHERE the capability lives, and the file list
+    // test above fails if a third .rs file appears to hold it instead.
+    const engine = read("src-tauri/src/engine.rs");
+    expect(engine).toMatch(/fn engine_status\(/);
+    expect(engine).toMatch(/fn engine_request\(/);
+    expect(engine).toMatch(/allow-engine-status/);
+    expect(engine).toMatch(/allow-engine-request/);
+    // The keystore is reached from that one module and nowhere else. `main.rs` in particular must
+    // not learn how to read a key: it is compiled into every build.
+    expect(engine).toMatch(/keyring::Entry::new/);
+    expect(main).not.toMatch(/keyring|getrandom/);
+  });
+
+  /**
+   * The engine's lifecycle owns a child process on a private pipe, and one item in the keystore.
+   *
+   * It opens no socket and reads no file — including no probe for whether the engine exists, which
+   * is why a missing engine is discovered by trying to start it and reading `NotFound` back. Those
+   * absences are the whole of what the shell claims about itself, and they have to hold in the file
+   * that does the most.
+   *
+   * `invoke_handler` USED TO BE ON THIS LIST and is deliberately not any more. It was a true
+   * statement about a shell that had no engine to talk to; the local build now registers exactly
+   * two commands, and pretending otherwise would mean either a false comment or a guard nobody can
+   * satisfy. What replaced it is stricter about the thing that actually matters — see
+   * "declares and registers its two commands only in the local build", which checks that every
+   * command, every capability grant and every keystore call sits behind the feature gate, so the
+   * PUBLISHED binary still contains none of them.
    */
   it("spawns a child and nothing else — no sockets, no filesystem", () => {
     const engine = read("src-tauri/src/engine.rs");
     expect(engine).not.toMatch(/std::(fs|net)/);
     expect(engine).not.toMatch(/reqwest|hyper|ureq|curl|TcpStream|TcpListener|UnixStream/);
-    expect(engine).not.toMatch(/invoke_handler/);
     // All three streams are pipes. stdin above all: the write end must belong to this process
     // alone, because closing it is how the engine is asked to leave — and because the kernel
     // closing it when this process dies is what stops an orphaned engine holding an IMAP

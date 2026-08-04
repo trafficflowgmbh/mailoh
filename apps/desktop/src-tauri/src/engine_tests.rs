@@ -24,6 +24,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 ///  · `serve-deaf`      — announce ready and then ignore stdin entirely. Never leaves.
 ///  · `die`             — exit 1 without ever announcing. What a locked data directory looks like.
 ///  · `noise`           — announce ready, then write a line of prose to the frame stream.
+///  · `echo`            — answer every request with a response describing what it received.
+///  · `mute`            — accept requests and answer none. A wedged engine, which is what the
+///                        run-end drain exists for.
+///
+/// The three request modes decode frames the same way the real engine does — an 8-byte preamble
+/// then a JSON header then a body — so a test that passes is a test about this shell's half of the
+/// protocol rather than about a script written to agree with it.
 ///
 /// Every mode appends a line to `$FAKE_LOG` on start and on exit, which is how a test counts
 /// starts and proves an exit independently of anything this shell reports about itself.
@@ -35,17 +42,19 @@ const note = (what) => { if (log) fs.appendFileSync(log, what + " " + process.pi
 note("start");
 process.on("exit", () => note("exit"));
 
-function frame(header) {
+function frame(header, body) {
   const h = Buffer.from(JSON.stringify(header), "utf8");
+  const b = body ?? Buffer.alloc(0);
   const pre = Buffer.alloc(8);
   pre.writeUInt32BE(h.length, 0);
-  pre.writeUInt32BE(0, 4);
-  process.stdout.write(Buffer.concat([pre, h]));
+  pre.writeUInt32BE(b.length, 4);
+  process.stdout.write(Buffer.concat([pre, h, b]));
 }
 const ready = () => frame({
   v: 1, t: "ready", baseUrl: "http://sidecar",
   sessionToken: "tok_" + "a".repeat(24),
   accountId: "acc-1", userId: "usr-1", mailboxId: "mbx-1",
+  credentialState: "ready",
 });
 
 if (mode === "die") { process.exit(1); }
@@ -55,6 +64,32 @@ ready();
 // The real engine leaves when its stdin ends; `serve-deaf` is the one that does not.
 if (mode !== "serve-deaf") {
   process.stdin.on("end", () => process.exit(0));
+}
+
+if (mode === "echo" || mode === "mute") {
+  let buf = Buffer.alloc(0);
+  process.stdin.on("data", (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
+    for (;;) {
+      if (buf.length < 8) return;
+      const hl = buf.readUInt32BE(0);
+      const bl = buf.readUInt32BE(4);
+      if (buf.length < 8 + hl + bl) return;
+      const header = JSON.parse(buf.subarray(8, 8 + hl).toString("utf8"));
+      const body = buf.subarray(8 + hl, 8 + hl + bl);
+      buf = buf.subarray(8 + hl + bl);
+      if (mode === "mute") continue;
+      // The answer describes the request, so a test can prove what actually crossed the pipe —
+      // the method, the URL, every header the shell composed, and the body's bytes.
+      const said = Buffer.from(JSON.stringify({
+        method: header.method, url: header.url, h: header.h, body: body.toString("utf8"),
+      }), "utf8");
+      frame({
+        v: 1, t: "res", id: header.id, status: 200, statusText: "OK",
+        h: [["content-type", "application/json"]], sc: [],
+      }, said);
+    }
+  });
 }
 process.stdin.resume();
 
@@ -582,6 +617,7 @@ fn the_session_token_is_not_printable() {
         user_id: "usr-1".to_string(),
         mailbox_id: "mbx-1".to_string(),
         session_token: Secret("tok_do_not_print_me".to_string()),
+        credential_state: CredentialState::Ready,
     };
     let printed = format!("{ready:?}");
     assert!(!printed.contains("tok_do_not_print_me"), "the token reached a Debug output: {printed}");
@@ -618,4 +654,186 @@ fn default_timings_are_the_shipped_ones() {
     assert_eq!(t.backoff_base, RESTART_BACKOFF_BASE);
     assert_eq!(t.backoff_cap, RESTART_BACKOFF_CAP);
     assert_eq!(MAX_STARTS, 4);
+}
+
+// ── The bridge: a request down the pipe, an answer back ─────────────────────────────────────
+//
+// The transport is what makes `engine.rs` load-bearing rather than a lifecycle nobody consults.
+// Everything below runs against a real child over a real pipe, for the reason stated at the top of
+// this file: a correlation map tested against a fake stream would prove nothing about the failure
+// that matters, which is a UI waiting for ever on an engine that is not going to answer.
+
+/// Wait until the engine reports `Serving`, or fail saying what it reported instead.
+fn serving(engine: &Engine) {
+    wait_for(|| matches!(engine.state(), EngineState::Serving { .. }), Duration::from_secs(10), "Serving");
+}
+
+fn get(path: &str) -> EngineRequest {
+    EngineRequest {
+        method: "GET".to_string(),
+        url: format!("http://sidecar{path}"),
+        headers: vec![("accept".to_string(), "application/json".to_string())],
+        body: Vec::new(),
+    }
+}
+
+#[test]
+fn a_request_crosses_the_pipe_and_the_answer_comes_back() {
+    let f = Fixture::new("echo");
+    let engine = Engine::spawn_with(f.launch("echo"), quick());
+    serving(&engine);
+
+    let answer = engine.request(get("/mailboxes")).expect("the engine answered");
+    assert_eq!(answer.status, 200);
+    assert_eq!(answer.status_text, "OK");
+    assert!(answer.headers.iter().any(|(k, v)| k == "content-type" && v == "application/json"));
+
+    // The body is the engine's own account of what it received, so this asserts what crossed the
+    // pipe rather than what this process believes it sent.
+    let said: serde_json::Value = serde_json::from_slice(&answer.body).expect("json");
+    assert_eq!(said["method"], "GET");
+    assert_eq!(said["url"], "http://sidecar/mailboxes");
+
+    engine.stop();
+}
+
+#[test]
+fn the_shell_adds_the_authorization_and_the_caller_cannot() {
+    // THE POINT OF THE WHOLE ARRANGEMENT. The per-launch session token is the engine's credential;
+    // it reaches the child and never the caller. A caller that could set the header could also read
+    // back what it set, which is the one way a token gets out of this process.
+    let f = Fixture::new("auth");
+    let engine = Engine::spawn_with(f.launch("echo"), quick());
+    serving(&engine);
+
+    let mut req = get("/health");
+    req.headers.push(("Authorization".to_string(), "Bearer i-chose-this".to_string()));
+    let answer = engine.request(req).expect("the engine answered");
+
+    let said: serde_json::Value = serde_json::from_slice(&answer.body).expect("json");
+    let headers = said["h"].as_array().expect("headers");
+    let auth: Vec<&str> = headers
+        .iter()
+        .filter(|pair| pair[0].as_str().is_some_and(|k| k.eq_ignore_ascii_case("authorization")))
+        .map(|pair| pair[1].as_str().unwrap_or(""))
+        .collect();
+    assert_eq!(auth.len(), 1, "exactly one authorization reached the engine: {auth:?}");
+    assert_eq!(auth[0], format!("Bearer tok_{}", "a".repeat(24)));
+    assert!(!auth[0].contains("i-chose-this"), "the caller's authorization was forwarded");
+
+    engine.stop();
+}
+
+#[test]
+fn a_request_body_reaches_the_engine_intact() {
+    let f = Fixture::new("body");
+    let engine = Engine::spawn_with(f.launch("echo"), quick());
+    serving(&engine);
+
+    let answer = engine
+        .request(EngineRequest {
+            method: "POST".to_string(),
+            url: "http://sidecar/rules".to_string(),
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            body: br#"{"from":"petra@nordlys.example"}"#.to_vec(),
+        })
+        .expect("the engine answered");
+    let said: serde_json::Value = serde_json::from_slice(&answer.body).expect("json");
+    assert_eq!(said["method"], "POST");
+    assert_eq!(said["body"], r#"{"from":"petra@nordlys.example"}"#);
+
+    engine.stop();
+}
+
+#[test]
+fn an_engine_that_dies_mid_request_fails_the_caller_instead_of_hanging() {
+    // THE ACCEPTANCE FOR THE WHOLE CORRELATION MAP, and the reason there is no timer in this file.
+    //
+    // `mute` accepts the request and answers nothing. Killing it must fail the caller — a promise
+    // that never settles is a spinner for ever with no log line near the cause. Mutate
+    // `drain_waiting` out of the run-end path and this test hangs until the harness kills it,
+    // which is exactly what a user would experience.
+    let f = Fixture::new("mute");
+    let engine = Arc::new(Engine::spawn_with(f.launch("mute"), quick()));
+    serving(&engine);
+
+    let asking = Arc::clone(&engine);
+    let caller = thread::spawn(move || asking.request(get("/sync")));
+
+    // Give the request time to be written and registered before the engine is taken away.
+    thread::sleep(Duration::from_millis(150));
+    let pid = engine.pid().expect("a running engine");
+    let killed = std::process::Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(killed.success(), "could not kill the engine");
+
+    let answer = caller.join().expect("the calling thread did not panic");
+    let err = answer.expect_err("a killed engine answered a request");
+    assert!(!err.is_empty(), "the failure said nothing");
+
+    engine.stop();
+}
+
+#[test]
+fn a_request_before_serving_is_refused_by_name() {
+    // Every state that is not `Serving` gets its own sentence, because "the request failed" is the
+    // one answer that helps nobody decide what to render.
+    let engine = Engine::inert(EngineState::Absent { looked_for: "/nowhere/ohmail-engine".to_string() });
+    let err = engine.request(get("/sync")).expect_err("an absent engine answered");
+    assert!(err.contains("no local engine"), "{err}");
+
+    let engine = Engine::inert(EngineState::NoKey { reason: "the keystore is locked".to_string() });
+    let err = engine.request(get("/sync")).expect_err("a keyless engine answered");
+    assert_eq!(err, "the keystore is locked");
+}
+
+#[test]
+fn the_credential_state_rides_on_the_ready_frame() {
+    let f = Fixture::new("cred");
+    let engine = Engine::spawn_with(f.launch("echo"), quick());
+    serving(&engine);
+    assert_eq!(engine.ready().expect("ready").credential_state, CredentialState::Ready);
+    engine.stop();
+}
+
+#[test]
+fn an_engine_that_says_nothing_about_credentials_is_unknown_and_not_absent() {
+    // An older engine sends no `credentialState`. Reading that as "no password" would put a
+    // password prompt in front of somebody whose mailbox is working.
+    assert_eq!(CredentialState::parse(None), CredentialState::Unknown);
+    assert_eq!(CredentialState::parse(Some("nonsense")), CredentialState::Unknown);
+    assert_eq!(CredentialState::parse(Some("absent")), CredentialState::Absent);
+    assert_eq!(CredentialState::parse(Some("unreadable")), CredentialState::Unreadable);
+    assert_eq!(CredentialState::parse(Some("ready")), CredentialState::Ready);
+}
+
+#[test]
+fn the_status_the_window_can_read_carries_no_token() {
+    // `engine_status` is the one thing a page may read about the engine, and the token is the one
+    // thing it must never contain. Asserted on the serialization rather than on the struct, because
+    // the serialization is what crosses.
+    let f = Fixture::new("status");
+    let engine = Engine::spawn_with(f.launch("echo"), quick());
+    serving(&engine);
+
+    let printed = status_json(&engine).to_string();
+    assert!(printed.contains("\"state\":\"serving\""), "{printed}");
+    assert!(printed.contains("mbx-1"));
+    assert!(printed.contains("\"credentialState\":\"ready\""), "{printed}");
+    assert!(!printed.contains("tok_"), "the session token reached the window: {printed}");
+    assert!(!printed.to_lowercase().contains("sessiontoken"), "{printed}");
+
+    engine.stop();
+}
+
+#[test]
+fn a_key_is_sixty_four_hex_characters_and_nothing_else() {
+    assert!(is_key(&"a".repeat(64)));
+    assert!(is_key(&"0123456789abcdef".repeat(4)));
+    assert!(!is_key(&"a".repeat(63)));
+    assert!(!is_key(&"a".repeat(65)));
+    assert!(!is_key(&"g".repeat(64)));
+    assert!(!is_key(""));
 }

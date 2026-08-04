@@ -30,7 +30,7 @@ path = "src/main.rs"
 # It is not dead code: `cargo test --features local-engine` is what proves the
 # lifecycle, and those tests start real processes.
 default = []
-local-engine = ["dep:serde_json"]
+local-engine = ["dep:serde_json", "dep:keyring", "dep:getrandom"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -75,6 +75,31 @@ tauri = { version = "2", default-features = false, features = [
 # be: this binary is conveyed to users under GPL-3.0, and an AGPL dependency
 # anywhere in the shared half would force publishing the hosted service too.
 serde_json = { version = "1", optional = true }
+
+# THE ONE PER-INSTALL KEY, AND WHY IT NEEDS A CRATE AT ALL.
+#
+# A local install has to be able to store a mailbox password and still have it
+# after the app is quit. The engine seals that password into its own database
+# under a key it is handed at spawn — so the key cannot live in the same
+# database, and it must not live in a file beside it either: a key next to the
+# ciphertext it opens is not a key, it is an obfuscation. The operating system
+# already has the right place for exactly one small secret per application, and
+# this crate is the portable way to reach it: Keychain on macOS, Credential
+# Manager on Windows, the Secret Service on Linux.
+#
+# Optional, so the default build's dependency graph is unchanged — the preview
+# stores nothing and therefore needs nowhere to store it. MIT OR Apache-2.0, as
+# is everything it pulls in; nothing here is copyleft and nothing may be, since
+# this binary is conveyed to users under GPL-3.0 and an AGPL dependency in the
+# shared half would force publishing the hosted service with it.
+keyring = { version = "4", optional = true }
+
+# The key's 32 bytes, from the operating system's CSPRNG. `getrandom` and not a
+# full random-number generator: this needs one call, once per install, and a
+# seeded userspace generator would be a worse source for the only secret the
+# shell ever mints. Already in the dependency graph — `tauri` depends on it —
+# so the feature adds no third-party code to audit here either.
+getrandom = { version = "0.3", optional = true }
 
 [profile.release]
 codegen-units = 1

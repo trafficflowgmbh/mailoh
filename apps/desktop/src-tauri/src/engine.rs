@@ -57,11 +57,13 @@
 //! make that worse: it retries a bounded number of times and then stays down with a reason,
 //! rather than hammering a directory another process legitimately owns.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -194,6 +196,50 @@ impl fmt::Debug for Secret {
     }
 }
 
+/// Whether the engine has a mailbox password it can use. Straight off the `ready` frame.
+///
+/// Serving is not the same as connected, and the difference is the whole reason this travels: the
+/// engine comes up and serves the local mirror whether or not it can log in, because a missing
+/// password is a prompt rather than a broken app. Without this the shell's only evidence would be
+/// that nothing ever syncs, which looks identical to a slow first sync and to an unreachable
+/// server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialState {
+    /// There is a password to log in with.
+    Ready,
+    /// Nothing stored and nothing supplied. Ask for one; nothing is broken and nothing is lost.
+    Absent,
+    /// A password is stored and this install's key does not open it. Re-entering it re-seals it.
+    Unreadable,
+    /// The engine sent a value this shell does not know. Newer engine, older shell.
+    Unknown,
+}
+
+impl CredentialState {
+    fn parse(value: Option<&str>) -> CredentialState {
+        match value {
+            Some("ready") => CredentialState::Ready,
+            Some("absent") => CredentialState::Absent,
+            Some("unreadable") => CredentialState::Unreadable,
+            // ABSENT IS NOT THE FALLBACK, AND THAT IS DELIBERATE. An engine built before this field
+            // existed sends nothing, and reading that as "no password" would put a password prompt
+            // in front of somebody whose mailbox is working. Unknown says what is true — the shell
+            // does not know — and the surface treats it as "carry on".
+            _ => CredentialState::Unknown,
+        }
+    }
+
+    /// The word that goes on screen and in a log line.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CredentialState::Ready => "ready",
+            CredentialState::Absent => "absent",
+            CredentialState::Unreadable => "unreadable",
+            CredentialState::Unknown => "unknown",
+        }
+    }
+}
+
 /// What the engine said when it started serving.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ready {
@@ -203,6 +249,9 @@ pub struct Ready {
     pub mailbox_id: String,
     /// The per-launch bearer token. Never persisted by the engine, never logged by this shell.
     pub session_token: Secret,
+    /// See [`CredentialState`]. The value at launch; a password entered later takes effect on the
+    /// next one, which is the engine's own rule about its IMAP credentials.
+    pub credential_state: CredentialState,
 }
 
 /// How a run of the engine ended.
@@ -226,6 +275,13 @@ pub enum EngineState {
     /// Naming the variables beats starting a process that fails, or one that runs and then
     /// refuses to remember the password somebody just typed.
     NotConfigured { missing: Vec<String> },
+    /// The operating system's keystore would not give up this install's key, or take a new one.
+    ///
+    /// Distinct from every other refusal because the recovery is the user's rather than ours —
+    /// unlocking a keychain, granting an app access it was denied. Nothing is started: an engine
+    /// without a key serves the mirror and then refuses to remember a password somebody typed,
+    /// which is a worse failure than a window that says what is wrong.
+    NoKey { reason: String },
     Starting { attempt: u32 },
     /// Serving: the `ready` frame arrived.
     Serving { mailbox_id: String },
@@ -345,9 +401,19 @@ fn engine_file_name() -> String {
 
 struct Shared {
     state: EngineState,
-    /// The write end of the engine's stdin, and the only one that exists. Dropping it is the
-    /// graceful stop; see the module header.
-    stdin: Option<std::process::ChildStdin>,
+    /// The way into the engine's stdin, and the only one that exists.
+    ///
+    /// The pipe itself belongs to a writer thread; this is the channel that feeds it. Dropping
+    /// this is still the graceful stop — the thread's receiver ends, the thread returns, the
+    /// `ChildStdin` it owns is dropped, and the engine reads EOF. Every property the module header
+    /// claims for the raw handle therefore still holds, including the orphan defence: nothing else
+    /// in this process or any other holds the write end.
+    ///
+    /// It is a channel rather than the handle because of what a WRITE does. A 32 MB request would
+    /// otherwise be written while holding the state mutex — the same mutex the supervisor takes on
+    /// every poll to check the kill deadline — so a full pipe would stall the one loop whose job is
+    /// to notice that the engine has stopped reading.
+    stdin: Option<SyncSender<Vec<u8>>>,
     /// The current child, while there is one. Test-visible so a test can prove a process is gone
     /// rather than trust that this file reaped it.
     pid: Option<u32>,
@@ -362,6 +428,22 @@ struct Shared {
     /// When the current child must be killed if it has not left by itself.
     deadline: Option<Instant>,
     finished: bool,
+    /// The next correlation id. Minted here rather than in the webview, so a page cannot collide
+    /// two requests onto one id and read somebody else's answer.
+    next_id: u64,
+    /// Requests sent and not yet answered.
+    ///
+    /// EMPTIED ON EVERY RUN END, and that is the bridge's liveness mechanism rather than a timer.
+    /// A promise that never settles is the worst failure a bridge can have — the UI shows a
+    /// spinner for ever and no log says why — so when the engine goes away, every waiter is failed
+    /// with a transport error. `HttpAdapter` turns a thrown fetch into a retryable
+    /// `MutationRejectedError`, which is the shape it already handles.
+    ///
+    /// A per-request DEADLINE was considered and refused: AT8 confined its 12 s bound to
+    /// `listAttachments` on purpose, because aborting a mutation and retrying it is how one send
+    /// becomes two. The failure a timer would catch here — an engine alive but wedged — is a
+    /// residual this file accepts and the sync surface reports.
+    waiting: HashMap<u64, Sender<Result<EngineResponse, String>>>,
 }
 
 struct Inner {
@@ -381,6 +463,8 @@ fn new_shared(state: EngineState, finished: bool) -> Shared {
         stop: false,
         deadline: None,
         finished,
+        next_id: 1,
+        waiting: HashMap::new(),
     }
 }
 
@@ -430,8 +514,47 @@ impl Engine {
         let exe = std::env::current_exe().ok();
         let exe_dir = exe.as_deref().and_then(Path::parent);
         let data_dir = app.path().app_data_dir().ok();
-        match plan(&|name| std::env::var(name).ok(), exe_dir, data_dir.as_deref()) {
-            Plan::Spawn(launch) => Engine::spawn(launch),
+
+        // THE KEY IS RESOLVED BEFORE THE PLAN IS MADE, AND IT IS THE SHELL'S TO RESOLVE.
+        //
+        // The environment still wins. That is the development path — a key handed in by whoever
+        // started the process — and it is also the only way a launch can be reproduced by hand.
+        // When the environment says nothing, the keystore does: `install_key` reads the one item
+        // this install owns, or mints it. A failure there is NOT allowed to degrade into "start
+        // without a key": the engine would come up, serve the mirror, accept a password and refuse
+        // to store it, which is the failure that looks like the product working right up until it
+        // does not.
+        let from_env = std::env::var(KEK_VAR).ok().filter(|v| !v.trim().is_empty());
+        let key = match from_env {
+            Some(key) => Ok(key),
+            None => install_key(),
+        };
+        let key = match key {
+            Ok(key) => key,
+            Err(reason) => return Engine::inert(EngineState::NoKey { reason }),
+        };
+
+        // The key answers for itself. `plan` lists `OHMAIL_KEK` among what it refuses to start
+        // without, and it is right to — an engine with no key cannot store a password. What has
+        // changed is only WHERE the value comes from, so the shell answers that one name and every
+        // other still comes from the environment the process was given.
+        let resolved = key.clone();
+        let get = move |name: &str| -> Option<String> {
+            if name == KEK_VAR {
+                Some(resolved.clone())
+            } else {
+                std::env::var(name).ok()
+            }
+        };
+        match plan(&get, exe_dir, data_dir.as_deref()) {
+            Plan::Spawn(mut launch) => {
+                // Composed here rather than in `plan`, because `plan` touches nothing outside its
+                // arguments and the keystore is emphatically outside them. `Launch`'s `Debug`
+                // prints the NAMES of its environment and never the values — written before there
+                // was a value worth hiding, for exactly this line.
+                launch.env.push((OsString::from(KEK_VAR), OsString::from(key)));
+                Engine::spawn(launch)
+            }
             Plan::Inert(state) => Engine::inert(state),
         }
     }
@@ -574,9 +697,15 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
 
         let stdout = child.stdout.take().expect("stdout was piped");
         let stderr = child.stderr.take().expect("stderr was piped");
+        let stdin = child.stdin.take().expect("stdin was piped");
+        // BOUNDED, so a UI that outruns the engine is refused rather than buffered without limit.
+        // The bound is on frames in flight to the pipe, not on bytes: each one has already passed
+        // the pending-request cap, which is the real admission control.
+        let (to_engine, from_shell) = mpsc::sync_channel::<Vec<u8>>(16);
+        let writer = thread::spawn(move || write_frames(stdin, from_shell));
         {
             let mut s = inner.shared.lock().expect("engine state");
-            s.stdin = child.stdin.take();
+            s.stdin = Some(to_engine);
             s.pid = Some(child.id());
             s.ready = None;
             s.fault = None;
@@ -610,10 +739,29 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         let ran = started.elapsed();
         let (served, fault) = {
             let mut s = inner.shared.lock().expect("engine state");
+            // THE SENDER GOES BEFORE THE JOIN, AND THE OTHER ORDER DEADLOCKS.
+            //
+            // `write_frames` loops over its receiver, which only ends when every sender is dropped
+            // — and this field is the last one. Joining first therefore waits for a thread that is
+            // waiting for this line, for ever, on every single run end. Found by the drain test
+            // hanging rather than reasoned about; the symptom was an app that never noticed its
+            // engine had died, which is precisely the failure the drain exists to prevent.
             s.stdin = None;
             s.pid = None;
             (s.ready.is_some(), s.fault.take())
         };
+        let _ = writer.join();
+        // EVERY WAITER, FAILED, BEFORE ANYTHING ELSE IS DECIDED.
+        //
+        // This run cannot answer another request: the process is gone and its `ready` is about to
+        // be replaced. Whether the shell restarts, quits or gives up, a request that was in flight
+        // when the engine died is a request that will never be answered, and saying so is the only
+        // honest outcome — the alternative is a caller waiting on a channel whose sender is held by
+        // a map nobody will ever look at again.
+        drain_waiting(
+            &inner,
+            fault.as_deref().unwrap_or("the engine stopped before it answered this request"),
+        );
         let exit = Exit { code: status.code(), served, ran };
         inner.shared.lock().expect("engine state").last_exit = Some(exit);
 
@@ -710,15 +858,15 @@ fn backoff(attempt: u32, timings: Timings) -> Duration {
 
 // ── Reading the wire ─────────────────────────────────────────────────────────────────────────
 
-/// Read frames until the stream ends, recording the engine's `ready` and discarding the rest.
+/// Read frames until the stream ends: record the engine's `ready`, hand each answer to whoever is
+/// waiting for it, and skip everything else.
 ///
-/// Discarding is the honest state of this slice: nothing sends requests yet, so nothing is
-/// waiting for a response. The reader still has to run, and has to run for the whole life of the
-/// process, because a pipe nobody drains blocks the writer once it fills — and the engine
-/// blocked on a write it can never finish is a hang with no symptom near its cause.
-///
-/// Bodies are SKIPPED rather than read into memory: a frame body may be 32 MB, and buffering one
-/// only to drop it would be the largest allocation in this shell.
+/// **A body is read into memory only when something is waiting for it.** A frame body may be 32 MB,
+/// so buffering one nobody asked for would be the largest allocation in this shell, and an unknown
+/// correlation id is exactly that — a late answer to a request that has already been failed. The
+/// reader still has to consume those bytes, and does, by skipping them: a pipe nobody drains blocks
+/// the writer once it fills, and an engine blocked on a write it can never finish is a hang with no
+/// symptom anywhere near its cause.
 fn read_frames(mut stdout: ChildStdout, inner: &Arc<Inner>) {
     let mut preamble = [0u8; PREAMBLE_BYTES];
     loop {
@@ -753,19 +901,71 @@ fn read_frames(mut stdout: ChildStdout, inner: &Arc<Inner>) {
             Ok(false) | Err(_) => return,
         }
 
-        if let Err(message) = accept_header(&header, inner) {
-            fault(inner, message);
-            return;
-        }
+        let action = match accept_header(&header, inner) {
+            Ok(action) => action,
+            Err(message) => {
+                fault(inner, message);
+                return;
+            }
+        };
 
-        if !skip(&mut stdout, body_len as u64) {
-            return;
+        match action {
+            Answer::None => {
+                if !skip(&mut stdout, body_len as u64) {
+                    return;
+                }
+            }
+            Answer::Failed { id, message } => {
+                if !skip(&mut stdout, body_len as u64) {
+                    return;
+                }
+                deliver(inner, id, Err(message));
+            }
+            Answer::Response { id, status, status_text, headers } => {
+                let mut body = vec![0u8; body_len as usize];
+                match read_exact_or_eof(&mut stdout, &mut body) {
+                    Ok(true) => {}
+                    // The engine died part-way through a response. The waiter is failed by the
+                    // run-end drain rather than here, which is the one place that knows why.
+                    Ok(false) | Err(_) => return,
+                }
+                deliver(inner, id, Ok(EngineResponse { status, status_text, headers, body }));
+            }
         }
     }
 }
 
+/// What one frame header asks the reader to do next.
+enum Answer {
+    /// Nothing is waiting for this. Skip the body.
+    None,
+    Response { id: u64, status: u16, status_text: String, headers: Vec<(String, String)> },
+    /// The engine could not produce a response at all — distinct from a 5xx, which IS a response.
+    Failed { id: u64, message: String },
+}
+
+/// Hand one answer to its waiter. A missing waiter is not an error: the request was already failed
+/// by a run-end drain, and the engine had no way to know that before it wrote.
+fn deliver(inner: &Arc<Inner>, id: u64, answer: Result<EngineResponse, String>) {
+    let waiter = inner.shared.lock().expect("engine state").waiting.remove(&id);
+    if let Some(waiter) = waiter {
+        let _ = waiter.send(answer);
+    }
+}
+
+/// Fail every outstanding request. See [`Shared::waiting`] — this is the bridge's liveness rule.
+fn drain_waiting(inner: &Arc<Inner>, reason: &str) {
+    let waiting: Vec<_> = {
+        let mut s = inner.shared.lock().expect("engine state");
+        s.waiting.drain().map(|(_, tx)| tx).collect()
+    };
+    for waiter in waiting {
+        let _ = waiter.send(Err(reason.to_string()));
+    }
+}
+
 /// Inspect one frame header. `Err` is a protocol fault and ends the stream.
-fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<(), String> {
+fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
     let parsed: serde_json::Value = serde_json::from_slice(header)
         .map_err(|err| format!("a frame header was not JSON: {err}"))?;
 
@@ -779,8 +979,68 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<(), String> {
         }
     }
 
-    if parsed.get("t").and_then(serde_json::Value::as_str) != Some("ready") {
-        return Ok(());
+    let kind = parsed.get("t").and_then(serde_json::Value::as_str);
+
+    // ── An answer to something this shell asked for ────────────────────────────────────────
+    //
+    // A missing or non-integer id is a protocol fault rather than a frame to ignore: the id is how
+    // one answer is told from another, and a stream that has stopped supplying it is a stream whose
+    // remaining bytes cannot be trusted to belong to anybody in particular.
+    if kind == Some("res") || kind == Some("err") {
+        let id = parsed
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| format!("a {} frame carried no correlation id", kind.unwrap_or("?")))?;
+
+        if kind == Some("err") {
+            let code = parsed.get("code").and_then(serde_json::Value::as_str).unwrap_or("engine_failed");
+            let message = parsed.get("message").and_then(serde_json::Value::as_str).unwrap_or("");
+            return Ok(Answer::Failed { id, message: format!("{code}: {message}") });
+        }
+
+        // Only when somebody is waiting. See the note on `read_frames`: an unknown id is a late
+        // answer to a request that has already been failed, and reading its body would be an
+        // allocation of up to 32 MB in service of nothing.
+        if !inner.shared.lock().expect("engine state").waiting.contains_key(&id) {
+            return Ok(Answer::None);
+        }
+
+        let status = parsed
+            .get("status")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| "a res frame carried no status".to_string())?;
+        let status_text = parsed
+            .get("statusText")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let mut headers: Vec<(String, String)> = Vec::new();
+        if let Some(pairs) = parsed.get("h").and_then(serde_json::Value::as_array) {
+            for pair in pairs {
+                if let Some(kv) = pair.as_array() {
+                    if let (Some(k), Some(v)) = (
+                        kv.first().and_then(serde_json::Value::as_str),
+                        kv.get(1).and_then(serde_json::Value::as_str),
+                    ) {
+                        headers.push((k.to_string(), v.to_string()));
+                    }
+                }
+            }
+        }
+        // `sc` — the response's Set-Cookie array — is deliberately dropped rather than forwarded.
+        // The engine is bearer-only (`allowCookieAuth: false`) and mints no cookies; the field
+        // exists on the wire so that stays true by evidence rather than by nobody having looked,
+        // and there is no cookie jar on this side of the bridge for one to go into.
+        return Ok(Answer::Response {
+            id,
+            status: status.min(u64::from(u16::MAX)) as u16,
+            status_text,
+            headers,
+        });
+    }
+
+    if kind != Some("ready") {
+        return Ok(Answer::None);
     }
 
     let field = |name: &str| -> Result<String, String> {
@@ -796,6 +1056,11 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<(), String> {
         user_id: field("userId")?,
         mailbox_id: field("mailboxId")?,
         session_token: Secret(field("sessionToken")?),
+        // OPTIONAL, so an engine built before this field existed still starts. Absent reads as
+        // `Unknown` and never as `Absent` — see `CredentialState::parse`.
+        credential_state: CredentialState::parse(
+            parsed.get("credentialState").and_then(serde_json::Value::as_str),
+        ),
     };
 
     let mailbox_id = ready.mailbox_id.clone();
@@ -809,7 +1074,7 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<(), String> {
     // The mailbox id, and nothing else. Not the token, and not the data directory: a directory
     // under the user's home carries their account name, and the shell that set it already knows.
     inner.set_state(EngineState::Serving { mailbox_id });
-    Ok(())
+    Ok(Answer::None)
 }
 
 fn fault(inner: &Arc<Inner>, message: String) {
@@ -848,6 +1113,163 @@ fn skip<R: Read>(reader: &mut R, mut remaining: u64) -> bool {
     true
 }
 
+// ── Writing the wire ─────────────────────────────────────────────────────────────────────────
+
+/// One request, on its way to the engine. Composed from what the webview asked for, plus the
+/// authorization the webview never sees.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EngineRequest {
+    pub method: String,
+    /// Absolute or root-relative. Composed against the engine's own `baseUrl`.
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+/// What the engine answered. A status of any kind means the app ran; a transport failure is an
+/// `Err` out of [`Engine::request`] instead, which is the shape a dead socket gives a browser.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EngineResponse {
+    pub status: u16,
+    pub status_text: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+/// How many requests may be outstanding before the shell refuses to send another.
+///
+/// Admission control, not a performance knob. Without it a page in a loop could queue unboundedly
+/// against an engine that has stopped answering, and the first symptom would be memory rather than
+/// a message. The API this bridges is a delta-sync client: a drain, a body fetch and a handful of
+/// mutations are in flight at once, never dozens.
+pub const MAX_PENDING_REQUESTS: usize = 32;
+
+/// Own the engine's stdin and write whatever the shell hands over, in order.
+///
+/// One thread, so two concurrent requests can never interleave a preamble with somebody else's
+/// body — the frame stream has no resync point, so that would end the connection. When the channel
+/// closes, this returns and drops the handle: that is the EOF the engine answers by leaving, and it
+/// is why [`Engine::stop`] drops a sender rather than a pipe.
+fn write_frames(mut stdin: ChildStdin, frames: Receiver<Vec<u8>>) {
+    for frame in frames {
+        if stdin.write_all(&frame).is_err() || stdin.flush().is_err() {
+            // The engine is not reading. Nothing to report here — the supervisor is about to
+            // observe the exit, and it is the one that knows how the run ended.
+            return;
+        }
+    }
+}
+
+/// A `req` frame: preamble, header JSON, body. Mirrors the engine's codec — see the constants at
+/// the top of this file, and the note there about there being no shared artifact to import.
+fn encode_request(id: u64, req: &EngineRequest, token: &str) -> Result<Vec<u8>, String> {
+    let mut headers: Vec<serde_json::Value> = Vec::with_capacity(req.headers.len() + 1);
+    for (name, value) in &req.headers {
+        // THE CALLER DOES NOT GET TO SUPPLY THIS ONE. The per-launch session token is the engine's
+        // credential and it lives on this side of the bridge; a webview that could set the header
+        // could also read back what it set, and the whole point of `Secret` is that the token never
+        // reaches a page. Dropping it here rather than rejecting the request keeps a stray
+        // `Authorization` from a client library harmless instead of fatal.
+        if name.eq_ignore_ascii_case("authorization") {
+            continue;
+        }
+        headers.push(serde_json::json!([name, value]));
+    }
+    headers.push(serde_json::json!(["authorization", format!("Bearer {token}")]));
+
+    let header = serde_json::json!({
+        "v": PROTOCOL_VERSION,
+        "t": "req",
+        "id": id,
+        "method": req.method,
+        "url": req.url,
+        "h": headers,
+    });
+    let header_bytes = serde_json::to_vec(&header).map_err(|err| format!("could not encode the request: {err}"))?;
+    if header_bytes.len() > MAX_HEADER_BYTES as usize {
+        return Err(format!("the request's headers are over the {MAX_HEADER_BYTES}-byte cap"));
+    }
+    if req.body.len() > MAX_BODY_BYTES as usize {
+        return Err(format!("the request body is over the {MAX_BODY_BYTES}-byte cap"));
+    }
+
+    let mut frame = Vec::with_capacity(PREAMBLE_BYTES + header_bytes.len() + req.body.len());
+    frame.extend_from_slice(&(header_bytes.len() as u32).to_be_bytes());
+    frame.extend_from_slice(&(req.body.len() as u32).to_be_bytes());
+    frame.extend_from_slice(&header_bytes);
+    frame.extend_from_slice(&req.body);
+    Ok(frame)
+}
+
+impl Engine {
+    /// Ask the engine one question and wait for its answer.
+    ///
+    /// Blocks the calling thread. There is no timer — see [`Shared::waiting`] — so the ways this
+    /// returns are: the engine answered, the engine went away, or the shell would not send it.
+    ///
+    /// **The authorization is added here and cannot be supplied by the caller.** That is what lets
+    /// the webview run the unmodified Cloud sync client against a local engine: it needs no token,
+    /// so there is none for it to leak, log or store.
+    pub fn request(&self, req: EngineRequest) -> Result<EngineResponse, String> {
+        let rx = {
+            let mut s = self.inner.shared.lock().expect("engine state");
+
+            // A NAMED REFUSAL PER STATE, because "the request failed" is the one answer that helps
+            // nobody. Everything except `Serving` means there is no engine listening, and the
+            // reason a surface should render differs in each case.
+            let token = match (&s.state, &s.ready) {
+                (EngineState::Serving { .. }, Some(ready)) => ready.session_token.expose().to_string(),
+                (EngineState::Serving { .. }, None) => {
+                    return Err("the engine is serving but announced no session".to_string())
+                }
+                (EngineState::Absent { .. }, _) => {
+                    return Err("there is no local engine in this build".to_string())
+                }
+                (EngineState::NotConfigured { missing }, _) => {
+                    return Err(format!("the engine has not been configured: nothing set {}", missing.join(", ")))
+                }
+                (EngineState::NoKey { reason }, _) => return Err(reason.clone()),
+                (EngineState::Starting { .. }, _) => {
+                    return Err("the engine is still starting".to_string())
+                }
+                (EngineState::Restarting { .. }, _) => {
+                    return Err("the engine stopped and is being restarted".to_string())
+                }
+                (EngineState::Stopped, _) => return Err("the engine has stopped".to_string()),
+                (EngineState::Failed { reason, .. }, _) => return Err(reason.clone()),
+            };
+
+            if s.waiting.len() >= MAX_PENDING_REQUESTS {
+                return Err(format!(
+                    "{MAX_PENDING_REQUESTS} requests are already waiting on the engine; this one was not sent"
+                ));
+            }
+            let writer = match s.stdin.clone() {
+                Some(writer) => writer,
+                None => return Err("the engine's input has been closed".to_string()),
+            };
+
+            let id = s.next_id;
+            s.next_id += 1;
+            let frame = encode_request(id, &req, &token)?;
+
+            let (tx, rx) = mpsc::channel();
+            s.waiting.insert(id, tx);
+            // Under the lock ON PURPOSE, and this is the same ordering argument `stop()` makes: a
+            // send that raced the run-end drain would leave a waiter registered against a run that
+            // has already been drained, and nothing would ever answer it.
+            if writer.send(frame).is_err() {
+                s.waiting.remove(&id);
+                return Err("the engine stopped reading its input".to_string());
+            }
+            rx
+        };
+
+        rx.recv()
+            .unwrap_or_else(|_| Err("the engine went away before it answered".to_string()))
+    }
+}
+
 /// Forward the engine's diagnostics to this process's stderr, verbatim.
 ///
 /// Verbatim, and not prefixed: the engine emits one JSON object per line through a redacting
@@ -884,6 +1306,7 @@ fn log_state(state: &EngineState) {
         EngineState::NotConfigured { missing } => {
             log_line(format_args!("not started — nothing set {}", missing.join(", ")));
         }
+        EngineState::NoKey { reason } => log_line(format_args!("not started — {reason}")),
         EngineState::Starting { attempt } => {
             log_line(format_args!("starting (attempt {attempt} of {MAX_STARTS})"));
         }
@@ -924,4 +1347,210 @@ fn exit_status_unavailable() -> ExitStatus {
 fn exit_status_unavailable() -> ExitStatus {
     use std::os::windows::process::ExitStatusExt;
     ExitStatus::from_raw(1)
+}
+
+// ── The one per-install key ──────────────────────────────────────────────────────────────────
+//
+// DESKTOP-DUAL-MODE §5: the native shell owns the keystore and holds exactly one per-install
+// key-encryption key. The engine seals the mailbox password into its own database under that key
+// and reads it back on every later launch, so the password is typed once and the environment
+// carries the key instead of the secret.
+//
+// It is ONE key per install rather than one keystore item per mailbox, and that is the decision
+// worth stating: one key scales to any number of mailboxes and reuses the envelope encryption the
+// rest of the product already has, where a keystore item per mailbox would be a second
+// credential-at-rest design competing with the first.
+//
+// ── WHAT LOSING IT COSTS ────────────────────────────────────────────────────────────────────
+//
+// The stored password, and nothing else. The local mirror is an ordinary unencrypted database and
+// the mailbox on the user's own server is the master, so a lost key is a prompt rather than a
+// catastrophe: type the password again and it is re-sealed. Deleting the data directory and this
+// one keystore item removes the install completely, and every message stays where it is.
+
+/// The environment variable the engine reads its key from.
+pub const KEK_VAR: &str = "OHMAIL_KEK";
+
+/// Where the key lives in the operating system's keystore.
+///
+/// The service name is the product rather than the bundle identifier on purpose: two artifacts of
+/// this app must never end up with two different keys for one data directory, and a bundle id is
+/// exactly the thing that differs between them.
+pub const KEYSTORE_SERVICE: &str = "ohmail";
+pub const KEYSTORE_ENTRY: &str = "install-key";
+
+/// A 32-byte AES-256 key, lower-case hex. The engine validates the same shape and refuses anything
+/// else, so getting this wrong is a startup failure rather than a mailbox that will not open later.
+fn is_key(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Read this install's key, or mint it on first run.
+///
+/// Compiled only under the `local-engine` feature, like everything else in this file — the preview
+/// stores nothing and therefore needs nowhere to store it.
+fn install_key() -> Result<String, String> {
+    let entry = keyring::Entry::new(KEYSTORE_SERVICE, KEYSTORE_ENTRY)
+        .map_err(|err| format!("this computer's keystore could not be opened ({err})"))?;
+
+    match entry.get_password() {
+        Ok(existing) if is_key(&existing) => Ok(existing),
+        // A PRESENT-BUT-WRONG ITEM IS NOT REPLACED, and that is the whole of the reasoning.
+        // Overwriting it would mint a key that cannot open the credential the previous one sealed,
+        // turning a recoverable state ("re-enter your password") into a silent one — the engine
+        // would seal a NEW password under the NEW key and the old row would be unreadable for ever
+        // with nothing to say so. Refusing names the item a person can delete.
+        Ok(_) => Err(format!(
+            "the {KEYSTORE_SERVICE} key in this computer's keystore is not a key this app wrote. \
+             Remove the {KEYSTORE_SERVICE} / {KEYSTORE_ENTRY} item and open ohmail again — you will \
+             be asked for your mailbox password once more, and no mail is affected"
+        )),
+        Err(keyring::Error::NoEntry) => {
+            let mut bytes = [0u8; 32];
+            getrandom::fill(&mut bytes)
+                .map_err(|err| format!("this computer would not supply random bytes for a new key ({err})"))?;
+            let key: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            entry
+                .set_password(&key)
+                .map_err(|err| format!("this computer's keystore would not store a new key ({err})"))?;
+            // READ IT BACK BEFORE IT IS USED. A `set` that reports success and a `get` that returns
+            // nothing is a real keystore failure mode, and finding it now costs one syscall —
+            // finding it on the next launch costs the password the user is about to type.
+            match entry.get_password() {
+                Ok(stored) if stored == key => Ok(key),
+                _ => Err(
+                    "this computer's keystore accepted a new key and did not give it back, so a \
+                     password stored now could not be read after a restart"
+                        .to_string(),
+                ),
+            }
+        }
+        Err(err) => Err(format!("this computer's keystore would not give up this app's key ({err})")),
+    }
+}
+
+// ── What the window may ask ──────────────────────────────────────────────────────────────────
+//
+// Two commands, and they are the only thing the webview can call. `engine_status` is what a surface
+// renders; `engine_request` is the bridge the client engine's `fetch` goes down.
+//
+// THE SESSION TOKEN IS NOT AMONG THEM. `engine_status` does not carry it and `engine_request` adds
+// it on this side, so the page holds no credential — which is also what lets the unmodified client
+// run here: it authenticates with nothing because it needs to.
+
+/// What the shell knows about the engine, as the webview sees it.
+///
+/// A tagged object rather than a string, because the surface renders different things for different
+/// states and matching on prose is how a translated string becomes load-bearing.
+#[cfg(feature = "local-engine")]
+fn status_json(engine: &Engine) -> serde_json::Value {
+    let (state, ready) = {
+        let s = engine.inner.shared.lock().expect("engine state");
+        (s.state.clone(), s.ready.clone())
+    };
+    let mut out = match &state {
+        EngineState::Absent { looked_for } => {
+            serde_json::json!({ "state": "absent", "lookedFor": looked_for })
+        }
+        EngineState::NotConfigured { missing } => {
+            serde_json::json!({ "state": "not_configured", "missing": missing })
+        }
+        EngineState::NoKey { reason } => serde_json::json!({ "state": "no_key", "reason": reason }),
+        EngineState::Starting { attempt } => {
+            serde_json::json!({ "state": "starting", "attempt": attempt, "of": MAX_STARTS })
+        }
+        EngineState::Serving { mailbox_id } => {
+            serde_json::json!({ "state": "serving", "mailboxId": mailbox_id })
+        }
+        EngineState::Restarting { attempt, delay, .. } => serde_json::json!({
+            "state": "restarting", "attempt": attempt, "of": MAX_STARTS, "delayMs": delay.as_millis() as u64,
+        }),
+        EngineState::Stopped => serde_json::json!({ "state": "stopped" }),
+        EngineState::Failed { reason, .. } => serde_json::json!({ "state": "failed", "reason": reason }),
+    };
+    if let (Some(ready), Some(object)) = (ready, out.as_object_mut()) {
+        object.insert("accountId".into(), ready.account_id.clone().into());
+        object.insert("userId".into(), ready.user_id.clone().into());
+        object.insert("mailboxId".into(), ready.mailbox_id.clone().into());
+        object.insert("credentialState".into(), ready.credential_state.as_str().into());
+        // `baseUrl` and NOT `sessionToken`. The first is a public fact about where to address a
+        // request; the second is the credential this shell exists to keep off the page.
+        object.insert("baseUrl".into(), ready.base_url.clone().into());
+    }
+    out
+}
+
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn engine_status(engine: tauri::State<'_, Arc<Engine>>) -> serde_json::Value {
+    status_json(&engine)
+}
+
+/// One request, down the pipe and back.
+///
+/// `async` is load-bearing rather than decoration: Tauri runs a synchronous command on the main
+/// thread, and this one blocks until the engine answers. On the main thread that is the window
+/// freezing for the length of every request the app makes.
+///
+/// The answer comes back as raw bytes — a length-prefixed metadata header and then the body —
+/// because a mail body is not JSON and re-encoding one through a JSON string would cost a copy and
+/// a UTF-8 assumption that attachments break.
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn engine_request(
+    engine: tauri::State<'_, Arc<Engine>>,
+    method: String,
+    url: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+) -> Result<tauri::ipc::Response, String> {
+    let answer = engine.request(EngineRequest { method, url, headers, body })?;
+    let meta = serde_json::json!({
+        "status": answer.status,
+        "statusText": answer.status_text,
+        "h": answer.headers,
+    });
+    let meta = serde_json::to_vec(&meta).map_err(|err| format!("could not encode the answer: {err}"))?;
+    let mut out = Vec::with_capacity(4 + meta.len() + answer.body.len());
+    out.extend_from_slice(&(meta.len() as u32).to_be_bytes());
+    out.extend_from_slice(&meta);
+    out.extend_from_slice(&answer.body);
+    Ok(tauri::ipc::Response::new(out))
+}
+
+/// The window's grant, and the whole of it.
+///
+/// Added at runtime rather than as a file in `capabilities/`, because a file there is compiled into
+/// EVERY build: the preview would carry a grant for commands it does not have, and "the window can
+/// call nothing" would become a claim about a permission list rather than about the binary. This
+/// string is in a module the preview does not compile.
+#[cfg(feature = "local-engine")]
+const LOCAL_ENGINE_CAPABILITY: &str = r#"{
+  "identifier": "local-engine",
+  "description": "The window may ask the shell about the local engine and send it one request at a time. Nothing else: no filesystem, no shell, no network, and no Tauri core API.",
+  "windows": ["main"],
+  "permissions": ["allow-engine-status", "allow-engine-request"]
+}"#;
+
+/// Register the two commands. Called from `main.rs` under the same feature.
+///
+/// It lives here rather than there so that `main.rs` contains no `invoke_handler` at all — the
+/// published shell's "registers no commands" is then a property of a file that is always compiled,
+/// rather than of a branch inside one.
+#[cfg(feature = "local-engine")]
+pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder.invoke_handler(tauri::generate_handler![engine_status, engine_request])
+}
+
+/// Hand the running engine to the window, and grant the window the two commands.
+#[cfg(feature = "local-engine")]
+pub fn manage(app: &tauri::App, engine: Arc<Engine>) {
+    use tauri::Manager;
+    app.manage(engine);
+    if let Err(err) = app.add_capability(LOCAL_ENGINE_CAPABILITY) {
+        // Fatal, and loudly. A window that cannot call the bridge is a window that renders nothing
+        // — and silently continuing would produce exactly the failure this slice exists to prevent:
+        // an app that looks like it is working and is not.
+        panic!("ohmail: the local engine's capability could not be granted: {err}");
+    }
 }

@@ -28,12 +28,23 @@
 mod engine;
 
 fn main() {
-    let app = tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+    // The two commands the window may call, registered in `engine.rs` so that this file names none
+    // of them. With the feature off the line is not compiled and the builder is untouched.
+    #[cfg(feature = "local-engine")]
+    {
+        builder = engine::attach(builder);
+    }
+
+    let app = builder
         .build(tauri::generate_context!())
         .expect("ohmail: failed to start the Tauri runtime");
 
     #[cfg(feature = "local-engine")]
-    let engine = engine::Engine::start(&app);
+    let engine = std::sync::Arc::new(engine::Engine::start(&app));
+    #[cfg(feature = "local-engine")]
+    engine::manage(&app, std::sync::Arc::clone(&engine));
 
     app.run(move |_app, _event| {
         #[cfg(feature = "local-engine")]
