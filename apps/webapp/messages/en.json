@@ -594,7 +594,7 @@
   },
   "fast": {
     "title": "Fast is a feature.",
-    "body": "Every mailbox is mirrored locally, so search answers as you type — typo-tolerant, scoped, and just as quick with the wifi off. Tags instead of folder gymnastics. Native apps that open before you finish the thought.",
+    "body": "Search answers as you type — typo-tolerant and scoped, over a local mirror of every mailbox. Tags instead of folder gymnastics, search that stays quick with the wifi off, and native apps that open before you finish the thought: those three are demonstrated above and are not on live accounts yet — we’ll say so here the day they are.",
     "pointA": "Local search, typo-tolerant, instant",
     "pointB": "Tags, not folder trees",
     "pointC": "Native on desktop, instant mirror everywhere",
