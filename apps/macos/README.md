@@ -242,9 +242,15 @@ left behind, because at that point they would be false.
 
 Packaging changes nothing about what the app contains. This build has no IMAP
 client, no network code and no account: it renders the whole interface on the
-small fictional mailbox compiled into it. The binary links no networking
-framework at all, which is the reason that claim can be checked rather than
-believed — `otool -L ohmail.app/Contents/MacOS/OhMail` lists Foundation, AppKit,
-SwiftUI and CoreGraphics, and nothing that opens a socket.
+small fictional mailbox compiled into it.
+
+That claim is checked rather than believed, and it is checked on the SYMBOLS the
+binary imports rather than on the libraries it links. Two libraries that could
+reach a network are linked and both are there for something else — CFNetwork for
+`HTTPURLResponse`, which is the shape the bridge to the local engine puts its
+replies in, and Security for the four `SecItem` calls the keystore makes. Neither
+import opens anything. `dyld_info -imports ohmail.app/Contents/MacOS/OhMail`
+lists every symbol taken from each of them, the packaging step holds those two to
+an explicit list, and Network.framework is refused outright.
 
 Anyone who installs this is looking at the interface, not at their mail.

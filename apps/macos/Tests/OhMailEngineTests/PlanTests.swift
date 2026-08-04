@@ -20,8 +20,17 @@ final class PlanTests: XCTestCase {
     /// say. The first version of this helper took `URL?` and defaulted with `??`, which turned every
     /// "pass nothing" case into "pass the default" — three tests asserted the opposite of what they
     /// ran and failed for the right reason.
+    ///
+    /// **`keys` defaults to a shell with NO keystore, and not to ``KeyProviderDefault``.** Two
+    /// reasons, and the second is the sharper one. The subject of this file is what the plan decides
+    /// from what it is given, so the empty keystore is the case that leaves the environment in
+    /// charge and keeps every assertion below about the plan. And ``KeyProviderDefault`` now reaches
+    /// the real Keychain: with it here, running this file would mint the installed app's key and
+    /// then, because the keychain ties an item to the binary that created it and a test bundle is
+    /// recompiled between runs, the NEXT run would stop on an authorization dialog and never
+    /// finish.
     private func plan(_ env: [String: String], exeDir: URL?? = nil, dataDir: URL?? = nil,
-                      keys: KeyProvider = KeyProviderDefault()) -> EnginePlan {
+                      keys: KeyProvider = StubKeys(value: nil, failure: nil)) -> EnginePlan {
         EngineProcess.plan(environment: env,
                            executableDirectory: exeDir ?? self.exeDir,
                            dataDirectoryFallback: dataDir ?? self.dataDir,
@@ -168,8 +177,16 @@ final class PlanTests: XCTestCase {
         XCTAssertTrue(reason.contains("interaction not allowed"), reason)
     }
 
-    func testTheDefaultKeyProviderIsAHoleAndSaysSo() throws {
-        XCTAssertNil(try KeyProviderDefault().kek())
+    /// **The default keystore is the Keychain, and this asserts it without opening one.**
+    ///
+    /// It used to assert that ``KeyProviderDefault`` answered `nil` — that the hole was still a
+    /// hole. The hole is filled, so the claim worth keeping is the wiring: an app that constructs
+    /// nothing gets the real keystore, at the one item the shipped build owns. Calling `kek()` here
+    /// would mint that item on the developer's own machine and make every later run of this file
+    /// stop on a keychain authorization dialog, so the name is what is checked; `KeychainKeyStoreTests`
+    /// is where the item is actually opened, always under a service name unique to its run.
+    func testTheDefaultKeyProviderIsTheKeychain() {
+        XCTAssertEqual(KeyProviderDefault(environment: [:]).service, "io.ohmail.desktop")
     }
 
     // MARK: - The shipped numbers

@@ -469,6 +469,11 @@ private final class RecordingSink: MailSourceSink {
 /// engine actually runs today: the compiled entry point cannot resolve its own sync loop and exits.
 /// `OHMAIL_TEST_ENGINE` names the entry point; without it this looks for one in the surrounding
 /// workspace and skips if there is none.
+/// A shell with no keystore, so the key comes from the environment this test sets.
+private struct NoKeystore: KeyProvider {
+    func kek() throws -> String? { nil }
+}
+
 @MainActor
 private struct LiveEngine {
     let engine: EngineProcess
@@ -533,9 +538,16 @@ private struct LiveEngine {
         environment[KEK_VAR] = String(repeating: "0", count: 64)
         environment[DATA_DIR_VAR] = directory.path
 
+        // **`keys:` IS PASSED, and it has to be.** The default provider is the real Keychain now,
+        // and it OUTRANKS the environment — so leaving it out would ignore the key set above, mint
+        // one into the item an installed copy owns, and then, because the keychain ties an item to
+        // the binary that created it and a test bundle is recompiled between runs, stop the NEXT
+        // run of this file on an authorization dialog. A shell with no keystore is what leaves
+        // `KEK_VAR` in charge, which is what this test means.
         let plan = EngineProcess.plan(environment: environment,
                                       executableDirectory: directory,
-                                      dataDirectoryFallback: directory)
+                                      dataDirectoryFallback: directory,
+                                      keys: NoKeystore())
         guard case .spawn(let launch) = plan else {
             throw Live("the plan refused to start the engine: \(plan)")
         }

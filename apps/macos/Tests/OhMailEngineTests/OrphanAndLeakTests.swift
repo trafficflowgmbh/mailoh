@@ -18,9 +18,19 @@ final class OrphanAndLeakTests: XCTestCase {
     private var wrapper: URL!
     private var logFile: URL!
 
+    /// **A keychain service belonging to this run and to nothing else.**
+    ///
+    /// The probe builds the real `KeyProviderDefault`, which now reaches the Keychain — so without
+    /// this every test in this file would mint the INSTALLED app's key on whoever's machine ran it.
+    /// Worse, the keychain ties an item to the binary that created it and this bundle is recompiled
+    /// between runs, so the next run would stop on an authorization dialog and never finish. A
+    /// service unique to the run can only ever meet an item this build wrote.
+    private var keychainService: String!
+
     override func setUpWithError() throws {
         let node = try nodePath()
         runID = UUID().uuidString.prefix(8).lowercased()
+        keychainService = "io.ohmail.test.orphan.\(UUID().uuidString)"
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ohmail-orphan-\(runID!)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -39,6 +49,9 @@ final class OrphanAndLeakTests: XCTestCase {
 
     override func tearDownWithError() throws {
         try? FileManager.default.removeItem(at: directory)
+        // Through `security(1)` rather than `SecItemDelete`: the probe minted it, and an item
+        // belonging to another binary cannot be deleted from here.
+        if let keychainService { forgetKeychainService(keychainService) }
     }
 
     /// The probe, built beside this test bundle.
@@ -59,6 +72,7 @@ final class OrphanAndLeakTests: XCTestCase {
         environment["OHMAIL_IMAP_HOST"] = "imap.example.org"
         environment["OHMAIL_IMAP_USER"] = "someone@example.org"
         environment[KEK_VAR] = String(repeating: "0", count: 64)
+        environment[KeychainKeyStore.serviceVariable] = keychainService
         environment[DATA_DIR_VAR] = directory.path
         environment["FAKE_LOG"] = logFile.path
         environment["FAKE_TOKEN"] = token
@@ -181,20 +195,25 @@ final class OrphanAndLeakTests: XCTestCase {
 
     // MARK: - The loud empty hole
 
-    /// **Launched with no key, the shell names the variable and starts nothing.**
+    /// **Launched short of what it needs, the shell names it and starts nothing.**
     ///
     /// The same assertion the window makes visually. It is here as well because a screenshot is a
-    /// one-off and this is not: the Keychain work exists because the engine side and a shell side each
-    /// assumed the key was the other's, and a hole nothing asserts on closes itself by accident.
-    func testAShellLaunchedWithNoKeyNamesOhmailKekAndStartsNothing() throws {
+    /// one-off and this is not: a whole process refusing to start, and a report a person could act
+    /// on, is the difference between an app that explains itself and one that just does nothing.
+    ///
+    /// **It used to remove `OHMAIL_KEK`, and that is no longer a way to make an install
+    /// unconfigured.** The shell has a keystore now: a launch with no key in its environment mints
+    /// one and carries on, which is the entire point of the Keychain. The variable this removes is
+    /// therefore one nothing can supply on the user's behalf — the mailbox host.
+    func testAShellLaunchedShortOfAMailboxNamesTheVariableAndStartsNothing() throws {
         let probe = Process()
         probe.executableURL = try probeURL()
         probe.arguments = [wrapper.path]
         var environment = ProcessInfo.processInfo.environment
-        environment["OHMAIL_IMAP_HOST"] = "imap.example.org"
         environment["OHMAIL_IMAP_USER"] = "someone@example.org"
+        environment[KeychainKeyStore.serviceVariable] = keychainService
         environment[DATA_DIR_VAR] = directory.path
-        environment.removeValue(forKey: KEK_VAR)
+        environment.removeValue(forKey: "OHMAIL_IMAP_HOST")
         probe.environment = environment
 
         let out = Pipe()
@@ -205,10 +224,12 @@ final class OrphanAndLeakTests: XCTestCase {
         probe.waitUntilExit()
 
         XCTAssertEqual(probe.terminationStatus, 0, "an unconfigured install is not a crash")
-        XCTAssertTrue(report.contains("missing OHMAIL_KEK"), "the report names the variable:\n\(report)")
-        XCTAssertTrue(report.contains("not started — nothing set OHMAIL_KEK"), report)
+        XCTAssertTrue(report.contains("missing OHMAIL_IMAP_HOST"), "the report names the variable:\n\(report)")
+        XCTAssertTrue(report.contains("not started — nothing set OHMAIL_IMAP_HOST"), report)
+        XCTAssertFalse(report.contains("OHMAIL_KEK"),
+                       "the key is not among the missing: the keystore supplies it\n\(report)")
         XCTAssertEqual(survivors(), [], "nothing was started")
         XCTAssertFalse(FileManager.default.fileExists(atPath: logFile.path),
-                       "the engine was executed despite there being no key to seal a credential under")
+                       "the engine was executed despite there being no mailbox to point it at")
     }
 }
