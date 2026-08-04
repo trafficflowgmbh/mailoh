@@ -1242,6 +1242,7 @@
     "listFailed": "Couldn't load this message's files.",
     "listOffline": "Couldn't reach ohmail — check your connection.",
     "listRetry": "Try again",
-    "listRetrying": "Looking again…"
+    "listRetrying": "Looking again…",
+    "listTimeout": "ohmail didn't answer in time."
   }
 }

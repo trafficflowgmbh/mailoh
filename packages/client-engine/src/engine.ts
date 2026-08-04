@@ -168,6 +168,12 @@ export type AttachmentsOutcome =
    *
    * `retryable` is TRUE for anything the client could not classify: an unclassified throw means
    * we never established that the server refused, and re-asking costs one indexed row.
+   *
+   * `code: "timeout"` is the THIRD thing that lands here, and it only exists from gap AT8 onward:
+   * a request the server accepted and never answered used to produce no outcome at all, because
+   * `fetch` has no deadline and neither did anything on this path. It now arrives bounded and
+   * aborted from `HttpAdapter.withDeadline`, retryable for the strongest version of the reason
+   * above — nothing refused us, nothing even spoke.
    */
   | { state: "failed"; error: string; code: string | null; retryable: boolean };
 
@@ -958,8 +964,13 @@ export class OhmailEngine {
         return { state: "ready", items };
       })
       // The adapter's own classification, kept. `MutationRejectedError` is the one thing
-      // `HttpAdapter` throws — for a non-2xx (`rejectionOf`: the server's code, and `retryable`
-      // defaulted from the status) and for a fetch that rejected outright (`code: "network"`).
+      // `HttpAdapter` throws, and it throws it for THREE reasons: a non-2xx (`rejectionOf`: the
+      // server's code, and `retryable` defaulted from the status), a fetch that rejected outright
+      // (`code: "network"`), and — since gap AT8 — a request that answered nothing at all inside
+      // `ATTACHMENT_LIST_TIMEOUT_MS` (`code: "timeout"`, `retryable: true`, raised by
+      // `HttpAdapter.withDeadline`, which aborts the request as it throws). That third one is why
+      // this catch exists at all now: before it, a hung read never reached here, the outcome stayed
+      // `loading`, and the surface drew nothing for ever.
       // Anything else reaching here is unclassified, and unclassified means we never established
       // that the server refused, so asking again is honest. See {@link AttachmentsOutcome}.
       .catch((err: unknown): AttachmentsOutcome => ({
