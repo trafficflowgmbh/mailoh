@@ -503,7 +503,7 @@
     "door": "ohmail <k>answers the door for you</k>: first-time senders <k>wait at the Screener</k> until you let them in, and everything you said yes to is organized in place — <k>real folders</k> on the mailboxes you already own. <o>Leave anytime</o>; your mailbox stays organized.",
     "ctaGet": "Get ohmail.",
     "ctaDemo": "Try the demo",
-    "note": "Free on desktop · Cloud from $9/mo, 14 days free · any IMAP mailbox"
+    "note": "Cloud from $9/mo, 14 days free · any IMAP mailbox · free desktop preview"
   },
   "demo": {
     "heading": "This is not a screenshot.",
@@ -797,7 +797,7 @@
   },
   "siteMeta": {
     "title": "ohmail — Consent-first email on your own mailboxes.",
-    "description": "The last mail client you will ever need. The Screener holds first-time senders until you decide; everything you said yes to is organized in place — real folders on your real server. Free on desktop, or Cloud from $9/mo with a 14-day trial and no card.",
+    "description": "The last mail client you will ever need. The Screener holds first-time senders until you decide; everything you said yes to is organized in place — real folders on your real server. Cloud from $9/mo with a 14-day trial and no card; the desktop app is a free interface preview.",
     "ogAlt": "ohmail — consent-first email on your own mailboxes"
   },
   "siteScreener": {
