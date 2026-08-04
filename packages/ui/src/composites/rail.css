@@ -24,7 +24,9 @@
   font-size:11px;font-weight:600;color:var(--ink3);padding:4px 8px;border-radius:8px;font-family:inherit;
   transition:color .15s}
 .rlabel-toggle:hover{color:var(--ink)}
-.rlabel-toggle .chev{width:11px;height:11px;transition:transform .25s var(--spring);transform:rotate(90deg)}
+/* The chevron LEADS the label — see `RailNav.tsx`. `flex:0 0 auto` so a long group name
+   cannot squeeze the affordance that says the group opens. */
+.rlabel-toggle .chev{flex:0 0 auto;width:11px;height:11px;transition:transform .25s var(--spring);transform:rotate(90deg)}
 .rgroup.closed .rlabel-toggle .chev{transform:none}
 .rgroup.closed .rgroup-body{display:none}
 /* tags — subordinate group nested under Triage: indented, one size down */

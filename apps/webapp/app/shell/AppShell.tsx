@@ -174,6 +174,18 @@ const PILE_IDS: string[] = ["ohbox", "reads", "receipts", "screener", ...Object.
 const NAV_HINT_AFTER = 6;
 
 /**
+ * How long the located row stays marked, and how long we look for it.
+ *
+ * The flash is long enough to be seen after a route transition and short enough that it is
+ * plainly a "here it is" rather than a selection — the cursor is what says selected, and this
+ * must not compete with it. The search window is bounded because a row that never appears
+ * means the message has left that pile, and looking forever would keep a `requestAnimationFrame`
+ * loop alive for the life of the tab.
+ */
+const LOCATE_FLASH_MS = 1600;
+const LOCATE_TIMEOUT_MS = 2000;
+
+/**
  * WHERE A MESSAGE OPENS — the decision, with nothing else in it.
  *
  * Extracted from `openMessage` because the decision and the navigation are two things and
@@ -494,6 +506,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const [chipState, setChipState] = useState<ReadsChipState>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [jump, setJump] = useState<{ view: "reads" | "receipts"; id: string } | null>(null);
+  /**
+   * THE ROW A SEARCH HIT LANDED ON — so the user can SEE where they were taken.
+   *
+   * Reported as: opening a search result "brings me to the mail in the screener but does not
+   * highlight / select it". The routing was right and the arrival was silent: `openMessage`
+   * set each view's cursor and navigated, and the user was handed a list with a cursor
+   * somewhere in it and no indication which row they had just asked for. On the Screener,
+   * where rows are SENDERS and the list is long, that is indistinguishable from having been
+   * dropped at the top of a queue of strangers.
+   *
+   * This holds the id that the destination view puts in `data-id` — the message id in three
+   * views, the SENDER row's id in the Screener — and is cleared once the flash has run.
+   */
+  const [located, setLocated] = useState<string | null>(null);
   const [fr, setFr] = useState<{ step: number; items: TriagePileEntry[] } | null>(null);
   /**
    * "Start a Reply Run once we are on Triage", as an INTENT rather than a race.
@@ -1426,17 +1452,22 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           setOhboxSel(target.id);
           // The reader, and via `readerPending` because `go` is about to clear it.
           if (target.reader) setReaderPending(target.id);
+          setLocated(target.id);
           go("ohbox");
           return;
         case "stream":
           (target.view === "reads" ? setReadsCur : setReceiptsCur)(target.id);
           setJump({ view: target.view, id: target.id });
+          setLocated(target.id);
           go(target.view);
           return;
         case "screener":
           if (target.row) {
             const row = target.row;
             setScnSel((s) => ({ ...s, [target.segment]: row }));
+            // The SENDER row's id, not the message's: that is what this view puts in
+            // `data-id`, and the flash has to name the thing on screen.
+            setLocated(row);
           }
           goScreener(target.segment);
           return;
@@ -1447,6 +1478,76 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     },
     [readColumnHidden, screenerRowFor],
   );
+
+  /**
+   * ═══ LOCATE THE ROW, IN WHICHEVER VIEW IT LANDED ══════════════════════════════════════
+   *
+   * ── WHY THIS IS ONE DOM EFFECT AND NOT FOUR PROPS ─────────────────────────────────────
+   *
+   * A search hit can land in four view shapes — the Ohbox's split pane, the two skim streams,
+   * and the Screener's sender queue — and threading a `locatedId` through all four would be
+   * four props, four effects and four chances for the fifth view to be added without one.
+   *
+   * All four already agree on a contract this can use instead: every row is
+   * `.row[data-id="<id>"]`, and each view already finds its own cursor that way to scroll it
+   * (`ReadsView`, `ReceiptsView`, `ScreenerView`) or to anchor the screening popover
+   * (`OhboxView`, and `AppShell`'s own `s` binding). This is a fifth reader of an established
+   * selector, not a new coupling — and it means a view added later is located correctly
+   * without being taught anything.
+   *
+   * ── WHY IT RETRIES ────────────────────────────────────────────────────────────────────
+   *
+   * `openMessage` sets the cursor and CHANGES THE ROUTE in the same gesture. The destination
+   * view has not mounted when this effect first runs, so a single query would miss every time
+   * — the row appears a frame or two later, after the hash change, the route effect and the
+   * view's own render. It re-tries on animation frames for a short bounded window and then
+   * gives up rather than looping: a hit whose row never appears is a message that is no longer
+   * in that pile, and flashing nothing is the honest outcome.
+   *
+   * The class is removed on a timer AND on unmount, so leaving the view mid-flash cannot
+   * leave a row permanently marked.
+   */
+  useEffect(() => {
+    if (!located) return;
+    let raf = 0;
+    let done = false;
+    const deadline = Date.now() + LOCATE_TIMEOUT_MS;
+    let clear: ReturnType<typeof setTimeout> | undefined;
+    let found: Element | null = null;
+
+    const look = () => {
+      if (done) return;
+      const row =
+        typeof document === "undefined"
+          ? null
+          : document.querySelector(`.view .row[data-id="${CSS.escape(located)}"]`);
+      if (row) {
+        done = true;
+        found = row;
+        row.scrollIntoView({ block: "center" });
+        row.classList.add("is-located");
+        clear = setTimeout(() => {
+          row.classList.remove("is-located");
+          setLocated(null);
+        }, LOCATE_FLASH_MS);
+        return;
+      }
+      if (Date.now() > deadline) {
+        done = true;
+        setLocated(null);
+        return;
+      }
+      raf = requestAnimationFrame(look);
+    };
+    raf = requestAnimationFrame(look);
+
+    return () => {
+      done = true;
+      cancelAnimationFrame(raf);
+      if (clear) clearTimeout(clear);
+      found?.classList.remove("is-located");
+    };
+  }, [located]);
 
   const startFR = useCallback(() => {
     // NO `setFrValues({})`. Keyed by message, what is in that map is a reply somebody wrote

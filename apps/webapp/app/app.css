@@ -857,6 +857,26 @@ body.reading .shell {
 }
 
 /* ================= tag picker ================= */
+/* ── The located row ───────────────────────────────────────────────────────────────────
+   Opening a search result moves the cursor and navigates; this is what says WHICH row you
+   were taken to. A brief wash that fades, not a persistent state: the cursor is what means
+   "selected", and a second permanent marker beside it would be two answers to one question.
+   `prefers-reduced-motion` gets the wash without the animation — the information is the
+   colour, not the movement. */
+@keyframes locate-flash {
+  0% { background: var(--accent-wash, var(--tint)); }
+  100% { background: transparent; }
+}
+.row.is-located {
+  animation: locate-flash 1.6s var(--swift) forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .row.is-located {
+    animation: none;
+    background: var(--accent-wash, var(--tint));
+  }
+}
+
 /* ── The number-key hint ───────────────────────────────────────────────────────────────
    Shown once, after a handful of rail clicks, then dismissed forever. A strip above the
    deck rather than a floating card: it is an aside, not something to be got out of the way

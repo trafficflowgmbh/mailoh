@@ -222,13 +222,26 @@ function TagsGroup({
   };
   return (
     <div className={open ? "rgroup rsub" : "rgroup rsub closed"}>
+      {/*
+       * THE CHEVRON LEADS. It used to trail the label — `{label} <Icon/>` — which put it
+       * exactly where the navigable rows above put their count, so the group header read as
+       * a destination rather than as a disclosure. Clicking it then collapses the group,
+       * which looks like a feature that has stopped working: the list you were pointing at
+       * disappears and the view does not change.
+       *
+       * A leading chevron is the conventional affordance for "this opens" everywhere a tree
+       * appears, and it is the whole change: same button, same `aria-expanded`, same rotation.
+       * `Icon` already sets `aria-hidden` on the svg itself, so the state is announced once,
+       * by the button.
+       */}
       <button
         type="button"
         className="rlabel-toggle"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
       >
-        {label} <Icon name="chev" className="chev" />
+        <Icon name="chev" className="chev" />
+        {label}
       </button>
       <div className="rgroup-body">
         {items.map((t) => (
