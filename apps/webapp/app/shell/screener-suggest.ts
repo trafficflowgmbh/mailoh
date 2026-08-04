@@ -212,8 +212,19 @@ export function useScreenerSuggestions(opts: {
         try {
           const res = await screenerApi.suggest(set, { dryRun: true });
           if (io.current.run !== run) return;
-          setQuote({ senders: res.quoted, credits: res.quotedCredits });
           setPhase("ready");
+          // NO PRICE, NO PURCHASE. A server that answers without `quotedCredits` — one
+          // deployed before the field existed, reached during the minutes between two
+          // deploys — leaves the cost unknown, and an unknown cost is not one a person can
+          // consent to. The confirm stays disabled because `quote` is null; the alternative,
+          // multiplying the count by an assumed credit cost, is the exact guess this field
+          // was added to remove.
+          if (typeof res.quotedCredits !== "number") {
+            setQuote(null);
+            setNotice(t("suggest.failed"));
+            return;
+          }
+          setQuote({ senders: res.quoted, credits: res.quotedCredits });
           setNotice(res.quoted === 0 ? t("suggest.nothing") : null);
         } catch (err) {
           if (io.current.run !== run) return;
