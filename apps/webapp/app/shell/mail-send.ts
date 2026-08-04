@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * SENDING MAIL (slices U4b, U4f) — the client half of the gated send, and the one action in
+ * SENDING MAIL — the client half of the gated send, and the one action in
  * this app that cannot be taken back.
  *
  * Everything else the shell dispatches is a local edit the server later agrees with; a
@@ -24,10 +24,10 @@
  *                 send the user deliberately chose.
  *   `failed`      a definite refusal. Text kept, reason shown, Send live again.
  *
- * ── ONE MACHINE, TWO SURFACES (U4f) ─────────────────────────────────────────────────────
+ * ── ONE MACHINE, TWO SURFACES ───────────────────────────────────────────────────────────
  *
- * It shipped serving the inline reply only, and U4f gave it Compose rather than giving Compose
- * a machine of its own. Nothing above is reply-specific: the lock, the retry driver, the
+ * It shipped serving the inline reply only, and Compose was given this machine rather than one
+ * of its own. Nothing above is reply-specific: the lock, the retry driver, the
  * four-outcome reading of the wire and "a 200 is inspected, not trusted" are properties of
  * SENDING, and a second copy of them is a second place for invariant #2 to be true in. The
  * difference between the two callers is one field on the mutation (`inReplyTo`) and one line
@@ -50,7 +50,8 @@
  *
  * A confirmation can arrive from the original `mutate()` OR from a flush minutes later, by
  * which time the user may have closed the editor or walked to another view. Both paths land
- * in `settle`, so the scratch draft is cleared and U4e fires either way, and the surface is
+ * in `settle`, so the scratch draft is cleared and the triage debt discharged either way, and
+ * the surface is
  * closed only if it still happens to be the one on screen.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -66,7 +67,7 @@ export interface SendState {
   /** The server's or the transport's own words, for `failed`. */
   reason?: string;
   /**
-   * The server's stable machine name for the refusal, when it sent one (gap O20).
+   * The server's stable machine name for the refusal, when it sent one.
    *
    * `reason` is server English and is rendered as a quotation — correct for the long tail of
    * SMTP refusals nobody can enumerate, and wrong for a refusal the product has its own words
@@ -184,7 +185,7 @@ export function phaseFor(res: MutationResult): SendState {
 }
 
 /**
- * U4e — which triage states a delivered reply discharges.
+ * Which triage states a delivered reply discharges.
  *
  * `reply_later` (Answer Later) and `bubbled_up` (a Resurface that came due) are both "come
  * back to this", and replying IS coming back to it. `set_aside` (Parked) and `muted` are
@@ -245,7 +246,7 @@ export function useMailSend(
   }, []);
 
   /**
-   * A send that DID land. The scratch draft goes, the triage debt goes (U4e), and the surface
+   * A send that DID land. The scratch draft goes, the triage debt goes, and the surface
    * closes if it is still the one on screen.
    */
   const settle = useCallback(
@@ -259,7 +260,7 @@ export function useMailSend(
           /* private mode refuses writes and therefore holds nothing to remove */
         }
 
-        // ── U4e: the reply IS the evidence the message was answered ────────────────────
+        // ── the reply IS the evidence the message was answered ─────────────────────────
         //
         // Read at CONFIRM time, not at press time: the state may have moved while the request
         // was out, and a send that failed must never clear a debt. A compose answers nothing,
@@ -293,7 +294,7 @@ export function useMailSend(
       }
       // A confirmation is the only outcome that does anything beyond the phase, and `settle`
       // is where all of it lives — so a confirmation from a flush minutes later clears the
-      // draft and fires U4e exactly as the first press would have.
+      // draft and discharges the debt exactly as the first press would have.
       if (res.status === "confirmed") settle(key, m);
       else setPhase(key, next);
     },

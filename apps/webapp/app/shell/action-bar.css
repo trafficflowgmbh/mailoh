@@ -1,8 +1,8 @@
-/* ═══ THE MESSAGE ACTION BAR (slice O13) ═══════════════════════════════════════════════
+/* ═══ THE MESSAGE ACTION BAR ══════════════════════════════════════════════════════════ 
  *
  * ── WHAT WAS WRONG, MEASURED RATHER THAN GUESSED ──────────────────────────────────────
  *
- * The owner, reading their own mail: *"it breaks a line and doesn't show shortcuts"*. Both
+ * Reported from real use: the bar breaks a line, and it does not show its shortcuts. Both
  * halves came from one shape — eight equal-weight `.btn` capsules in a flat
  * `flex-wrap:wrap` row (`packages/ui/…/message.css` `.msg-actions`), with a single
  * hand-typed `kbdHint="s"` on the Screening button and nothing on the other seven.
@@ -43,7 +43,7 @@
   min-width: 0;
 }
 
-/* ── THE SAME BAR OVER A SELECTION (slice U5-BULK) ────────────────────────────────────
+/* ── THE SAME BAR OVER A SELECTION ─────────────────────────────────────────────────── 
  *
  * `.pick-bar` (app.css, not ours to edit) is `display:flex;flex-wrap:wrap` with a count
  * before the bar and Clear after it. Giving the bar its own full-width line is the same
@@ -181,7 +181,7 @@
   color: inherit;
 }
 
-/* ── the read switch — it states the CURRENT state (gap O9's ruling) ──────────────── */
+/* ── the read switch — it states the CURRENT state ─────────────────────────────────  */
 
 .abar-dot {
   width: 7px;
@@ -233,7 +233,7 @@
  * exhale", and on a pointer device that is a resting state which one mouse movement undoes.
  *
  * On a TOUCH device there is no hover, so it is not a resting state, it is the ONLY state:
- * the bar and every keycap in it stay at 35% for ever. That defeats the half of O13 that
+ * the bar and every keycap in it stay at 35% for ever. That defeats the half of this bar that
  * exists to make the keys visible, on the surface with the least room to spare.
  *
  * Restored only where hover does not exist. The desktop exhale is deliberately untouched —
@@ -246,7 +246,7 @@
 /* ── THE DENSITY LADDER ───────────────────────────────────────────────────────────────
  *
  * Base = the tightest surface. Reply, the read switch and More are the three that always
- * stand: the first is the verb, the second is what the owner asked for by name, the third
+ * stand: the first is the verb, the second is the one asked for by name, the third
  * is the way to everything else. Base row measures **184px**, which is what lets it stand
  * in the 242px split column.
  *

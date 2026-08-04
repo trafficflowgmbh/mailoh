@@ -1,7 +1,7 @@
-/* ═══ UX10 — KEY HINTS ONLY WHERE THERE ARE KEYS ═════════════════════════════════════════
+/* ═══ KEY HINTS ONLY WHERE THERE ARE KEYS ════════════════════════════════════════════════
  *
- * Walked at 390px on a real account against production, 2026-08-04. Three pieces of keyboard
- * chrome were on screen on a device with no keyboard:
+ * Walked at 390px in a real browser. Three pieces of keyboard chrome were on screen on a
+ * device with no keyboard:
  *
  *   1. a **⌘K pill in the mobile top bar**, whose entire label is a chord;
  *   2. **"esc to return"** over the reading overlay;
@@ -60,11 +60,11 @@
     display: none;
   }
 
-  /* THE DECISION CAPSULES' KEYCAPS (added with UX11, and it is an AMPLIFICATION rather than
-     a new case). This bar already carried one keycap on a touch device — the AI capsule's
-     hand-typed `y` — and UX10 did not catch it. UX11 puts a letter on all five capsules and
-     a shifted twin on each ✓, so what was one unpressable cap becomes ten, on the surface a
-     phone user does the most tapping on.
+  /* THE DECISION CAPSULES' KEYCAPS — an AMPLIFICATION of the case above rather than a new
+     one. This bar already carried a keycap on a touch device, the AI capsule's hand-typed
+     `y`, and the rules above did not catch it. A letter on all five capsules and a shifted
+     twin on each ✓ turns that one unpressable cap into ten, on the surface a phone user does
+     the most tapping on.
      `decision-bar.css`'s container queries already hide them below 490px of bar, which is
      every phone; this is the tablet, where the bar is wide, the pointer is still coarse and
      the caps would otherwise show. Specificity by the same rule as the others: the

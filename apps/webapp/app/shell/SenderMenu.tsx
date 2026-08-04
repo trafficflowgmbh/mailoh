@@ -1,16 +1,16 @@
 "use client";
 
 /**
- * The sender's screening, as a popover you can reach from any list or any open message
- * (slice U3). Anchored like the tag picker; Escape and an outside click dismiss.
+ * The sender's screening, as a popover you can reach from any list or any open message.
+ * Anchored like the tag picker; Escape and an outside click dismiss.
  *
  * It states the consequence BEFORE the click, and the two consequences are genuinely
  * different: from the Screener the change becomes a rule, from anywhere else it moves the
  * mail and future mail is unaffected. See `sender-screening.ts` for why.
  *
- * ── O19 ADDS THREE THINGS AND CHANGES NOTHING THAT WAS HERE ──────────────────────────────
+ * ── THREE ADDITIONS THAT CHANGE NOTHING THAT WAS HERE ────────────────────────────────────
  *
- * The owner asked for the existing sheet to stay exactly as it is — the avatar, the
+ * The existing sheet was to stay exactly as it is — the avatar, the
  * `1 message · now in Ohbox` line, the five destinations, the honest footer — so the
  * additions sit around it rather than replacing it:
  *
@@ -19,25 +19,26 @@
  *     It DEFAULTS TO THE ADDRESS. Defaulting to the domain would silently widen what every
  *     existing click does — and on a shared provider ("everyone at gmail.com") that is a
  *     mailbox-destroying gesture one habit-click away. The counts are stated on the switch so
- *     the wide option is chosen with its size visible, which is the mitigation O19-RISK asks
- *     for: consent by count, not by cap.
+ *     the wide option is chosen with its size visible, which is the mitigation that matters:
+ *     consent by count, not by cap.
  *  2. **A pre-click disclosure for the two reject destinations.** Screening a waiting sender
  *     out ALSO arms auto-unsubscribe (the screener calls `onScreenOut` after the commit, and the
  *     server wires that dependency in), so one click on a domain can send
- *     one-click unsubscribe requests to every list under it. O19-RISK: *"that must be stated
- *     in the sheet before it runs, not discovered afterwards."* It is therefore a CONFIRM and
+ *     one-click unsubscribe requests to every list under it. That has to be stated in the
+ *     sheet before it runs, not discovered afterwards. It is therefore a CONFIRM and
  *     not a toast — the same construction `RulesView` uses for revoke, and for the same
  *     reason: a sentence shown after the act is not a disclosure.
  *  3. **A way into the detail view** — every message from this address or domain and what
  *     accounts for where it sits (`sender-audit.ts`).
  *
- * ── O19c ADDS THE FOURTH, AND IT IS THE ONE THAT CHANGES THE DEFAULT ────────────────────
+ * ── THE FOURTH ADDITION, AND IT IS THE ONE THAT CHANGES THE DEFAULT ─────────────────────
  *
- * Owner: *"but also allow it to actually create the rule and apply it to ALL messages future
- * and previous, this should be the default behaviour."* Choosing a destination for a sender
- * PAST the gate now writes a rule as well as moving the mail, through `rule_create` — the verb
- * `4a3ff4f` named and could not build. The toggle is ON by default, because the default is
- * where the request lives, and OFF is the explicit non-default O19(d) asks to keep reachable.
+ * The requirement: creating a rule must also apply it to the mail ALREADY in the mailbox, not
+ * only to what arrives next, and that has to be the default. Choosing a destination for a
+ * sender PAST the gate therefore writes a rule as well as moving the mail, through
+ * `rule_create` — the verb the earlier sender work named and could not build. The toggle is ON
+ * by default, because that is where the requirement puts it, and OFF stays reachable as the
+ * explicit non-default.
  *
  * It is only offered for a sender the Screener is NOT holding. A waiting sender's rule is
  * promoted by `POST /screener/:id` inside the decision itself, so a switch there would be a
@@ -91,7 +92,7 @@ export function SenderMenu({
   const [scope, setScope] = useState<ScreeningScope>("sender");
   /** The reject destination awaiting its second click, or null. One question at a time. */
   const [confirm, setConfirm] = useState<ScreeningDest | null>(null);
-  /** O19c — ON by default. The owner's request is about the DEFAULT, not about an option. */
+  /** ON by default. The requirement is about the DEFAULT, not about offering an option. */
   const [makeRule, setMakeRule] = useState(true);
 
   useEffect(() => {
@@ -182,7 +183,7 @@ export function SenderMenu({
           : t("nowSpread", { count: subject.messages.length })}
       </div>
 
-      {/* ── THE RULE, WHICH IS NOW THE DEFAULT (O19c) ────────────────────────────────────
+      {/* ── THE RULE, WHICH IS NOW THE DEFAULT ───────────────────────────────────────────
           ABOVE the destinations, because it changes what clicking one of them does and a
           control read afterwards is not a choice. Offered only past the gate: a waiting
           sender's rule is promoted by the decide itself, so a switch there would be a control
@@ -271,8 +272,8 @@ export function SenderMenu({
 
       {/* ── THE FOOTER, WHICH NOW HAS THREE TRUE SENTENCES INSTEAD OF TWO ────────────────
           A Screener-held sender goes through the endpoint that promotes a rule. Past the gate,
-          the sentence follows the toggle — and `footNoRule` is the one O19 predicted would
-          become false. It did, the moment `rule_create` existed, so it is no longer the
+          the sentence follows the toggle — and `footNoRule` is the sentence that was predicted
+          to become false. It did, the moment `rule_create` existed, so it is no longer the
           default sentence; it is what the OPT-OUT says, and it is still exactly true there.
 
           `footWillRule` states the OUTCOME ("future mail files there too") rather than the

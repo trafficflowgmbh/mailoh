@@ -4,7 +4,7 @@
  * THE SHELL'S SYNC STRIP — everything the product has to say about a sync, said wherever you
  * are standing.
  *
- * ── P17: WHAT WAS WRONG THE FIRST TIME ──────────────────────────────────────────────────
+ * ── WHAT WAS WRONG THE FIRST TIME ───────────────────────────────────────────────────────
  *
  * "Sync failed. Retrying." existed, and it rendered in exactly one place: the Ohbox's EMPTY
  * state. So the only mailbox that could ever be told its sync was broken was one that had
@@ -13,17 +13,15 @@
  * completely healthy: the rows were there, they were just from ten minutes ago, and nothing
  * anywhere said so. Reads, Receipts and the Screener had no failure surface at all.
  *
- * It has been found three times — when P16 shipped (the ruling said "and nothing more",
- * which scoped the message to the empty pane), independently by a reviewer, and again in
- * the audit — because each time the fix was written as another branch inside a view, and a
- * view can only speak about itself.
+ * It has been found three separate times, because each time the fix was written as another
+ * branch inside a view — and a view can only speak about itself.
  *
- * ── A1: AND THE SAME WAS TRUE OF PROGRESS ───────────────────────────────────────────────
+ * ── AND THE SAME WAS TRUE OF PROGRESS ───────────────────────────────────────────────────
  *
  * The failure had a home; the FIRST IMPORT did not. `mailboxes.syncPending` — "Waiting for
  * first sync" — was one sentence for every state a first sync can be in, and it lived on a row
- * in Settings → Mailboxes, three clicks from where anybody was looking. Measured on the agent's
- * own account on 2026-08-03: thirty minutes of it while 495 messages arrived. The Ohbox's own
+ * in Settings → Mailboxes, three clicks from where anybody was looking — and a first import
+ * runs for tens of minutes, not seconds, on a mailbox of any size. The Ohbox's own
  * counter existed but stopped at `bootstrapping`, which goes false as soon as the first CLIENT
  * drain lands — seconds — so it was silent for the entire multi-minute WORKER import that
  * follows.
@@ -217,7 +215,7 @@ export function SyncBar() {
  * `prefers-reduced-motion` answer already exists at `app.css:1657`: the ring stays, the
  * rotation stops, so the affordance survives without motion. The class NAME is the only wart —
  * `mbx-` means the Settings block. It wants renaming to a shared `.spin`, which is a change to
- * `app.css`; that file was held by another agent for the whole of this slice.
+ * `app.css`, and is owed.
  *
  * `aria-hidden` on all three forms. The strip is a `role="status"` region that already
  * announces its sentence, and an indeterminate spinner has no value a screen reader could

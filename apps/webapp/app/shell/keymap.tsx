@@ -1,13 +1,13 @@
 "use client";
 
 /**
- * THE KEYBOARD REGISTRY (slice U2).
+ * THE KEYBOARD REGISTRY.
  *
  * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
  *
- * Owner, verbatim: *"basic keyboard shortcuts like read / unread etc. are not integrated
- * (an not visible in the ui to understand them)"*. Both halves were true, and they had the
- * same cause. `AppShell` owned one `document` keydown listener and every view added another
+ * Two complaints, one cause: the basic shortcuts — read, unread and the rest — were not
+ * integrated, and nothing in the interface made them discoverable. Both were true, and they
+ * had the same cause. `AppShell` owned one `document` keydown listener and every view added another
  * one of its own — six listeners by the end — so nothing could say what `c` does without
  * reading six files, and precedence was whatever order React happened to mount them in.
  * The only key map on screen was a per-view hint strip plus a hand-typed sentence in the (i)
@@ -42,7 +42,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-/* UX10 — the rules that stop key hints being shown on devices with no keys. It rides with the
+/* The rules that stop key hints being shown on devices with no keys. It rides with the
    registry rather than with any one component because the chrome it hides is spread across the
    shell, the dock and the reading overlay, and this module is the one thing that is in the
    bundle whenever any of them are. `AppShell` imports it; it never renders conditionally. */
@@ -99,7 +99,7 @@ export interface KeyBinding {
 /**
  * Registration scope, in precedence order: `overlay` beats `view` beats `global`.
  *
- * ── WHY THERE ARE THREE AND NOT TWO (slice S24) ─────────────────────────────────────────
+ * ── WHY THERE ARE THREE AND NOT TWO ──────────────────────────────────────────────────── 
  *
  * Two scopes said "the innermost VIEW wins", which is right for `c` (Compose everywhere,
  * Receipts in the Screener) and wrong for Escape. Escape's owner is not a view, it is
@@ -348,16 +348,16 @@ export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "vi
 }
 
 /**
- * THE BINDING THAT OWNS `chord` RIGHT NOW — so a BUTTON can show its key (slice O13).
+ * THE BINDING THAT OWNS `chord` RIGHT NOW — so a BUTTON can show its key.
  *
  * ── WHY THIS EXISTS ─────────────────────────────────────────────────────────────────────
  *
- * The owner, on the reading view: *"doesn't show shortcuts … my feedback already given"*.
- * Seven of the action bar's eight verbs had a live shortcut and showed none; the eighth
+ * Reported from the reading view: the action bar does not show its shortcuts. Seven of its
+ * eight verbs had a live shortcut and showed none; the eighth
  * carried `kbdHint="s"`, hand-typed at the call site, which rendered as a bare `s` in the
  * label row and read as a stray character rather than as a hint.
  *
- * A second, hand-maintained list of key hints is precisely what U2 deleted from the (i)
+ * A second, hand-maintained list of key hints is precisely what this registry deleted from the (i)
  * panel — *"a second list of the bindings [that] had already drifted from them"* — and
  * exactly what the `?` sheet is generated to avoid. So the bar reads the same registry the
  * sheet does, and a hint can no longer be wrong: change the chord and the button follows,

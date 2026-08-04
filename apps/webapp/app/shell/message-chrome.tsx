@@ -26,7 +26,7 @@ export interface MessageChrome {
   onReplyBody: (next: string) => void;
   closeReply: () => void;
   /**
-   * Send the open reply to `messageId` (slice U4b). It takes the id rather than closing over
+   * Send the open reply to `messageId`. It takes the id rather than closing over
    * `replyTo` because a confirmation can arrive long after the editor moved on, and the
    * outcome belongs to the message that was answered, not to whatever is on screen now.
    */
@@ -37,7 +37,7 @@ export interface MessageChrome {
   openSenderMenu: (messageId: string, anchor: HTMLElement | null) => void;
   /**
    * The conversation this message belongs to, oldest first — `threadOf`, wired to the live
-   * engine (slice P6b). Empty when there is no conversation; see the selector.
+   * engine. Empty when there is no conversation; see the selector.
    *
    * It arrives through the chrome rather than as a prop for the reason this whole context
    * exists: `MessagePane` is mounted in TWO places at once (the Ohbox read column and the
@@ -49,8 +49,7 @@ export interface MessageChrome {
    */
   conversationOf: (messageId: string) => EngineMessage[];
   /**
-   * THE MESSAGE'S TEXT, AND WHAT THAT TEXT IS — `bodyOf` wired to the live mirror
-   * (slice U5-BODY).
+   * THE MESSAGE'S TEXT, AND WHAT THAT TEXT IS — `bodyOf` wired to the live mirror.
    *
    * It travels with `conversationOf` and for the identical reason: `MessagePane` is mounted
    * TWICE while the reader is open, one of those mounts is three components deep inside a
@@ -61,7 +60,7 @@ export interface MessageChrome {
    * A FUNCTION, so the two mounts can hold different messages and so the answer is read at
    * render time from the current mirror. What it must NOT be is a resolved string: `state`
    * is the whole point, and a pane that received only text could not tell a fetch in flight
-   * from a completed one — which is the failure U5a shipped.
+   * from a completed one — which is the failure that shipped the first time.
    */
   bodyOf: (message: EngineMessage) => MessageBody;
   /**
@@ -79,7 +78,7 @@ export interface MessageChrome {
    */
   hydrateBody: (messageId: string, opts?: { retry?: boolean }) => void;
   /**
-   * THE FILES ON THIS MESSAGE (gap O18), or ABSENT when this client cannot open attachments.
+   * THE FILES ON THIS MESSAGE, or ABSENT when this client cannot open attachments.
    *
    * It travels here for the third time for the same reason `conversationOf` and `bodyOf` do,
    * and this one is the strongest case of the three: the pane is mounted TWICE while the
@@ -103,7 +102,7 @@ export interface MessageChrome {
    */
   attachments?: AttachmentsChrome;
   /**
-   * P2 — HOW A BLOCKED IMAGE MAY BE LOADED, or ABSENT when it may not be.
+   * HOW A BLOCKED IMAGE MAY BE LOADED, or ABSENT when it may not be.
    *
    * It travels here for the same reason `attachments` does and the case is identical: the
    * pane is mounted TWICE while the reader is open, both mounts hold the same message, and

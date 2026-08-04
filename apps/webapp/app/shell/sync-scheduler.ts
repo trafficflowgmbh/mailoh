@@ -9,11 +9,11 @@ import {
 } from "@ohmail/client-engine";
 
 /**
- * P16 — THE WAKE SIGNAL THIS APP DID NOT HAVE.
+ * THE WAKE SIGNAL THIS APP DID NOT HAVE.
  *
  * `EngineProvider` used to call `engine.start()` once and that was every drain the tab would
- * ever perform. Three failures followed from the one omission, all of them observed against
- * production: new mail never arrived without a manual reload; a single transient throw left a
+ * ever perform. Three failures followed from the one omission, all of them observed in real
+ * use: new mail never arrived without a manual reload; a single transient throw left a
  * permanently empty mailbox, because there was no second attempt; and a ~37-page bootstrap
  * spent twelve to fifteen seconds rendering "0 unread of 0", which is indistinguishable from
  * a broken account.
@@ -96,7 +96,7 @@ export const SYNC_BOOTSTRAPPING: SyncStatus = {
 };
 
 /**
- * How many consecutive failures the user hears about (P17).
+ * How many consecutive failures the user hears about.
  *
  * One is a blip — a dropped packet, a cold serverless function, a wifi handover — and the
  * loop is back inside two seconds; saying so would train people to ignore the strip. Three
@@ -110,8 +110,8 @@ export const SYNC_BOOTSTRAPPING: SyncStatus = {
  *
  * A CODED REFUSAL IS NOT SUBJECT TO IT, and used to skip it in the other direction. This said
  * "`terminal` is NOT subject to it. A refusal no retry can fix is reported on the first one",
- * and that was true of the STRONG claim: one coded 401 announced a revoked session. O10 moved
- * the strong claim behind one confirmation ({@link REFUSAL_CONFIRM_MS}) and left the WEAK one
+ * and that was true of the STRONG claim: one coded 401 announced a revoked session. The strong
+ * claim moved behind one confirmation ({@link REFUSAL_CONFIRM_MS}) and left the WEAK one
  * where the strong one was — {@link SyncStatus.refused} is published on the first refusal, so
  * the strip says "Sync failed. Retrying." immediately rather than waiting out three drains.
  * A statement our own API made about this identity is not a dropped packet, and the streak's
@@ -137,12 +137,12 @@ export const BACKOFF_BASE_MS = 1_000;
 export const BACKOFF_CAP_MS = 60_000;
 
 /**
- * How long a coded refusal must stand before the app will call it a revoked session — O10.
+ * How long a coded refusal must stand before the app will call it a revoked session.
  *
  * ── THE DEFECT ──────────────────────────────────────────────────────────────────────────
  *
- * Owner, 2026-08-04: *"Sync stopped — this session is no longer authorized"* appears and clears
- * by itself. It appeared because ONE coded 401 latched `terminal`, and it cleared because the
+ * Reported from real use: "Sync stopped — this session is no longer authorized" appears and
+ * then clears by itself. It appeared because ONE coded 401 latched `terminal`, and it cleared because the
  * next successful probe withdrew it. Everything in between was `role="alert"` telling a
  * signed-in user to sign in, on evidence that was one request old.
  *
@@ -152,8 +152,8 @@ export const BACKOFF_CAP_MS = 60_000;
  * that ask succeeds the user is never told anything about signing in; if it is refused the same
  * way, the server has re-made the claim and the app may repeat it. So the class of false alarms
  * this removes is precisely *refusals shorter than a minute* — and it must be said plainly that
- * a multi-minute alias window still reaches STOPPED. U-AUTHLATCH's wake probe is what covers
- * that one, and it already does: a hide/show clears a false latch with no reload.
+ * a multi-minute alias window still reaches STOPPED. The wake probe is what covers that one,
+ * and it already does: a hide/show clears a false latch with no reload.
  *
  * ── WHY IT IS `BACKOFF_CAP_MS` AND NOT A NUMBER OF ITS OWN ──────────────────────────────
  *
@@ -325,7 +325,7 @@ export function createSyncGate(): SyncGate {
         ...(adapter.searchServer ? { searchServer: adapter.searchServer.bind(adapter) } : {}),
 
         /*
-         * ── ATTACHMENTS (gap O18) — FORWARDED, NOT GATED, AND SPREAD ──────────────────────
+         * ── ATTACHMENTS — FORWARDED, NOT GATED, AND SPREAD ────────────────────────────────
          *
          * Three capabilities, one rule, and it is `searchServer`'s rule for the third time.
          *
@@ -446,8 +446,8 @@ export interface SyncSchedulerOptions {
  * `refusedAt` below. The live recurrence was an APP-shaped 401 on `/api/sync?since=…` that was
  * merely TRANSIENT, and no classifier can tell a transient 401 from a permanent one at the moment
  * it arrives. Only asking again can — which is now done TWICE, at two different moments and for
- * two different reasons: once before the claim is ever made ({@link REFUSAL_CONFIRM_MS}, O10), and
- * once on every wake after it has been (`lastProbeAt`, U-AUTHLATCH). The first stops a short
+ * two different reasons: once before the claim is ever made ({@link REFUSAL_CONFIRM_MS}), and
+ * once on every wake after it has been (`lastProbeAt`). The first stops a short
  * refusal from being announced at all; the second stops a long one from outliving the transient.
  */
 function isTerminalRefusal(err: unknown): boolean {
@@ -659,7 +659,7 @@ export function startSyncScheduler(
       revalidating = false;
       // …and an UNCONFIRMED refusal is withdrawn here too, or the next transient one an hour later
       // would find `refusedAt` still set, read itself as the confirmation, and latch on the first
-      // request — the O10 defect, resurrected on the second occurrence and invisible to any test
+      // request — the same defect, resurrected on the second occurrence and invisible to any test
       // that only drives one.
       refusedAt = null;
       failures = 0;
@@ -691,12 +691,12 @@ export function startSyncScheduler(
           return;
         }
         // THE FIRST ONE — believed enough to stop polling, NOT enough to tell a signed-in user
-        // that they are signed out (O10). One further ask is armed at `REFUSAL_CONFIRM_MS`; the
+        // that they are signed out. One further ask is armed at `REFUSAL_CONFIRM_MS`; the
         // published status carries `refused`, so the strip says "Sync failed. Retrying.", which is
         // true — that retry is the timer on the next line. It must NOT fall through to the
         // ordinary backoff below: at `failures === 1` that is a ~1 s retry, and a ladder of them
-        // inside the confirm window is exactly the "buys N−1 invocations" objection that
-        // `U-AUTHLATCH-BRIEF.md:59-60` used to reject confirming at all.
+        // inside the confirm window is exactly the "buys N−1 invocations" objection once used
+        // to reject confirming at all.
         refusedAt = Date.now();
         report("ohmail: the server refused this session — asking once more before saying so", err);
         arm(REFUSAL_CONFIRM_MS);

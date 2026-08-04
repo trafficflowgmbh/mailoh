@@ -1,5 +1,5 @@
 /**
- * COMPOSING A NEW MESSAGE (slice U4f) — the three fields, and the address parser.
+ * COMPOSING A NEW MESSAGE — the three fields, and the address parser.
  *
  * A reply inherits its recipient, its subject, its mailbox and its thread from the message
  * being answered. A compose has none of that, so this module owns the part of the send that
@@ -17,7 +17,7 @@ export interface ComposeFields {
   subject: string;
   body: string;
   /**
-   * THE SENDER THE USER PICKED, as a mailbox id (gap O20). `null` = they did not pick one.
+   * THE SENDER THE USER PICKED, as a mailbox id. `null` = they did not pick one.
    *
    * It is a field on the FORM rather than a derivation because a default that is re-derived on
    * every render would silently revert a deliberate choice: `drafts.mailboxId` is NOT NULL and
@@ -46,8 +46,8 @@ export const COMPOSE_DRAFT_KEY = "ohmail.ui.compose";
  * It is not an IMAP draft and it is not a `drafts` row on the server: nothing is written to
  * the account until Send is pressed, because a draft-per-keystroke is a write storm and an
  * orphan-row factory (`POST /drafts` has no delete-on-abandon path the client drives). Server
- * drafts on the mailbox are P3 and the owner has ruled they must live there; the compose
- * surface therefore says "kept in this browser" and nothing stronger.
+ * drafts on the mailbox are a later phase, and when they arrive they belong on the mailbox
+ * itself; the compose surface therefore says "kept in this browser" and nothing stronger.
  *
  * Storage can refuse — Safari private mode throws on write — and a refusal must never break
  * composing, so every access is wrapped and a failure simply means the draft lives for as
@@ -62,7 +62,8 @@ export function readComposeDraft(): ComposeFields {
       to: typeof parsed.to === "string" ? parsed.to : "",
       subject: typeof parsed.subject === "string" ? parsed.subject : "",
       body: typeof parsed.body === "string" ? parsed.body : "",
-      // Guarded field-wise, so a buffer written before O20 reads back as "no pick" and one
+      // Guarded field-wise, so a buffer written before this field existed reads back as "no
+      // pick" and one
       // written after it is still readable by a bundle that predates the field. Nothing here
       // versions the shape, and nothing needs to.
       fromMailboxId: typeof parsed.fromMailboxId === "string" && parsed.fromMailboxId.length > 0
@@ -215,8 +216,8 @@ export interface ComposePlan extends RecipientParse {
  *
  * It does not block and it does not open a confirm dialog. Blocking would be wrong — a
  * subjectless message is legitimate mail and every client sends one — and a modal
- * confirmation is the exact shape the owner objected to in Compose to begin with (*"cant even
- * esc out of it with key"*). So `noSubject` is surfaced as a factual note in the send row,
+ * confirmation is the exact shape Compose was moved away from to begin with — a dialog the
+ * keyboard could not leave. So `noSubject` is surfaced as a factual note in the send row,
  * BEFORE the press rather than as a dialog after it, which is the same warning arriving early
  * enough to be useful.
  *
@@ -225,10 +226,10 @@ export interface ComposePlan extends RecipientParse {
  *
  * ── IT IS HANDED THE ANSWER, IT DOES NOT CHOOSE ─────────────────────────────────────────
  *
- * `mailboxId` is `resolveComposeFrom(...).mailboxId` (gap O20) — the user's revalidated pick or
+ * `mailboxId` is `resolveComposeFrom(...).mailboxId` — the user's revalidated pick or
  * the derived default — resolved by the caller so that the id on the wire is the same object
  * the From line rendered. Passing `fields.fromMailboxId` straight through here would be the bug
- * this slice removes wearing a different hat: a pick stored days ago against a mailbox since
+ * this resolution removes wearing a different hat: a pick stored days ago against a mailbox since
  * disconnected would go out and collect a 409 nobody could act on.
  */
 export function composePlan(fields: ComposeFields, mailboxId: string | null): ComposePlan {
