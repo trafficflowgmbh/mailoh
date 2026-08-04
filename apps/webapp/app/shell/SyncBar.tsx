@@ -89,7 +89,9 @@ export function SyncBar() {
       return (
         // `role="alert"` and not `status`: the loop has stopped and will not restart itself,
         // so this is the one sync state that is worth interrupting a screen reader for. It is
-        // also the one that cannot repeat — `terminal` is set once and never cleared.
+        // U-AUTHLATCH: `terminal` is NO LONGER set-once. A wake now issues one bounded probe, and a
+        // drain that succeeds withdraws the claim, so this bar can appear, disappear and reappear.
+        // `role="alert"` re-announcing on a re-latch is correct: the server re-made the claim.
         <div className="sync-bar stopped" role="alert">
           <Glyph warn />
           <b>{t("stopped")}</b>

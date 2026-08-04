@@ -307,9 +307,32 @@ export interface SyncSchedulerOptions {
  *
  * Anything that is not a typed refusal — a network error, a parse failure, an unknown throw —
  * stays retryable. Terminal is a positive claim, made only when the server made it.
+ *
+ * ── U-AUTHLATCH, 2026-08-04: THAT LAST SENTENCE WAS FALSE AS WRITTEN ────────────────────
+ *
+ * `retryable === false` alone caught far more than a revoked session. `HttpAdapter.rejectionOf`
+ * defaults `retryable` to `status >= 500 || status === 429`, so **anything** else non-5xx latched:
+ * a platform 401 from deployment protection (HTML body ⇒ no envelope ⇒ `code: null`), a
+ * `DEPLOYMENT_NOT_FOUND` 404 mid-alias, any 400 from deploy skew, and a 403
+ * `enrollment_incomplete` whose own middleware comment says the client must NOT discard the
+ * session. Observed live: `ohmail.app` told a signed-in user "Sign in" while `/api/auth/session`,
+ * `/api/sync` and `/api/mailboxes` all answered 200.
+ *
+ * So the claim is now checked rather than asserted. `code !== null` is the proof the refusal came
+ * from OUR envelope and not from the platform, and 401/403 is the only pair that means "this
+ * identity cannot be served". Everything else goes back to being retryable, which is what the
+ * paragraph above always said.
+ *
+ * This narrowing is NOT sufficient on its own, and that is deliberate — see `revalidating` below.
+ * The live recurrence was an APP-shaped 401 on `/api/sync?since=…` that was merely TRANSIENT, and
+ * no classifier can tell a transient 401 from a permanent one at the moment it arrives. Only
+ * asking again can.
  */
 function isTerminalRefusal(err: unknown): boolean {
-  return err instanceof MutationRejectedError && err.retryable === false;
+  return err instanceof MutationRejectedError
+    && err.retryable === false
+    && (err.status === 401 || err.status === 403)
+    && err.code !== null;
 }
 
 /**
@@ -374,8 +397,31 @@ export function startSyncScheduler(
   let hydrated = false;
   let bootstrapping = true;
   let failures = 0;
-  /** Set once, by a refusal no retry can fix. The loop never runs again after it. */
+  /**
+   * Set by a refusal the server made about this identity. NO TIMER runs while it is true.
+   *
+   * It is no longer "set once and never cleared" — that was U-AUTHLATCH. A single transient 401
+   * bought permanent sync death for the tab's lifetime, and a reload was the only recovery, while
+   * the banner told a signed-in user to sign in. It is now cleared by a successful probe; see
+   * `revalidating`.
+   */
   let terminal = false;
+  /**
+   * A single probe drain, permitted while `terminal`, to test whether the refusal still holds.
+   *
+   * Latching stays IMMEDIATE (X6: say so rather than go quiet — a genuinely revoked user sees the
+   * banner on the first drain either way). What changes is that a wake may ask once more.
+   */
+  let revalidating = false;
+  /**
+   * When the last probe was issued. The bound for invariant #10: at most one probe per
+   * `BACKOFF_CAP_MS`, shared by BOTH wake sources, because `online` can fire repeatedly on a flaky
+   * network. Worst case for a revoked, visible, focus-flapped tab is ~60 req/hr against a healthy
+   * tab's ~450. A hidden tab issues zero (the `visible()` gate holds), and an abandoned visible tab
+   * issues zero after the first — probes fire on wake EVENTS, never on a timer. A terminal-mode
+   * timer would re-open the abandoned-tab hole this latch exists to close.
+   */
+  let lastProbeAt = 0;
 
   // No `document` at all (SSR, a non-browser host) is treated as visible: the gate exists to
   // stop hidden TABS, and something with no visibility model has none to hide.
@@ -387,7 +433,7 @@ export function startSyncScheduler(
    * `tick()` checked it once, before an `await` that can last as long as an IndexedDB open, and
    * the engine's page loop never checked it at all. Both holes are the same missing question.
    */
-  const mayRequest = (): boolean => !stopped && !terminal && visible();
+  const mayRequest = (): boolean => !stopped && (!terminal || revalidating) && visible();
 
   // The gate refuses the engine's NEXT page whenever this scheduler would refuse a new drain.
   // Claimed and never released: the predicate closes itself via `stopped`, so a torn-down
@@ -416,7 +462,8 @@ export function startSyncScheduler(
   };
 
   async function tick(): Promise<void> {
-    if (stopped || running || terminal) return;
+    if (stopped || running) return;
+    if (terminal && !revalidating) return;
     if (!visible()) {
       // Nothing armed while hidden. `visibilitychange` is what restarts the loop.
       disarm();
@@ -450,6 +497,10 @@ export function startSyncScheduler(
       }
       await engine.syncOnce();
       if (stopped) return;
+      // A drain that SUCCEEDED disproves the refusal, so the claim is withdrawn. `arm()` refuses
+      // to set a timer while `terminal`, which is why this clears it BEFORE arming.
+      terminal = false;
+      revalidating = false;
       failures = 0;
       bootstrapping = false;
       arm(pollMs);
@@ -468,6 +519,9 @@ export function startSyncScheduler(
         // so, rather than going quiet: `terminal` is what lets the shell tell the difference
         // between "your mailbox is having a bad minute" and "this tab can no longer be served".
         terminal = true;
+        // The probe asked and was refused again: stay latched, hold no timer. `role="alert"`
+        // re-announcing is correct — the claim was re-made by the server, not repeated by us.
+        revalidating = false;
         disarm();
         report("ohmail: this session can no longer sync — sign in again", err);
         return;
@@ -492,7 +546,17 @@ export function startSyncScheduler(
    * `sync-liveness.test.ts` red, and removing this one left them all green.
    */
   const wake = (): void => {
-    if (stopped || running || terminal) return;
+    if (stopped || running) return;
+    if (terminal) {
+      // U-AUTHLATCH: one bounded probe per wake. A transient refusal must not outlive the
+      // transient, and a genuine one must not buy invocations (#10) — hence the floor.
+      const at = Date.now();
+      if (at - lastProbeAt < BACKOFF_CAP_MS) return;
+      lastProbeAt = at;
+      revalidating = true;
+      void tick().finally(() => { revalidating = false; });
+      return;
+    }
     void tick();
   };
 
