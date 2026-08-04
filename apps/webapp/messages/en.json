@@ -463,7 +463,33 @@
     "toastUseDraft": "Draft moved to the editor.",
     "toastDiscard": "Draft discarded.",
     "keyLeave": "leave Compose",
-    "keySend": "Send the message"
+    "keySend": "Send the message",
+    "linkPrompt": "Link address",
+    "rte": {
+      "bar": "Formatting",
+      "bold": "Bold",
+      "italic": "Italic",
+      "strike": "Strikethrough",
+      "code": "Code",
+      "link": "Link",
+      "bullet": "Bulleted list",
+      "ordered": "Numbered list",
+      "quote": "Quote"
+    }
+  },
+  "draftReply": {
+    "verb": "Draft reply",
+    "offerTitle": "Draft a reply with AI",
+    "offerBody": "This uses 1 AI action from your plan. The draft lands in the editor — nothing is sent.",
+    "confirm": "Draft it",
+    "cancel": "Not now",
+    "running": "Drafting…",
+    "failed": "The draft could not be written.",
+    "unavailable": "Drafting needs a connected account.",
+    "replaceTitle": "You have already written something",
+    "replaceBody": "Replace what you typed with the draft, or add the draft below it?",
+    "replace": "Replace",
+    "append": "Add below"
   },
   "settings": {
     "title": "Settings",
