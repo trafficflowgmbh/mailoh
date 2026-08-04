@@ -394,5 +394,46 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         entity: { ...rule, destination: m.destination, updatedAt: iso } satisfies RuleDTO,
       }];
     }
+
+    /**
+     * ONE `rule` ROW, AND NO `message` EFFECT (gap O19c).
+     *
+     * The absent effects are the specification, exactly as they are for `rule_delete`. A rule is
+     * consulted when mail ARRIVES; nothing already filed moves because a rule was written. The
+     * surface that dispatches this composes its own `move`s for the mail it can see, from the
+     * same scope, so the mail that relocates and the rule that is written can never disagree
+     * about whose mail this is — which is the shape of the defect `4a3ff4f` found in `decide`.
+     *
+     * `provenance: "manual"` is not a guess: `RulesService.create` inserts exactly that, and an
+     * optimistic row claiming `promoted` would flip to "you made this one" under the user's eyes
+     * on the echo. `priority` is fabricated as 0 and is NOT sent — `validPriority(undefined)`
+     * answers 0 — so the two agree without the client asserting a ranking it did not choose.
+     *
+     * The id is a CLIENT uuid and the server's row arrives under its own, the same trade
+     * `screener_decide`'s promoted rule already makes. The overlay is dropped the moment the
+     * mutation resolves and the echo carries the real row, so the two never coexist for longer
+     * than one render.
+     *
+     * An empty `match` yields [] ⇒ the engine rejects locally with nothing on the wire, which is
+     * the right answer for a request the server would answer 400. It is unreachable from the
+     * sheet (a domain-less address is never offered domain scope) and is here so that it stays
+     * unreachable rather than becoming a rule matching every malformed sender.
+     */
+    case "rule_create": {
+      if (m.match === "") return [];
+      const rule: RuleDTO = {
+        id: ctx.uuid(),
+        kind: m.ruleKind,
+        match: m.match,
+        destination: m.destination,
+        priority: 0,
+        provenance: "manual",
+        enabled: true,
+        stats: { hits: 0, lastHitAt: null, demotions: 0 },
+        createdAt: iso,
+        updatedAt: iso,
+      };
+      return [{ type: "rule", id: rule.id, entity: rule }];
+    }
   }
 }

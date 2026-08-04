@@ -26,42 +26,56 @@
  * `dest`"). Stating it in the toast is the difference between a product that is narrower
  * than you hoped and one that lies to you.
  *
- * ── O19: THE SCOPE, AND THE HALF OF O19 THAT IS NOT BUILDABLE FROM HERE ──────────────────
+ * ── O19: THE SCOPE ──────────────────────────────────────────────────────────────────────
  *
  * `scope: "domain"` widens both halves of a decision together — the mail that moves, and the
- * `kind` of the rule the server promotes. It was on the wire and in the mutation vocabulary
- * from the start (`EngineMutation.screener_decide.scope`, `http-adapter.ts`'s body) and NO
- * surface had ever set it, so the whole feature was one argument away and unreachable.
+ * `kind` of the rule. It was on the wire and in the mutation vocabulary from the start
+ * (`EngineMutation.screener_decide.scope`, `http-adapter.ts`'s body) and NO surface had ever
+ * set it, so the whole feature was one argument away and unreachable.
  *
- * **What is still not reachable, and it is a hard blocker rather than a decision.** O19 asks
- * for rule creation to be the DEFAULT everywhere, including from the Ohbox — i.e. for a sender
- * whose mail has already left the gate. That cannot be composed here:
+ * ── O19c: A RULE FROM PAST THE GATE, AND IT IS NOW THE DEFAULT ───────────────────────────
  *
- *   · `screener_decide` is the only rule-creating verb in `EngineMutation`;
- *   · `mutationEffects`' derived branch returns NO effects unless the representative message
- *     is still in `ohmail/Screener` (`mutations.ts`);
- *   · `Engine.mutate` turns zero effects into `status: "rolled_back"` and **never sends the
- *     request** (`engine.ts`), so relaxing the server's own 404 changes nothing;
- *   · and this module cannot go around the engine — `app/api-client` is DENY'd from the
- *     desktop mirror this file is copied into (`scripts/publish-desktop.mjs`).
+ * Owner: *"but also allow it to actually create the rule and apply it to ALL messages future
+ * and previous, this should be the default behaviour to efficiently manage the mailbox."*
  *
- * So the honest surface is: a domain decision makes a rule where the gate can still see the
- * sender, and moves mail where it cannot. `footNoRule` therefore STAYS TRUE and stays unchanged
- * for the non-waiting case — it is not a sentence O19 made obsolete, it is one that is still
- * describing what actually happens.
+ * This used to be unbuildable and the comment here said so. It was true of the vocabulary, not
+ * of the server: `POST /rules` had been mounted the whole time with no caller, and the only
+ * rule-creating verb the engine knew was `screener_decide`, whose effects are empty for a
+ * representative outside `ohmail/Screener` — which `Engine.mutate` turns into a local rollback
+ * with **nothing sent**, so no amount of server-side relaxation could have reached it. The verb
+ * `rule_create` closes that, following `rule_delete`/`rule_update` exactly. The engine remains
+ * the only wire: `app/api-client` is DENY'd from the desktop mirror this file is copied into
+ * (`scripts/publish-desktop.mjs`), so a surface here cannot go around it.
+ *
+ * So the sheet now has THREE outcomes rather than two, and `ScreeningPlan.ruleState` names
+ * which one happened. Making the rule is the DEFAULT (`makeRule`), and the move-only path
+ * survives as the explicit opt-out, which is what O19(d) asks for.
+ *
+ * ── WHAT "APPLY TO ALL PREVIOUS" DOES AND DOES NOT COVER ────────────────────────────────
+ *
+ * The plan already moves every message the MIRROR holds from the subject, in every folder —
+ * so "previous" is covered for the mail this client has synced, and the count is on screen
+ * before the click. It is NOT covered for mail the mirror has never seen; that is a bounded
+ * server-side pass (`packages/services/src/sensitive-rescreen.ts` is the precedent, including
+ * its plan/apply split and its rule that a message the user has already acted on is not ours
+ * to move) and it is NOT shipped here. The copy therefore never says "every message".
  *
  * This module is pure: it reads the mirror and returns mutations. `SenderMenu` renders it
  * and `AppShell` dispatches them, so the mapping below is testable without a DOM.
  */
 import {
   FOLDER_OF_VIEW,
+  rulesList,
   senderKey,
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
   type Folder,
+  type MutationStatus,
+  type RuleDTO,
 } from "@ohmail/client-engine";
 import type { DecisionDestination } from "@ohmail/ui";
+import { ruleMatchesSender } from "./sender-audit";
 
 /** The five places a sender's mail can be screened to — the DecisionBar's own vocabulary. */
 export type ScreeningDest = DecisionDestination;
@@ -138,6 +152,17 @@ export interface SenderScreening {
   representativeId: string | null;
   /** The same four facts for each scope — `sender` mirrors the four fields above. */
   scopes: Record<ScreeningScope, ScreeningSubject>;
+  /**
+   * THE ENABLED RULES THE MIRROR ALREADY HOLDS FOR THIS SUBJECT (O19c).
+   *
+   * Read here rather than in the planner so the planner stays a pure function of its argument
+   * and the sheet's preview cannot compute a different answer from the dispatch. Only rules
+   * that would be THE SAME RULE the sheet is about to write — an exact `sender` match on the
+   * address, or an exact `domain` match on the domain, by `sender-audit.ts#ruleMatchesSender`,
+   * which is the client's copy of `core/src/rules.ts#matches`. Disabled rules are excluded:
+   * a paused rule sorts nothing, so it is not a reason to withhold a working one.
+   */
+  rules: RuleDTO[];
 }
 
 const DEST_OF_FOLDER = new Map<Folder, ScreeningDest | "screener">([
@@ -192,7 +217,13 @@ export function senderScreening(reader: EntityReader, messageId: string): Sender
     // With no domain there is nothing to widen to, so the domain subject IS the sender subject
     // and `SenderMenu` refuses to offer the switch. It is never a silently-empty second option.
     scopes: { sender, domain: domain === "" ? sender : subjectOf(theirs) },
+    rules: rulesList(reader).filter((r) => r.enabled && ruleMatchesSender(r, seed.from.address)),
   };
+}
+
+/** The `match` a rule at this scope carries — normalized ONCE, for the overlay and the wire. */
+export function ruleMatchOf(s: SenderScreening, scope: ScreeningScope): string {
+  return scope === "domain" ? s.domain : s.address.trim().toLowerCase();
 }
 
 /** The part after the `@`, lower-cased — the server's `domainOf`, on the client. */
@@ -217,15 +248,41 @@ function subjectOf(messages: EngineMessage[]): ScreeningSubject {
   };
 }
 
+/**
+ * WHAT THIS DID TO THE RULE FOR THIS SUBJECT (O19c). Five states, because the sheet says a
+ * different true sentence for each and a single boolean could only ever say two of them.
+ *
+ *  · `promoted`   — `POST /screener/:id` wrote it, server-side, as part of the decision.
+ *  · `created`    — `POST /rules` wrote a new one (the default from past the gate).
+ *  · `retargeted` — a rule for exactly this subject already existed, pointing somewhere else,
+ *                   and was PATCHed rather than duplicated. See the ladder in the planner.
+ *  · `already`    — one already files this subject's mail there. Nothing to write.
+ *  · `none`       — the user opted out, and the move is all that happens.
+ */
+export type ScreeningRuleState = "promoted" | "created" | "retargeted" | "already" | "none";
+
 export interface ScreeningPlan {
   /** What goes on the wire, in dispatch order. Empty means nothing to do. */
   mutations: EngineMutation[];
   /**
-   * Whether the server will remember this. Only `POST /screener/:id` promotes a rule; a
-   * composition of `move`s does not, and the copy has to say which one happened.
+   * The prefix of {@link ScreeningPlan.mutations} that writes the rule — the SAME objects, so
+   * the two cannot disagree about what was dispatched. Empty for `promoted`, `already` and
+   * `none`. The caller awaits exactly these to decide what to claim; see {@link screeningToast}.
+   */
+  ruleMutations: EngineMutation[];
+  /** Which of the five things above happened. */
+  ruleState: ScreeningRuleState;
+  /**
+   * Whether a rule will be in force for this subject afterwards — true for every state except
+   * `none`, INCLUDING `already`, because the question the copy asks is "will future mail
+   * follow?" and not "did this write a row?".
    */
   rule: boolean;
-  /** The rule's subject, when one is made — `domain` widens it to everyone at the domain. */
+  /**
+   * The subject of the rule that will be in force — `domain` widens it to everyone at the
+   * domain. Non-null whenever {@link ScreeningPlan.rule} is, `already` included, because the
+   * question it answers is whose future mail follows and not which row was written.
+   */
   ruleScope: ScreeningScope | null;
   /** Messages this will relocate. */
   moved: number;
@@ -235,7 +292,10 @@ export interface ScreeningPlan {
    * Whether committing this ALSO hands mail to auto-unsubscribe, which the sheet must say
    * before the click and not after.
    *
-   * True exactly when a rule is made AND the decision is the endpoint's `no`. `decide` calls
+   * True exactly when the DECIDE path runs AND the decision is the endpoint's `no` — never for
+   * a rule this sheet writes itself, which is the honest negative and not a convenient one:
+   * `RulesService.create` calls nothing, and the routing pass that consults rules on arrival
+   * calls nothing either. A rule created from past the gate arms NOTHING today. `decide` calls
    * `unsubscribe.onScreenOut(ctx, <the mail it just re-routed>)` after its commit on the reject
    * branch, and `apps/api-vercel/src/deps.ts` wires that dependency in, so this is live in
    * production rather than latent. A plain `move` to Screened does NOT arm it — nothing calls
@@ -246,23 +306,85 @@ export interface ScreeningPlan {
 }
 
 /**
- * The mutations that put every message from `s` into `dest`.
+ * The mutations that put every message from `s` into `dest`, and the rule that makes the next
+ * one follow.
  *
- * Order matters and is the correctness: the decide goes first so each follow-up `move`
- * computes its optimistic effect against an overlay that already contains it (the engine's
- * overlay is last-write-wins per entity), which is the same ordering `screener-state.ts`
- * documents for the Screener's own path.
+ * Order matters and is the correctness: the rule and the decide go first so each follow-up
+ * `move` computes its optimistic effect against an overlay that already contains it (the
+ * engine's overlay is last-write-wins per entity), which is the same ordering
+ * `screener-state.ts` documents for the Screener's own path.
+ *
+ * `makeRule` DEFAULTS TO TRUE — that is O19c's "this should be the default behaviour", and the
+ * default is where the owner's request actually lives; an opt-in rule would have changed
+ * nothing about managing a mailbox. `false` is the explicit non-default the sheet keeps
+ * reachable (O19d) and is also what the BULK path passes, because its confirm copy promises no
+ * rule and forty senders is not a place to start making promises silently.
  */
 export function planScreeningChange(
   s: SenderScreening,
   dest: ScreeningDest,
   scope: ScreeningScope = "sender",
+  makeRule = true,
 ): ScreeningPlan {
   const wanted = FOLDER_OF_VIEW[dest];
   const subject = s.scopes[scope];
   const mutations: EngineMutation[] = [];
   const movedByDecide = new Set<string>();
-  const rule = subject.waiting && subject.representativeId != null;
+  const promoted = subject.waiting && subject.representativeId != null;
+
+  /**
+   * ── THE RULE LADDER, AND IT RUNS BEFORE THE MOVES ───────────────────────────────────────
+   *
+   * The rule mutation is dispatched FIRST for the same reason the decide is: the durable half
+   * of the intent should land before the mail is shuffled, so a sequence interrupted halfway
+   * leaves a rule with mail still on its way rather than moved mail with nothing remembering
+   * why. `AppShell` fires them in parallel, so this is an ordering of intent, not a barrier.
+   *
+   *  1. A WAITING subject makes no `rule_create` at all — `decide` promotes one server-side and
+   *     a second row here would be a duplicate the user never asked for.
+   *  2. A rule for exactly this subject already pointing at the destination ⇒ nothing to write.
+   *     Without this, a habit-click mints a fresh identical rule every time.
+   *  3. One pointing SOMEWHERE ELSE is RETARGETED, never duplicated — and every one of them is,
+   *     not just the first. Two `manual` rules with the same match, priority, effect and kind
+   *     fall through `core/src/rules.ts#compareRules` to an arbitrary ID TIE-BREAK, so leaving
+   *     the old one standing would make "future mail files there too" a coin toss. Retargeting
+   *     all of them makes the sentence true whichever wins.
+   *  4. Otherwise, write one.
+   *
+   * A covering rule of the OTHER kind is deliberately not consulted: a `domain` rule is not
+   * retargeted by a click on one address, because a new `sender` rule outranks it anyway
+   * (`KIND_RANK`: sender 0, domain 1) and rewriting the domain's destination would silently
+   * re-file everyone else at that domain. `s.rules` is already filtered to exact matches.
+   */
+  const covering = makeRule && !promoted ? s.rules.filter((r) => r.kind === scope) : [];
+  const ruleMutations: EngineMutation[] = [];
+  let ruleState: ScreeningRuleState = "none";
+
+  if (promoted) {
+    ruleState = "promoted";
+  } else if (makeRule) {
+    if (covering.some((r) => r.destination === wanted)) {
+      ruleState = "already";
+    } else if (covering.length > 0) {
+      ruleState = "retargeted";
+      for (const r of covering) ruleMutations.push({ kind: "rule_update", ruleId: r.id, destination: wanted });
+    } else {
+      ruleState = "created";
+      ruleMutations.push({
+        kind: "rule_create",
+        // THE RULE'S SUBJECT AND THE MAIL THAT MOVES COME FROM THE SAME `scope`, and that is
+        // the whole guard. `4a3ff4f` found `decide` computing the mail to move BY ADDRESS
+        // regardless of scope, so a domain rule moved one sender's mail and stranded the rest
+        // behind a gate whose own rule already let them through. Here `match` is derived from
+        // `scope` and the moves below are taken from `subject` — which IS `s.scopes[scope]` —
+        // so the two cannot be given different subjects without changing both lines.
+        ruleKind: scope,
+        match: ruleMatchOf(s, scope),
+        destination: wanted,
+      });
+    }
+  }
+  mutations.push(...ruleMutations);
 
   if (subject.waiting && subject.representativeId) {
     const decision = DECISION_OF_DEST[dest];
@@ -282,8 +404,8 @@ export function planScreeningChange(
     //
     // The tempting alternative is to emit `move`s for the domain's OTHER held senders so the
     // overlay paints them at once, since `mutationEffects` only overlays ONE address's held
-    // mail whatever `scope` says. It is wrong twice. `AppShell` fires mutations in parallel
-    // (`void engine.mutate(m)`), so a `move` that lands FIRST takes the message out of
+    // mail whatever `scope` says. It is wrong twice. The moves are fired in parallel and not
+    // awaited ({@link dispatchScreeningChange}), so a `move` that lands FIRST takes it out of
     // `ohmail/Screener` and `decide`'s held-only lookup then cannot see it — the message is
     // filed with no rule and no consent record, which is the fork this composition exists to
     // avoid. And a message that reaches the destination through `move` instead of `decide` has
@@ -303,10 +425,99 @@ export function planScreeningChange(
 
   return {
     mutations,
-    rule,
-    ruleScope: rule ? scope : null,
+    ruleMutations,
+    ruleState,
+    rule: ruleState !== "none",
+    ruleScope: ruleState !== "none" ? scope : null,
     moved: toMove.length + movedByDecide.size,
     senders: subject.senders,
-    unsubscribes: rule && DECISION_OF_DEST[dest] === "no",
+    unsubscribes: promoted && DECISION_OF_DEST[dest] === "no",
   };
+}
+
+/**
+ * WHICH SENTENCE THE SHELL IS ALLOWED TO SAY, GIVEN WHAT THE SERVER ACTUALLY ANSWERED (O19c).
+ *
+ * It lives here and not in `AppShell` for the reason `RulesView` already gives: a shell that
+ * has to remember to branch on three statuses is a shell that can ship two of them. O16's first
+ * cut fired its toast on click and printed *"Rule revoked. Your mail hasn't moved."* over a 403
+ * on a live account — the fixtures adapter never refuses, so every test was green. This slice
+ * makes a CLAIM ABOUT FUTURE MAIL, which is exactly the kind of claim a refusal falsifies.
+ *
+ * `queued` is not folded into success: the overlay stands, so the rule is correctly on screen,
+ * but the server has not been told and "future mail files there too" is a claim about the
+ * server. The MOVES are not awaited and are not re-reported — they are `move`s, the same verb
+ * every list already uses, and each one rolls its own row back on screen if it fails.
+ *
+ * Every key takes the same three placeholders (`sender`, `place`, `count`), which is what lets
+ * the caller interpolate one of them without a five-armed branch of its own.
+ */
+export type ScreeningToastKey =
+  | "toastRuled" | "toastRetargeted" | "toastAlreadyRuled"
+  | "toastRuleQueued" | "toastRuleFailed" | "toastMoved";
+
+export function screeningToast(
+  plan: ScreeningPlan,
+  ruleStatus: MutationStatus | null,
+): ScreeningToastKey {
+  switch (plan.ruleState) {
+    case "none":
+      return "toastMoved";
+    case "already":
+      return "toastAlreadyRuled";
+    /**
+     * THE DECIDE PATH IS NOT AWAITED AND KEEPS THE SENTENCE IT SHIPPED WITH. Its rule is
+     * written by the server inside the decision's own transaction — there is no separate
+     * request whose outcome could differ from the decision's — and `4a3ff4f` verified that
+     * path. Widening the await to it would change a shipped behaviour this slice was not
+     * asked to touch.
+     */
+    case "promoted":
+      return "toastRuled";
+    default:
+      if (ruleStatus === "rolled_back") return "toastRuleFailed";
+      if (ruleStatus === "queued") return "toastRuleQueued";
+      return plan.ruleState === "retargeted" ? "toastRetargeted" : "toastRuled";
+  }
+}
+
+/**
+ * The WORST of several outcomes, because a plan can retarget more than one rule and a claim is
+ * only as true as its weakest half. Ordered rolled_back < queued < confirmed: one refusal makes
+ * the whole sentence false, and one queued mutation makes it not-yet-true.
+ */
+export function worstStatus(results: readonly { status: MutationStatus }[]): MutationStatus | null {
+  if (results.length === 0) return null;
+  if (results.some((r) => r.status === "rolled_back")) return "rolled_back";
+  if (results.some((r) => r.status === "queued")) return "queued";
+  return "confirmed";
+}
+
+/**
+ * DISPATCH THE PLAN AND ANSWER WITH THE SENTENCE THAT IS TRUE (O19c).
+ *
+ * This lives here rather than inline in `AppShell` for one reason: a shell is not testable and
+ * this repository's recurring defect is precisely a correct module under an untested wiring.
+ * `tag_assign` had a finished picker over an adapter that threw; O16 had a three-outcome
+ * vocabulary under a toast that fired on click. Both were green. So the awaiting, the
+ * fire-and-forget and the choice of sentence are ONE function with a `mutate` seam, and
+ * `sender-screening.test.ts` drives it with an adapter that refuses.
+ *
+ * ── EXACTLY ONCE, AND ONLY THE RULE IS AWAITED ──────────────────────────────────────────
+ *
+ * `ruleMutations` is an identity-shared prefix of `mutations`, so the `includes` filter is what
+ * keeps the rule from being dispatched twice — once awaited, once not, under two different
+ * Idempotency-Keys, which on a route that does not honour the key means TWO rules. The moves
+ * are deliberately not awaited: they are `move`s, the verb every list already uses, and each
+ * one rolls its own row back on screen without a sentence needing to mention it.
+ */
+export async function dispatchScreeningChange(
+  plan: ScreeningPlan,
+  mutate: (m: EngineMutation) => Promise<{ status: MutationStatus }>,
+): Promise<ScreeningToastKey> {
+  const rules = plan.ruleMutations.map((m) => mutate(m));
+  for (const m of plan.mutations) {
+    if (!plan.ruleMutations.includes(m)) void mutate(m);
+  }
+  return screeningToast(plan, worstStatus(await Promise.all(rules)));
 }

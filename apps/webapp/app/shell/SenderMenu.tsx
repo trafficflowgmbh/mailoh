@@ -30,6 +30,25 @@
  *     reason: a sentence shown after the act is not a disclosure.
  *  3. **A way into the detail view** — every message from this address or domain and what
  *     accounts for where it sits (`sender-audit.ts`).
+ *
+ * ── O19c ADDS THE FOURTH, AND IT IS THE ONE THAT CHANGES THE DEFAULT ────────────────────
+ *
+ * Owner: *"but also allow it to actually create the rule and apply it to ALL messages future
+ * and previous, this should be the default behaviour."* Choosing a destination for a sender
+ * PAST the gate now writes a rule as well as moving the mail, through `rule_create` — the verb
+ * `4a3ff4f` named and could not build. The toggle is ON by default, because the default is
+ * where the request lives, and OFF is the explicit non-default O19(d) asks to keep reachable.
+ *
+ * It is only offered for a sender the Screener is NOT holding. A waiting sender's rule is
+ * promoted by `POST /screener/:id` inside the decision itself, so a switch there would be a
+ * control that cannot change the outcome.
+ *
+ * **It does NOT carry the unsubscribe disclosure, and that is checked rather than assumed.**
+ * `unsubscribe.onScreenOut` has exactly one production caller — `screener-service.ts`, on
+ * `decide`'s reject branch — `RulesService.create` calls nothing, the routing pass that
+ * consults rules on arrival calls nothing, and `sweepScreenedOut` still has no production
+ * caller. A rule written from past the gate arms NOTHING today, so warning here would train
+ * people to click through the confirm above, which is real.
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -62,7 +81,7 @@ export function SenderMenu({
 }: {
   state: SenderMenuState;
   sender: SenderScreening;
-  onChoose: (dest: ScreeningDest, scope: ScreeningScope) => void;
+  onChoose: (dest: ScreeningDest, scope: ScreeningScope, makeRule: boolean) => void;
   onOpenDetail: (scope: ScreeningScope) => void;
   onClose: () => void;
 }) {
@@ -71,6 +90,8 @@ export function SenderMenu({
   const [scope, setScope] = useState<ScreeningScope>("sender");
   /** The reject destination awaiting its second click, or null. One question at a time. */
   const [confirm, setConfirm] = useState<ScreeningDest | null>(null);
+  /** O19c — ON by default. The owner's request is about the DEFAULT, not about an option. */
+  const [makeRule, setMakeRule] = useState(true);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -95,16 +116,16 @@ export function SenderMenu({
    * here for the preview and there for the dispatch is one function evaluated twice, not two
    * implementations that agree today.
    */
-  const preview = confirm ? planScreeningChange(sender, confirm, scope) : null;
+  const preview = confirm ? planScreeningChange(sender, confirm, scope, makeRule) : null;
 
   const commit = (dest: ScreeningDest) => {
     // The disclosure is owed exactly when the wire will arm auto-unsubscribe, and
     // `ScreeningPlan.unsubscribes` is the one place that condition is decided.
-    if (planScreeningChange(sender, dest, scope).unsubscribes) {
+    if (planScreeningChange(sender, dest, scope, makeRule).unsubscribes) {
       setConfirm(dest);
       return;
     }
-    onChoose(dest, scope);
+    onChoose(dest, scope, makeRule);
   };
 
   return (
@@ -160,6 +181,31 @@ export function SenderMenu({
           : t("nowSpread", { count: subject.messages.length })}
       </div>
 
+      {/* ── THE RULE, WHICH IS NOW THE DEFAULT (O19c) ────────────────────────────────────
+          ABOVE the destinations, because it changes what clicking one of them does and a
+          control read afterwards is not a choice. Offered only past the gate: a waiting
+          sender's rule is promoted by the decide itself, so a switch there would be a control
+          that cannot change the outcome.
+
+          It reuses `.sm-scope`'s styling because `sender-sheet.css` is not this slice's to
+          restyle, and carries `sm-rule` so a test can name it without depending on order. The
+          scope switch's own test now selects it by `role="radiogroup"` rather than by that
+          class, which is what this file's tests were supposed to do in the first place. */}
+      {!subject.waiting ? (
+        <div className="sm-scope">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={makeRule}
+            aria-label={t("ruleToggleAria")}
+            className={makeRule ? "sm-rule on" : "sm-rule"}
+            onClick={() => setMakeRule((on) => !on)}
+          >
+            {makeRule ? `✓ ${t("ruleToggle")}` : t("ruleToggle")}
+          </button>
+        </div>
+      ) : null}
+
       {/* ── THE CONFIRM, WHICH CARRIES THE DISCLOSURE ──────────────────────────────────────
           Not an "are you sure?" — the user is sure. It is the one moment at which "this will
           also ask these senders to stop mailing you" can be READ, before it is true. */}
@@ -176,7 +222,7 @@ export function SenderMenu({
           </p>
           <p className="sm-confirm-fine">{t("unsubFine")}</p>
           <span className="sm-confirm-row">
-            <button type="button" className="go" onClick={() => { setConfirm(null); onChoose(confirm, scope); }}>
+            <button type="button" className="go" onClick={() => { setConfirm(null); onChoose(confirm, scope, makeRule); }}>
               {t("unsubCommit")}
             </button>
             <button type="button" onClick={() => setConfirm(null)}>{t("cancel")}</button>
@@ -208,21 +254,27 @@ export function SenderMenu({
         {t("auditOpen", { count: subject.messages.length })}
       </button>
 
-      {/* The honest half. A Screener-held sender goes through the endpoint that promotes a
-          rule; everyone else gets moves, and moves do not remember anything.
+      {/* ── THE FOOTER, WHICH NOW HAS THREE TRUE SENTENCES INSTEAD OF TWO ────────────────
+          A Screener-held sender goes through the endpoint that promotes a rule. Past the gate,
+          the sentence follows the toggle — and `footNoRule` is the one O19 predicted would
+          become false. It did, the moment `rule_create` existed, so it is no longer the
+          default sentence; it is what the OPT-OUT says, and it is still exactly true there.
 
-          `footNoRule` IS UNCHANGED AND STILL TRUE. O19 expected this sentence to become false,
-          and for the non-waiting case it did not: rule creation for a sender whose mail has
-          left the gate is not reachable from this shell at all — `screener_decide` is the only
-          rule-creating verb in the engine's vocabulary and `mutationEffects` produces no
-          effects for a representative outside `ohmail/Screener`, which `Engine.mutate` turns
-          into a local rollback with no request sent. See `sender-screening.ts`. */}
+          `footWillRule` states the OUTCOME ("future mail files there too") rather than the
+          mechanism ("this makes a rule"), because the footer cannot know which destination is
+          about to be clicked: for a destination a rule already covers, nothing is written and
+          only the outcome sentence stays true. The toast, which does know, names the
+          difference — `screeningToast` in `sender-screening.ts`. */}
       <div className="sm-foot">
         {subject.waiting
           ? scope === "domain"
             ? t("footRuleDomain", { domain: sender.domain })
             : t("footRule", { sender: sender.address })
-          : t("footNoRule")}
+          : makeRule
+            ? scope === "domain"
+              ? t("footWillRuleDomain", { domain: sender.domain })
+              : t("footWillRule", { sender: sender.address })
+            : t("footNoRule")}
       </div>
     </div>
   );

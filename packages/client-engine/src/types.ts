@@ -649,7 +649,55 @@ export type EngineMutation =
    * one sender's decision into a whole domain's without saying so. Both are refused here
    * rather than offered thinly.
    */
-  | { kind: "rule_update"; ruleId: string; destination: Folder };
+  | { kind: "rule_update"; ruleId: string; destination: Folder }
+  /**
+   * MAKE A RULE FROM PAST THE GATE (gap O19c) — the verb that did not exist.
+   *
+   * Owner: *"but also allow it to actually create the rule and apply it to ALL messages future
+   * and previous, this should be the default behaviour to efficiently manage the mailbox."*
+   *
+   * ── WHY A NEW VERB, RATHER THAN RELAXING SOMETHING ──────────────────────────────────────
+   *
+   * `screener_decide` was the only rule-creating verb in this vocabulary, and it makes a rule
+   * only for a sender the Screener is still holding: `mutationEffects`' derived branch returns
+   * NO effects unless the representative message is in `ohmail/Screener`, and `Engine.mutate`
+   * turns zero effects into `rolled_back` **without sending the request**. So the Ohbox case —
+   * a sender whose mail is already past the gate, which is the case the owner is asking about —
+   * could not be made to reach the server by loosening the server. `4a3ff4f` shipped the rest of
+   * O19 and named this seam rather than faking it. `POST /rules` has been mounted the whole
+   * time; this is the caller it never had.
+   *
+   * ── IT MOVES NO MAIL, AND THAT IS THE POINT OF THE OTHER HALF ───────────────────────────
+   *
+   * Same doctrine as `rule_delete` and `rule_update`: `RulesService.create` writes the `rules`
+   * row and one `rule` change, and the routing pass consults rules when mail ARRIVES
+   * (`packages/core/src/rules.ts`), never retroactively. The mail that is already filed is moved
+   * by the `move` mutations the surface composes ALONGSIDE this one, from the same scope — never
+   * by an effect here, which would paint a re-sort the server is not going to perform.
+   *
+   * ── `ruleKind`, NOT `kind` ──────────────────────────────────────────────────────────────
+   *
+   * `kind` is the discriminant of this union, so the rules row's own kind needs another name.
+   * `header` is deliberately absent: a header rule matches on something that is not a principal,
+   * and no surface can compose one from a message the user clicked.
+   */
+  | {
+      kind: "rule_create";
+      /** The rules row's `kind`. `domain` widens it to everyone after the `@`. */
+      ruleKind: "sender" | "domain";
+      /**
+       * The address or the domain, ALREADY NORMALIZED by the caller (trimmed, lower-cased).
+       *
+       * Normalized once at the call site rather than here, so the optimistic row and the wire
+       * body are literally the same string — the server stores `match` verbatim
+       * (`RulesService.validMatch` does not fold case) and echoes it back, so a client that
+       * lower-cased in one place and not the other would show a row that changes under the
+       * cursor on the echo. Empty yields no effects: the server answers 400, and an empty
+       * `domain` match would be compared against the empty domain of every malformed address.
+       */
+      match: string;
+      destination: Folder;
+    };
 
 // ── errors ─────────────────────────────────────────────────────────────────
 
