@@ -126,6 +126,15 @@ public extension AppState {
     var currentWaiting: WaitingSender? {
         screenerSelection(.waiting).flatMap { id in waiting.first { $0.id == id } }
     }
+
+    /// Whether anything in the screener has a suggestion at all.
+    ///
+    /// The condition on every control that acts on suggestions in bulk — "apply all", and the `y`
+    /// hint that advertises accepting one. A tier with no classifier answers false for a full
+    /// screener, and the controls are not offered rather than being offered and doing nothing.
+    /// Offering them would be the worse half of the same defect: a button that files real mail is
+    /// read as a button that knows where the mail goes.
+    var hasSuggestions: Bool { waiting.contains { $0.ai != nil } }
     var currentScreened: ScreenedSender? {
         screenerSelection(.screened).flatMap { id in screened.first { $0.id == id } }
     }

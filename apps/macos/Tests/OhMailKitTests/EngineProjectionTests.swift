@@ -142,6 +142,54 @@ final class EngineProjectionTests: XCTestCase {
         XCTAssertTrue(index.unplacedIDs.isEmpty)
     }
 
+    /// **A TIER WITH NO CLASSIFIER OFFERS NO SUGGESTION, AND NO CONTROL ACTS AS IF IT DID.**
+    ///
+    /// The local engine calls no model: `GET /screener` answers `aiSuggestion: null` and the delta
+    /// feed carries no routing decision. `WaitingSender.ai` used to be non-optional, so this
+    /// projection had to invent a value to satisfy the type — and two controls then read that value
+    /// as a decision somebody had made. The row drew a confidence chip for it, and "apply all
+    /// suggestions" filed real mail to its destination.
+    ///
+    /// Both halves are pinned here, and they are separate failures. The first is about what the
+    /// projection produces. The second is about what the app does with it, asserted at the state
+    /// layer rather than in the view, because a keyboard shortcut, a menu item and a future caller
+    /// all reach `applyAllSuggestions()` without passing through the control that is hidden.
+    func testTheLocalTierProjectsNoSuggestionAndTheBulkControlMovesNoMail() throws {
+        let (world, _) = try mirror("sync-first-contact")
+            .world(bodies: [:], identity: EngineIdentity(address: "reader@corpus.test"), now: Self.now)
+
+        XCTAssertFalse(world.waiting.isEmpty,
+                       "the corpus produced no waiting senders, so this test pins nothing")
+        for w in world.waiting {
+            XCTAssertNil(w.ai, "\(w.addr) carries a suggestion, and nothing in this tier computed one")
+        }
+
+        let state = AppState(source: MailSourceTests.StubSource(world: world))
+        XCTAssertFalse(state.hasSuggestions,
+                       "the screener reports suggestions to apply when none was computed")
+
+        let before = state.waiting.map(\.id)
+        XCTAssertTrue(state.applyAllSuggestions().isEmpty,
+                      "mail was filed on a suggestion nobody made")
+        XCTAssertEqual(state.waiting.map(\.id), before,
+                       "waiting senders were decided without a decision")
+    }
+
+    /// The counterfactual, so the assertion above cannot pass by the control being dead everywhere.
+    /// Given a world that DOES carry suggestions, the same state offers them and applies them.
+    func testASuggestionThatExistsIsStillOfferedAndApplied() {
+        var world = MailWorld()
+        world.waiting = [WaitingSender(
+            id: "m1", from: "Studio", addr: "studio@pottery.test", initial: "S", time: "10:02",
+            ai: AISuggestion(dest: .reads, conf: "0.90", why: "newsletter shape"),
+            held: HeldMailbag(HeldMail(id: "m1", subj: "Kiln day", time: "10:02",
+                                       content: .plain(body: "b", preview: nil))))]
+
+        let state = AppState(source: MailSourceTests.StubSource(world: world))
+        XCTAssertTrue(state.hasSuggestions, "a real suggestion is not being offered")
+        XCTAssertEqual(state.applyAllSuggestions().count, 1, "a real suggestion was not applied")
+    }
+
     /// The mark-seen the journey performed is visible in the very next drain — from the engine's
     /// bytes, not from a local edit.
     func testTheRecordedMarkSeenIsVisibleInTheNextDrain() throws {

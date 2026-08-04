@@ -361,6 +361,9 @@ public struct HeldMailbag: Sendable {
     }
 }
 
+/// A classifier's answer about where a sender's mail belongs: the destination, the confidence it
+/// carries, and the reason in the classifier's own words. Every field comes from one model call —
+/// there is no arrangement in which some of them are known and the rest are not.
 public struct AISuggestion: Sendable {
     public var dest: Destination
     public var conf: String   // "0.92"
@@ -378,10 +381,27 @@ public struct WaitingSender: Identifiable, Sendable {
     public var time: String
     public var scope: Scope
     public var dull: Bool
-    public var ai: AISuggestion
+    /// **Optional because a suggestion is a thing that either was computed or was not.**
+    ///
+    /// Not every tier has a classifier. A local install runs the mail engine against the user's own
+    /// server and calls no model, so `GET /screener` answers `aiSuggestion: null` and the delta feed
+    /// carries no routing decision — there is no destination, no confidence and no rationale to
+    /// state about that sender.
+    ///
+    /// This used to be non-optional, and the cost was not theoretical. A projection with nothing to
+    /// put here had to invent a value to satisfy the type, so every waiting sender arrived carrying
+    /// a destination nothing had chosen; the row then drew a confidence chip for it and "apply all
+    /// suggestions" filed real mail to it. A control that acts on a fact nobody computed is worse
+    /// than a missing feature, and the type is what makes the difference visible: `nil` cannot be
+    /// rendered as a number or applied to a mailbox by accident, because every reader has to say
+    /// what it does without one.
+    ///
+    /// Deliberately without a default. A construction site that has no suggestion must write `nil`
+    /// and mean it, rather than reach the same state by omission.
+    public var ai: AISuggestion?
     public var held: HeldMailbag
     public init(id: String, from: String, addr: String, initial: String, time: String,
-                scope: Scope = .sender, dull: Bool = false, ai: AISuggestion, held: HeldMailbag) {
+                scope: Scope = .sender, dull: Bool = false, ai: AISuggestion?, held: HeldMailbag) {
         self.id = id; self.from = from; self.addr = addr; self.initial = initial; self.time = time
         self.scope = scope; self.dull = dull; self.ai = ai; self.held = held
     }

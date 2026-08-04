@@ -1,0 +1,126 @@
+/* ───────────────────────────────────────────────────────────────────────────────────────
+   O11b — the html mail surface. Owns the CHROME around a message, never the message.
+
+   The rule that shapes every value here: the sender's document lives in an <iframe>, so
+   nothing in this file can style it and nothing in it can style this file. What is left for
+   us is the sheet the letter sits on, the consent bar above it, and the two states.
+
+   `.msg-body` (packages/ui/src/composites/message.css) still wraps the whole thing and still
+   carries the plain-text path's type scale; `white-space:pre-line` there is why `.mb` resets
+   it — an html mail is not preformatted, and inheriting `pre-line` puts a blank line between
+   every block the sanitizer produced.
+   ─────────────────────────────────────────────────────────────────────────────────────── */
+
+.mb {
+  white-space: normal;
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* The whole point, restated as a rule: this column may never be wider than its parent,
+     whatever the mail contains. A 600px marketing table in a 320px split column scrolls
+     INSIDE the sheet below; the app never grows a horizontal scrollbar. */
+  min-width: 0;
+}
+
+/* ── the consent bar ──────────────────────────────────────────────────────────────────
+   Quiet on purpose. It reports a decision that has ALREADY been taken in the reader's
+   favour — nothing was fetched — so it is not a warning and must not be dressed as one.
+   Sits above the sheet rather than floating over it: a bar that overlaps the first line of
+   a message is a bar that hides the mail to talk about the mail. */
+.mb-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--tint);
+  box-shadow: inset 0 0 0 1px var(--hair-soft);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink2);
+}
+
+.mb-bar-icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--ink3);
+}
+
+.mb-bar-text { min-width: 0; flex: 1 1 auto; }
+
+/* The tracker sentence, when there is one. Louder than the rest of the bar and quieter than
+   an error: something tried, and it did not get through. */
+.mb-bar-hit { color: var(--accent-ink); }
+
+.mb-bar-btn {
+  flex: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 11px;
+  border-radius: 99px;
+  color: var(--ink);
+  background: var(--panel);
+  box-shadow: var(--lift-0);
+  transition: transform 0.15s var(--swift), box-shadow 0.2s var(--swift);
+}
+.mb-bar-btn:hover { transform: translateY(-1px); box-shadow: var(--lift-2); }
+.mb-bar-btn:disabled { cursor: default; opacity: 0.55; transform: none; box-shadow: var(--lift-0); }
+
+/* ── the sheet ────────────────────────────────────────────────────────────────────────
+   A letter on the desk. The frame is always a LIGHT sheet, in both themes, and that is a
+   decision rather than an oversight: a sender's html assumes a light background — half of
+   bulk mail sets `color:#333` and no background at all — so re-tinting the surface under it
+   produces dark text on dark, message by message, with no way for us to know which. Every
+   mainstream web client renders mail on white for the same reason. What IS themed is
+   everything this file owns: the bar, the border, the shadow the sheet casts. */
+.mb-sheet {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: var(--lift-0);
+  /* In dark mode the white sheet needs its own edge, or it reads as a hole in the panel. */
+  outline: 1px solid var(--hair-soft);
+  outline-offset: -1px;
+  max-width: 100%;
+}
+
+.mb-frame {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  border: 0;
+  /* Replaced by the measured content height as soon as the frame loads. The floor is what a
+     reader sees for the fraction of a second before that, and while a frame that failed to
+     measure stays visible rather than collapsing to nothing. */
+  min-height: 120px;
+  background: #ffffff;
+  color-scheme: light;
+}
+
+/* ── the states this surface owns ─────────────────────────────────────────────────────── */
+
+/* Said when the sanitizer is not available (no DOM — a server render that reached here) and
+   the text alternative is being shown instead. Matches `.msg-body-state` in the UI package
+   deliberately: the product speaking about the body, never part of it. */
+.mb-note {
+  font-size: 12px;
+  color: var(--ink3);
+  margin: 0;
+  max-width: 60ch;
+}
+
+/* ── narrow ───────────────────────────────────────────────────────────────────────────
+   390px phone and the `minmax(320px,400px)` split column are the same problem, and the
+   column is the narrower of the two. Nothing changes except the bar, which stops trying to
+   sit on one line before its button wraps under a clipped sentence. */
+@media (max-width: 430px) {
+  .mb { gap: 10px; }
+  .mb-bar { padding: 8px 10px; font-size: 12px; }
+  .mb-sheet { border-radius: 10px; }
+}

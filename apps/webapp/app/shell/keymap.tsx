@@ -337,8 +337,8 @@ export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "vi
   const latest = useRef(bindings);
   latest.current = bindings;
   const shape = bindings
-    .map((b) => `${b.chord} ${b.group} ${b.label} ${b.disabled ? 1 : 0} ${b.inInput ? 1 : 0}`)
-    .join("");
+    .map((b) => `${b.chord}${b.group}${b.label}${b.disabled ? 1 : 0}${b.inInput ? 1 : 0}`)
+    .join("");
 
   useEffect(
     () => register({ scope, get: () => latest.current }),

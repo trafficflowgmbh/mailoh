@@ -363,9 +363,9 @@ final class OhMailKitTests: XCTestCase {
 
     func testAIPreselectDestinations() {
         let s = AppState()
-        XCTAssertEqual(s.waiting.first { $0.id == "lena" }?.ai.dest, .ohbox)
-        XCTAssertEqual(s.waiting.first { $0.id == "paperbird" }?.ai.dest, .reads)
-        XCTAssertEqual(s.waiting.first { $0.id == "jackpot" }?.ai.dest, .screened)
+        XCTAssertEqual(s.waiting.first { $0.id == "lena" }?.ai?.dest, .ohbox)
+        XCTAssertEqual(s.waiting.first { $0.id == "paperbird" }?.ai?.dest, .reads)
+        XCTAssertEqual(s.waiting.first { $0.id == "jackpot" }?.ai?.dest, .screened)
     }
 
     func testApplyAllClearsWaiting() {
@@ -671,7 +671,7 @@ final class OhMailKitTests: XCTestCase {
         out += s.readsBodies.values
         out += s.receiptsBodies.values
         for w in s.waiting {
-            out += [w.from, w.addr, w.ai.why]
+            out += [w.from, w.addr, w.ai?.why ?? ""]
             for h in w.held.all { out += [h.subj, h.body ?? "", h.trackers ?? ""] }
         }
         for x in s.screened {

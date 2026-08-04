@@ -46,7 +46,11 @@ public struct ScreenerView: View {
 
             if seg == .waiting && !s.waiting.isEmpty {
                 HStack(spacing: 7) {
-                    PillButton(Copy.applyAll, key: "a", compact: true) { s.applyAllSuggestions() }
+                    // Offered only when there are suggestions to apply. Without a classifier this
+                    // control would file every waiting sender's mail on a destination nothing chose.
+                    if s.hasSuggestions {
+                        PillButton(Copy.applyAll, key: "a", compact: true) { s.applyAllSuggestions() }
+                    }
                     PillButton(Copy.markAllSpam, key: "s", kind: .ghost, compact: true) { s.markAllSpam() }
                 }
             }
@@ -72,7 +76,12 @@ public struct ScreenerView: View {
                     SenderRow(rowID: w.id, initial: w.initial, who: w.from, addr: w.addr, time: w.time,
                               subject: w.held.newest.subj, dull: w.dull, selected: w.id == sel,
                               chips: {
-                                  Badge("→ \(w.ai.dest.done) \(w.ai.conf)", kind: .ai, numeric: true)
+                                  // Only when something computed one. A tier with no classifier has
+                                  // no destination and no confidence to put in this chip, and a chip
+                                  // is read as a statement about the sender's mail.
+                                  if let ai = w.ai {
+                                      Badge("→ \(ai.dest.done) \(ai.conf)", kind: .ai, numeric: true)
+                                  }
                                   if w.held.count > 1 { Badge("\(w.held.count) held", numeric: true) }
                               }) { select(.waiting, w.id) }
                 }
@@ -113,7 +122,8 @@ public struct ScreenerView: View {
     @ViewBuilder private var hints: some View {
         if seg == .waiting {
             Hint(["j", "k"], "move")
-            Hint(["y"], "accept suggestion")
+            // Advertised only where there is something to accept — see `hasSuggestions`.
+            if s.hasSuggestions { Hint(["y"], "accept suggestion") }
             Hint(["o", "r", "c", "n", "x"], "file")
             Hint(["⇧"], "+key marks read")
         } else {
@@ -180,19 +190,24 @@ struct ScreenerPreview: View {
         }
     }
 
-    private func whyLine(_ w: WaitingSender) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Icon(.spark, 15).foregroundStyle(p.accentInk.color).padding(.top, 2)
-            (Text("AI suggests ")
-             + Text(w.ai.dest.done).font(Typography.font(Typography.Size.bodyS, Typography.Weight.bold))
-             + Text(" \(w.ai.conf)").font(Typography.font(Typography.Size.bodyS, Typography.Weight.heavy))
-             + Text(" — ").foregroundStyle(p.ink3.color)
-             + Text("“\(w.ai.why)”").foregroundStyle(p.ink3.color))
-                .blanc(BlancText(size: Typography.Size.bodyS, weight: Typography.Weight.regular, leading: 1.5))
-                .foregroundStyle(p.ink2.color)
-                .fixedSize(horizontal: false, vertical: true)
+    /// The rationale line. Absent entirely when nothing computed a suggestion — there is no
+    /// "AI suggests" sentence to write when no model was asked, and an empty one would read as a
+    /// classifier that had nothing to say rather than as a tier that does not classify.
+    @ViewBuilder private func whyLine(_ w: WaitingSender) -> some View {
+        if let ai = w.ai {
+            HStack(alignment: .top, spacing: 8) {
+                Icon(.spark, 15).foregroundStyle(p.accentInk.color).padding(.top, 2)
+                (Text("AI suggests ")
+                 + Text(ai.dest.done).font(Typography.font(Typography.Size.bodyS, Typography.Weight.bold))
+                 + Text(" \(ai.conf)").font(Typography.font(Typography.Size.bodyS, Typography.Weight.heavy))
+                 + Text(" — ").foregroundStyle(p.ink3.color)
+                 + Text("“\(ai.why)”").foregroundStyle(p.ink3.color))
+                    .blanc(BlancText(size: Typography.Size.bodyS, weight: Typography.Weight.regular, leading: 1.5))
+                    .foregroundStyle(p.ink2.color)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.bottom, 14)
         }
-        .padding(.bottom, 14)
     }
 
     @ViewBuilder
@@ -315,7 +330,9 @@ struct DecisionBar: View {
                 ForEach(Destination.allCases, id: \.self) { d in
                     SplitDecisionButton(
                         dest: d,
-                        isAI: sender.ai.dest == d,
+                        // No suggestion means no ring: `nil?.dest == d` is false for every
+                        // destination, so nothing is presented as the recommended one.
+                        isAI: sender.ai?.dest == d,
                         quiet: !d.isFiling,
                         onFile: { s.decide(sender, to: d, read: false) },
                         onFileRead: { s.decide(sender, to: d, read: true) }

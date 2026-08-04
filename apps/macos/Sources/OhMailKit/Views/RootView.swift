@@ -367,8 +367,11 @@ public struct RootView: View {
             if ch == "s" { s.markAllSpam(); return .handled }
             return nil
         }
-        if ch.lowercased() == "y" {
-            decide(cur, cur.ai.dest, read: shift || ch == "Y")
+        // `y` accepts the suggestion, so it does nothing when there is not one. Falling through
+        // rather than filing to a default: `y` is not a destination key (those are o/r/c/n/x), so an
+        // unhandled press moves no mail — which is the correct answer when nothing was suggested.
+        if ch.lowercased() == "y", let ai = cur.ai {
+            decide(cur, ai.dest, read: shift || ch == "Y")
             return .handled
         }
         if let dest = Destination.allCases.first(where: { $0.key == ch.lowercased() }) {

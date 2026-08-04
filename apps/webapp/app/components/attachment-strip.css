@@ -1,0 +1,291 @@
+/* ═══ THE ATTACHMENT STRIP ═══════════════════════════════════════════════════════════
+ *
+ * Blanc encodes presence with light falloff, and this strip leans on that instead of
+ * inventing a state palette:
+ *
+ *   idle       flat impression in the surface — `--tint`, no shadow. Not fetched, so it
+ *              must not stand like an object that is here.
+ *   loading    the impression breathes between the two neutral tints (`send-working`'s
+ *              exact move) under a sentence naming the wait and its source.
+ *   ready      the object rises onto `--panel` with `--lift-0` (the `rise` entrance from
+ *              base.css) and hovers to `--lift-2` like every standing Blanc object.
+ *   failed     `send-status.warn`'s register: accent-soft ground, accent hairline — a
+ *              condition inviting one action (the whole tile is the retry).
+ *   too_large  inert. No cursor, no hover, no lift; the fact in `--ink3`.
+ *
+ * Layout is intrinsic, no media query and no container query: the grid places as many
+ * 210px-min tracks as the container affords, which is one column in the 242px split
+ * reading column and the 350px phone sheet, two on the 568px desktop measure. That the
+ * SPLIT COLUMN is narrower than a phone is the trap action-bar.css documents; auto-fill
+ * sidesteps it by never asking the viewport anything. `auto-fill` (not `auto-fit`) keeps
+ * a lone attachment at track width instead of stretching it across the whole measure.
+ *
+ * Reduced motion: the base.css global kill collapses the transitions and runs each
+ * animation once, so the breathe rests on its 50% frame's companion tint set explicitly
+ * below, and the sweep is removed rather than slowed — states stay distinct standing
+ * still (idle `--tint` · loading `--tint2` + sentence · ready panel + shadow).
+ */
+
+.att-strip { margin-top: 20px; }
+
+/* ── the LIST's own state (AT6): one row, one sentence, at most one action ─────────
+ *
+ * The failed TILE's register, at list scale: accent-soft ground and an accent hairline —
+ * "a condition inviting one action" — and the same 13px object radius, because this row
+ * stands where the tiles would have. It does NOT breathe: the tile's `att-working` animates
+ * toward `--tint2`, which would fight the accent ground, and the sweep beside the sentence
+ * already says "running". Blanc defines no danger colour and this is not an error dialog;
+ * it is the strip saying what it could not find out.
+ */
+
+.att-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;          /* 242px column: the action may take its own line */
+  gap: 8px 12px;
+  padding: 10px 13px;
+  border-radius: 13px;
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-hair);
+}
+
+/* Product speech about the list — same size and rhythm as the tile's state line, and it
+   WRAPS for the same reason: a sentence clipped to "Couldn't reach ohm" has lost its fact. */
+.att-list-say {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--accent-ink);
+  overflow-wrap: anywhere;
+}
+.att-list-say .att-spin { margin-top: 3px; }
+
+/* A verb, so it gets the capsule — `.att-all`'s exact vocabulary, one step quieter because
+   it sits on the accent ground rather than the page. */
+.att-list-retry {
+  margin-left: auto;
+  flex: none;
+  padding: 6px 13px;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 1.5;
+  white-space: nowrap;
+  color: var(--ink);
+  border-radius: 99px;
+  background: var(--panel);
+  box-shadow: var(--lift-0);
+  transition: box-shadow .2s var(--swift), transform .15s var(--swift), color .15s var(--swift);
+}
+.att-list-retry:hover { box-shadow: var(--lift-2); transform: translateY(-1px); }
+.att-list-retry:active { transform: scale(.97); }
+/* Asking again: the capsule settles back into the row and stops answering. Guarded in the
+   component rather than `disabled`, so focus stays on the element that was just pressed. */
+.att-list[data-state="retrying"] .att-list-retry {
+  color: var(--ink3);
+  cursor: default;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--accent-hair);
+}
+.att-list[data-state="retrying"] .att-list-retry:hover { transform: none; box-shadow: inset 0 0 0 1px var(--accent-hair); }
+
+/* ── plural header: the inventory line and the one group verb ─────────────────────── */
+
+.att-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;          /* 242px column: the button may take its own line */
+  gap: 8px 10px;
+  margin-bottom: 10px;
+}
+/* Product speech, not mail: same voice as `.msg-body-state` next door. */
+.att-sum { font-size: 12px; color: var(--ink3); }
+
+/* "Download all" is a verb, so it gets the capsule — the abar-solo vocabulary. */
+.att-all {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 1.5;
+  white-space: nowrap;
+  color: var(--ink);
+  border-radius: 99px;
+  background: var(--panel);
+  box-shadow: var(--lift-0);
+  transition: background .15s var(--swift), color .15s var(--swift),
+    box-shadow .2s var(--swift), transform .15s var(--swift);
+}
+.att-all:hover { box-shadow: var(--lift-2); transform: translateY(-1px); }
+.att-all:active { transform: scale(.97); }
+/* Working: the capsule settles back into the surface and breathes — the same "in motion,
+   not your move" grammar as `.send-status.pending`. Guarded in the component, not
+   `disabled`, so focus stays put for the announcement when the toast lands. */
+.att-all[data-working] {
+  color: var(--ink3);
+  cursor: default;
+  background: var(--tint);
+  box-shadow: none;
+  animation: att-working 2s ease-in-out .5s infinite;
+}
+.att-all[data-working]:hover { transform: none; box-shadow: none; }
+
+/* ── the tiles ────────────────────────────────────────────────────────────────────── */
+
+.att-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+}
+
+.att-tile {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  padding: 9px 13px 9px 9px;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+  border-radius: 13px;      /* a small pane, not a capsule: this is an object, not a verb */
+  background: var(--tint);  /* idle ground — recessed, because the bytes are not here */
+  transition: background .15s var(--swift), box-shadow .2s var(--swift),
+    transform .15s var(--swift);
+}
+.att-tile:hover { background: var(--tint2); }
+.att-tile:active { transform: scale(.98); }
+
+.att-tile[data-state="loading"] {
+  cursor: default;
+  animation: att-working 2s ease-in-out .4s infinite;
+}
+.att-tile[data-state="loading"]:active { transform: none; }
+
+/* Fetched: the object stands on the surface and behaves like everything else that does. */
+.att-tile[data-state="ready"] {
+  background: var(--panel);
+  box-shadow: var(--lift-0);
+  animation: rise .25s var(--spring);
+}
+.att-tile[data-state="ready"]:hover {
+  background: var(--panel);
+  box-shadow: var(--lift-2);
+  transform: translateY(-1px);
+}
+
+.att-tile[data-state="failed"] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-hair);
+}
+.att-tile[data-state="failed"]:hover {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-hair), var(--lift-0);
+}
+
+.att-tile[data-state="too_large"] { cursor: default; color: var(--ink3); }
+.att-tile[data-state="too_large"]:hover { background: var(--tint); }
+.att-tile[data-state="too_large"]:active { transform: none; }
+
+/* ── the leaf: type at a glance ───────────────────────────────────────────────────── */
+
+.att-leaf {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 9px;
+  background: var(--panel);  /* a blank page against the recessed idle ground */
+  color: var(--ink2);
+}
+/* On the risen tile the figure/ground flips, so the leaf never vanishes into its tile. */
+.att-tile[data-state="ready"] .att-leaf { background: var(--tint); }
+.att-tile[data-state="too_large"] .att-leaf { color: var(--ink3); }
+
+.att-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* An unknown binary wears its extension, in the keycap's own monospace — honest about
+   being "a file", specific about which kind. */
+.att-badge {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+}
+
+/* ── name and state line ──────────────────────────────────────────────────────────── */
+
+.att-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+/* The stem ellipsizes; the extension may not — it is the part that says what this IS. */
+.att-name {
+  display: flex;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 550;
+  line-height: 1.35;
+}
+.att-stem { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-ext { flex: none; }
+
+/* The product speaking about the object — quieter than the name, same register as
+   `.msg-body-state`. Never confusable with the mail. It WRAPS rather than truncates:
+   in the 242px split column "Fetching from your mailbox…" clipped to "…from your mai",
+   and a state sentence that loses its ending has lost its meaning. A tile may be one
+   line taller; it may not say half a fact. */
+.att-state {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--ink3);
+  overflow-wrap: anywhere;
+}
+.att-tile[data-state="failed"] .att-state { color: var(--accent-ink); }
+
+/* A one-second sweep beside the sentence, `.mbx-wait`'s move: says "running" without
+   asking to be watched. The sentence, not the sweep, carries the meaning. */
+.att-spin {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 99px;
+  border: 1.5px solid var(--hair);
+  border-top-color: var(--accent);
+  animation: att-spin 1s linear infinite;
+}
+
+/* Inside the state line the sweep sits on the sentence's FIRST line when it wraps;
+   inside the capsule (one line by construction) it needs no offset. */
+.att-state .att-spin { margin-top: 3px; }
+
+@keyframes att-spin { to { transform: rotate(360deg); } }
+/* One keyframe, both breathers — state, not decoration (send-working's exact shape). */
+@keyframes att-working { 50% { background: var(--tint2); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .att-spin { animation: none; }
+  /* The breathers rest on the louder tint so loading ≠ idle while standing still. */
+  .att-tile[data-state="loading"],
+  .att-all[data-working] { animation: none; background: var(--tint2); }
+}

@@ -217,7 +217,9 @@ public struct EngineProjection {
             time: displayTime(representative?.date, now: now),
             scope: .sender,
             dull: false,
-            ai: noSuggestion,
+            // No classifier runs in this tier, so there is no suggestion — said with `nil` rather
+            // than with a manufactured destination. See `WaitingSender.ai`.
+            ai: nil,
             held: bag(sender, mirror: mirror, bodies: bodies, now: now))
     }
 
@@ -246,22 +248,21 @@ public struct EngineProjection {
                                                              time: "", content: .plain(body: nil, preview: nil)))
     }
 
-    /// **THE ONE FABRICATED VALUE IN THIS FILE, AND IT IS HERE SO THERE IS ONE PLACE TO DELETE.**
+    /// **THERE IS NO FABRICATED VALUE IN THIS FILE, AND THIS NOTE IS WHY THAT IS CHECKABLE.**
     ///
-    /// `WaitingSender.ai` is a non-optional `AISuggestion`, and a local install has no classifier:
-    /// `GET /screener` answers `aiSuggestion: null` and the delta feed carries no routing decision,
-    /// so there is no confidence and no rationale to state. The confidence and the reason are
-    /// therefore EMPTY — visibly nothing, rather than a plausible number about somebody's actual
-    /// mail, which is the exact defect `Classification` was introduced to remove.
+    /// A local install has no classifier: `GET /screener` answers `aiSuggestion: null` and the delta
+    /// feed carries no routing decision, so there is no destination, no confidence and no rationale
+    /// to state about a waiting sender.
     ///
-    /// The destination cannot be empty, and `.ohbox` is chosen because it is the decide endpoint's
-    /// own bare-Yes folder: an "apply the suggestion" gesture then degrades to a plain Yes rather
-    /// than to a filing decision nothing made.
+    /// This used to be a named constant — `.ohbox` with an empty confidence and an empty reason —
+    /// because `WaitingSender.ai` was non-optional and the projection had to put *something* there.
+    /// It was contained rather than correct: the row still drew a confidence chip for it, the
+    /// decision bar still ringed that destination as the suggested one, and "apply all suggestions"
+    /// still filed real mail to it. `WaitingSender.ai` is optional now and this projection passes
+    /// `nil`, so the absence is representable and every reader has to handle it.
     ///
-    /// It should not survive. The fix is one optional on `WaitingSender.ai` and three call sites,
-    /// and it belongs to whoever owns `Models.swift` — reported rather than done here, because a
-    /// projection is not the place to change what a model can represent.
-    static let noSuggestion = AISuggestion(dest: .ohbox, conf: "", why: "")
+    /// Nothing replaces the constant. It is named here only so that a future reader who finds this
+    /// projection filling a suggestion in again knows the shape was tried and what it cost.
 
     /// What a quarantined sender's row says. A statement of where the mail is, with no detection
     /// source and no confidence, because this tier computes neither.

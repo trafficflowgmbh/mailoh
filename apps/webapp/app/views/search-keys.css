@@ -1,0 +1,36 @@
+/* ═══ THE SEARCH CURSOR (slice U5-OPEN, gap U5c) ══════════════════════════════════════
+ *
+ * `SearchView` declared zero key bindings, so with results on screen the keyboard did
+ * nothing at all — the owner's *"search does not allow a message to be opened"*, in the one
+ * surface you arrive at by pressing `/`. ↑/↓ and ↵ are the fix; this is the other half of
+ * it, because a cursor nobody can see is not a keyboard path, it is a keyboard rumour.
+ *
+ * A WRAPPER RATHER THAN A PROP. `SearchHit` is a `@ohmail/ui` primitive with no `selected`
+ * in its contract, and widening a shared design-system component for one view's cursor is
+ * the trade `OhboxView.onRangeClickCapture` already refused for the same reason. The
+ * wrapper carries `aria-current` too, so the state is announced and not merely drawn.
+ *
+ * The treatment is the list row's, deliberately: `.row.sel` in `app.css` marks the cursor
+ * with `--accent-soft` and an inset accent rule on the leading edge. A search result under
+ * the cursor is the same idea in a different list, and inventing a second visual language
+ * for it would make the two read as different kinds of state.
+ */
+/* 16px is `.hit`'s own radius (`packages/ui/src/composites/search.css:12`), matched rather
+   than picked: the wrapper sits exactly behind the button, so a different corner would read
+   as a halo. The button's bottom margin collapses out of this box, so the tint ends at the
+   row rather than in the gap below it. */
+.hit-w {
+  border-radius: 16px;
+  transition: background .15s var(--swift), box-shadow .15s var(--swift);
+}
+
+.hit-w.cur {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* NOTHING OVERRIDES `.hit` ITSELF, and the first draft of this file did. It set
+   `background:none` on the child to stop a doubled fill — there is no doubled fill (the
+   button is transparent at rest, and only `:hover` paints it), and at `0,2,0` the rule beat
+   `.hit:hover` at `0,1,0`. It would have deleted the hover state of every search result to
+   solve a problem that did not exist. */

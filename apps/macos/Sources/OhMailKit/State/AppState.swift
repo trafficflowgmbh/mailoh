@@ -289,16 +289,31 @@ public final class AppState: MailSourceSink {
         }
     }
 
-    /// Apply the AI suggestion to every waiting sender (files unread). Returns the
+    /// Apply the AI suggestion to every waiting sender **that has one** (files unread). Returns the
     /// receipts so a caller can undo the whole batch; the toast already can.
+    ///
+    /// A sender with no suggestion is skipped and stays waiting, rather than being filed somewhere
+    /// chosen by this function. That is the whole of the difference: this used to read
+    /// `it.ai.dest` off a non-optional field that a projection with no classifier had filled in to
+    /// satisfy the type, so "apply all" moved real mail on a decision nothing had made. The UI does
+    /// not offer the control when `hasSuggestions` is false, and this is the same rule stated where
+    /// the mail actually moves — a keyboard shortcut, a menu item or a test reaches here without
+    /// passing the view.
     @discardableResult
     public func applyAllSuggestions() -> [Receipt] {
         let items = waiting
         var receipts: [Receipt] = []
-        for it in items { if let r = decide(it, to: it.ai.dest, read: false, quiet: true) { receipts.append(r) } }
+        var applied: [Destination] = []
+        for it in items {
+            guard let ai = it.ai else { continue }
+            if let r = decide(it, to: ai.dest, read: false, quiet: true) {
+                receipts.append(r)
+                applied.append(ai.dest)
+            }
+        }
         if !receipts.isEmpty {
             offer(UndoOp(receipts: receipts, doneMessage: "Undone — \(receipts.count) waiting again."),
-                  message: summary(items.map(\.ai.dest)))
+                  message: summary(applied))
         }
         return receipts
     }
