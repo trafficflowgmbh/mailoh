@@ -53,9 +53,9 @@ export type Folder =
 export type ChangeOp = "create" | "update" | "move" | "delete";
 
 /**
- * The EntityType values the server's `/sync` feed carries today (contract §3.1 P1).
+ * The EntityType values the server's `/sync` feed carries today (contract §3.1).
  *
- * `"tag"` JOINED THIS LIST IN W6 and the move is the whole point of that slice. It used to sit
+ * `"tag"` JOINED THIS LIST LATE, and the move is the whole point. It used to sit
  * only in {@link MirrorEntityType}, among the demo-world types, and the consequence was not a
  * missing feature but an invisible one: `TagView`, `TagPicker` and the `t` shortcut were all
  * built and all worked against fixtures, while a real Cloud account drained a `/sync` feed with
@@ -74,7 +74,7 @@ export type SyncEntityType =
  * Everything the LOCAL mirror stores. Beyond the synced types, the engine keeps
  * client-local entities for the demo/fixture world (`screener_sender`,
  * `triage_item`, `mailbox`), view metadata (`view_meta`, e.g. the Reads
- * waterline) and hydrated message bodies (`message_body`, slice U5-BODY).
+ * waterline) and hydrated message bodies (`message_body`).
  * Unknown strings are tolerated by design.
  */
 export type MirrorEntityType =
@@ -172,14 +172,14 @@ export interface EngineMessage extends EngineMessageExtras {
   updatedAt: ISODateTime;
 }
 
-// ── message bodies (slice U5-BODY) ─────────────────────────────────────────
+// ── message bodies ─────────────────────────────────────────────────────────
 
 /**
  * `GET /messages/:id/body`, as much of it as this client reads.
  *
  * The endpoint answers `{messageId, text, html, headers, loadedRemoteContent}`.
  *
- * ── `html` USED TO BE DROPPED HERE, AND THAT WAS THE WHOLE OF O11b ───────────────────
+ * ── `html` USED TO BE DROPPED HERE ──────────────────────────────────────────────────
  *
  * This interface was `{ text: string }`, with a comment saying html was not read because
  * rendering it "would need a sanitiser, and it is also where a tracking pixel re-enters a
@@ -189,9 +189,9 @@ export interface EngineMessage extends EngineMessageExtras {
  *
  * What the narrowing COST, until 2026-08-04: the html part reached this process and was
  * thrown away one line before it was needed, so every reading surface rendered
- * mailparser's `htmlToText` rendition — the `text/plain` alternative — and a real billing
- * mail read as `Claude [claude.ai/images/email/claude_logo_chip.p…]` with a tracking
- * pixel's url as its last visible line. No amount of work in the renderer could fix that,
+ * mailparser's `htmlToText` rendition — the `text/plain` alternative — so a real billing
+ * mail read as its sender's logo filename in square brackets, with a tracking pixel's
+ * url as its last visible line. No amount of work in the renderer could fix that,
  * because the renderer was being handed the wrong input.
  *
  * `text` is ALSO still carried, and is not a legacy field: sensitive mail stores NO html at
@@ -250,27 +250,27 @@ export interface MessageBodyRecord {
   /** The endpoint's already-redacted text. Empty while loading and after a failure. */
   text: string;
   /**
-   * The endpoint's html part (O11b), or `null` — for a message with none, for sensitive
+   * The endpoint's html part, or `null` — for a message with none, for sensitive
    * mail, and for every record that is not `ready`. Held here rather than on the message
    * row for exactly the reason the text is: a `/sync` delta must not be able to erase it.
    *
    * ── OPTIONAL, AND THAT IS ABOUT INDEXEDDB RATHER THAN ABOUT MAIL ────────────────────
    *
    * `message_body` records are PERSISTED (`IndexedDbMirrorStore`), so every browser that
-   * ran a build from before O11b already holds records of the older shape — `{messageId,
+   * ran a build from before `html` was read already holds records of the older shape — `{messageId,
    * state, text}` and nothing else. Those rows are not migrated and must not be: the body
    * is re-fetchable from the endpoint at any time, and a migration that invented `html:
    * null` for them would be indistinguishable from a message that genuinely has none.
    * Declaring these required would be the type system asserting something about the
    * store that is false on every existing install. `bodyOf` reads them with `?? null`.
    *
-   * ── AND THAT ABSENCE IS NOW THE SIGNAL TO RE-ASK (O11b-CACHE) ───────────────────────
+   * ── AND THAT ABSENCE IS NOW THE SIGNAL TO RE-ASK ───────────────────────────────────
    *
    * The paragraph above was right that they must not be migrated and wrong about what it
    * cost to leave them alone. `hydrateBody` returned early on `state === "ready"`, so a
-   * message opened before O11b was never re-fetched and stayed a text dump FOR EVER, on a
-   * build that contains the renderer — which is what the owner reported the night O11b
-   * shipped, over the very mail that defined the gap.
+   * message opened before the html part was read was never re-fetched and stayed a text
+   * dump FOR EVER, on a build that contains the renderer — reported from a real install,
+   * over the very mail that had defined the gap.
    *
    * So `undefined` here is load-bearing and is not merely tolerated: it means "no build
    * ever answered this record's question", and `hydrateBody` re-asks exactly once for it.
@@ -282,7 +282,7 @@ export interface MessageBodyRecord {
    */
   html?: string | null;
   /** The reader's remote-content decision, as the server last stated it. Optional for the
-   *  same reason `html` is: a record written before O11b carries neither. */
+   *  same reason `html` is: a record written before those fields were read carries neither. */
   loadedRemoteContent?: boolean;
   /** Why the fetch failed, for the console — never rendered to the user. */
   error?: string;
@@ -291,7 +291,7 @@ export interface MessageBodyRecord {
 /**
  * What a surface knows about the text it is about to render.
  *
- * The four values exist because ONE of them — `snippet` — is how U5a shipped: `body ??
+ * The four values exist because ONE of them — `snippet` — is what shipped first: `body ??
  * snippet` renders a one-line truncation as though it were the whole message, with no
  * signal anywhere that there is more. A surface that cannot tell these apart cannot show
  * the difference, so the distinction is in the type rather than in each caller's guesswork.
@@ -358,7 +358,7 @@ export interface EngineDraft {
 // ── client-local entities (fixtures / demo world) ──────────────────────────
 
 /**
- * A tag. NO LONGER FIXTURE-ONLY as of W6 — it is a real `/sync` entity backed by the `tags`
+ * A tag. NO LONGER FIXTURE-ONLY — it is a real `/sync` entity backed by the `tags`
  * table, and this interface is now the client mirror of the server's `TagDTO`.
  *
  * A tag is OURS: a row in our database keyed by message, and never an IMAP folder. That is why
@@ -389,7 +389,7 @@ export interface ScreenerHeldMail {
   time: string;
   body: string;
   /**
-   * WHAT `body` ACTUALLY IS (slice U5-BODY). Absent ⇒ `full`, which is the fixture world:
+   * WHAT `body` ACTUALLY IS. Absent ⇒ `full`, which is the fixture world:
    * a `screener_sender` entity carries its held bodies verbatim and there is nothing to
    * hydrate. A DERIVED row — every row on a Cloud account — starts at `snippet` and moves
    * through `loading` to `full` or `failed`, and the preview has to say which, because a
@@ -421,7 +421,7 @@ export interface ScreenerSenderDTO {
   detection?: { source: string; confidence: number; reason: string; label: string };
   /**
    * TRUE when `screenerSegments()` computed this row from the MESSAGE MIRROR rather
-   * than reading a `screener_sender` entity (slice C1) — i.e. every row on a Cloud
+   * than reading a `screener_sender` entity — i.e. every row on a Cloud
    * account, and none in the demo world.
    *
    * It is not cosmetic. `id` is then the representative MESSAGE id, which is what
@@ -524,7 +524,7 @@ export type EngineMutation =
        */
       labels?: string[];
       /**
-       * TAG-OR-CREATE (W6). Present when the user typed a name that does not exist yet, which
+       * TAG-OR-CREATE. Present when the user typed a name that does not exist yet, which
        * is the only way to mint a tag from this shell: the shared shell may not import
        * `app/api-client` (`scripts/publish-desktop.mjs` DENYs it), so the engine is its only
        * wire, and a separate `tag_create` mutation would have to be handled in
@@ -547,7 +547,7 @@ export type EngineMutation =
       messageIds?: string[];
     }
   /**
-   * FOLDER-AGNOSTIC read-state (slice U1) — the mutation `feed_mark_seen` could not be.
+   * FOLDER-AGNOSTIC read-state — the mutation `feed_mark_seen` could not be.
    *
    * `feed_mark_seen` is the Reads WATERLINE, and its optimistic effect drops every id outside
    * `ohmail/Reads` by construction while its wire side would PATCH anything. Outside Reads the
@@ -562,11 +562,11 @@ export type EngineMutation =
    */
   | { kind: "mark_seen"; messageIds: string[]; unread: boolean }
   /**
-   * SEND MAIL (slices U4b, U4f) — the one mutation whose effect leaves the building.
+   * SEND MAIL — the one mutation whose effect leaves the building.
    *
    * ── ONE VERB, TWO ENTRY POINTS ─────────────────────────────────────────────────────────
    *
-   * It shipped as `reply_send` and was generalized in U4f rather than copied: Compose needed
+   * It shipped as `reply_send` and was generalized rather than copied: Compose needed
    * the same idempotency key, the same four-outcome failure surface, the same "a 200 is
    * inspected, not trusted" reading of the wire and the same double-send lock. A second
    * implementation of "send an email" is two places for invariant #2 to be true in, which is
@@ -588,7 +588,7 @@ export type EngineMutation =
    * SMTP cannot be un-sent, so the overlay must never assert that it arrived. The effect is
    * therefore ONE `draft` row at `status: "sending"` — the same state the server writes on
    * its reservation — and deliberately NOT a Sent-folder message row. The real copy lands
-   * when the worker's Sent-folder watch ingests it (slice U4c), minutes later; fabricating
+   * when the worker's Sent-folder watch ingests it, minutes later; fabricating
    * one here would be a claim the mirror contradicts on the next drain.
    *
    * The three non-delivered outcomes are distinguishable at the call site and MUST stay
@@ -626,7 +626,7 @@ export type EngineMutation =
     }
   | { kind: "draft_accept"; draftId: string }
   /**
-   * REVOKE A RULE, AND CHANGE WHERE ONE FILES (gap O16) — the undo for the consent gate.
+   * REVOKE A RULE, AND CHANGE WHERE ONE FILES — the undo for the consent gate.
    *
    * ── WHY THESE ARE ENGINE MUTATIONS AND NOT `app/api-client` CALLS ───────────────────────
    *
@@ -659,7 +659,7 @@ export type EngineMutation =
    * `destination` only, though `PATCH /rules/:id` accepts kind/match/priority/enabled too.
    *
    * Destination is the field the user has a mental model for — "this sender goes to the
-   * wrong pile" is the whole of gap C5 — and it is the only one whose new value the surface
+   * wrong pile" is the whole of it — and it is the only one whose new value the surface
    * can offer as a closed set of six folders it already renders names for. `match` is a
    * free-text field whose validity is a server concern, and re-keying a rule's `kind` turns
    * one sender's decision into a whole domain's without saying so. Both are refused here
@@ -667,10 +667,11 @@ export type EngineMutation =
    */
   | { kind: "rule_update"; ruleId: string; destination: Folder }
   /**
-   * MAKE A RULE FROM PAST THE GATE (gap O19c) — the verb that did not exist.
+   * MAKE A RULE FROM PAST THE GATE — the verb that did not exist.
    *
-   * Owner: *"but also allow it to actually create the rule and apply it to ALL messages future
-   * and previous, this should be the default behaviour to efficiently manage the mailbox."*
+   * The requirement: creating a rule must also apply it to the mail ALREADY in the mailbox,
+   * not only to what arrives next, and that has to be the default — managing a mailbox means
+   * dealing with what is in it.
    *
    * ── WHY A NEW VERB, RATHER THAN RELAXING SOMETHING ──────────────────────────────────────
    *
@@ -678,9 +679,9 @@ export type EngineMutation =
    * only for a sender the Screener is still holding: `mutationEffects`' derived branch returns
    * NO effects unless the representative message is in `ohmail/Screener`, and `Engine.mutate`
    * turns zero effects into `rolled_back` **without sending the request**. So the Ohbox case —
-   * a sender whose mail is already past the gate, which is the case the owner is asking about —
-   * could not be made to reach the server by loosening the server. `4a3ff4f` shipped the rest of
-   * O19 and named this seam rather than faking it. `POST /rules` has been mounted the whole
+   * a sender whose mail is already past the gate, which is the case that matters here — could
+   * not be made to reach the server by loosening the server. The rest of the sender work shipped
+   * without it and named this seam rather than faking it. `POST /rules` has been mounted the whole
    * time; this is the caller it never had.
    *
    * ── IT MOVES NO MAIL, AND THAT IS THE POINT OF THE OTHER HALF ───────────────────────────
@@ -724,11 +725,11 @@ export type EngineMutation =
        *
        * ── IT IS SENT EXPLICITLY, NEVER OMITTED, AND THAT IS DELIBERATE ────────────────────
        *
-       * The SERVER defaults an absent field to `true`, because that is the owner's request and
+       * The SERVER defaults an absent field to `true`, because that is what was asked for and
        * the honest API contract. The SURFACE still sends the value on every call, so what ships
        * is decided by one constant in the webapp
        * (`sender-screening.ts#RETRO_DEFAULT_ON`) rather than by a field's absence. That is what
-       * makes the default orderable against O16 — see the constant, which names the reason.
+       * makes the default a decision in one visible place — see the constant, which names it.
        *
        * The paragraph above `mutationEffects`' `rule_create` case is now WRONG for this flag and
        * says so there: the effects are still rule-only, but the mail really does re-sort

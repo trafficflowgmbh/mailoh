@@ -40,7 +40,7 @@ interface PendingMutation {
 }
 
 /**
- * WHAT `GET /search` ANSWERS, as much of it as this client reads (gap O14).
+ * WHAT `GET /search` ANSWERS, as much of it as this client reads.
  *
  * The route returns `{ items, facets, total }`. `items` are canonical `MessageDTO`s, and an
  * {@link EngineMessage} is exactly a `MessageDTO` plus optional fixture extras, so a DTO IS
@@ -90,7 +90,7 @@ export type ServerSearchOutcome =
   | { state: "ready"; items: EngineMessage[]; total: number }
   | { state: "failed"; error: string };
 
-// ── attachments (gap O18) ──────────────────────────────────────────────────
+// ── attachments ────────────────────────────────────────────────────────────
 //
 // ohmail STORES NO ATTACHMENT BYTES, anywhere, ever. Metadata is synced at ingest; the bytes live
 // only in the user's own IMAP mailbox and are pulled from it at the moment somebody asks. What the
@@ -134,18 +134,18 @@ export interface AttachmentItem {
  *
  * `unavailable` is a first-class answer — the demo and the desktop tier have no server to ask —
  * and `ready` with an EMPTY `items` is a different, also-true answer that the surface must render
- * differently. The second one is COMMON, not an edge case: measured against production on
- * 2026-08-04, 755 of 1,766 attachment-flagged messages (43%) carry only `inline` parts, which
- * {@link toAttachmentItem}'s caller filters out. The paperclip is painted from `hasAttachments`,
- * which counts those parts, so a paperclip over an empty strip is a state the UI has to be able to
- * say something honest about. (The absolute numbers drift — the corpus syncs continuously — but the
- * ratio has been stable across two measurements an hour apart.)
+ * differently. The second one is COMMON rather than an edge case, and structurally so: a great
+ * many messages carry `inline` parts and nothing else — an embedded logo in an HTML mail is one —
+ * and {@link toAttachmentItem}'s caller filters those out. The paperclip is painted from
+ * `hasAttachments`, which COUNTS them. So a paperclip over an empty strip is not a rare
+ * inconsistency to be tidied away; it is a state the UI has to be able to say something honest
+ * about.
  */
 export type AttachmentsOutcome =
   | { state: "unavailable" }
   /**
-   * `retrying` is set ONLY when a human pressed the list's own retry over a held `failed`
-   * (gap AT6). A surface renders the first ask as nothing — the read is one indexed row and a
+   * `retrying` is set ONLY when a human pressed the list's own retry over a held `failed`.
+   * A surface renders the first ask as nothing — the read is one indexed row and a
    * skeleton on every message open would be noise — but it must NOT go silent again the moment
    * somebody presses "Try again": the row they pressed would vanish for the whole round-trip
    * and come back, which reads as "it worked" followed by "no it didn't". The flag is what lets
@@ -155,8 +155,8 @@ export type AttachmentsOutcome =
   | { state: "ready"; items: AttachmentItem[] }
   /**
    * `code` and `retryable` are the SERVER'S OWN CLASSIFICATION, carried through rather than
-   * re-derived from the sentence (gap AT6 — before it, only `error` survived the catch and the
-   * surface had no way to tell "you are offline" from "that message is not yours").
+   * re-derived from the sentence. Before that, only `error` survived the catch and the surface
+   * had no way to tell "you are offline" from "that message is not yours".
    *
    * WHAT CAN ACTUALLY LAND HERE, because copy written for the wrong failure is a lie:
    * `GET /messages/:id/attachments` is `cost: "read"` and `AttachmentsService.listForMessage`
@@ -169,7 +169,8 @@ export type AttachmentsOutcome =
    * `retryable` is TRUE for anything the client could not classify: an unclassified throw means
    * we never established that the server refused, and re-asking costs one indexed row.
    *
-   * `code: "timeout"` is the THIRD thing that lands here, and it only exists from gap AT8 onward:
+   * `code: "timeout"` is the THIRD thing that lands here, and it exists only because the list read
+   * was eventually given a deadline:
    * a request the server accepted and never answered used to produce no outcome at all, because
    * `fetch` has no deadline and neither did anything on this path. It now arrives bounded and
    * aborted from `HttpAdapter.withDeadline`, retryable for the strongest version of the reason
@@ -308,7 +309,7 @@ export class OhmailEngine {
   private readonly serverSearches = new Map<string, Promise<ServerSearchOutcome>>();
 
   /**
-   * Attachment metadata + byte state by message id (gap O18).
+   * Attachment metadata + byte state by message id.
    *
    * IN MEMORY, NEVER `store.putLocal`, and that is a correctness requirement rather than a
    * preference. ohmail stores no attachment bytes anywhere — not server-side, not here — and an
@@ -437,7 +438,7 @@ export class OhmailEngine {
   }
 
   /**
-   * A drain that is guaranteed to have STARTED AFTER the caller's write committed (gap O3-ENGINE).
+   * A drain that is guaranteed to have STARTED AFTER the caller's write committed.
    *
    * ## THE DEFECT THIS EXISTS FOR
    *
@@ -449,8 +450,8 @@ export class OhmailEngine {
    * the write had landed, deleted the optimistic overlay — and the mail snapped back to the
    * Screener until the next 8 s poll.
    *
-   * Reported twice by the owner as "when I select one as ohbox, it does not seem to work", and
-   * then it does. It depends on whether a poll happens to be in flight when the click lands, which
+   * Reported twice from real use, as "when I select one as ohbox, it does not seem to work" —
+   * and then it does. It depends on whether a poll happens to be in flight when the click lands, which
    * is why it looked intermittent: unpredictable by construction, not by luck.
    *
    * ## WHY "STARTED AFTER THE POST RETURNED" IS SUFFICIENT — AND WHAT WOULD BREAK IT
@@ -547,10 +548,10 @@ export class OhmailEngine {
     for (const l of this.listeners) l();
   }
 
-  // ── message bodies (slice U5-BODY) ───────────────────────────────────────
+  // ── message bodies ───────────────────────────────────────────────────────
 
   /**
-   * FETCH ONE MESSAGE'S BODY, ON EXPLICIT INTENT (slice U5-BODY).
+   * FETCH ONE MESSAGE'S BODY, ON EXPLICIT INTENT.
    *
    * The one capability behind every reading surface. Before it, the wire `MessageDTO`
    * carried `snippet` and never `body`, so on a live account `m.body ?? m.snippet` rendered
@@ -627,15 +628,15 @@ export class OhmailEngine {
     if (msg.protected != null) return;
     const held = this.read().get<MessageBodyRecord>("message_body", messageId);
     /**
-     * ── ALREADY READY — **AND FROM A BUILD THAT KNEW ABOUT `html`** (O11b-CACHE) ──────────
+     * ── ALREADY READY — **AND FROM A BUILD THAT KNEW ABOUT `html`** ─────────────────────
      *
-     * `19f64ba` shipped the html part and a renderer for it, and the owner still saw the same
-     * message as a text dump ending in a tracking pixel's url. Not a stale deploy (the live
-     * mailbox chunk contains the renderer) and not a missing server field (that message holds
-     * 19 596 characters of `html`): it was THIS LINE.
+     * The html part and a renderer for it shipped together, and a message already opened was
+     * STILL a text dump ending in a tracking pixel's url. Not a stale deploy (the live mailbox
+     * chunk contains the renderer) and not a missing server field (that message's `html` was
+     * there, and long): it was THIS LINE.
      *
      * `message_body` records are persisted (`IndexedDbMirrorStore`), and one written by any
-     * build before O11b is `{messageId, state, text}` with no `html` key at all. `ready`
+     * build from before it is `{messageId, state, text}` with no `html` key at all. `ready`
      * suppressed the fetch, `bodyOf` read `rec.html ?? null`, and every message the reader had
      * already opened stayed frozen in the pre-fix shape for ever — while newly-arrived mail
      * rendered correctly, which is why the product looked unfixed only to the people already
@@ -681,16 +682,17 @@ export class OhmailEngine {
       // marker rather than leaving a surface saying "loading…" forever; `bodyOf` then falls
       // back to the snippet, which is the honest answer for an adapter with no endpoint.
       //
-      // O11b — `html` rides along, UNTOUCHED. This is the one hop between the wire and the
+      // `html` rides along, UNTOUCHED. This is the one hop between the wire and the
       // renderer and it must stay a carry: sanitizing here would put attacker markup through
       // a transform in the engine, where no surface can see what it did and where the result
       // would be written into the mirror. What is stored is what the sender wrote.
       //
-      // ── `?? null` IS ABOUT THE KEY EXISTING, NOT ABOUT THE VALUE (O11b-CACHE) ───────────
+      // ── `?? null` IS ABOUT THE KEY EXISTING, NOT ABOUT THE VALUE ────────────────────────
       //
       // No string is altered by it: it maps `undefined` — a field this adapter did not answer —
       // onto the `null` that MEANS "there is no html", so that a record THIS ENGINE WROTE
-      // always carries the key. `hydrateBody` decides a record is pre-O11b, and re-fetches it,
+      // always carries the key. `hydrateBody` decides a record predates the html part, and
+      // re-fetches it,
       // from `html === undefined`; a write that could leave the field absent would land back in
       // that branch on the next open and poll for ever.
       //
@@ -844,8 +846,9 @@ export class OhmailEngine {
          * mutation failed, and it still rolls back or queues in the `catch` below.
          *
          * The residual: on a failed drain the mirror has not caught up, so the row reverts on
-         * screen until the next poll. That is the O3 symptom in the one case where the network
-         * genuinely broke, rather than in the ordinary case of a poll being in flight.
+         * screen until the next poll. That is the symptom this method exists to prevent, in the
+         * one case where the network genuinely broke rather than in the ordinary case of a poll
+         * being in flight.
          */
         try {
           await this.syncFresh();
@@ -892,7 +895,7 @@ export class OhmailEngine {
    * Synchronous, no round trip, answers from the mirror on every keystroke. It reads
    * subject, sender, the ≤200-character snippet and whatever body text this device holds —
    * `LocalSearchResult.coverage` says how much of the corpus that was, and the surface is
-   * required to say so rather than let the count of hits imply completeness (gap O14).
+   * required to say so rather than let the count of hits imply completeness.
    */
   search(query: string, opts: { limit?: number } = {}): LocalSearchResult {
     const version = this.readerView.version();
@@ -902,7 +905,7 @@ export class OhmailEngine {
     return this.searchCache.index.search(query, opts);
   }
 
-  // ── the archive pass (gap O14) ───────────────────────────────────────────
+  // ── the archive pass ─────────────────────────────────────────────────────
 
   /**
    * Is there a server archive behind this client at all?
@@ -926,7 +929,7 @@ export class OhmailEngine {
    *
    * ── THE RESULT DOES NOT GO IN THE MIRROR ────────────────────────────────────────────────
    *
-   * Same rule as U5-BODY's, for a sharper reason. `/sync` owns the mirror: rows arrive at a
+   * Same rule as the hydrated bodies', for a sharper reason. `/sync` owns the mirror: rows arrive at a
    * seq, deletes arrive at a seq, and `applyToRecords` reconciles by seq. A search hit has no
    * seq. Writing one in would create a row no delta can ever update or remove — a message
    * that outlives its own deletion, in a store whose whole contract is that it converges. So
@@ -986,7 +989,7 @@ export class OhmailEngine {
     return request;
   }
 
-  // ── attachments (gap O18) ────────────────────────────────────────────────
+  // ── attachments ──────────────────────────────────────────────────────────
 
   /**
    * Can this client open attachments at all?
@@ -1067,7 +1070,8 @@ export class OhmailEngine {
       // The adapter's own classification, kept. `MutationRejectedError` is the one thing
       // `HttpAdapter` throws, and it throws it for THREE reasons: a non-2xx (`rejectionOf`: the
       // server's code, and `retryable` defaulted from the status), a fetch that rejected outright
-      // (`code: "network"`), and — since gap AT8 — a request that answered nothing at all inside
+      // (`code: "network"`), and — since the read was given a deadline — a request that answered
+      // nothing at all inside
       // `ATTACHMENT_LIST_TIMEOUT_MS` (`code: "timeout"`, `retryable: true`, raised by
       // `HttpAdapter.withDeadline`, which aborts the request as it throws). That third one is why
       // this catch exists at all now: before it, a hung read never reached here, the outcome stayed
@@ -1171,8 +1175,8 @@ export class OhmailEngine {
    * restored in the same tick and no render could ever observe it. A state nothing can render is
    * not error handling.
    *
-   * THE SECOND HALF OF THAT IS NO LONGER TRUE — gap AT6 gave the strip a list state, and `failed`
-   * now reaches it. The FIRST half is why this still must not use it: a failed zip says nothing
+   * THE SECOND HALF OF THAT IS NO LONGER TRUE — the strip has a list state now, and `failed`
+   * reaches it. The FIRST half is why this still must not use it: a failed zip says nothing
    * about the metadata, and a list-level failure row here would claim the files are unknown when
    * they are on screen.
    *

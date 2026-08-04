@@ -90,7 +90,7 @@ function byDateAsc(a: EngineMessage, b: EngineMessage): number {
   return -byDateDesc(a, b);
 }
 
-// ── Bodies (slice U5-BODY) ─────────────────────────────────────────────────
+// ── Bodies ─────────────────────────────────────────────────────────────────
 
 /**
  * THE TEXT A SURFACE RENDERS, AND WHAT THAT TEXT ACTUALLY IS.
@@ -136,7 +136,7 @@ export function bodyOf(
   reader: EntityReader,
   m: Pick<EngineMessage, "id" | "snippet"> & { body?: string },
 ): MessageBody {
-  // O11b — `html` IS NULL ON EVERY BRANCH BUT ONE, and that is the contract rather than an
+  // `html` IS NULL ON EVERY BRANCH BUT ONE, and that is the contract rather than an
   // omission ({@link MessageBody}). The demo's rows carry text and no html; a snippet is not
   // html; and `loading`/`failed` have no body to describe. Only `ready` has a document, so
   // only `ready` may report one — otherwise a surface could render a stale frame underneath
@@ -167,10 +167,10 @@ export function bodyOf(
 // ── Conversations ──────────────────────────────────────────────────────────
 
 /**
- * THE CONVERSATION a message belongs to, oldest first (slice P6b).
+ * THE CONVERSATION a message belongs to, oldest first.
  *
- * `threadId` is populated by C3 — 2 319 threads on the owner's mailbox, largest 18 — and
- * nothing rendered it. This is the one place the grouping is computed.
+ * `threadId` is populated at ingest, and until this selector existed nothing rendered it.
+ * This is the one place the grouping is computed.
  *
  * ── THE EMPTY ARRAY IS A CONTRACT, NOT A DEGENERATE CASE ────────────────────────────────
  *
@@ -183,12 +183,12 @@ export function bodyOf(
  * NO FOLDER FILTER. A conversation legitimately spans folders: a stranger's first mail sits
  * in `ohmail/Screener` while their accepted follow-ups land in the Ohbox, and hiding the
  * held one would be the reader lying about what it has. The `Sent` folder is the other
- * side of that coin and is NOT watched (gap U4c) — the user's own replies are not in
+ * side of that coin and is NOT watched — the user's own replies are not in
  * `messages` at all, so this can only ever return the counterpart's half. Callers say so;
  * see `Conversation.tsx`.
  *
  * O(n) over the mirror, like every selector here. Do NOT call it per row to build list
- * badges — that is O(n²) at 8 800 messages and wants a one-pass count selector instead.
+ * badges — that is O(n²) over a mailbox of any size and wants a one-pass count selector instead.
  */
 export function threadOf(reader: EntityReader, messageId: string): EngineMessage[] {
   const self = reader.get<EngineMessage>("message", messageId);
@@ -208,7 +208,7 @@ export function messagesIn(reader: EntityReader, folder: Folder): EngineMessage[
 }
 
 /**
- * WHICH MAILBOX A FRESH COMPOSE SENDS FROM (slice U4f).
+ * WHICH MAILBOX A FRESH COMPOSE SENDS FROM.
  *
  * A reply inherits its mailbox from the message it answers. A compose has no parent, and the
  * server will not guess: `POST /drafts` requires a `mailboxId` that belongs to the account
@@ -229,7 +229,7 @@ export function messagesIn(reader: EntityReader, folder: Folder): EngineMessage[
  * order of a mirror scan is not a fact about the user and this answer decides whose address a
  * stranger sees in their From line.
  *
- * ── THE LIMIT THAT USED TO BE STATED HERE IS NOW CLOSED (gap O20) ──────────────────────
+ * ── THE LIMIT THAT USED TO BE STATED HERE IS NOW CLOSED ────────────────────────────────
  *
  * This paragraph said "with two mailboxes connected this picks one of them and offers no way to
  * choose", filed as owed. It was worse than owed: nothing on the compose surface said WHICH one,
@@ -352,7 +352,7 @@ export function senderKey(address: string): string {
 }
 
 /**
- * One held message, with its body RESOLVED rather than degraded (slice U5-BODY).
+ * One held message, with its body RESOLVED rather than degraded.
  *
  * This used to be `body: m.body ?? m.snippet` with a comment calling the snippet a stated
  * degradation. It was stated, and it was also the thing that made `ScreenerSenderDTO.held`'s
@@ -374,7 +374,7 @@ function heldOf(reader: EntityReader, m: EngineMessage, now: Date): ScreenerHeld
 }
 
 /**
- * THE SCREENER, DERIVED FROM THE MESSAGE MIRROR (slice C1).
+ * THE SCREENER, DERIVED FROM THE MESSAGE MIRROR.
  *
  * `screener_sender` is a client-local entity: `/sync`'s vocabulary never carried it
  * (`change-log.ts`), so before this the Screener was structurally empty on every Cloud
@@ -538,7 +538,7 @@ export function tagsCrossView(reader: EntityReader): TagGroup[] {
   }));
 }
 
-// ── Rules: the consent gate's memory (gap O16) ─────────────────────────────
+// ── Rules: the consent gate's memory ───────────────────────────────────────
 
 /**
  * EVERY ROUTING RULE THIS ACCOUNT HAS, NEWEST FIRST.
