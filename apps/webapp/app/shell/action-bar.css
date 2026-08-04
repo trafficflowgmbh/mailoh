@@ -1,0 +1,253 @@
+/* ═══ THE MESSAGE ACTION BAR (slice O13) ═══════════════════════════════════════════════
+ *
+ * ── WHAT WAS WRONG, MEASURED RATHER THAN GUESSED ──────────────────────────────────────
+ *
+ * The owner, reading their own mail: *"it breaks a line and doesn't show shortcuts"*. Both
+ * halves came from one shape — eight equal-weight `.btn` capsules in a flat
+ * `flex-wrap:wrap` row (`packages/ui/…/message.css` `.msg-actions`), with a single
+ * hand-typed `kbdHint="s"` on the Screening button and nothing on the other seven.
+ *
+ * Measured on the live demo before the fix, so the numbers below are observations:
+ *
+ *   · 1440px window → `.msg` is capped at `max-width:640px` and pads 34px a side, so the
+ *     bar gets **568px, for ever**. The buttons needed 656px. TWO LINES, 73px tall, with
+ *     "Draft reply" alone on the second. **Widening the window never fixed it** — this is
+ *     not a small-screen defect, which is why it survived a year of desktop use.
+ *   · 1000px window → the split grid resolves to `400px 312px`, so the READING column is
+ *     310px and the bar gets **242px**. FOUR LINES, 152px tall.
+ *   · 390px phone → the reader sheet pads 20px a side: **350px**. Wider than the split
+ *     column, which is why the phone is not the width that defeats this layout.
+ *
+ * ── WHY THIS IS A CONTAINER QUERY AND NOT A MEDIA QUERY ───────────────────────────────
+ *
+ * 242px and 350px are the same bar in the same product at the SAME viewport class — the
+ * first is a 1000px desktop, the second a 390px phone. A viewport media query cannot tell
+ * them apart and would dress the roomier surface as the tighter one. The bar therefore
+ * asks its OWN width, and `.abar` is the container that answers.
+ *
+ * ── THE STRUCTURAL FIX, WHICH IS NOT A BREAKPOINT ─────────────────────────────────────
+ *
+ * `.abar-row` is `flex-wrap:nowrap` and every `.abar-g` is `flex:none;white-space:nowrap`.
+ * So a group CANNOT break internally and the row CANNOT wrap: "breaks mid-group" is
+ * removed by construction, not by having picked good numbers. What the breakpoints below
+ * decide is only WHICH groups stand in the row; anything not standing there is in the
+ * More panel, and the same queries hide it there so it is never in both places at once.
+ * That is the one rule to keep if these numbers are ever re-tuned.
+ */
+
+/* `.msg-actions` (packages/ui, not ours to edit) is `display:flex;flex-wrap:wrap`. Giving
+   it exactly ONE child that fills the line makes its own wrap unreachable — the bar's
+   layout is decided here and nowhere else. */
+.msg-actions > .abar {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.abar {
+  container-type: inline-size;
+  container-name: abar;
+  width: 100%;
+}
+
+.abar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap; /* load-bearing — see the header */
+  min-width: 0;
+}
+
+/* A group is atomic: it is never split across a line and never shrunk below its content. */
+.abar-g {
+  display: flex;
+  align-items: center;
+  flex: none;
+  white-space: nowrap;
+}
+
+/* The read switch sits apart from the verbs — it reports a STATE, it does not file mail. */
+.abar-read-g {
+  margin-left: auto;
+  gap: 6px;
+}
+
+/* ── the buttons ──────────────────────────────────────────────────────────────────── */
+
+.abar-b {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: nowrap;
+  border-radius: 99px;
+  transition: background .15s var(--swift), color .15s var(--swift),
+    box-shadow .2s var(--swift), transform .15s var(--swift);
+}
+.abar-b:hover { background: var(--tint); }
+.abar-b:active { transform: scale(.97); }
+.abar-b:disabled { color: var(--ink3); cursor: default; }
+.abar-b:disabled:hover { background: none; }
+.abar-b:disabled:active { transform: none; }
+
+/* A button standing on its own gets the Blanc capsule; one inside a segment does not,
+   because the segment carries the capsule for the whole group. */
+.abar-solo {
+  background: var(--panel);
+  box-shadow: var(--lift-0);
+}
+.abar-solo:hover {
+  background: var(--panel);
+  box-shadow: var(--lift-2);
+  transform: translateY(-1px);
+}
+
+.abar-b.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: var(--lift-0);
+}
+.abar-b.primary:hover {
+  background: var(--accent);
+  filter: brightness(1.07);
+  box-shadow: var(--lift-2);
+  transform: translateY(-1px);
+}
+
+/* ── the segmented group: three horizons that read as one control ─────────────────── */
+
+.abar-seg {
+  background: var(--panel);
+  box-shadow: var(--lift-0);
+  border-radius: 99px;
+}
+.abar-seg .abar-b { border-radius: 0; }
+.abar-seg .abar-b:first-child { border-radius: 99px 0 0 99px; }
+.abar-seg .abar-b:last-child { border-radius: 0 99px 99px 0; }
+/* One hairline between segments — the join that makes three buttons read as one object. */
+.abar-seg .abar-b + .abar-b { box-shadow: inset 1px 0 0 var(--hair-soft); }
+
+/* ── keycaps ──────────────────────────────────────────────────────────────────────── */
+
+/* Quieter and smaller than the global `kbd`: seven of these now sit in one row, and at the
+   base keycap size they would read as the loudest thing in the message. The hint is for
+   the second read, never the first. */
+.abar kbd {
+  font-size: 9.5px;
+  padding: 0 4px;
+  min-width: 15px;
+  border-radius: 5px;
+  background: transparent;
+  border-color: var(--hair-soft);
+  color: var(--ink3);
+  line-height: 1.6;
+}
+.abar-b.primary kbd {
+  border-color: oklch(1 0 0 / .32);
+  color: inherit;
+}
+
+/* ── the read switch — it states the CURRENT state (gap O9's ruling) ──────────────── */
+
+.abar-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  flex: none;
+  border: 1.5px solid var(--accent);
+  background: var(--accent);
+  transition: background .15s var(--swift), border-color .15s var(--swift);
+}
+/* checked === read. The filled accent dot is the SAME mark the list row uses for unread,
+   so "there is a dot" means the same thing in both places. */
+.abar-read[aria-checked="true"] .abar-dot {
+  background: transparent;
+  border-color: var(--hair);
+}
+
+/* ── the More panel and the Move row: the bar is REPLACED, never grown ────────────── */
+
+/* Both sub-rows may wrap — they are a menu that has taken the bar's place for one
+   interaction, not the resting bar, and a menu that clipped its own last item would be the
+   defect this slice exists to remove. */
+.abar-panel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.abar-lab {
+  font-size: 11px;
+  color: var(--ink3);
+  padding-right: 2px;
+  white-space: nowrap;
+}
+/* A panel section is a grouping for the container queries below and NOT a box: its buttons
+   must be flex children of the panel itself, or they would lay out as one unbreakable unit
+   and reintroduce the clipping this slice removes. */
+.abar-pg { display: contents; }
+.abar-chev {
+  transform: rotate(90deg);
+  opacity: .55;
+}
+
+/* ── ONE BORROWED RULE, NARROWED RATHER THAN REVERSED ─────────────────────────────────
+ *
+ * `packages/ui/src/composites/reader.css:17-18` rests the reader's action bar at
+ * `opacity:.35` and brings it to 1 on `.msg:hover` / `:focus-within` — the reader is "the
+ * exhale", and on a pointer device that is a resting state which one mouse movement undoes.
+ *
+ * On a TOUCH device there is no hover, so it is not a resting state, it is the ONLY state:
+ * the bar and every keycap in it stay at 35% for ever. That defeats the half of O13 that
+ * exists to make the keys visible, on the surface with the least room to spare.
+ *
+ * Restored only where hover does not exist. The desktop exhale is deliberately untouched —
+ * this narrows the rule to the devices its own mechanism works on, it does not overrule it.
+ */
+@media (hover: none) {
+  .reader .msg-actions:has(> .abar) { opacity: 1; }
+}
+
+/* ── THE DENSITY LADDER ───────────────────────────────────────────────────────────────
+ *
+ * Base = the tightest surface. Reply, the read switch and More are the three that always
+ * stand: the first is the verb, the second is what the owner asked for by name, the third
+ * is the way to everything else. Base row measures **184px**, which is what lets it stand
+ * in the 242px split column.
+ *
+ * EVERY NUMBER BELOW IS A MEASUREMENT, not a round number picked to look tidy. Each is the
+ * natural width of the row that tier admits, read off the built page in Chrome:
+ *
+ *   Reply 67.7 · defer 220.4 · file 138.7 · read+More 110.3 · gaps 6
+ *     base            = 67.7 + 110.3 + 6           = 184.0
+ *     base + defer    = 184.0 + 220.4 + 6          = 410.4  → admit at 411
+ *     + file          = 410.4 + 138.7 + 6          = 555.1  → admit at 556
+ *
+ * The desktop container is 568.6px (`.msg` is capped at `max-width:640px` and pads 34px a
+ * side), so the full row fits with **13.5px to spare** — measured `scrollWidth === clientWidth`,
+ * i.e. zero overflow. That slack is thin on purpose: it is the price of showing all seven
+ * verbs at the one width the reading measure allows, and it is the number to re-check first
+ * if a label is ever lengthened or a locale other than `en` is added.
+ */
+.abar-defer,
+.abar-file { display: none; }
+
+/* Panel duplicates: hidden exactly when the group is standing in the row above, so a verb
+   is in the row or in the panel and never in both. Same queries, opposite sense. */
+@container abar (min-width: 411px) {
+  .abar-defer { display: flex; }
+  .abar-panel .abar-p-defer { display: none; }
+}
+
+@container abar (min-width: 556px) {
+  .abar-file { display: flex; }
+  .abar-panel .abar-p-file { display: none; }
+}

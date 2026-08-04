@@ -662,6 +662,21 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
           void engine.mutate({ kind: "triage_set", messageId: m.id, state: "set_aside" });
           toast(t("ohbox.toastAside"));
           break;
+        case "unread":
+          /**
+           * THE READ TOGGLE'S FALLBACK ARM, and it is deliberately not the normal path (O13).
+           *
+           * In the product the bar's switch presses `u` itself, so this is reached only
+           * where that binding does not exist — the desktop shell, or a pane mounted with no
+           * keymap provider. It goes through the same `markSeen` every other read-state path
+           * in this file goes through, which is what keeps "one call site for one mutation"
+           * true; what it CANNOT do from here is set `OhboxView`'s `pinnedUnread`, which is
+           * exactly why the button prefers the key. See `ActionBar` in `MessagePane.tsx`.
+           */
+          // `!m.unread` is the DESIRED state, written the way `OhboxView.toggleUnread`
+          // writes it — one expression for "flip it", not two that could drift apart.
+          markSeen([m.id], !m.unread);
+          break;
         case "resurface": {
           const when = nextFridayNine(now);
           void engine.mutate({
@@ -686,7 +701,7 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
         }
       }
     },
-    [engine, toast, t, piles.replyLater.length, now, openReply],
+    [engine, toast, t, piles.replyLater.length, now, openReply, markSeen],
   );
 
   const readsMarkSeen = useCallback(

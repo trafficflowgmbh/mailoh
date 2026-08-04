@@ -126,6 +126,28 @@ interface Registry {
   register: (layer: Omit<Layer, "id">) => () => void;
   /** Everything currently bound, in DISPATCH order. Bumps whenever a layer's shape changes. */
   bindings: KeyBinding[];
+  /**
+   * RUN a chord's binding as if it had been typed, and say whether anything did.
+   *
+   * ── WHY THIS IS NOT `bindings.find(…).run()` ────────────────────────────────────────────
+   *
+   * `bindings` is memoised on `version`, which bumps only when a layer's SHAPE changes
+   * (chord, group, label, enabled-ness). That is right for everything the array is read for
+   * — the overlay renders shape, and a hint is shape — but a binding's `run` is a CLOSURE
+   * that changes on every render without changing the shape. So the memoised array holds
+   * handlers from the last shape change, and calling one of those runs against stale state.
+   *
+   * Found in a browser, not reasoned about: the action bar's read switch called
+   * `bindings.find("u").run()` and two presses in a row marked the message read TWICE,
+   * while two presses of the `u` KEY at the same cadence toggled correctly. `u`'s shape is
+   * constant across a read-state flip, so no version bump ever refreshed the array, and the
+   * second press re-ran the first press's closure.
+   *
+   * The dispatcher never had this problem because it walks `ordered()` at KEYPRESS time,
+   * and `Layer.get` is a getter for exactly this reason. `press` is that same walk, exposed
+   * — so a button and a keystroke are not merely equivalent, they are one code path.
+   */
+  press: (chord: string) => boolean;
 }
 
 const KeymapContext = createContext<Registry | null>(null);
@@ -262,12 +284,30 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [ordered]);
 
+  /**
+   * The dispatcher's own walk, reachable from a click. See {@link Registry.press}.
+   *
+   * `ordered()` is called HERE rather than closed over, so the handler is the one the
+   * current render published — the same guarantee `onKey` gets and for the same reason.
+   * A disabled binding is skipped exactly as the dispatcher skips it, so a button driven by
+   * this can never do what the key refuses to do.
+   */
+  const press = useCallback((chord: string): boolean => {
+    for (const b of ordered()) {
+      if (b.chord !== chord || b.disabled) continue;
+      b.run(new KeyboardEvent("keydown", { key: chord }));
+      return true;
+    }
+    return false;
+  }, [ordered]);
+
   const value = useMemo<Registry>(
     // `version` is the dependency that matters: it changes when a layer is added, removed
-    // or reshaped, which is exactly when the overlay's content changes.
-    () => ({ register, bindings: ordered() }),
+    // or reshaped, which is exactly when the overlay's content changes. `press` is NOT
+    // subject to it — it resolves its handler when it is called.
+    () => ({ register, bindings: ordered(), press }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [register, ordered, version],
+    [register, ordered, press, version],
   );
 
   return <KeymapContext.Provider value={value}>{children}</KeymapContext.Provider>;
@@ -301,6 +341,61 @@ export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "vi
     [register, scope, shape],
   );
 }
+
+/**
+ * THE BINDING THAT OWNS `chord` RIGHT NOW — so a BUTTON can show its key (slice O13).
+ *
+ * ── WHY THIS EXISTS ─────────────────────────────────────────────────────────────────────
+ *
+ * The owner, on the reading view: *"doesn't show shortcuts … my feedback already given"*.
+ * Seven of the action bar's eight verbs had a live shortcut and showed none; the eighth
+ * carried `kbdHint="s"`, hand-typed at the call site, which rendered as a bare `s` in the
+ * label row and read as a stray character rather than as a hint.
+ *
+ * A second, hand-maintained list of key hints is precisely what U2 deleted from the (i)
+ * panel — *"a second list of the bindings [that] had already drifted from them"* — and
+ * exactly what the `?` sheet is generated to avoid. So the bar reads the same registry the
+ * sheet does, and a hint can no longer be wrong: change the chord and the button follows,
+ * delete the binding and the hint disappears with it.
+ *
+ * ── WHAT IT RETURNS ─────────────────────────────────────────────────────────────────────
+ *
+ * The binding that would WIN this keypress — `bindings` is already in dispatch order
+ * (overlay, then view, then global, innermost first) and the first match is the one the
+ * dispatcher would run. So the hint answers the question the reader is actually asking,
+ * "what will this key do HERE", which is the same rule `groupedBindings` dedups by.
+ *
+ * ── AND WHY IT DOES NOT THROW, UNLIKE `useKeymap` ───────────────────────────────────────
+ *
+ * `useKeymap`'s throw is a real guard: a component that DECLARES bindings into no registry
+ * is a bug, silently. Reading one is not the same act. `MessagePane` renders in the desktop
+ * shell and in tests that mount a view with no provider at all (`ohbox-read-state.test.ts`,
+ * `conversation.test.ts`), and a message must stay readable without a keyboard registry
+ * behind it. No provider means NO hint — never a guessed one.
+ */
+export function useBinding(chord: string): KeyBinding | null {
+  const ctx = useContext(KeymapContext);
+  return ctx ? (ctx.bindings.find((b) => b.chord === chord) ?? null) : null;
+}
+
+/**
+ * PRESS a chord from a click — the companion to {@link useBinding}, and the only safe way
+ * to invoke one.
+ *
+ * `useBinding` answers questions about SHAPE (is this key bound here, is it enabled, what
+ * does it say), all of which the memoised array reports correctly because a shape change is
+ * what bumps it. Its `run` is the one field that is NOT safe to call from that array — see
+ * {@link Registry.press} for the browser-observed failure that establishes this.
+ *
+ * Returns `false` when nothing enabled is bound to `chord`, so a caller can fall back
+ * rather than silently do nothing. Safe with no provider, for the reason `useBinding` is.
+ */
+export function useKeyPress(): (chord: string) => boolean {
+  const ctx = useContext(KeymapContext);
+  return ctx ? ctx.press : NO_PRESS;
+}
+
+const NO_PRESS = (): boolean => false;
 
 /**
  * The overlay's rows, grouped — the ONE derivation of the sheet from the registry.

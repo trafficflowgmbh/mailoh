@@ -8,12 +8,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
-import { Button, Chip, ProtectedBlock, ReadingPane } from "@ohmail/ui";
+import { Button, Chip, Icon, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
 import { BodyText } from "./BodyText";
 import { ConversationEntries, ConversationHead } from "./Conversation";
 import { PLACE_LABEL, avatarHue, displayTime, hueOf, initialsOf, rowAddress, senderName, tagsOfMessage } from "./format";
 import { InlineReply } from "./InlineReply";
+import { chordKeys, useBinding, useKeyPress } from "./keymap";
 import { useMessageChrome } from "./message-chrome";
+import "./action-bar.css";
 
 /**
  * MOVE CARRIES ITS DESTINATION (gap C4).
@@ -25,10 +27,306 @@ import { useMessageChrome } from "./message-chrome";
  * second callback argument: every pass-through of `onAction` keeps compiling unchanged.
  */
 export type MoveTarget = Extract<OhmailView, "ohbox" | "reads" | "receipts" | "screened" | "spam">;
-export type MessageAction = "reply" | "later" | "aside" | "resurface" | "draft" | `move:${MoveTarget}`;
+/**
+ * `"unread"` is the FALLBACK arm of the read toggle, not its normal path — see
+ * {@link ActionBar}. The shell answers it by dispatching the same `mark_seen` the `u` key
+ * dispatches; it is reached only where `u` is not bound (the desktop shell, a test with no
+ * keymap provider), and it is deliberately a toggle rather than a direction so that no
+ * caller has to know the current state to use it correctly.
+ */
+export type MessageAction =
+  | "reply"
+  | "later"
+  | "aside"
+  | "resurface"
+  | "draft"
+  | "unread"
+  | `move:${MoveTarget}`;
 
 /** The DecisionBar's vocabulary, so filing means the same thing everywhere. */
 const MOVE_TARGETS: MoveTarget[] = ["ohbox", "reads", "receipts", "screened", "spam"];
+
+/**
+ * Which sub-row has taken the bar's place, if any. `null` is the resting bar.
+ *
+ * It was a `moving` boolean until O13. A second disclosure (More) made two booleans able to
+ * be true at once, which is a state the bar has no rendering for — a union cannot express it.
+ */
+type BarPanel = "move" | "more";
+
+/**
+ * A verb's keycap, READ FROM THE LIVE REGISTRY (slice O13).
+ *
+ * Renders nothing when nothing is bound to `chord` here, which is the whole point: the bar
+ * cannot advertise a key that does not work, and it cannot go stale when a chord moves.
+ * `chordKeys` is the same notation the `?` sheet prints, so `⌘`/`⇧`/`↵` would render
+ * identically in both places if a bar verb ever took a modifier.
+ *
+ * This replaces `kbdHint="s"` — one hand-typed hint on one of eight buttons, which is what
+ * the owner saw as a stray `s` in the label row.
+ */
+function Key({ chord }: { chord: string }) {
+  const binding = useBinding(chord);
+  if (!binding) return null;
+  return <Kbd>{chordKeys(chord).join(" ")}</Kbd>;
+}
+
+/**
+ * ═══ THE ACTION BAR (slice O13) ═══════════════════════════════════════════════════════
+ *
+ * Owner, reading their own mail: *"it breaks a line and doesn't show shortcuts and my
+ * feedback already given, allow mark read / unread in it intelligently"*.
+ *
+ * ── THE GROUPING, WHICH IS THE ACTUAL FIX ─────────────────────────────────────────────
+ *
+ * The eight buttons this replaces were eight peers in one wrapping row, and they are not
+ * eight peers. They answer three different questions, and one of the three was being asked
+ * three times:
+ *
+ *   · ANSWER IT      — Reply (the accent verb), Draft reply (the AI variant, in More).
+ *   · NOT NOW        — Answer Later, Park, Resurface. **The same idea at three horizons**,
+ *                      so they are ONE segmented control with hairlines between the
+ *                      segments, not three siblings competing with Reply for weight.
+ *   · FILE IT        — Screening (this SENDER's future mail) and Move (THIS message).
+ *                      One control, two scopes, which is exactly why they belong adjacent
+ *                      and exactly why they must stay two buttons: U3 put Screening here
+ *                      because "where does this sender's mail go" had no control outside
+ *                      the Screener, and folding it into Move would undo that.
+ *
+ * and beside them, not among them, the READ SWITCH — a state, not a decision about where
+ * mail goes, so it is separated by `margin-left:auto` rather than by a divider.
+ *
+ * Layout is in `action-bar.css`; the rule that matters is that a group is atomic, so the
+ * row cannot break mid-group at any width. What a narrow container drops is whole groups,
+ * into More.
+ *
+ * ── EVERY VERB SHOWS ITS KEY, AND NOT BY BEING TOLD ───────────────────────────────────
+ *
+ * Each `<Key chord>` asks the registry. Before this the bar carried exactly one hint —
+ * `kbdHint="s"`, typed at the call site — while `r`, `a`, `e`, `b` and `u` were all live
+ * and silent. That single hint is the stray `s` in the owner's report: not a bug in the
+ * label, a bug in the label row having only one keycap in it.
+ *
+ * ── AND THE READ SWITCH DOES NOT FIGHT THE READER (gap O9, and U1's dwell) ────────────
+ *
+ * `u` is already bound, in `OhboxView`, and marking unread there sets a `pinnedUnread` ref
+ * that the 2 s dwell checks WHEN ITS TIMER FIRES — the guard
+ * `ohbox-read-state.test.ts` calls *"`u` is not undone by a dwell that is already
+ * ticking"*. A button that dispatched `mark_seen` on its own would have no way to set that
+ * pin, so a click on it inside the dwell window would be reverted two seconds later by the
+ * heuristic: the exact defect that test exists to prevent, reintroduced through a new door.
+ *
+ * So the switch does not re-implement the verb — **it presses the key**. One handler, one
+ * pin, one place where "reading has happened" is decided. `onAction("unread")` is the
+ * fallback for surfaces where `u` is not bound at all (the desktop shell, a pane mounted
+ * with no keymap provider), and it is the only arm that can drift, which is why it is the
+ * arm that is never taken in the product.
+ */
+function ActionBar({
+  message,
+  panel,
+  onPanel,
+  onAction,
+  onScreen,
+}: {
+  message: EngineMessage;
+  panel: BarPanel | null;
+  onPanel: (next: BarPanel | null) => void;
+  onAction: (action: MessageAction) => void;
+  onScreen: (anchor: HTMLElement | null) => void;
+}) {
+  const t = useTranslations("ohbox");
+  const tr = useTranslations("screening");
+  const press = useKeyPress();
+
+  /**
+   * A label whose key is not in `messages/en.json` yet.
+   *
+   * This slice may not edit that file — another executor holds it — so the new copy is
+   * reported for the owner to apply and read through `t.has` until it lands. The fallback
+   * is the SAME wording that was reported, and en.json wins the moment the key exists, so
+   * this cannot become a second source of copy: it is a shim with one exit, not a default.
+   */
+  const copy = (key: string, reported: string): string => (t.has(key) ? t(key) : reported);
+
+  /**
+   * Marking read/unread — the key's own handler wherever the key exists. See the header.
+   *
+   * `press` and NOT `useBinding("u")?.run()`. The second is what this was, and it was wrong
+   * in a way only a browser showed: two presses in a row marked the message read twice,
+   * because the memoised binding array holds closures from the last SHAPE change and `u`'s
+   * shape does not change when read-state does. `press` resolves the handler when it is
+   * called, exactly as the keydown dispatcher does. See `Registry.press`.
+   */
+  const toggleRead = () => {
+    if (!press("u")) onAction("unread");
+  };
+
+  const defer = (
+    <>
+      {/* "Later", not "Answer Later". Inside a control whose own name is "Not now", each
+          segment need only carry its HORIZON — the shared idea is said once, by the group,
+          instead of three times by its members. It is also the 45px that decides whether
+          filing fits on the row at the 569px the reading measure allows. */}
+      <button type="button" className="abar-b" onClick={() => onAction("later")}>
+        {copy("actionLater", "Later")}
+        <Key chord="a" />
+      </button>
+      <button type="button" className="abar-b" onClick={() => onAction("aside")}>
+        {t("actionSetAside")}
+        <Key chord="e" />
+      </button>
+      <button type="button" className="abar-b" onClick={() => onAction("resurface")}>
+        {t("actionResurface")}
+        <Key chord="b" />
+      </button>
+    </>
+  );
+
+  /* U3. "Move" relocates THIS message; screening decides where this SENDER's mail goes,
+     which is a different question and had no control anywhere outside the Screener.
+     The anchor is the BUTTON — not a list row found by selector — because in the reader
+     sheet the row is behind the overlay and a popover would open under it. */
+  const file = (
+    <>
+      <button
+        type="button"
+        className="abar-b"
+        onClick={(e) => onScreen((e.currentTarget as HTMLElement | null) ?? null)}
+      >
+        {tr("action")}
+        <Key chord="s" />
+      </button>
+      <button type="button" className="abar-b" onClick={() => onPanel("move")}>
+        {t("actionMove")}
+      </button>
+    </>
+  );
+
+  if (panel === "move") {
+    return (
+      <div className="abar">
+        <div className="abar-panel">
+          <span className="abar-lab">{t("moveLabel")}</span>
+          {MOVE_TARGETS.filter((v) => FOLDER_OF_VIEW[v] !== message.folder).map((v) => (
+            <button
+              key={v}
+              type="button"
+              className="abar-b abar-solo"
+              onClick={() => {
+                onPanel(null);
+                onAction(`move:${v}`);
+              }}
+            >
+              → {PLACE_LABEL[v] ?? v}
+            </button>
+          ))}
+          <button type="button" className="abar-b" onClick={() => onPanel(null)}>
+            {t("moveCancel")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (panel === "more") {
+    /* The panel REPLACES the bar rather than growing it, which is the pattern Move already
+       used. Its members are hidden by the same container queries that put them in the row,
+       from the other side — so a verb is in the row or in this panel and never in both. */
+    return (
+      <div className="abar">
+        <div className="abar-panel">
+          <span className="abar-lab">{copy("actionMore", "More")}</span>
+          <span className="abar-pg abar-p-defer">{defer}</span>
+          <span className="abar-pg abar-p-file">{file}</span>
+          <button type="button" className="abar-b abar-solo" onClick={() => onAction("draft")}>
+            <Icon name="spark" size={13} />
+            {t("actionDraftReply")}
+          </button>
+          <button type="button" className="abar-b" onClick={() => onPanel(null)}>
+            {t("moveCancel")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const read = !message.unread;
+  return (
+    <div className="abar">
+      <div className="abar-row">
+        <div className="abar-g">
+          <button
+            type="button"
+            className="abar-b abar-solo primary"
+            onClick={() => onAction("reply")}
+          >
+            {t("actionReply")}
+            <Key chord="r" />
+          </button>
+        </div>
+
+        <div
+          className="abar-g abar-seg abar-defer"
+          role="group"
+          aria-label={copy("groupDefer", "Not now")}
+        >
+          {defer}
+        </div>
+
+        <div
+          className="abar-g abar-seg abar-file"
+          role="group"
+          aria-label={copy("groupFile", "File it")}
+        >
+          {file}
+        </div>
+
+        <div className="abar-g abar-read-g">
+          {/*
+           * `role="switch"` and not a pair of buttons: O9 ruled the control must "state the
+           * current state", because a one-way "Mark read" leaves no way back and mislabels
+           * itself the moment it has been pressed. A switch labelled "Read" reports the
+           * state in its label AND in `aria-checked`, and what pressing it does is in the
+           * title — which is the only wording that has to change with the state.
+           */}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={read}
+            className="abar-b abar-solo abar-read"
+            title={read ? copy("actionMarkUnread", "Mark unread") : copy("actionMarkRead", "Mark read")}
+            onClick={toggleRead}
+          >
+            <span className="abar-dot" aria-hidden="true" />
+            {copy("actionRead", "Read")}
+            <Key chord="u" />
+          </button>
+
+          {/*
+           * ICON-ONLY, and that is a measurement rather than a preference: dropping the word
+           * "More" is 35px, and 35px is the difference between filing standing on the row at
+           * the 569px reading measure and being pushed into this menu itself. A disclosure is
+           * the one control here whose meaning survives without a label — pressing it is the
+           * only thing it can do — so it is the right 35px to spend. The name is not lost,
+           * it moves to `aria-label` and the tooltip.
+           */}
+          <button
+            type="button"
+            className="abar-b abar-solo abar-more"
+            aria-haspopup="true"
+            aria-expanded={false}
+            aria-label={copy("actionMore", "More")}
+            title={copy("actionMore", "More")}
+            onClick={() => onPanel("more")}
+          >
+            <Icon name="chev" size={12} className="abar-chev" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** "Protected — …" renders with the leading word bolded, like the prototype. */
 function ProtectedPolicy({ text }: { text: string }) {
@@ -68,11 +366,11 @@ export function MessagePane({
   const addRef = useRef<HTMLSpanElement>(null);
   const isProtected = message.protected != null;
   const mine = tagsOfMessage(message, tags);
-  const [moving, setMoving] = useState(false);
+  const [panel, setPanel] = useState<BarPanel | null>(null);
   const chrome = useMessageChrome();
 
   // A half-open destination row must not carry over to the next message.
-  useEffect(() => setMoving(false), [message.id]);
+  useEffect(() => setPanel(null), [message.id]);
 
   /**
    * THE CONVERSATION (slice P6b) — oldest first, empty when there is no conversation.
@@ -228,57 +526,13 @@ export function MessagePane({
           : undefined
       }
       actions={
-        moving ? (
-          <>
-            <span className="choose-lab">{t("moveLabel")}</span>
-            {MOVE_TARGETS.filter((v) => FOLDER_OF_VIEW[v] !== message.folder).map((v) => (
-              <Button
-                key={v}
-                onClick={() => {
-                  setMoving(false);
-                  onAction(`move:${v}`);
-                }}
-              >
-                → {PLACE_LABEL[v] ?? v}
-              </Button>
-            ))}
-            <Button variant="ghost" onClick={() => setMoving(false)}>
-              {t("moveCancel")}
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button onClick={() => onAction("reply")}>{t("actionReply")}</Button>
-            <Button onClick={() => onAction("later")}>{t("actionReplyLater")}</Button>
-            <Button onClick={() => onAction("aside")}>{t("actionSetAside")}</Button>
-            <Button onClick={() => onAction("resurface")}>{t("actionResurface")}</Button>
-            {/* U3. "Move" relocates THIS message; screening decides where this SENDER's
-                mail goes, which is a different question and had no control anywhere
-                outside the Screener. */}
-            <Button
-              kbdHint="s"
-              onClick={(e) =>
-                chrome.openSenderMenu(
-                  message.id,
-                  (e.currentTarget as HTMLElement | null) ?? null,
-                )
-              }
-            >
-              {tr("action")}
-            </Button>
-            <Button variant="ghost" onClick={() => setMoving(true)}>
-              {t("actionMove")}
-            </Button>
-            <Button
-              variant="primary"
-              icon="spark"
-              style={{ marginLeft: "auto" }}
-              onClick={() => onAction("draft")}
-            >
-              {t("actionDraftReply")}
-            </Button>
-          </>
-        )
+        <ActionBar
+          message={message}
+          panel={panel}
+          onPanel={setPanel}
+          onAction={onAction}
+          onScreen={(anchor) => chrome.openSenderMenu(message.id, anchor)}
+        />
       }
       reply={
         replying ? (
