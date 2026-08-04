@@ -93,23 +93,21 @@ export function displayTime(m: EngineMessage, now: Date): string {
  * The audit asks for IMAP INTERNALDATE, and that is the right value — but it is not reachable
  * from anywhere a display fix can stand:
  *
- *  1. **Nothing persists it.** `packages/core/src/mime.ts:459` writes `parsed.date ?? null`
- *     and INTERNALDATE is read only for ORDERING, into an in-memory cache
- *     (`arrivalKey`, `packages/core/src/adapters/imap.ts:70`). `messages` has no column for
- *     it, so `dto/materialize.ts` has nothing to coalesce to but `createdAt` — when OUR
- *     worker wrote the row. `imap.ts:44-48` already records why that is the wrong answer:
+ *  1. **Nothing persists it.** The MIME parser writes `parsed.date ?? null`, and INTERNALDATE is
+ *     read only for ORDERING, into an in-memory `arrivalKey` cache. The `messages` table has no
+ *     column for it, so materialization has nothing to coalesce to but `createdAt` — when the
+ *     sync worker wrote the row. The IMAP adapter already records why that is the wrong answer:
  *     an imported mailbox "leaves every message stamped with the import time".
  *  2. **A non-null `MessageDTO.date` would desynchronise two orderings.** The server sorts by
- *     `messages.date`, still NULL (`dto/materialize.ts:150`); the client sorts by the DTO's
- *     `date`, and `byDateDesc` reads a missing one as 0 — oldest. Synthesizing a value client-
- *     side of the sort would place an undated message NEWEST here and OLDEST there, and
- *     contract §5.2 makes the server's order the order.
+ *     `messages.date`, which is still NULL; the client sorts by the DTO's `date`, and
+ *     `byDateDesc` reads a missing one as 0 — oldest. Synthesizing a value client-side of the
+ *     sort would place an undated message NEWEST here and OLDEST there, and the sync contract
+ *     makes the server's order the order.
  *
- * So the true repair belongs at ingest, where INTERNALDATE is in hand and one write fixes
- * every surface at once — and `packages/core` and `apps/worker` are both held by other
- * slices. It is filed as owed. This function is what stops the product lying in the meantime,
- * and it stays correct after that fix lands: a date that is always present simply means no
- * part is ever dropped.
+ * So the true repair belongs at ingest, where INTERNALDATE is in hand and one write fixes every
+ * surface at once; it is owed rather than done. This function is what stops the product lying in
+ * the meantime, and it stays correct after that fix lands: a date that is always present simply
+ * means no part is ever dropped.
  */
 export function metaLine(...parts: Array<string | null | undefined>): string {
   return parts.filter((p): p is string => typeof p === "string" && p !== "").join(" · ");

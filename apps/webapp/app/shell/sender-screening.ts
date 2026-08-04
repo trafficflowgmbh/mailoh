@@ -375,8 +375,8 @@ export interface ScreeningPlan {
    * `RulesService.create` calls nothing, and the routing pass that consults rules on arrival
    * calls nothing either. A rule created from past the gate arms NOTHING today. `decide` calls
    * `unsubscribe.onScreenOut(ctx, <the mail it just re-routed>)` after its commit on the reject
-   * branch, and `apps/api-vercel/src/deps.ts` wires that dependency in, so this is live in
-   * production rather than latent. A plain `move` to Screened does NOT arm it — nothing calls
+   * branch, and the server wires that dependency in, so this is live in the deployed API rather
+   * than latent. A plain `move` to Screened does NOT arm it — nothing calls
    * the drain (`sweepScreenedOut` has no production caller) — so this is false for a sender who
    * has already left the gate, which is the honest answer and not a convenient one.
    */

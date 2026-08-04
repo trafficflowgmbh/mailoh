@@ -16,13 +16,13 @@
  * Two things were read out of the worker rather than assumed, and each one on its own
  * disqualifies the column:
  *
- *  · **It is shared.** `stampMailboxSync` (`apps/worker/src/mailboxes.ts:979-984`) is ONE
- *    `UPDATE … WHERE id IN (…)` for every mailbox the cycle served. Both production mailbox
- *    rows were read on 2026-08-03 and reported an IDENTICAL 207 seconds of age, so the column
- *    cannot distinguish one mailbox's progress from another's.
- *  · **It lands EARLY.** `apps/worker/src/index.ts:1281` pushes the mailbox into `synced`
- *    after each successful cycle *whether or not* `hasBacklog` is true. So a mailbox
- *    thirty seconds into a thirty-minute import already carries a stamp.
+ *  · **It is shared.** The server stamps it in ONE `UPDATE … WHERE id IN (…)` covering every
+ *    mailbox the cycle served. Two mailboxes on one account were measured reporting an
+ *    IDENTICAL 207 seconds of age, so the column cannot distinguish one mailbox's progress
+ *    from another's.
+ *  · **It lands EARLY.** The server moves a mailbox into `synced` after each successful cycle
+ *    *whether or not* it still has a backlog. So a mailbox thirty seconds into a thirty-minute
+ *    import already carries a stamp.
  *
  * And separately it lands LATE: the first attach was measured at 358 s and again at 373 s for
  * a 1 712-message mailbox, twice, in production, and attaches are serial — so a second
@@ -57,11 +57,10 @@
 /**
  * The ways OUR OWN infrastructure declines to serve a mailbox (mail 0029).
  *
- * A CLOSED set with a CHECK constraint behind it, owned by
- * `packages/db/src/mailbox-errors.ts` → `MAILBOX_SYNC_BLOCK_REASONS`. It is re-declared here
- * rather than imported for the same reason `api-client.ts` re-declares `errorCode`: this
- * module ships in the Desktop mirror (`scripts/publish-desktop.mjs` DENYs `packages/db`), so
- * an import would break a build that has no server in it at all.
+ * A CLOSED set with a CHECK constraint behind it, owned server-side as
+ * `MAILBOX_SYNC_BLOCK_REASONS`. It is re-declared here rather than imported for the same reason
+ * `api-client.ts` re-declares `errorCode`: this module ships in the Desktop app, which is built
+ * without the server packages, so an import would break a build that has no server in it at all.
  *
  * Re-declaring a closed set is how the two drift, and A0b's brief names the exact failure it
  * produced once already: a fourth `status` value would have rendered the literal key path
@@ -85,8 +84,8 @@ export function isSyncBlockReason(v: unknown): v is SyncBlockReason {
 /**
  * THE ORGANIZER LEASE'S VERDICT, AS COPY TOKENS — UX3 (mail 0027).
  *
- * `mailboxes.disabled_reason` is the other closed set on this row: `MAILBOX_DISABLED_REASONS`
- * (`packages/db/src/mailbox-errors.ts`), three members, its own CHECK constraint. It says why a
+ * `mailboxes.disabled_reason` is the other closed set on this row: `MAILBOX_DISABLED_REASONS`,
+ * three members, its own CHECK constraint, owned server-side. It says why a
  * mailbox is `disabled` when the LEASE decided it rather than a person — and until UX3 it was on
  * no wire at all, which is how a mailbox could read "disconnected", "No mail yet — added 3
  * minutes ago" and "No mailbox connected, so nothing can arrive" at the same moment.
@@ -132,8 +131,8 @@ export function standDownToken(wire: string | null): StandDownReason | null {
 /**
  * ONE mailbox, as the shared shell is allowed to know it.
  *
- * Structural and shell-owned, NOT `MailboxDTO`. `apps/webapp/app/api-client.ts` is DENYd from
- * the Desktop mirror, so this file may not name its types; and narrowing to the fields the
+ * Structural and shell-owned, NOT `MailboxDTO`. The Cloud client's API layer is not part of the
+ * Desktop app, so this file may not name its types; and narrowing to the fields the
  * ladder reads is the honest declaration of what the derivation is entitled to consult.
  * Anything the Cloud client can see and this interface does not name is a fact the copy may
  * not assert.
@@ -192,9 +191,9 @@ export interface MailboxFacts {
  *
  * The paragraph above predicted a flap if this window were one or two poll periods. It was the
  * right argument aimed at the wrong clock, and the flap happened anyway at thirty seconds: the
- * gap that governs mid-import is not the CLIENT's 8 s poll, it is the WORKER's cycle —
- * `pollIntervalMs`, 60 s by default (`apps/worker/src/config.ts`). No 30 s window can span one
- * of those, so every worker cycle tore the run down and the strip had to start again.
+ * gap that governs mid-import is not the CLIENT's 8 s poll, it is the SERVER's cycle — a poll
+ * interval of 60 s by default. No 30 s window can span one of those, so every server cycle tore
+ * the run down and the strip had to start again.
  *
  * This constant still decides what counts as ONE RUN of rises, which is the evidence that an
  * import has BEGUN. What outlives it is the episode — see {@link IMPORT_END_IDLE_MS}.
@@ -213,12 +212,11 @@ export const GROWTH_WINDOW_MS = 30_000;
  *
  * ── WHY NINETY SECONDS ──────────────────────────────────────────────────────────────────
  *
- * The quiet gap mid-import is ONE WORKER CYCLE. `apps/worker/src/index.ts:2214` kicks the cycle
- * on `pollIntervalMs`, which `apps/worker/src/config.ts:466` defaults to 60 s, and the client
- * then needs up to one 8 s `POLL_MS` to see what that cycle wrote — a floor of 68 s. The largest
- * gap actually measured was 45 s. Ninety clears both with room for a cycle that overruns, and
- * `mail-state.test.ts` asserts the relation against the worker's own source rather than against
- * this sentence.
+ * The quiet gap mid-import is ONE SERVER CYCLE. The server kicks that cycle on a poll interval
+ * that defaults to 60 s, and the client then needs up to one 8 s `POLL_MS` to see what the cycle
+ * wrote — a floor of 68 s. The largest gap actually measured was 45 s. Ninety clears both with
+ * room for a cycle that overruns, and `mail-state.test.ts` asserts the relation against the
+ * server's own constant rather than against this sentence.
  *
  * ── AND WHAT IT COSTS, SAID OUT LOUD ────────────────────────────────────────────────────
  *
@@ -580,11 +578,11 @@ const QUIET: MailState = {
  * one this slice fixes, and just as false. Attaches are serial, so a second mailbox waits
  * behind the first; ten leaves room for that.
  *
- * **It must stay under the `syncLag` alert threshold (15 minutes,
- * `packages/db/src/alerts.ts`), and `mail-state.test.ts` asserts that against the real
- * constant.** This is A0b's `syncBlockGraceMs < syncLagMs` argument one layer up: if we page
- * ourselves before the screen has escalated, the user is again the last to know — which is
- * exactly the 32 minutes of 2026-08-03.
+ * **It must stay under the server's `syncLag` alert threshold (15 minutes), and
+ * `mail-state.test.ts` asserts that against the real constant.** This is the
+ * `syncBlockGraceMs < syncLagMs` argument one layer up: if the operators are paged before the
+ * screen has escalated, the user is again the last to know — which is exactly the half-hour of
+ * silence this whole module exists to end.
  */
 export const AWAITING_SLOW_MS = 600_000;
 
@@ -764,18 +762,18 @@ function climb(input: MailStateInputs): MailState {
   // THE TEST IS `syncBlockedSince !== null`, AND IT IS NOT THE FIELD IT LOOKS LIKE IT SHOULD BE.
   //
   // This line used to read `m.syncBlockedReason !== null` with a comment saying the test is
-  // `!== null` and NOT `isSyncBlockReason` — the right rule, aimed one field to the left, and A0e
-  // is why. `packages/services/src/mailbox-service.ts:526-527` NARROWS the reason to the closed
-  // set and forwards the timestamp UNCONDITIONALLY, so a server that grows a fourth reason emits
-  // `{syncBlockedReason: null, syncBlockedSince: <ts>}` — the narrowing happens on the server, and
-  // refusing to narrow again here bought nothing because there was nothing left to narrow. Gating
-  // on the reason gave that mailbox silence, which is exactly what this column was migrated to end.
+  // `!== null` and NOT `isSyncBlockReason` — the right rule, aimed one field to the left. The
+  // server NARROWS the reason to the closed set and forwards the timestamp UNCONDITIONALLY, so a
+  // server that grows a fourth reason emits `{syncBlockedReason: null, syncBlockedSince: <ts>}` —
+  // the narrowing has already happened by the time it reaches us, and refusing to narrow again
+  // here bought nothing because there was nothing left to narrow. Gating on the reason gave that
+  // mailbox silence, which is exactly what this column was added to end.
   //
   // A timestamp is also the safer predicate to have chosen: it cannot carry a server-authored
   // token, so the generic copy below is authored here and nowhere else.
   //
-  // COMPLETE only because `reason non-null ⇒ since non-null` — five writers set and clear both
-  // columns in one statement and no CHECK enforces it (`docs/ohmail/A0DE-BRIEF.md`).
+  // COMPLETE only because `reason non-null ⇒ since non-null` — an audit of the server found five
+  // writers, each setting and clearing both columns in one statement, and no CHECK enforcing it.
   const blocked = live.find((m) => m.syncBlockedSince !== null);
   if (blocked) {
     return {

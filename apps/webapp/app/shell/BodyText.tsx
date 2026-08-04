@@ -12,10 +12,10 @@
  *
  * ── WHY THIS IS A RENDER-TIME COMPONENT AND NOT AN INGEST STEP ────────────────────────────
  *
- * `message_bodies.text` is the sensitivity-redacted source for the `body_tsv` generated column
- * (`packages/db/src/schema.ts`), and `canonicalId` hashes `textBody` for dedup
- * (`packages/core/src/mime.ts`). Rewriting the text on the way in would change dedup keys and
- * the search corpus and force a backfill, to buy presentation. The stored shape does not move;
+ * The stored `text` of a message body is the sensitivity-redacted source for the server's
+ * full-text search column, and the dedup key is a hash of that same text. Rewriting the text on
+ * the way in would change dedup keys and the search corpus and force a backfill, to buy
+ * presentation. The stored shape does not move;
  * the DTO already ships `text`, and turning text into a reading surface is the client's job.
  *
  * ── REACT ELEMENTS ONLY ───────────────────────────────────────────────────────────────────

@@ -35,7 +35,7 @@
  * `DEFAULT_SENT_HISTORY_MESSAGES` (2 000) of Sent, so a conversation whose outbound half is
  * older than that still shows one side. It is not stated on screen — a permanent caveat on
  * every conversation, for a case that needs two thousand sent messages to reach, is noise —
- * and it is recorded in `packages/core/src/adapters/imap-types.ts` and BETA-GAPS instead.
+ * and it is recorded beside the ingest constant that sets the depth instead.
  *
  * ── BOUNDING, AND WHY THERE IS NO ACCORDION ─────────────────────────────────────────────
  *

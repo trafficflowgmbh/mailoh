@@ -26,8 +26,8 @@
  *
  * ── SENDABLE IS `!== "disabled"`, NOT `=== "connected"` ─────────────────────────────────
  *
- * This mirrors the server exactly, and the server's reasoning is load-bearing:
- * `SendService.reserve` (`packages/services/src/send-service.ts:193-201`) refuses ONLY
+ * This mirrors the server exactly, and the server's reasoning is load-bearing: when the server
+ * reserves a send it refuses ONLY
  * `'disabled'`, because `'error'` is the sync worker's verdict about IMAP and SMTP is a
  * different transport — a mailbox that cannot be READ may still be able to SEND, and an
  * `error` the user cannot clear would strand their outbox on a transient fault they did not
@@ -70,9 +70,9 @@ interface FactsShape {
  *
  * The order is the rule, not a presentation choice: "the oldest connected mailbox" is the
  * default, and sorting here is what lets every consumer express that as "the first sendable
- * one" instead of re-deriving a comparison. `createdAt` is NOT NULL server-side
- * (`packages/services/src/dto/types.ts`), and ties fall back to the id so the order is total —
- * two mailboxes connected inside the same millisecond must not swap places between renders.
+ * one" instead of re-deriving a comparison. `createdAt` is NOT NULL server-side, and ties fall
+ * back to the id so the order is total — two mailboxes connected inside the same millisecond
+ * must not swap places between renders.
  */
 export function optionsFromFacts(facts: readonly FactsShape[]): FromOption[] {
   return [...facts]
@@ -94,9 +94,9 @@ interface MirrorShape {
 /**
  * The MIRROR's `"mailbox"` entities → the options, in mirror order.
  *
- * This is the demo and the Desktop. `"mailbox"` is not an `EntityType` in the change log
- * (`packages/db/src/change-log.ts`), so `/sync` never emits one and only the FixturesAdapter
- * seeds these rows — which is why the Cloud path above exists at all.
+ * This is the demo and the Desktop. `"mailbox"` is not one of the change log's entity types, so
+ * `/sync` never emits one and only the FixturesAdapter seeds these rows — which is why the Cloud
+ * path above exists at all.
  *
  * **`status` IS DELIBERATELY NOT READ HERE.** The fixture shape carries a capitalised display
  * label (`"Connected"`, `packages/fixtures/src/data.ts:34`), not the three-member lifecycle

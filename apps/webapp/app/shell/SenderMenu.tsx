@@ -22,8 +22,8 @@
  *     the wide option is chosen with its size visible, which is the mitigation O19-RISK asks
  *     for: consent by count, not by cap.
  *  2. **A pre-click disclosure for the two reject destinations.** Screening a waiting sender
- *     out ALSO arms auto-unsubscribe (`screener-service.ts` calls `onScreenOut` after the
- *     commit; `apps/api-vercel/src/deps.ts` wires it in), so one click on a domain can send
+ *     out ALSO arms auto-unsubscribe (the screener calls `onScreenOut` after the commit, and the
+ *     server wires that dependency in), so one click on a domain can send
  *     one-click unsubscribe requests to every list under it. O19-RISK: *"that must be stated
  *     in the sheet before it runs, not discovered afterwards."* It is therefore a CONFIRM and
  *     not a toast — the same construction `RulesView` uses for revoke, and for the same
