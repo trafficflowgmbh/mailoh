@@ -58,15 +58,42 @@ export interface SyncStatus {
   failures: number;
   /**
    * The loop has STOPPED and will not retry: the server refused this session in a way no
-   * amount of waiting fixes (a revoked or deleted account, a 401/403). Distinct from
-   * `failures > 0`, which is a mailbox that is still being retried.
+   * amount of waiting fixes (a revoked or deleted account, a 401/403) **and then refused it
+   * again when asked**. Distinct from `failures > 0`, which is a mailbox that is still being
+   * retried, and distinct from {@link SyncStatus.refused}, which is the same refusal before it
+   * has been confirmed.
    */
   terminal: boolean;
+  /**
+   * OUR api refused this session ONCE, and the claim has not yet been re-made — O10.
+   *
+   * The shell must not tell a signed-in user to sign in on this. It is published so the strip can
+   * say the weaker true thing ("Sync failed. Retrying.") instead of the stronger unverified one,
+   * and so that it says SOMETHING: a refusal answered with silence is how the 32 minutes of
+   * 2026-08-03 happened. Mutually exclusive with `terminal` by construction — confirmation moves
+   * the fact from one field to the other. See {@link REFUSAL_CONFIRM_MS}.
+   *
+   * ── AN INVARIANT THIS FIELD DEPENDS ON, AND CANNOT ENFORCE ──────────────────────────────
+   *
+   * **Every publish that changes `refused` must also change `failures` or `terminal`.**
+   * `engine.tsx`'s status dedup compares `bootstrapping`, `failures` and `terminal` and CANNOT
+   * see this field, so a transition that moved only `refused` would be swallowed and the strip
+   * would never appear. It holds today for the same reason the comment there says `terminal`
+   * held before it was compared: `refused` is only ever set in the publish that increments
+   * `failures`, and only ever cleared in one that zeroes `failures` or sets `terminal`. That is a
+   * coincidence until something enforces it — `sync-liveness.test.ts` asserts it over adjacent
+   * published pairs, and the real fix is to widen that dedup, which is owed.
+   */
+  refused: boolean;
 }
 
 /** A live engine before its first tick, and the permanent value for the demo. */
-export const SYNC_SETTLED: SyncStatus = { bootstrapping: false, failures: 0, terminal: false };
-export const SYNC_BOOTSTRAPPING: SyncStatus = { bootstrapping: true, failures: 0, terminal: false };
+export const SYNC_SETTLED: SyncStatus = {
+  bootstrapping: false, failures: 0, terminal: false, refused: false,
+};
+export const SYNC_BOOTSTRAPPING: SyncStatus = {
+  bootstrapping: true, failures: 0, terminal: false, refused: false,
+};
 
 /**
  * How many consecutive failures the user hears about (P17).
@@ -81,7 +108,14 @@ export const SYNC_BOOTSTRAPPING: SyncStatus = { bootstrapping: true, failures: 0
  * same moment. Two literals would let those drift into a window where the count is frozen
  * and nothing explains why.
  *
- * `terminal` is NOT subject to it. A refusal no retry can fix is reported on the first one.
+ * A CODED REFUSAL IS NOT SUBJECT TO IT, and used to skip it in the other direction. This said
+ * "`terminal` is NOT subject to it. A refusal no retry can fix is reported on the first one",
+ * and that was true of the STRONG claim: one coded 401 announced a revoked session. O10 moved
+ * the strong claim behind one confirmation ({@link REFUSAL_CONFIRM_MS}) and left the WEAK one
+ * where the strong one was — {@link SyncStatus.refused} is published on the first refusal, so
+ * the strip says "Sync failed. Retrying." immediately rather than waiting out three drains.
+ * A statement our own API made about this identity is not a dropped packet, and the streak's
+ * "one is a blip" argument does not cover it.
  */
 export const SYNC_FAILURE_STREAK = 3;
 
@@ -101,6 +135,44 @@ export const BACKOFF_BASE_MS = 1_000;
  * the alternative to a slow retry is a mailbox that stays wrong until someone reloads.
  */
 export const BACKOFF_CAP_MS = 60_000;
+
+/**
+ * How long a coded refusal must stand before the app will call it a revoked session — O10.
+ *
+ * ── THE DEFECT ──────────────────────────────────────────────────────────────────────────
+ *
+ * Owner, 2026-08-04: *"Sync stopped — this session is no longer authorized"* appears and clears
+ * by itself. It appeared because ONE coded 401 latched `terminal`, and it cleared because the
+ * next successful probe withdrew it. Everything in between was `role="alert"` telling a
+ * signed-in user to sign in, on evidence that was one request old.
+ *
+ * ── WHAT IS BOUGHT, AND WHAT IS NOT ─────────────────────────────────────────────────────
+ *
+ * The first coded refusal now stops the poll and arms exactly ONE further ask, this far out. If
+ * that ask succeeds the user is never told anything about signing in; if it is refused the same
+ * way, the server has re-made the claim and the app may repeat it. So the class of false alarms
+ * this removes is precisely *refusals shorter than a minute* — and it must be said plainly that
+ * a multi-minute alias window still reaches STOPPED. U-AUTHLATCH's wake probe is what covers
+ * that one, and it already does: a hide/show clears a false latch with no reload.
+ *
+ * ── WHY IT IS `BACKOFF_CAP_MS` AND NOT A NUMBER OF ITS OWN ──────────────────────────────
+ *
+ * Sixty seconds is already this module's one bounded unit of retry: it is the ceiling the
+ * backoff walks up to and sits at forever, and it is the floor {@link SyncStatus.refused}'s
+ * sibling `lastProbeAt` uses for the same purpose. Reusing it means one number to reason about
+ * rather than two that must be kept in a relation nobody wrote down. Longer would be worse, not
+ * safer: it buys a slightly larger class of suppressed false positives and charges a genuinely
+ * revoked user that much longer before the one action that works.
+ *
+ * ── AND WHY THIS IS NOT THE TIMER `U-AUTHLATCH-BRIEF.md:70-71` FORBIDS ──────────────────
+ *
+ * That ban is on a timer that runs WHILE `terminal` and recurs — it would re-open the
+ * abandoned-visible-tab hole the latch exists to close. This one is PRE-terminal and arms at
+ * most once per refusal episode: it either recovers into the ordinary poll or latches `terminal`,
+ * after which there is no timer at all. The cost of a genuine revocation goes from one request to
+ * two, once, and then to zero.
+ */
+export const REFUSAL_CONFIRM_MS = BACKOFF_CAP_MS;
 
 /**
  * The smallest delay any retry may draw, whatever the jitter says. See {@link backoffDelay}.
@@ -323,10 +395,13 @@ export interface SyncSchedulerOptions {
  * identity cannot be served". Everything else goes back to being retryable, which is what the
  * paragraph above always said.
  *
- * This narrowing is NOT sufficient on its own, and that is deliberate — see `revalidating` below.
- * The live recurrence was an APP-shaped 401 on `/api/sync?since=…` that was merely TRANSIENT, and
- * no classifier can tell a transient 401 from a permanent one at the moment it arrives. Only
- * asking again can.
+ * This narrowing is NOT sufficient on its own, and that is deliberate — see `revalidating` and
+ * `refusedAt` below. The live recurrence was an APP-shaped 401 on `/api/sync?since=…` that was
+ * merely TRANSIENT, and no classifier can tell a transient 401 from a permanent one at the moment
+ * it arrives. Only asking again can — which is now done TWICE, at two different moments and for
+ * two different reasons: once before the claim is ever made ({@link REFUSAL_CONFIRM_MS}, O10), and
+ * once on every wake after it has been (`lastProbeAt`, U-AUTHLATCH). The first stops a short
+ * refusal from being announced at all; the second stops a long one from outliving the transient.
  */
 function isTerminalRefusal(err: unknown): boolean {
   return err instanceof MutationRejectedError
@@ -398,19 +473,37 @@ export function startSyncScheduler(
   let bootstrapping = true;
   let failures = 0;
   /**
-   * Set by a refusal the server made about this identity. NO TIMER runs while it is true.
+   * Set by a refusal the server made about this identity **and then re-made**. NO TIMER runs
+   * while it is true.
    *
-   * It is no longer "set once and never cleared". A single transient 401
-   * bought permanent sync death for the tab's lifetime, and a reload was the only recovery, while
-   * the banner told a signed-in user to sign in. It is now cleared by a successful probe; see
-   * `revalidating`.
+   * It is no longer "set once and never cleared": a single transient 401 bought permanent sync
+   * death for the tab's lifetime, and a reload was the only recovery, while the banner told a
+   * signed-in user to sign in. It is cleared by a successful probe (`revalidating`).
+   *
+   * And it is no longer set by the FIRST refusal either — that is `refusedAt`, O10.
    */
   let terminal = false;
   /**
+   * WHEN a coded refusal arrived that has not been confirmed — O10. Null when there is none.
+   *
+   * This is where the fact lives between the two asks. The poll is stopped (a refusal is believed
+   * that far immediately: continuing to poll an identity the server just refused is exactly the
+   * invocation the latch exists to prevent), one confirm drain is armed at
+   * {@link REFUSAL_CONFIRM_MS}, and the published status carries `refused: true` so the strip says
+   * the weaker true sentence rather than nothing and rather than "sign in".
+   *
+   * This replaces the claim `revalidating`'s doc used to make — *"Latching stays IMMEDIATE — say
+   * so rather than go quiet"*. Latching the STRONG claim is no longer immediate. The half of that
+   * sentence which still stands, and is the half that mattered, is "rather than go quiet": the
+   * first refusal is still spoken about, in the same tick, in the sentence that is true of it.
+   */
+  let refusedAt: number | null = null;
+  /**
    * A single probe drain, permitted while `terminal`, to test whether the refusal still holds.
    *
-   * Latching stays IMMEDIATE — say so rather than go quiet, since a genuinely revoked user sees the
-   * banner on the first drain either way). What changes is that a wake may ask once more.
+   * A wake may ask once more, floored at one probe per {@link BACKOFF_CAP_MS}. Distinct from
+   * `refusedAt`'s confirm drain in both direction and purpose: this one tries to DISPROVE a claim
+   * already on screen, the confirm tries to establish one that is not.
    */
   let revalidating = false;
   /**
@@ -420,6 +513,11 @@ export function startSyncScheduler(
    * tab's ~450. A hidden tab issues zero (the `visible()` gate holds), and an abandoned visible tab
    * issues zero after the first — probes fire on wake EVENTS, never on a timer. A terminal-mode
    * timer would re-open the abandoned-tab hole this latch exists to close.
+   *
+   * That last sentence is about the TERMINAL-MODE probe and is unchanged. `refusedAt`'s confirm
+   * drain does run on a timer, and it is not the thing being forbidden here: it is pre-terminal,
+   * it arms at most once per refusal episode, and it ends in either a healthy poll or `terminal`
+   * with no timer at all. An abandoned visible tab pays one extra request, once, for ever.
    */
   let lastProbeAt = 0;
 
@@ -443,7 +541,7 @@ export function startSyncScheduler(
 
   const publish = (): void => {
     if (stopped) return;
-    options.onStatus?.({ bootstrapping, failures, terminal });
+    options.onStatus?.({ bootstrapping, failures, terminal, refused: refusedAt !== null });
   };
 
   const disarm = (): void => {
@@ -501,6 +599,11 @@ export function startSyncScheduler(
       // to set a timer while `terminal`, which is why this clears it BEFORE arming.
       terminal = false;
       revalidating = false;
+      // …and an UNCONFIRMED refusal is withdrawn here too, or the next transient one an hour later
+      // would find `refusedAt` still set, read itself as the confirmation, and latch on the first
+      // request — the O10 defect, resurrected on the second occurrence and invisible to any test
+      // that only drives one.
+      refusedAt = null;
       failures = 0;
       bootstrapping = false;
       arm(pollMs);
@@ -515,17 +618,37 @@ export function startSyncScheduler(
       }
       failures += 1;
       if (isTerminalRefusal(err)) {
-        // No amount of waiting fixes a revoked session or a deleted account. Stop — and SAY
-        // so, rather than going quiet: `terminal` is what lets the shell tell the difference
-        // between "your mailbox is having a bad minute" and "this tab can no longer be served".
-        terminal = true;
-        // The probe asked and was refused again: stay latched, hold no timer. `role="alert"`
-        // re-announcing is correct — the claim was re-made by the server, not repeated by us.
-        revalidating = false;
-        disarm();
-        report("ohmail: this session can no longer sync — sign in again", err);
+        if (terminal || refusedAt !== null) {
+          // CONFIRMED. We asked again — either the confirm drain `refusedAt` armed, or the wake
+          // probe — and the server made the same refusal. No amount of waiting fixes a revoked
+          // session or a deleted account, so stop, hold no timer, and SAY so: `terminal` is what
+          // lets the shell tell the difference between "your mailbox is having a bad minute" and
+          // "this tab can no longer be served". `role="alert"` re-announcing on a re-latch is
+          // correct — the claim was re-made by the server, not repeated by us.
+          terminal = true;
+          refusedAt = null;
+          revalidating = false;
+          disarm();
+          report("ohmail: this session can no longer sync — sign in again", err);
+          return;
+        }
+        // THE FIRST ONE — believed enough to stop polling, NOT enough to tell a signed-in user
+        // that they are signed out (O10). One further ask is armed at `REFUSAL_CONFIRM_MS`; the
+        // published status carries `refused`, so the strip says "Sync failed. Retrying.", which is
+        // true — that retry is the timer on the next line. It must NOT fall through to the
+        // ordinary backoff below: at `failures === 1` that is a ~1 s retry, and a ladder of them
+        // inside the confirm window is exactly the "buys N−1 invocations" objection that
+        // `U-AUTHLATCH-BRIEF.md:59-60` used to reject confirming at all.
+        refusedAt = Date.now();
+        report("ohmail: the server refused this session — asking once more before saying so", err);
+        arm(REFUSAL_CONFIRM_MS);
         return;
       }
+      // Anything that is not a coded refusal is not evidence ABOUT AUTHORIZATION, so it cannot
+      // confirm one: a network error during the confirm window says nothing about whether the
+      // session is still good, and reading it as corroboration is how a flaky connection would
+      // start signing people out.
+      refusedAt = null;
       // AUDIBLE, EVERY TIME. The predecessor of this loop swallowed the first rejection and
       // called it "the HTTP path retries on the next wake signal", with no wake signal in the
       // app — one throw, no request, no console entry, no error state.
@@ -555,6 +678,20 @@ export function startSyncScheduler(
       lastProbeAt = at;
       revalidating = true;
       void tick().finally(() => { revalidating = false; });
+      return;
+    }
+    if (refusedAt !== null) {
+      // A coded refusal is waiting to be confirmed, and a wake does not get to ask early. The
+      // confirmation is a SECOND ask, spaced by `REFUSAL_CONFIRM_MS`; a tab somebody flips away
+      // from and back must not be able to shorten it, or a two-second transient latches whenever
+      // the user happens to switch windows — and it must not be able to buy invocations either
+      // (#10), which a wake-triggered drain per flip is exactly.
+      //
+      // So this only RESTORES the timer, because going hidden disarmed it: `refusedAt` survives
+      // the hide, the strip keeps saying "Retrying." in a tab nobody is looking at (correct — the
+      // fact did not change), and coming back re-arms whatever is left of the window. Clamped at
+      // zero so a tab that was away longer than the window asks immediately.
+      arm(Math.max(0, refusedAt + REFUSAL_CONFIRM_MS - Date.now()));
       return;
     }
     void tick();

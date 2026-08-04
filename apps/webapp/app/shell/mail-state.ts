@@ -122,8 +122,49 @@ export interface MailboxFacts {
  *
  * A DURATION and not a count of polls, for the reason A0b's `syncBlockGraceMs` is one: a count
  * is a proxy for time that silently retunes the moment `POLL_MS` changes.
+ *
+ * ── IT BOUNDS THE RUN, NOT THE EPISODE — O7 ─────────────────────────────────────────────
+ *
+ * The paragraph above predicted a flap if this window were one or two poll periods. It was the
+ * right argument aimed at the wrong clock, and the flap happened anyway at thirty seconds: the
+ * gap that governs mid-import is not the CLIENT's 8 s poll, it is the WORKER's cycle —
+ * `pollIntervalMs`, 60 s by default (`apps/worker/src/config.ts`). No 30 s window can span one
+ * of those, so every worker cycle tore the run down and the strip had to start again.
+ *
+ * This constant still decides what counts as ONE RUN of rises, which is the evidence that an
+ * import has BEGUN. What outlives it is the episode — see {@link IMPORT_END_IDLE_MS}.
  */
 export const GROWTH_WINDOW_MS = 30_000;
+
+/**
+ * How long an import EPISODE survives a mirror that is not moving — O7.
+ *
+ * ── THE DEFECT THIS NUMBER EXISTS FOR ───────────────────────────────────────────────────
+ *
+ * Measured on the owner's account: three worker drains with 45 s of idle between them showed
+ * the strip FIVE times, with 31-second quiet gaps inside a single import. Every one of those
+ * gaps is longer than {@link GROWTH_WINDOW_MS}, so each one ended the run — and with the run
+ * gone the strip had to re-earn two rises AND the delta before it could speak again.
+ *
+ * ── WHY NINETY SECONDS ──────────────────────────────────────────────────────────────────
+ *
+ * The quiet gap mid-import is ONE WORKER CYCLE. `apps/worker/src/index.ts:2214` kicks the cycle
+ * on `pollIntervalMs`, which `apps/worker/src/config.ts:466` defaults to 60 s, and the client
+ * then needs up to one 8 s `POLL_MS` to see what that cycle wrote — a floor of 68 s. The largest
+ * gap actually measured was 45 s. Ninety clears both with room for a cycle that overruns, and
+ * `mail-state.test.ts` asserts the relation against the worker's own source rather than against
+ * this sentence.
+ *
+ * ── AND WHAT IT COSTS, SAID OUT LOUD ────────────────────────────────────────────────────
+ *
+ * The strip now lingers up to 90 s after the last message instead of 30 s, over a count that has
+ * stopped moving — and `SyncBar.tsx`'s spinner keeps turning for all of it. That is a real cost,
+ * accepted, because there is NO end-of-import signal to replace it with: `lastSyncAt` cannot be
+ * read positively (see the file header, both defects), and `/sync` answers `hasMore` about one
+ * DRAIN, never about the import. A tail of stale-but-true beats a strip that appears five times,
+ * which is the defect that was actually filed.
+ */
+export const IMPORT_END_IDLE_MS = 90_000;
 
 /**
  * How much a run of rises must add before it is called an IMPORT rather than the post.
@@ -133,9 +174,12 @@ export const GROWTH_WINDOW_MS = 30_000;
  * `SyncBar.tsx` was built to avoid. Twenty-five messages is crossed in ~19 s at the measured
  * import rate (27 messages / 20 s) and is not crossed by a thread burst.
  *
- * It is only ONE of three ways in — see {@link isImporting}. The first import of a mailbox
- * does not have to reach it, because an episode that starts from an EMPTY mirror is
- * unambiguous.
+ * It is measured against {@link MirrorGrowth.added} — what the run ADDED — and no longer against
+ * `count - runStartCount`, which was a NET delta a single delete could walk back. That is O7's
+ * first defect; the field's own doc has the mechanism.
+ *
+ * The first import of a mailbox does not have to reach it, because a run that starts from an
+ * EMPTY mirror is unambiguous. See {@link isImporting}.
  */
 export const IMPORT_MIN_DELTA = 25;
 
@@ -152,6 +196,36 @@ export interface MirrorGrowth {
   rises: number;
   /** The count this run started from. Zero means "this mirror was empty", i.e. a first import. */
   runStartCount: number;
+  /**
+   * Messages the current run has ADDED. Cumulative, and never reduced — O7's first defect.
+   *
+   * The qualifier used to be `count - runStartCount`, a NET delta, and a fall moves `count` while
+   * deliberately leaving `runStartCount` alone ({@link growthStep} says why). So every delete, and
+   * every message a Screener backfill moved out of the mirror, SHRANK the evidence that an import
+   * was under way: the net delta walked back and forth across {@link IMPORT_MIN_DELTA} and the
+   * strip followed it, on and off, for as long as the backfill ran.
+   *
+   * `added === count - runStartCount` exactly when no fall has happened in the run — which is the
+   * whole "and nothing else changed" claim, and is asserted rather than asserted-in-a-comment.
+   */
+  added: number;
+  /**
+   * THE EPISODE LATCH — O7's second and third defects, which are the same defect.
+   *
+   * True from the moment a run first qualifies as an import until the mirror has been still for
+   * {@link IMPORT_END_IDLE_MS}. It is deliberately NOT cleared when a RUN ends, and that is the
+   * point: both qualifiers that can start an episode are effectively single-use in a session.
+   * `runStartCount === 0` can only hold before the first gap, because {@link growthStep} moves the
+   * baseline off zero and never back; and `bootstrapping` goes false on this tab's first
+   * successful drain (`sync-scheduler.ts`) and never returns. So without a latch, an import that
+   * pauses for 31 seconds has to re-earn two rises AND twenty-five messages before the strip may
+   * speak again — five times during one import, which is what was measured.
+   *
+   * A boolean and not a timestamp: nothing reads WHEN the episode began, and everything
+   * time-based reads `lastRiseAt`, which is the fact that actually decays. A field nobody reads
+   * is a claim under test that fails.
+   */
+  importing: boolean;
 }
 
 /**
@@ -161,49 +235,86 @@ export interface MirrorGrowth {
  * 495 rather than at 0. Seeding the clock with "now" would make the next arrival look like the
  * second rise of a run that never had a first, so every reload of a healthy mailbox would
  * announce an import. `-Infinity` makes the first rise unambiguously a first rise.
+ *
+ * `importing: false` for the same reason, and it is the one place the latch does not survive: a
+ * tab opening mid-import cannot tell itself apart from a tab opening onto a settled mailbox, so
+ * it must claim nothing. It re-enters through `bootstrapping` while its own first drain runs, and
+ * after that needs {@link IMPORT_MIN_DELTA} more messages to latch — the cold-start behaviour this
+ * module always had, unchanged by O7.
  */
 export function seedGrowth(count: number): MirrorGrowth {
-  return { count, lastRiseAt: -Infinity, rises: 0, runStartCount: count };
+  return {
+    count,
+    lastRiseAt: -Infinity,
+    rises: 0,
+    runStartCount: count,
+    added: 0,
+    importing: false,
+  };
 }
 
 /**
  * Fold one observation of the mirror's size in.
  *
  * A FALL — a delete, a move out of the mirror — moves the baseline and touches nothing else.
- * It is not a rise, and it is not evidence that the previous rise did not happen.
+ * It is not a rise, and it is not evidence that the previous rise did not happen. That was
+ * already true and already deliberate; what O7 changed is that it now MATTERS, because `added`
+ * is the qualifier and a fall may not reduce it.
  */
 export function growthStep(prev: MirrorGrowth, count: number, now: number): MirrorGrowth {
   if (count === prev.count) return prev;
   if (count < prev.count) return { ...prev, count };
   const continues = now - prev.lastRiseAt <= GROWTH_WINDOW_MS;
-  return {
-    count,
-    lastRiseAt: now,
-    rises: continues ? prev.rises + 1 : 1,
-    // A new run starts from the count BEFORE this rise — so a run that begins on an empty
-    // mirror has `runStartCount === 0`, which is what identifies a first import.
-    runStartCount: continues ? prev.runStartCount : prev.count,
-  };
+  const rises = continues ? prev.rises + 1 : 1;
+  // A new run starts from the count BEFORE this rise — so a run that begins on an empty
+  // mirror has `runStartCount === 0`, which is what identifies a first import.
+  const runStartCount = continues ? prev.runStartCount : prev.count;
+  const added = (continues ? prev.added : 0) + (count - prev.count);
+  // THE EPISODE OUTLIVES THE RUN. A 31 s gap ends the run — it is longer than GROWTH_WINDOW_MS —
+  // and must not end the import, because the worker's cycle is 60 s and a gap of that size is
+  // simply what the middle of an import looks like from a client that can only see its mirror.
+  const held = prev.importing && now - prev.lastRiseAt < IMPORT_END_IDLE_MS;
+  const qualifies = rises >= 2 && (runStartCount === 0 || added >= IMPORT_MIN_DELTA);
+  return { count, lastRiseAt: now, rises, runStartCount, added, importing: held || qualifies };
 }
 
-/** Two rises, the second of them recent. Nothing else counts as growth. */
+/**
+ * Two rises, the second of them recent. Nothing else counts as growth.
+ *
+ * It is the ENTRY evidence, and {@link isImporting} bypasses it entirely once an episode has
+ * latched — which is the most surprising line in this file, so it is said in both places. A
+ * latched episode is not required to keep proving that the mirror is growing right now; it is
+ * required only not to have been still for {@link IMPORT_END_IDLE_MS}.
+ */
 export function isGrowing(g: MirrorGrowth, now: number): boolean {
   return g.rises >= 2 && now - g.lastRiseAt < GROWTH_WINDOW_MS;
 }
 
 /**
- * Is this growth an IMPORT worth interrupting the screen for? Three ways in, all client facts:
+ * Is this growth an IMPORT worth interrupting the screen for? Two ways in, all client facts.
  *
- *  1. the run started on an EMPTY mirror — a first import, the A1 defect itself;
- *  2. the tab's first drain has not completed — P16: a new device repopulating its mirror;
- *  3. the run has added {@link IMPORT_MIN_DELTA} or more — a mid-import stall that resumed at
- *     count 300 is still an import, and this is the only arm that can see it.
+ * ── 1. THE EPISODE IS LATCHED ───────────────────────────────────────────────────────────
+ *
+ * {@link growthStep} set {@link MirrorGrowth.importing} when a run first qualified — it started
+ * from an EMPTY mirror (a first import, the A1 defect itself), or it added
+ * {@link IMPORT_MIN_DELTA} or more (a mid-import stall that resumed at count 300 is still an
+ * import). The only question left here is whether the mirror has gone still for
+ * {@link IMPORT_END_IDLE_MS}, which is the whole of O7's fix: the qualifiers are evaluated once,
+ * at the rise that earns them, and never re-litigated between two worker cycles.
+ *
+ * ── 2. THIS TAB'S FIRST DRAIN HAS NOT COMPLETED ─────────────────────────────────────────
+ *
+ * P16: a new device repopulating its own mirror. It is the one arm that CANNOT latch, because
+ * `growthStep` is not told about `bootstrapping` — and it is not told because that would mean
+ * changing `MailStateProvider.tsx`'s call, which this slice may not touch. It does not need to
+ * latch: it is true for seconds, it covers exactly the cold-start window `seedGrowth` describes,
+ * and a run that matters outlives it by qualifying on its own.
  *
  * Not one of them reads a timestamp the server wrote. That is WORKLIST.md:510 verbatim.
  */
 export function isImporting(g: MirrorGrowth, bootstrapping: boolean, now: number): boolean {
-  if (!isGrowing(g, now)) return false;
-  return g.runStartCount === 0 || bootstrapping || g.count - g.runStartCount >= IMPORT_MIN_DELTA;
+  if (g.importing) return now - g.lastRiseAt < IMPORT_END_IDLE_MS;
+  return isGrowing(g, now) && bootstrapping;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -218,7 +329,9 @@ export function isImporting(g: MirrorGrowth, bootstrapping: boolean, now: number
  *                     thing to say (a first attach was measured at ~6 minutes), and it says
  *                     how long, so it can never be a frozen spinner.
  *  2. `importing`     **THE MIRROR IS GROWING.** Keyed on the client's own count rising across
- *                     syncs, never on a stamp. Counts, never a percentage.
+ *                     syncs, never on a stamp. Counts, never a percentage. An EPISODE rather
+ *                     than a run of rises, because the worker writes an import in cycles a
+ *                     minute apart and a state that re-qualified between them flapped (O7).
  *  3. `screenerOnly`  emitted as {@link MailState.screenerCandidate}, not as a key: mail has
  *                     landed, the mirror is settled and nothing is wrong. The OHBOX pane
  *                     combines it with its own emptiness — a fresh account is mostly Screener
@@ -230,10 +343,16 @@ export function isImporting(g: MirrorGrowth, bootstrapping: boolean, now: number
  *
  * ── AND THE TWO THAT ARE NOT A1'S ───────────────────────────────────────────────────────
  *
- * `stopped` and `failing` are P17's, unchanged, and they OUTRANK all six. The reason is the
- * rule `OhboxView`'s counter already followed and this one inherits: once the drains are
- * failing the mirror count is FROZEN, so every claim below about growth is a claim about a
- * number that cannot move. A frozen counter is the same lie in a new font.
+ * `stopped` and `failing` are P17's and they OUTRANK all six. The reason is the rule
+ * `OhboxView`'s counter already followed and this one inherits: once the drains are failing the
+ * mirror count is FROZEN, so every claim below about growth is a claim about a number that
+ * cannot move. A frozen counter is the same lie in a new font.
+ *
+ * `failing` now has a SECOND cause — O10. It is reached by the failure streak, as before, and
+ * also by a single coded 401/403 that the server has not yet re-made (`sync.refused`). Both mean
+ * the same thing about the mirror, which is why they share a state and a sentence: the loop is
+ * not draining and it intends to try again. What the second one must not do is reach `stopped`,
+ * because that sentence tells a signed-in user they are signed out on one request's evidence.
  *
  * `quiet` is the resting value and it is most of the time. There is no permanent "everything
  * is fine" chrome to learn to ignore.
@@ -355,8 +474,15 @@ function earliest(stamps: Array<string | null>): string | null {
 
 /** Everything the ladder is allowed to read. Every field is something the CLIENT observes. */
 export interface MailStateInputs {
-  /** `useSyncStatus()` — what the tab's own drain loop is doing. */
-  sync: { bootstrapping: boolean; failures: number; terminal: boolean };
+  /**
+   * `useSyncStatus()` — what the tab's own drain loop is doing.
+   *
+   * Structural, and re-declared rather than imported as `SyncStatus`, for the reason
+   * {@link MailboxFacts} is: this module ships in the Desktop mirror. The four fields are the
+   * whole of what the ladder is entitled to consult. `refused` is a coded 401/403 the server has
+   * not yet re-made (O10) — weaker than `terminal` and deliberately so.
+   */
+  sync: { bootstrapping: boolean; failures: number; terminal: boolean; refused: boolean };
   /** `SYNC_FAILURE_STREAK`, passed in so the surfaces cannot drift from the scheduler. */
   failureStreak: number;
   /**
@@ -400,7 +526,14 @@ export function deriveMailState(input: MailStateInputs): MailState {
   if (sync.terminal) return { ...QUIET, key: "stopped" };
   // And a failing loop means the mirror is FROZEN. `OhboxView`'s counter already stops here;
   // every state below would be reading a number that cannot change.
-  if (sync.failures >= failureStreak) return { ...QUIET, key: "failing" };
+  //
+  // `sync.refused` joins it, and does NOT get its own key — O10. A coded 401/403 the server has
+  // not re-made means the loop has stopped draining and has armed one more ask, which is what
+  // `failing` already says and already means; a seventh state would need copy of its own for a
+  // condition that resolves in sixty seconds either way. It bypasses `failureStreak` because that
+  // threshold exists for blips ("one is a dropped packet") and a refusal our own API made about
+  // this identity is not one. What it must not do is reach `stopped` above.
+  if (sync.failures >= failureStreak || sync.refused) return { ...QUIET, key: "failing" };
 
   // "We cannot see mailboxes" — not "there are none". Everything from here reads them.
   if (mailboxes === null) return QUIET;
@@ -414,10 +547,22 @@ export function deriveMailState(input: MailStateInputs): MailState {
   // would notice it; and if a mailbox is not being synced at all, "syncing" is false even
   // when a second mailbox happens to be growing the mirror.
   //
-  // The test is `!== null`, NOT `isSyncBlockReason`. A server that grows a fourth reason must
-  // get generic copy, not silence: narrowing here would restore exactly the invisibility this
-  // column was migrated to end.
-  const blocked = live.find((m) => m.syncBlockedReason !== null);
+  // THE TEST IS `syncBlockedSince !== null`, AND IT IS NOT THE FIELD IT LOOKS LIKE IT SHOULD BE.
+  //
+  // This line used to read `m.syncBlockedReason !== null` with a comment saying the test is
+  // `!== null` and NOT `isSyncBlockReason` — the right rule, aimed one field to the left, and A0e
+  // is why. `packages/services/src/mailbox-service.ts:526-527` NARROWS the reason to the closed
+  // set and forwards the timestamp UNCONDITIONALLY, so a server that grows a fourth reason emits
+  // `{syncBlockedReason: null, syncBlockedSince: <ts>}` — the narrowing happens on the server, and
+  // refusing to narrow again here bought nothing because there was nothing left to narrow. Gating
+  // on the reason gave that mailbox silence, which is exactly what this column was migrated to end.
+  //
+  // A timestamp is also the safer predicate to have chosen: it cannot carry a server-authored
+  // token, so the generic copy below is authored here and nowhere else.
+  //
+  // COMPLETE only because `reason non-null ⇒ since non-null` — five writers set and clear both
+  // columns in one statement and no CHECK enforces it (`docs/ohmail/A0DE-BRIEF.md`).
+  const blocked = live.find((m) => m.syncBlockedSince !== null);
   if (blocked) {
     return {
       ...QUIET,
@@ -459,6 +604,10 @@ export function deriveMailState(input: MailStateInputs): MailState {
   // Above `awaiting` by construction (`awaiting` requires an empty mirror) and above the
   // Screener pointer, because while mail is still landing "it is all in the Screener" is a
   // claim about a set that is still changing.
+  //
+  // `now` is the SHELL's clock, beaten every `MAIL_CLOCK_MS` by `MailStateProvider` while
+  // `state.clock` is true — which is what ends a latched episode. The reducer only ever runs when
+  // the mirror MOVES, so an import that simply stops would otherwise never be told it had.
   if (isImporting(growth, sync.bootstrapping, now)) {
     return { ...QUIET, key: "importing", clock: true, count: mirrored };
   }
