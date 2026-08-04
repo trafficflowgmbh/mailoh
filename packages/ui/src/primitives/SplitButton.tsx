@@ -18,6 +18,15 @@ export interface SplitButtonProps {
   quiet?: boolean;
   /** Keyboard hint shown inside the main segment (e.g. "y"). */
   kbdHint?: string;
+  /**
+   * Keyboard hint shown inside the ✓ segment (e.g. "⇧").
+   *
+   * The ✓ half is a SECOND verb wearing an icon, and until UX11 the only thing that said so
+   * was a legend detached from it at the other end of the bar. A cap here is the same move
+   * the message action bar made in `bf4eb08` — the key sits on the verb it belongs to — and
+   * it is `aria-hidden` because `checkLabel` already carries the accessible name.
+   */
+  checkKbdHint?: string;
   title?: string;
   checkTitle?: string;
   className?: string;
@@ -26,6 +35,10 @@ export interface SplitButtonProps {
 /**
  * One capsule, two decisions. The main segment files; the attached ✓
  * segment files AND marks read — each with its own handler.
+ *
+ * Both halves can carry their own keycap (`kbdHint`, `checkKbdHint`), which is
+ * how UX11 replaced the bar's detached "o r c n x file" legend: the key goes on
+ * the verb, exactly as the message action bar's does.
  */
 export function SplitButton({
   label,
@@ -35,6 +48,7 @@ export function SplitButton({
   ai,
   quiet,
   kbdHint,
+  checkKbdHint,
   title,
   checkTitle,
   className,
@@ -56,6 +70,9 @@ export function SplitButton({
         onClick={onCheckPress}
       >
         <Icon name="check" size={12} />
+        {/* `aria-label` on this button already wins over its contents, so the cap is shown
+            and never spoken. */}
+        {checkKbdHint ? <Kbd className="d-readk">{checkKbdHint}</Kbd> : null}
       </button>
     </span>
   );

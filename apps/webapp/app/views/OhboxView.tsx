@@ -262,7 +262,12 @@ export function OhboxView({
   }, [onSelect]);
 
   /**
-   * Opening a message IS reading it — Enter, click-into-reader, mobile tap.
+   * Opening a message IS reading it — Enter, a second click on the selected row, mobile tap.
+   *
+   * `onEnterReader` is an unconditional statement of INTENT ("the user asked to open this
+   * message"), not an instruction to raise a sheet. Since UX12 the shell answers it with the
+   * reader only where the reading column is hidden; at a split width the column beside this
+   * list IS the open, and a sheet over it was the same message rendered twice.
    *
    * It also PINS the selection, and that is not housekeeping. A click on the top row of a
    * fresh Ohbox takes the "already selected" branch below, because the implicit fallback had
@@ -544,9 +549,11 @@ export function OhboxView({
           // selects as well as commits, so the cursor lands here exactly once.
           open(m);
         } else if (selected?.id === m.id) {
-          // Second click on the already-selected row: into the reader, so it is read. Also
-          // the FIRST click on the top row of an untouched Ohbox, which the implicit fallback
-          // had already made `selected` — see `open` for what that used to do to the reader.
+          // Second click on the already-selected row: an explicit OPEN, so it is read — and
+          // at a split width that is all it is, because the pane beside this list is already
+          // showing it (gap UX12). Also the FIRST click on the top row of an untouched
+          // Ohbox, which the implicit fallback had already made `selected` — see `open` for
+          // what that used to do to the reader.
           open(m);
         } else {
           selectByUser(m.id);
@@ -663,13 +670,18 @@ export function OhboxView({
             row above. */}
         {demo ? <div className="tail-row">{t("tail")}</div> : null}
       </ListPane>
+      {/* NO `onEnterReader` ON THE PANE (gap UX12). `ReadingPane` renders a small
+          "Open reading mode" button when it is given one, and this column is the ONE place
+          that passed it. Below 900px the column is `display:none`, so that button was
+          reachable at exactly the widths where the sheet duplicates the pane it is standing
+          on — a control whose only outcome was the defect. The reader is not lost: it is
+          what "opened" means where there is no column, which is the shell's `enterReader`. */}
       <ReadColumn>
         {selected ? (
           <MessagePane
             message={selected}
             tags={tags}
             now={now}
-            onEnterReader={() => onEnterReader(selected.id)}
             onAction={(a) => onAction(a, selected)}
             onAddTag={onAddTag}
           />

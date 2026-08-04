@@ -14,4 +14,17 @@
 .dbtn.ai{box-shadow:0 0 0 1.5px var(--accent-hair), var(--lift-0)} /* the AI-preselected destination */
 .dbtn.ai:hover{box-shadow:0 0 0 1.5px var(--accent-hair), var(--lift-2)}
 .dbtn.ai .d-main{background:var(--accent-soft);color:var(--accent-ink);font-weight:650}
-.dbtn kbd{border:0;background:transparent;padding:0 1px;min-width:0;color:inherit;opacity:.7}
+/* KEYCAPS, IN THE ACTION BAR'S TREATMENT (UX11). `apps/webapp/app/shell/action-bar.css`
+   settled this once — quieter and smaller than the global `kbd`, because a row of them
+   would otherwise be the loudest thing on the surface, and "the hint is for the second
+   read, never the first". These caps sit in the same product one screen away, so they are
+   the same object; a second, louder keycap here would read as a different kind of thing. */
+.dbtn kbd{font-size:9.5px;padding:0 4px;min-width:15px;border-radius:5px;line-height:1.6;
+  background:transparent;border-color:var(--hair-soft);color:var(--ink3)}
+.dbtn .d-main{gap:7px}
+.dbtn.ai .d-main kbd{border-color:var(--accent-hair);color:inherit;opacity:.75}
+/* The ✓ half's cap is the whole point of the pair reading as ONE instruction — "⇧ and the
+   letter to my left" — so the icon and the cap sit tight together rather than as two items
+   in a row. */
+.dbtn .d-read{gap:4px}
+.dbtn .d-read kbd{letter-spacing:.02em}

@@ -33,6 +33,22 @@ body.reading .shell {
   transform: scale(0.994);
   pointer-events: none;
 }
+/* THE GHOST, AT THE WIDTHS WHERE IT IS A DUPLICATE (gap UX12).
+   `enterReader` no longer raises the sheet where the reading column is visible, so the
+   reported double-render is gone at the source. This closes the one way back to it: open
+   the sheet at 390px and widen the window, and the column appears BEHIND a sheet that is
+   already up. At 5% the prototype's recede reads as an exhale over a list; over a pane
+   showing the same message, with its own action bar, it reads as a rendering bug — which
+   is what the live walk actually reported.
+   `div.shell` and not `.shell`: `packages/ui/composites/reader.css` declares the same rule
+   at the same specificity, so equal weight would leave this to stylesheet order. Below
+   901px the prototype's 5% stays exactly as designed — there the shell behind is the list,
+   not a second copy of the message. */
+@media (min-width: 901px) {
+  body.reading div.shell {
+    opacity: 0;
+  }
+}
 .deck {
   flex: 1;
   min-height: 0;

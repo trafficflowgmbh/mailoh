@@ -297,7 +297,15 @@ export function ScreenerView({
         <MessageRow
           key={w.id}
           id={w.id}
-          from={w.from.address}
+          /* NAME AND ADDRESS, AS IN `waiting` (gap UX11). These two segments printed the
+             ADDRESS ALONE, which in the demo world is invisible — every screened and spam
+             fixture is an address with no display name — and on a live account throws away
+             the half a human recognises. Both are needed and for different reasons: the
+             name is the screening signal, the address is what keeps the judgement
+             spoof-safe. `MessageRow` renders the second only when there is a first, so a
+             genuinely nameless sender still shows exactly one line. */
+          from={w.from.name || w.from.address}
+          address={w.from.name ? w.from.address : undefined}
           time={screenedDate(w, t("today"))}
           subject={newestHeld(w)?.subject ?? ""}
           avatarInitial={w.initial}
@@ -313,7 +321,8 @@ export function ScreenerView({
       <MessageRow
         key={r.sender.id}
         id={r.sender.id}
-        from={r.sender.from.address}
+        from={r.sender.from.name || r.sender.from.address}
+        address={r.sender.from.name ? r.sender.from.address : undefined}
         time={newestHeld(r.sender)?.time ?? r.sender.time}
         subject={newestHeld(r.sender)?.subject ?? ""}
         avatarInitial={r.sender.initial}
@@ -396,13 +405,14 @@ export function ScreenerView({
                   <Kbd>↵</Kbd> {t("hintAccept")}
                 </span>
               ) : null}
-              <span>
-                <Kbd>o</Kbd> <Kbd>r</Kbd> <Kbd>c</Kbd> <Kbd>n</Kbd> <Kbd>x</Kbd> {t("hintFile")}
-              </span>
-              <span>
-                <Kbd>⇧</Kbd>
-                {t("hintShiftRead")}
-              </span>
+              {/* THE FILING LEGEND IS GONE, NOT MOVED (gap UX11). It read
+                  `o r c n x file` and `⇧+key marks read` — five keycaps in the bottom
+                  corner of the LIST, naming five destinations that live in the bar at the
+                  top of the other pane, with nothing on screen to attach them to. Each key
+                  is now on the capsule it fires, which is `bf4eb08`'s rule for the message
+                  action bar; a legend as well as the caps would be the second list U2
+                  deleted from the (i) panel. `j`/`k` and `↵` stay: they act on the LIST,
+                  which is the pane this strip belongs to. */}
             </>
           ) : (
             <>
@@ -604,10 +614,17 @@ function WaitingPreview({
           * owner was left looking for a suggestion the surface had never admitted it did
           * not have. "Every mail says why" is published copy; silence does not satisfy it.
           *
-          * The wording is the site's own, kept deliberately in step with `AiSection`'s
-          * `status` line ("no live model is connected in production yet") and its AI-off
-          * row ("pick a door"). Both change together the day a classifier is injected in
+          * The FACT is shared with `AiSection`'s `status` line ("no live model is connected
+          * in production yet") and both change together the day a classifier is injected in
           * `apps/api-vercel/src/deps.ts` — the same trigger `AiSection.tsx` already names.
+          *
+          * THE WORDING IS NO LONGER SHARED, and that is the correction UX11 makes. This
+          * used to end *"Pick a door."*, borrowed from the marketing page's AI-off row.
+          * There the metaphor is established one screen earlier — `hero.door` is the
+          * landing's own paragraph — and here nothing has ever been called a door: the
+          * capsules beside this sentence say Ohbox, Reads, Receipts, Screen out, Spam. A
+          * word the surface never defines is not shorthand, it is a second vocabulary. The
+          * marketing line keeps its own.
           */}
         {sender.ai ? (
           <div className="scn-why">
@@ -706,10 +723,12 @@ function ScreenedPreview({
         <div className="scn-caption num">
           {t("heldCaptionAll", { count: sender.held.length })}
         </div>
+        {/* Name AND address, matching the waiting preview — see the screened row. */}
         {sender.held.map((h) => (
           <HeldMail
             key={h.id}
-            from={sender.from.address}
+            from={sender.from.name || sender.from.address}
+            address={sender.from.name ? sender.from.address : undefined}
             subject={h.subject}
             time={h.time}
             body={h.body}
@@ -794,7 +813,8 @@ function SpamPreview({
         {held.map((h) => (
           <HeldMail
             key={h.id}
-            from={row.sender.from.address}
+            from={row.sender.from.name || row.sender.from.address}
+            address={row.sender.from.name ? row.sender.from.address : undefined}
             subject={h.subject}
             time={h.time}
             body={h.body}

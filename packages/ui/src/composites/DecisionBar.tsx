@@ -1,6 +1,5 @@
 import { useEffect, type ReactNode } from "react";
 import { Icon } from "../icons.js";
-import { Kbd } from "../primitives/Kbd.js";
 import { SegmentedControl } from "../primitives/SegmentedControl.js";
 import { SplitButton } from "../primitives/SplitButton.js";
 import "./decision-bar.css";
@@ -51,8 +50,6 @@ export interface DecisionBarProps {
   onBack?: () => void;
   /** Overrides the default consequence line. */
   note?: ReactNode;
-  /** Show the right-hand key hints. */
-  keysHint?: boolean;
   className?: string;
 }
 
@@ -60,6 +57,31 @@ export interface DecisionBarProps {
  * Five split-buttons — Ohbox · Reads · Receipts · Screen out · Spam —
  * with the AI destination preselected, a sender/domain scope toggle and
  * the consequence line. Fits one line at 1280px (container query).
+ *
+ * ── UX11: THE KEY GOES ON THE VERB, AND THE LEGEND IS GONE ─────────────────────────────
+ *
+ * A live walk found this bar illegible in three ways at once. Every capsule is TWO verbs,
+ * and only one of them was ever explained: the note said what the ✓ half does and nothing
+ * said what pressing the label does. Four of the five keys were in a `title` attribute —
+ * invisible to anyone not hovering — while a strip at the far end of the bar spelled
+ * "⇧+key marks read" for keys that were not on screen, and the view under it printed a
+ * second strip reading "o r c n x file". Three lists of the same five facts, none of them
+ * beside the control.
+ *
+ * So each half wears its own cap, from `DECISION_KEY` — the same constant `ScreenerView`
+ * derives its keyboard registry bindings from, so a cap and its binding cannot disagree
+ * without editing the one line both read. That is `bf4eb08`'s rule for the message action
+ * bar ("keys generated from the registry and attached to the verb they belong to") applied
+ * to the surface it had not reached.
+ *
+ * ── AND TWO SHIPPED HINTS WERE FALSE ───────────────────────────────────────────────────
+ *
+ * The AI capsule was capped `y` and the strip read "y accept" UNCONDITIONALLY, but `y` is
+ * bound only by this component's own `keyboard` listener — and the webapp deliberately
+ * stopped passing `keyboard` when the keys moved into the registry (`ScreenerView`'s keymap
+ * note). The product therefore shipped a keycap for a key that does nothing, twice. The cap
+ * is now `y` only where `y` is really live, and the strip is deleted rather than corrected:
+ * accept-on-↵ is hinted by the view, from the binding that exists.
  */
 export function DecisionBar({
   aiDest,
@@ -70,7 +92,6 @@ export function DecisionBar({
   keyboard,
   onBack,
   note,
-  keysHint = true,
   className,
 }: DecisionBarProps) {
   useEffect(() => {
@@ -119,7 +140,11 @@ export function DecisionBar({
             <SplitButton
               key={d}
               label={DECISION_LABEL[d]}
-              kbdHint={ai ? "y" : undefined}
+              /* `y` only where `y` is bound — this component's own listener. Everywhere
+                 else the capsule shows the letter that files it, which is live in both
+                 modes: the registry declares o/r/c/n/x from this same `DECISION_KEY`. */
+              kbdHint={keyboard && ai ? "y" : k}
+              checkKbdHint={`⇧${k.toUpperCase()}`}
               ai={ai}
               quiet={QUIET.has(d)}
               title={`${DECISION_DONE_LABEL[d]} (${k})`}
@@ -143,19 +168,20 @@ export function DecisionBar({
             { id: "domain", label: "whole domain" },
           ]}
         />
+        {/* THE CONSEQUENCE LINE, WHICH IS THE CONSENT DISCLOSURE (4a3ff4f) AND NOW SAYS
+            WHAT BOTH HALVES DO. "Becomes a rule — future mail from … files automatically"
+            is the sentence that has to be readable BEFORE the click, because screening a
+            sender out arms auto-unsubscribe; it stays first and unchanged. What follows it
+            used to explain the ✓ half only, leaving the half people actually press
+            unexplained. */}
         <span className="d-note">
           {note ?? (
             <>
-              Becomes a rule — future mail from {ruleTarget} files automatically. The ✓ half
-              also marks this mail read.
+              Becomes a rule — future mail from {ruleTarget} files automatically. The name
+              files the mail waiting here; the ✓ files it and marks it read.
             </>
           )}
         </span>
-        {keysHint ? (
-          <span className="d-keys">
-            <Kbd>y</Kbd> accept · <Kbd>⇧</Kbd>+key marks read
-          </span>
-        ) : null}
       </div>
     </div>
   );

@@ -454,6 +454,35 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
     [],
   );
 
+  /**
+   * OPENING THE READER — THE ONE GATE (gap UX12).
+   *
+   * A live walk at 1440 found the reading experience rendered TWICE: the message painted in
+   * the split's 752px column AND a 660px modal over it, with the ghost of that column — and
+   * a second action bar — legible behind the sheet. The sheet is not a bigger view of the
+   * message; it is a NARROWER duplicate of one already on screen.
+   *
+   * The rule was never in doubt, only unenforced: `readColumnHidden` is what "opened" means
+   * on a width whose reading column is `display:none`, and `openReply` and `openMessage`
+   * both already ask it. `OhboxView.open` was the one path that did not — it called
+   * `onEnterReader` unconditionally, so ↵ and a second click on the selected row opened the
+   * sheet at every width.
+   *
+   * IT IS GATED HERE AND NOT IN THE VIEW, deliberately. A view that asked the media query
+   * itself would be a second copy of the predicate, live in one place and drifting from the
+   * two that already exist — the shape U2 deleted from the (i) panel and O13 deleted from
+   * the action bar. The view's contract stays "the user asked to open this message"; what
+   * that MEANS at a given width is the shell's answer, given once.
+   *
+   * The id still travels (see the call site): this narrows WHETHER, never WHAT.
+   */
+  const enterReader = useCallback(
+    (messageId: string) => {
+      if (readColumnHidden()) setReaderFor(messageId);
+    },
+    [readColumnHidden],
+  );
+
   const waitingLive = screener.waiting.filter((w) => !screener.isExiting(w.id));
 
   /**
@@ -1770,8 +1799,10 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
                    staleness: `OhboxView.open` calls `onSelect(id)` and this in the SAME tick,
                    so the shell's `selectedOhbox` here is still the PREVIOUS row. With the
                    reader holding an id of its own, reading that stale value would open the
-                   message the user was on before the one they tapped. */
-                onEnterReader={setReaderFor}
+                   message the user was on before the one they tapped.
+
+                   It is `enterReader` and no longer `setReaderFor` — see the gate (gap UX12). */
+                onEnterReader={enterReader}
                 onMarkSeen={markSeen}
                 doorbellInitials={waitingLive.map((w) => w.initial)}
                 doorbellHues={waitingLive.map((w) => avatarHue(w.from.address))}

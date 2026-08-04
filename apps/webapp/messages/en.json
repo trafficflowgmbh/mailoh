@@ -273,11 +273,9 @@
     },
     "applyAll": "Apply {count, plural, one {1 suggestion} other {# suggestions}}",
     "markAllSpam": "Mark all spam",
-    "noSuggestion": "No suggestion — no model is connected yet. Pick a door.",
+    "noSuggestion": "No suggestion — no model is connected yet. Choose where this sender’s mail goes.",
     "hintMove": "move",
     "hintAccept": "accept suggestion",
-    "hintFile": "file",
-    "hintShiftRead": "+key marks read",
     "hintPreview": "selecting a row previews the held mail",
     "aiSuggests": "AI suggests",
     "aiWhy": "“{why}”",
@@ -997,6 +995,13 @@
     "err_storage": "Sync failed — ohmail could not store this mail. This one is on us.",
     "err_sync": "Sync failed while reading the mailbox.",
     "err_unknown": "Sync failed, and we could not tell why.",
+    "probe_auth": "That mail server refused the password. If your provider requires an app-specific password, generate one there and use it here instead of your account password.",
+    "probe_connect": "We could not reach that mail server. Check the IMAP host and port.",
+    "probe_tls": "That mail server's certificate was refused, so we stopped before sending the password. Check the IMAP host, and whether that port expects TLS.",
+    "probe_timeout": "That mail server did not answer in time. Check the IMAP host and port, then try again.",
+    "probe_storage": "We could not finish checking that mailbox. Try again.",
+    "probe_sync": "We could not finish checking that mailbox. Try again.",
+    "probe_unknown": "We could not finish checking that mailbox, and we could not tell why. Try again.",
     "errSince": "Failing since {when}",
     "errAttempts": "{count} attempts",
     "standDown_organized_elsewhere_local": "ohmail on your own machine has claimed this mailbox.",
@@ -1241,8 +1246,8 @@
     "tooLarge": "{size} · too large to fetch",
     "listFailed": "Couldn't load this message's files.",
     "listOffline": "Couldn't reach ohmail — check your connection.",
+    "listTimeout": "ohmail didn't answer in time.",
     "listRetry": "Try again",
-    "listRetrying": "Looking again…",
-    "listTimeout": "ohmail didn't answer in time."
+    "listRetrying": "Looking again…"
   }
 }
