@@ -58,7 +58,7 @@ export interface DecisionBarProps {
  * with the AI destination preselected, a sender/domain scope toggle and
  * the consequence line. Fits one line at 1280px (container query).
  *
- * ── UX11: THE KEY GOES ON THE VERB, AND THE LEGEND IS GONE ─────────────────────────────
+ * ── THE KEY GOES ON THE VERB, AND THE LEGEND IS GONE ───────────────────────────────────
  *
  * A live walk found this bar illegible in three ways at once. Every capsule is TWO verbs,
  * and only one of them was ever explained: the note said what the ✓ half does and nothing
@@ -70,8 +70,8 @@ export interface DecisionBarProps {
  *
  * So each half wears its own cap, from `DECISION_KEY` — the same constant `ScreenerView`
  * derives its keyboard registry bindings from, so a cap and its binding cannot disagree
- * without editing the one line both read. That is `bf4eb08`'s rule for the message action
- * bar ("keys generated from the registry and attached to the verb they belong to") applied
+ * without editing the one line both read. That is the message action bar's rule ("keys
+ * generated from the registry and attached to the verb they belong to") applied
  * to the surface it had not reached.
  *
  * ── AND TWO SHIPPED HINTS WERE FALSE ───────────────────────────────────────────────────
@@ -168,7 +168,7 @@ export function DecisionBar({
             { id: "domain", label: "whole domain" },
           ]}
         />
-        {/* THE CONSEQUENCE LINE, WHICH IS THE CONSENT DISCLOSURE (4a3ff4f) AND NOW SAYS
+        {/* THE CONSEQUENCE LINE, WHICH IS THE CONSENT DISCLOSURE, AND NOW SAYS
             WHAT BOTH HALVES DO. "Becomes a rule — future mail from … files automatically"
             is the sentence that has to be readable BEFORE the click, because screening a
             sender out arms auto-unsubscribe; it stays first and unchanged. What follows it

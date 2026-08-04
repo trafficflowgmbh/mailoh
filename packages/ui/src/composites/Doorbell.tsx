@@ -3,11 +3,11 @@ import { Avatar } from "../primitives/Avatar.js";
 import "./doorbell.css";
 
 /**
- * How many faces a knock is allowed to show (gap C6).
+ * How many faces a knock is allowed to show.
  *
  * The doorbell rendered ONE circle per waiting sender. That was invisible while the
- * Screener was structurally empty on Cloud; the moment C1 made it real, a seeded account
- * with 86 waiting senders drew 86 letters — 852px of them, measured live — and shoved the
+ * Screener was structurally empty on Cloud; the moment it started returning senders, an
+ * account with 86 waiting senders drew 86 letters — 852px of them, measured — and shoved the
  * label and the "Screener ›" affordance off the right-hand edge. Four is the number that
  * still reads as "some people are waiting" at 390px and leaves room for the sentence that
  * says how many. The count lives in the LABEL; the stack is a texture, not a census.

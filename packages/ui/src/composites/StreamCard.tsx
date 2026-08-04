@@ -36,8 +36,7 @@ export interface StreamCardProps {
   expandLabel?: string;
   collapseLabel?: string;
   /**
-   * WHAT `body` ACTUALLY IS (slice U5-BODY). Omitted ⇒ `"full"`, the shape every existing
-   * caller had.
+   * WHAT `body` ACTUALLY IS. Omitted ⇒ `"full"`, the shape every existing caller had.
    *
    * It is here rather than in the app because it changes the CARD'S OWN measurement, and
    * that measurement is what hid the affordance. `short` is computed from `scrollHeight`, so
@@ -102,7 +101,7 @@ export function StreamCard({
     if (!card || !clip || card.offsetHeight === 0) return;
     setShort(clip.scrollHeight <= clampHeight + 28); // no point clamping a few lines
     /**
-     * RE-PIN AN OPEN CARD WHEN ITS TEXT CHANGES (slice U5-BODY).
+     * RE-PIN AN OPEN CARD WHEN ITS TEXT CHANGES.
      *
      * `toggle` opens by pinning `max-height` to the content height MEASURED AT THAT MOMENT.
      * Before hydration that moment holds a two-line snippet, so an expand-then-fill card
@@ -117,9 +116,9 @@ export function StreamCard({
    * THE BODY IS NOT (YET) THE WHOLE MESSAGE.
    *
    * `short` is a fact about the text on screen; this is a fact about whether that text is
-   * the mail. They come apart exactly where U5a shipped — a snippet is short AND incomplete
-   * — and the card must keep its affordance in that case rather than concluding from the
-   * height that there is nothing more to show. `.pend` in `stream.css` re-enables the pill
+   * the mail. They come apart wherever a snippet is short AND incomplete at once — and the
+   * card must keep its affordance in that case rather than concluding from the height that
+   * there is nothing more to show. `.pend` in `stream.css` re-enables the pill
    * and drops the fade for a card that is both short and pending.
    */
   const pending = bodyState !== "full";

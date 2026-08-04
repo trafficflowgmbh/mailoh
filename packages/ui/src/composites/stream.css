@@ -17,7 +17,7 @@
 .scast.short .sc-clip{max-height:none}
 .sc-body{padding:9px 26px 18px;font-size:13.5px;line-height:1.7;color:var(--ink);white-space:pre-line;max-width:62ch;margin:0}
 .sc-body + .sc-body{padding-top:0}
-/* U5-BODY. The hydration state line: the same weight as .stream-hints, because it is the
+/* The hydration state line: the same weight as .stream-hints, because it is the
    same kind of statement — a fact about the surface, not part of the mail. `.warn` carries
    the accent so a failed fetch is not mistaken for a quiet aside. */
 .sc-state{margin:0;padding:0 26px 18px;font-size:11.5px;color:var(--ink3)}
@@ -41,7 +41,7 @@
 .sc-x .chev{width:12px;height:12px;transition:transform .3s var(--spring);transform:rotate(90deg)}
 .scast.open .sc-x .chev{transform:rotate(-90deg)}
 .scast.short .sc-x{display:none}
-/* U5-BODY — a card that is short ONLY because its body has not arrived keeps the pill, and
+/* A card that is short ONLY because its body has not arrived keeps the pill, and
    loses the fade (an 88px gradient over two lines of snippet reads as a rendering fault).
    These two rules are the whole visual cost of hydration; the pill, the clamp and the
    gradient are otherwise the prototype's. */

@@ -4,7 +4,7 @@
   font-style:normal;user-select:none}
 .av.s{width:26px;height:26px;font-size:10.5px}
 
-/* Per-sender tint (F10). Only the HUE varies: lightness and chroma are pinned here, per
+/* Per-sender tint. Only the HUE varies: lightness and chroma are pinned here, per
    theme, so no derived colour can land outside the legible band. Chroma stays inside the
    Blanc tag-hue range (.07–.09) — muted, never candy — and there is no gradient. */
 .av.tinted{background:oklch(0.62 0.075 var(--av-h) / .16);color:oklch(0.40 0.085 var(--av-h))}

@@ -4,7 +4,7 @@
  * (or above) the top third of its scroller — but never before the USER
  * has actually driven the scroller.
  *
- * ── WHY THE GUARD IS ON INPUT AND NOT ON `scroll` (slice U1f) ─────────────
+ * ── WHY THE GUARD IS ON INPUT AND NOT ON `scroll` ─────────────────────────
  *
  * It used to arm on the scroller's `scroll` event, and the comment above
  * used to say "never before the USER has actually scrolled". That sentence

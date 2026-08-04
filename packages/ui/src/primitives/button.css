@@ -12,7 +12,7 @@
 .btn.ghost:hover{background:var(--tint);color:var(--ink);transform:none;box-shadow:none}
 /* DISABLED. There was no rule for it at all, so a `disabled` primary kept the terracotta
    fill and the hover lift and read as the live control it is not — first needed by the
-   reply Send button (U4b), where "you cannot press this yet" and "pressing this sends mail
+   reply Send button, where "you cannot press this yet" and "pressing this sends mail
    to a person" must not look alike. Flat, unlit, no cursor promise; opacity is deliberately
    NOT used, because it would drop the label below contrast on the accent fill. */
 .btn:disabled{background:var(--tint2);color:var(--ink3);box-shadow:none;cursor:default}

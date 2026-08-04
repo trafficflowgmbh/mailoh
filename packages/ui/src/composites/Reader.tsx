@@ -11,7 +11,7 @@ export interface ReaderProps {
   hint?: ReactNode | null;
   /**
    * Escape returns from reading mode. Pass `false` while something INSIDE the sheet owns
-   * Escape — the inline reply editor does (slice U4). Without the opt-out both handlers
+   * Escape — the inline reply editor does. Without the opt-out both handlers
    * fire on one keypress: the editor closes and the message it was quoting disappears
    * from under it in the same frame, which reads as Esc having lost the draft.
    */

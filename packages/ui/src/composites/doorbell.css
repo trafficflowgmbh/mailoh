@@ -3,9 +3,9 @@
   display:flex;align-items:center;gap:12px;margin:16px 26px 0;padding:9px 16px 9px 10px;border-radius:99px;border:0;cursor:pointer;
   background:var(--accent-soft);width:calc(100% - 52px);text-align:left;overflow:hidden;
   font-family:inherit;font-size:inherit;color:inherit;line-height:1.5;
-  /* THE DOORBELL MEASURES ITSELF, NOT THE VIEWPORT (O12-COMPACT).
-     A viewport media query is the wrong instrument here and O12 proved it the expensive
-     way: the doorbell is WIDER on a phone (362px at a 390px viewport) than in the desktop
+  /* THE DOORBELL MEASURES ITSELF, NOT THE VIEWPORT.
+     A viewport media query is the wrong instrument here, and the compact layout proved it
+     the expensive way: the doorbell is WIDER on a phone (362px at a 390px viewport) than in the desktop
      split column (268px at 1440px, `--split: minmax(320px,400px)`). So "is there room for
      the faces?" has no answer in viewport units — any breakpoint that keeps them on the
      phone drops them too late on the desktop, and vice versa.
@@ -27,8 +27,8 @@
 /* THE FACES ARE THE THING THAT GOES WHEN SPACE RUNS OUT — never the sentence.
    The stack is "a texture, not a census" (see `Doorbell.tsx`): the count lives in the label,
    so dropping the strip costs nothing a user can no longer learn, while dropping a word from
-   the sentence costs the NOUN — precisely the defect O12 existed to fix (the owner could not
-   see "waiting"). Same trade `.pvp-grid` makes in `app.css` at its own container query: a
+   the sentence costs the NOUN — precisely the defect the compact layout exists to fix, where
+   the word "waiting" was the first thing pushed off the edge. Same trade `.pvp-grid` makes in `app.css` at its own container query: a
    domain cut mid-word by an ellipsis is worse than no domain.
 
    309px is the doorbell's CONTENT box, not its border box — `container-type` measures the
@@ -40,12 +40,12 @@
 
      1 face,  "1 waiting"                          162px
      4 faces + "+82",    "86 waiting"              262px
-     4 faces + "+1039",  "1,043 waiting"           287px   ← the owner's real numbers
+     4 faces + "+1039",  "1,043 waiting"           287px   ← a heavily backlogged mailbox
      4 faces + "+12341", "12,345 waiting"          301px
      4 faces + "+99995", "99,999 waiting"          303px   ← worst realistic
 
-   So wherever the faces appear (≥310px) even the 99,999 case clears by 7px, and the owner's
-   real numbers clear by 23px.
+   So wherever the faces appear (≥310px) even the 99,999 case clears by 7px, and the 1,043
+   case clears by 23px.
 
    AND WHAT THE APP ACTUALLY GIVES IT, measured the same way — this is the half a previous
    pass got wrong by reasoning from `calc(100% - 52px)` alone and forgetting `.deck`'s 10px
@@ -55,12 +55,12 @@
      390px viewport → pane 370 → doorbell 342 → content 316 → faces stay, one line, 44px
      ≥900px (split) → column  400 → doorbell 348 → content 322 → faces stay, one line, 44px
 
-   Note the last row against O12's note that the desktop column is 320px: it is not. Below
+   Note the last row against the older note that the desktop column is 320px: it is not. Below
    900px `.view.split` collapses to `1fr` (list only), and above it the `1fr` sibling always
    leaves room for the first track to take its 400px MAXIMUM — so `minmax(320px,400px)`
    resolves to 400 at every width where the split exists, and the 320 floor is unreachable.
    The narrowest doorbell in the product is therefore the SMALL PHONE, not the desktop pane.
-   The inversion O12 found is still real (a 390px phone gives less than a desktop column) and
+   The inversion is still real (a 390px phone gives less than a desktop column) and
    is still why this is a container query rather than a media query.
 
    English-only today (`apps/webapp/messages/` holds just `en.json`). A translation whose word

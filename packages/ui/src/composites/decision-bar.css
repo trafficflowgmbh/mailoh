@@ -6,7 +6,7 @@
 .d-btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .d-sub{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
 .d-note{font-size:11px;color:var(--ink3);min-width:0;flex:1 1 220px;line-height:1.45}
-/* `.d-keys` is gone with the legend it styled (UX11) — the keys are on the capsules now. */
+/* `.d-keys` is gone with the legend it styled — the keys are on the capsules now. */
 .decide .btn{font-size:11.5px;padding:5.5px 13px}
 .choose-lab{font-size:11.5px;color:var(--ink3);align-self:center}
 .scn-back{display:none;align-items:center;gap:6px;margin:0 0 12px;padding:0;border:0;background:none;cursor:pointer;
@@ -18,7 +18,7 @@
    bar ≈540px of content width. Below 600px of bar width the capsules
    compress instead of wrapping; flex-wrap stays as the last-resort
    fallback for engines without container queries. */
-/* UX11 — THE CAPS DEGRADE IN ORDER, THEY DO NOT ALL VANISH AT ONCE.
+/* THE CAPS DEGRADE IN ORDER, THEY DO NOT ALL VANISH AT ONCE.
    MEASURED, not guessed: five capsules carrying a label, a letter, a ✓ and a shifted cap
    need 800px, and the bar has 700px of content at 1440 and 540 at 1280. Both halves fit
    only on a genuinely wide window, so the ✓ half's cap is the first thing dropped — it is
@@ -51,8 +51,8 @@
    with the letters the bar holds one line from a 1232px window, without them from 1156, and
    a 1232px window gives the bar 492px. Dropping them below 490 makes the two wrap points
    IDENTICAL — so a keycap is added wherever it fits and no window that used to hold one
-   line stops holding it. Wrapping the decision row is the remedy O12 was fixed with and
-   the owner then rejected; it is not available here either. */
+   line stops holding it. Wrapping the decision row is the remedy the doorbell was first
+   fixed with, and it was rejected there; it is not available here either. */
 @container (max-width: 490px){
   .decide .dbtn kbd{display:none}
 }

@@ -25,7 +25,7 @@ export interface MessageRowProps {
   justSeen?: boolean;
   selected?: boolean;
   /**
-   * MULTI-SELECT MEMBERSHIP, and why it changes the row's ROLE (slice U1d).
+   * MULTI-SELECT MEMBERSHIP, and why it changes the row's ROLE.
    *
    * Measured live on 2026-08-02: picking rows in the Ohbox set `aria-selected` on zero of
    * them. The pick was a class name and nothing else, so a screen reader could not tell a
@@ -56,7 +56,7 @@ export interface MessageRowProps {
   place?: string;
   /**
    * The sender's initial circle. Started as the Screener's own variant and is now the
-   * lead of every mail row (slice F10) — one row language, so the Ohbox and the Screener
+   * lead of every mail row — one row language, so the Ohbox and the Screener
    * do not describe the same person two different ways.
    */
   avatarInitial?: string;

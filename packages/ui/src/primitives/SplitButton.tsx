@@ -21,10 +21,10 @@ export interface SplitButtonProps {
   /**
    * Keyboard hint shown inside the ✓ segment (e.g. "⇧").
    *
-   * The ✓ half is a SECOND verb wearing an icon, and until UX11 the only thing that said so
-   * was a legend detached from it at the other end of the bar. A cap here is the same move
-   * the message action bar made in `bf4eb08` — the key sits on the verb it belongs to — and
-   * it is `aria-hidden` because `checkLabel` already carries the accessible name.
+   * The ✓ half is a SECOND verb wearing an icon, and the only thing that used to say so was a
+   * legend detached from it at the other end of the bar. A cap here is the same move the
+   * message action bar makes — the key sits on the verb it belongs to — and it is
+   * `aria-hidden` because `checkLabel` already carries the accessible name.
    */
   checkKbdHint?: string;
   title?: string;
@@ -37,8 +37,8 @@ export interface SplitButtonProps {
  * segment files AND marks read — each with its own handler.
  *
  * Both halves can carry their own keycap (`kbdHint`, `checkKbdHint`), which is
- * how UX11 replaced the bar's detached "o r c n x file" legend: the key goes on
- * the verb, exactly as the message action bar's does.
+ * what replaced the bar's detached "o r c n x file" legend: the key goes on the
+ * verb, exactly as the message action bar's does.
  */
 export function SplitButton({
   label,

@@ -14,7 +14,7 @@
 .dbtn.ai{box-shadow:0 0 0 1.5px var(--accent-hair), var(--lift-0)} /* the AI-preselected destination */
 .dbtn.ai:hover{box-shadow:0 0 0 1.5px var(--accent-hair), var(--lift-2)}
 .dbtn.ai .d-main{background:var(--accent-soft);color:var(--accent-ink);font-weight:650}
-/* KEYCAPS, IN THE ACTION BAR'S TREATMENT (UX11). `apps/webapp/app/shell/action-bar.css`
+/* KEYCAPS, IN THE ACTION BAR'S TREATMENT. `apps/webapp/app/shell/action-bar.css`
    settled this once — quieter and smaller than the global `kbd`, because a row of them
    would otherwise be the loudest thing on the surface, and "the hint is for the second
    read, never the first". These caps sit in the same product one screen away, so they are

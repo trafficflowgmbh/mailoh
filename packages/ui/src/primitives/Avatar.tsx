@@ -7,7 +7,7 @@ export interface AvatarProps {
   /** 30px default; "s" is the 26px doorbell size. */
   size?: "m" | "s";
   /**
-   * OKLCH hue angle in degrees for a deterministic per-sender tint (slice F10).
+   * OKLCH hue angle in degrees for a deterministic per-sender tint.
    *
    * The CALLER derives it — from the address, so the same person is the same colour in
    * every list and on every device — and this component only renders it. Lightness and

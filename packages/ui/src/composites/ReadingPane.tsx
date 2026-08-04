@@ -22,7 +22,7 @@ export interface ReadingPaneProps {
   /** Rich body (e.g. a ProtectedBlock). */
   children?: ReactNode;
   /**
-   * A statement ABOUT the body, immediately under it (slice U5-BODY): the message text is
+   * A statement ABOUT the body, immediately under it: the message text is
    * being fetched, or the fetch failed.
    *
    * A sibling rather than something folded into `body`, because the two must not be
@@ -43,10 +43,10 @@ export interface ReadingPaneProps {
   /** Deterministic per-sender hue for that circle; see `Avatar`. */
   avatarHue?: number;
   /**
-   * Makes the from-line a CONTROL — avatar and address together (slice U3).
+   * Makes the from-line a CONTROL — avatar and address together.
    *
-   * The owner's words: "needing to be able to directly click a mail adress and change its
-   * screener mode even on ohbox etc". A row cannot carry this affordance (`.row` is itself
+   * The requirement: click a mail address wherever it appears, the Ohbox included, and change
+   * that sender's screening from there. A row cannot carry this affordance (`.row` is itself
    * a `<button>`, and nesting interactive content in one is invalid), so the open message
    * is where the address becomes clickable for real, with a focusable, keyboard-reachable
    * control rather than a span with a mouse handler.
@@ -59,12 +59,12 @@ export interface ReadingPaneProps {
   /** Tooltip/aria for that control — supplied by the app, which owns the copy. */
   senderTitle?: string;
   /**
-   * Rendered INSIDE the message, after the actions: the inline reply editor (slice U4).
+   * Rendered INSIDE the message, after the actions: the inline reply editor.
    *
    * A slot rather than a component so the app owns the editor's behaviour, drafts and
    * copy, and so this file stays the anatomy of a message and nothing more. What matters
    * structurally is that it lives inside `<article class="msg">` — a reply that is not in
-   * the message is the compose route the owner rejected.
+   * the message is the compose route this exists to avoid.
    */
   reply?: ReactNode;
   className?: string;
