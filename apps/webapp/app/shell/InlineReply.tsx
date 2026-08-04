@@ -47,6 +47,8 @@ import { Button, Kbd } from "@ohmail/ui";
 import { rowAddress, senderName } from "./format";
 import { canSend, type SendState } from "./mail-send";
 import { SendStatus } from "./SendStatus";
+import { useMailboxFacts } from "./MailStateProvider";
+import { optionsFromFacts, resolveReplyFrom } from "./compose-from";
 
 /*
  * The scratch-buffer helpers and `canSend` used to live here and now live in `mail-send.ts`,
@@ -75,6 +77,29 @@ export function InlineReply({
   const t = useTranslations("reply");
   const box = useRef<HTMLDivElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
+
+  /**
+   * WHICH ADDRESS IS ANSWERING (gap O20).
+   *
+   * A reply goes out from the mailbox the message ARRIVED in — `Engine.enrich` has always
+   * derived that from the parent (`engine.ts:671`) and this slice does not change it. What it
+   * changes is that the editor now says so, and that the one case where the default is not
+   * available is stated instead of discovered afterwards.
+   *
+   * The SAME pure call `AppShell.sendReply` makes, over the same options, so the sentence below
+   * and the id on the wire are one decision. `resolveReplyFrom` returns nothing at all when the
+   * facts cannot be seen (Desktop, demo, a pane mounted with no provider) — and no line is
+   * rendered then, because a From line is a claim.
+   *
+   * THE MIRROR'S `"mailbox"` ENTITIES ARE DELIBERATELY NOT CONSULTED HERE, though Compose does
+   * use them. Reading them needs `useEngine()`, which throws outside an `EngineProvider`, and
+   * this component is mounted bare in more than one harness. The trade is honest rather than
+   * merely convenient: the fixture rows carry no status, so on the demo and the Desktop they
+   * could only ever repeat the parent's own mailbox — the substitution, which is the whole
+   * reason this line is worth rendering on a reply, is a fact only `GET /mailboxes` holds.
+   */
+  const facts = useMailboxFacts();
+  const from = resolveReplyFrom(facts ? optionsFromFacts(facts) : [], message.mailboxId);
 
   /**
    * BRING THE EDITOR TO THE READER (slice U5-REPLY).
@@ -116,6 +141,22 @@ export function InlineReply({
         {/* Only when it adds something — see `rowAddress`. */}
         {rowAddress(message) ? <small>{rowAddress(message)}</small> : null}
       </div>
+
+      {/* FROM, and the substitution said out loud (gap O20). Static text, never a control: a
+          reply has a right answer — the address the sender wrote to — and offering to change it
+          here is a different feature from being able to SEE it. */}
+      {from.address !== null ? (
+        <p className="reply-from">
+          <span>{t("from", { address: from.address })}</span>
+          {from.substituted ? (
+            <span className="reply-from-sub">
+              {from.substitutedFrom
+                ? t("fromSubstituted", { was: from.substitutedFrom })
+                : t("fromSubstitutedUnknown")}
+            </span>
+          ) : null}
+        </p>
+      ) : null}
 
       {/* NO QUOTED CONTEXT HERE. It was a `.reply-context` scroller between the head and the
           textarea; the conversation it held is the pane's, above — see the header. */}

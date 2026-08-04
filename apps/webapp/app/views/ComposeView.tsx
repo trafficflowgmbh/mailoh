@@ -1,7 +1,20 @@
 "use client";
 
 /**
- * COMPOSE (slice U4f) — a new message, and the two things that were wrong with it.
+ * COMPOSE (slice U4f, gap O20) — a new message, and the three things that were wrong with it.
+ *
+ * ── THE THIRD ONE, AND THE WORST (gap O20) ──────────────────────────────────────────────
+ *
+ * This form rendered To, Subject and an editor, and **no From at all**. The sender was resolved
+ * behind it by `sendingMailboxId` — the mailbox holding the account's NEWEST MESSAGE — so on an
+ * account with two connected addresses the From line flipped with whichever one last received
+ * mail, and nothing on screen said which had won. With ONE address it was no better: a stranger
+ * could not tell what they were writing from.
+ *
+ * The row is now the first field, the value is a mailbox id (never an address — aliases are a
+ * later slice), and it renders as static text when there is nothing to choose. `AppShell`
+ * resolves it and this file shows it, so the id on the wire and the line on the screen are one
+ * object — see `compose-from.ts`.
  *
  * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
  *
@@ -38,12 +51,14 @@ import { go } from "../shell/routing";
 import { canSend, type SendState } from "../shell/mail-send";
 import { SendStatus } from "../shell/SendStatus";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
+import type { ResolvedFrom } from "../shell/compose-from";
 
 export function ComposeView({
   engine,
   draft,
   fields,
   onFields,
+  from,
   plan,
   send,
   onSend,
@@ -53,6 +68,14 @@ export function ComposeView({
   /** The form, owned by `AppShell` so it survives navigating away — see `compose.ts`. */
   fields: ComposeFields;
   onFields: (next: ComposeFields) => void;
+  /**
+   * WHICH ADDRESS THIS SENDS FROM (gap O20) — resolved by the shell, rendered here.
+   *
+   * The same object `plan.mutation.mailboxId` was built from, so the line on screen and the id
+   * on the wire cannot be two different answers. This view does not choose; it shows the choice
+   * and reports a new one, which is the same division of labour as the send state machine.
+   */
+  from: ResolvedFrom;
   /** The same object `canSend` judges and `onSend` dispatches. */
   plan: ComposePlan;
   send: SendState;
@@ -98,9 +121,13 @@ export function ComposeView({
     // where the draft carries them, because a draft the drafter addressed is a draft the user
     // should not have to re-address.
     onFields({
+      ...fields,
       to: fields.to || draft.to.map((a) => (a.name ? `${a.name} <${a.address}>` : a.address)).join(", "),
       subject: fields.subject || draft.subject,
       body: draft.body,
+      // Spread FIRST so `fromMailboxId` survives: taking a draft fills the message, it does not
+      // re-decide who is sending it. Written as a spread rather than by naming the field so the
+      // next field added to `ComposeFields` is not silently dropped here too.
     });
     void engine.mutate({ kind: "draft_accept", draftId: draft.id });
     if (withToast) toast(t("toastUseDraft"));
@@ -117,6 +144,45 @@ export function ComposeView({
       </div>
       <div className="scroller">
         <div className="compose-wrap">
+          {/* FROM (gap O20). Before To, because it is the question the reader asks first and
+              because the answer used to be nowhere on this screen at all — compose resolved
+              its sender from whichever mailbox had received the newest message, and said
+              nothing, so on an account with two addresses the From flipped with the post.
+
+              A CONTROL ONLY WHEN THERE IS SOMETHING TO CHOOSE. One address renders as static
+              text: a select with a single option is a decision nobody has, and the point of
+              this line with one mailbox is that a stranger can see what they are writing
+              from. Nothing renders when the account's mailboxes cannot be named at all —
+              `from.address` is null — because a From line is a claim and there is nothing to
+              claim yet.
+
+              THE VALUE IS A MAILBOX ID. `from.choices` holds sendable mailboxes only, so a
+              disconnected address is never offered; the server refuses it too
+              (`drafts-service.ts` → `validMailbox`), and a control that offers what the server
+              refuses is an inert affordance with extra steps. */}
+          {from.address !== null ? (
+            <div className="c-field">
+              <label htmlFor="compose-from">{t("from")}</label>
+              {from.choices.length > 1 ? (
+                <span className="c-select">
+                  <select
+                    id="compose-from"
+                    className="c-input"
+                    value={from.mailboxId ?? ""}
+                    disabled={inFlight}
+                    onChange={(e) => onFields({ ...fields, fromMailboxId: e.target.value })}
+                  >
+                    {from.choices.map((o) => (
+                      <option key={o.id} value={o.id}>{o.address}</option>
+                    ))}
+                  </select>
+                </span>
+              ) : (
+                <output id="compose-from" className="c-static">{from.address}</output>
+              )}
+            </div>
+          ) : null}
+
           <div className="c-field">
             <label htmlFor="compose-to">{t("to")}</label>
             <input

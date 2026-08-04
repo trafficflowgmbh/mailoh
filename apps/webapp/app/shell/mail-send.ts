@@ -65,6 +65,17 @@ export interface SendState {
   phase: SendPhase;
   /** The server's or the transport's own words, for `failed`. */
   reason?: string;
+  /**
+   * The server's stable machine name for the refusal, when it sent one (gap O20).
+   *
+   * `reason` is server English and is rendered as a quotation — correct for the long tail of
+   * SMTP refusals nobody can enumerate, and wrong for a refusal the product has its own words
+   * for. `mailbox_disabled` is the one that matters today: `SendService.reserve` throws it at
+   * 409 for a mailbox that cannot send, and the surface that shows it now also holds the control
+   * that fixes it, so the copy can point at that instead of quoting a sentence written for an
+   * API consumer. See `SendStatus`.
+   */
+  code?: string;
 }
 
 export interface MailSendApi {
@@ -165,7 +176,11 @@ export function phaseFor(res: MutationResult): SendState {
   if (res.status === "confirmed") return IDLE;
   if (res.status === "queued") return { phase: "queued" };
   if (res.error?.code === "send_unverified") return { phase: "unverified" };
-  return { phase: "failed", ...(res.error?.message ? { reason: res.error.message } : {}) };
+  return {
+    phase: "failed",
+    ...(res.error?.message ? { reason: res.error.message } : {}),
+    ...(res.error?.code ? { code: res.error.code } : {}),
+  };
 }
 
 /**

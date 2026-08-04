@@ -229,13 +229,23 @@ export function messagesIn(reader: EntityReader, folder: Folder): EngineMessage[
  * order of a mirror scan is not a fact about the user and this answer decides whose address a
  * stranger sees in their From line.
  *
- * ── THE LIMIT, STATED ──────────────────────────────────────────────────────────────────
+ * ── THE LIMIT THAT USED TO BE STATED HERE IS NOW CLOSED (gap O20) ──────────────────────
  *
- * With two mailboxes connected this picks one of them and offers no way to choose. A From
- * picker needs the mailbox ADDRESSES, which means either a new `/sync` entity type or a prop
- * threaded from the Cloud shell — both outside U4f. Filed as owed. What it does NOT do is
- * pretend: Compose shows the address it will send from wherever the mirror can name it, and
- * says nothing where it cannot.
+ * This paragraph said "with two mailboxes connected this picks one of them and offers no way to
+ * choose", filed as owed. It was worse than owed: nothing on the compose surface said WHICH one,
+ * so the From flipped with whichever address last received mail and no screen mentioned it.
+ *
+ * The picker exists. `apps/webapp/app/shell/compose-from.ts` owns the rule — a fresh compose
+ * defaults to the OLDEST CONNECTED mailbox, a reply keeps the one the message arrived in, and
+ * the value is a mailbox id — over the account's real mailboxes, which the Cloud shell reads
+ * from `GET /mailboxes` and hands to the shared shell through `MailStateProvider` (the prop
+ * threaded from the Cloud shell this note called for; no new `/sync` entity type was needed).
+ *
+ * SO THIS FUNCTION IS NOW THE LAST RESORT AND NOT THE ANSWER. It is reached only where nothing
+ * can name the account's mailboxes at all — the Desktop, and a Cloud tab in the moment before
+ * its first mailbox poll lands — and in exactly those cases there is no From line on screen for
+ * it to contradict. `Engine.enrich` still falls back to it for a `mail_send` that carries no
+ * `mailboxId`, which is what keeps a send possible there rather than refused.
  *
  * `null` ⇒ this account has nothing to send from yet (a mailbox that has not finished its
  * first sync). The compose surface refuses rather than posting a draft the server will 400.

@@ -16,9 +16,25 @@ export interface ComposeFields {
   to: string;
   subject: string;
   body: string;
+  /**
+   * THE SENDER THE USER PICKED, as a mailbox id (gap O20). `null` = they did not pick one.
+   *
+   * It is a field on the FORM rather than a derivation because a default that is re-derived on
+   * every render would silently revert a deliberate choice: `drafts.mailboxId` is NOT NULL and
+   * immutable after create, so the pick has to survive as long as the text it belongs to. It
+   * lives here, beside the body, for the same reason the body lives here — leaving the view and
+   * coming back must not throw either of them away.
+   *
+   * `null` is not "no mailbox". It means the derived default applies, which is what a compose
+   * nobody has touched should send from. A stored id is revalidated against the account's
+   * mailboxes on the way out (`resolveComposeFrom`), never trusted.
+   *
+   * NEVER an address string — see `compose-from.ts`.
+   */
+  fromMailboxId: string | null;
 }
 
-export const EMPTY_COMPOSE: ComposeFields = { to: "", subject: "", body: "" };
+export const EMPTY_COMPOSE: ComposeFields = { to: "", subject: "", body: "", fromMailboxId: null };
 
 /** `localStorage` key for the compose scratch buffer — one, because there is one compose. */
 export const COMPOSE_DRAFT_KEY = "ohmail.ui.compose";
@@ -46,6 +62,12 @@ export function readComposeDraft(): ComposeFields {
       to: typeof parsed.to === "string" ? parsed.to : "",
       subject: typeof parsed.subject === "string" ? parsed.subject : "",
       body: typeof parsed.body === "string" ? parsed.body : "",
+      // Guarded field-wise, so a buffer written before O20 reads back as "no pick" and one
+      // written after it is still readable by a bundle that predates the field. Nothing here
+      // versions the shape, and nothing needs to.
+      fromMailboxId: typeof parsed.fromMailboxId === "string" && parsed.fromMailboxId.length > 0
+        ? parsed.fromMailboxId
+        : null,
     };
   } catch {
     // Blocked storage, or a value some earlier version wrote in another shape. Either way an
@@ -56,6 +78,14 @@ export function readComposeDraft(): ComposeFields {
 
 export function writeComposeDraft(f: ComposeFields): void {
   try {
+    /**
+     * "EMPTY" IS ABOUT THE TEXT, and `fromMailboxId` deliberately does not count.
+     *
+     * A sender pick on a form with nothing written in it is not a draft — persisting it would
+     * turn every visit to Compose into a stored buffer, and it would make the pick sticky in a
+     * way ruling 2 rules out: the default is derived on every fresh compose, and the only thing
+     * worth remembering is a pick attached to a message somebody is actually writing.
+     */
     if (f.to === "" && f.subject === "" && f.body === "") {
       window.localStorage.removeItem(COMPOSE_DRAFT_KEY);
       return;
@@ -190,8 +220,16 @@ export interface ComposePlan extends RecipientParse {
  * BEFORE the press rather than as a dialog after it, which is the same warning arriving early
  * enough to be useful.
  *
- * `mailboxId` is omitted rather than nulled when the mirror cannot name one, so `canSend`
- * refuses and `Engine.enrich` has nothing to disagree with.
+ * `mailboxId` is omitted rather than nulled when nothing can name one, so `canSend` refuses and
+ * `Engine.enrich` has nothing to disagree with.
+ *
+ * ── IT IS HANDED THE ANSWER, IT DOES NOT CHOOSE ─────────────────────────────────────────
+ *
+ * `mailboxId` is `resolveComposeFrom(...).mailboxId` (gap O20) — the user's revalidated pick or
+ * the derived default — resolved by the caller so that the id on the wire is the same object
+ * the From line rendered. Passing `fields.fromMailboxId` straight through here would be the bug
+ * this slice removes wearing a different hat: a pick stored days ago against a mailbox since
+ * disconnected would go out and collect a 409 nobody could act on.
  */
 export function composePlan(fields: ComposeFields, mailboxId: string | null): ComposePlan {
   const parsed = parseRecipients(fields.to);

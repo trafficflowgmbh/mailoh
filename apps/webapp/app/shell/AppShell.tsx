@@ -79,7 +79,13 @@ import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
-import { MailStateProvider, type MailboxProbe } from "./MailStateProvider";
+import { MailStateProvider, useMailState, type MailboxProbe } from "./MailStateProvider";
+import {
+  optionsFromFacts,
+  optionsFromMirror,
+  resolveComposeFrom,
+  resolveReplyFrom,
+} from "./compose-from";
 import { MessageChromeProvider } from "./message-chrome";
 import { SenderMenu, type SenderMenuState } from "./SenderMenu";
 import { SenderAuditPanel, type SenderAuditState } from "./SenderAuditPanel";
@@ -230,21 +236,57 @@ export function AppShell({
           every view mounted under it can declare bindings into the same table, which is
           also the table the `?` sheet is generated from. */}
       <KeymapProvider>
-        <ShellInner
-          mailboxFacts={mailboxFacts}
-          accountSection={accountSection}
-          mailboxSection={mailboxSection}
-          billingSection={billingSection}
-          securitySection={securitySection}
-          aboutSection={aboutSection}
-        />
+        <MailStateHost probe={mailboxFacts}>
+          <ShellInner
+            accountSection={accountSection}
+            mailboxSection={mailboxSection}
+            billingSection={billingSection}
+            securitySection={securitySection}
+            aboutSection={aboutSection}
+          />
+        </MailStateHost>
       </KeymapProvider>
     </EngineProvider>
   );
 }
 
-function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSection, securitySection, aboutSection }: {
-  mailboxFacts?: MailboxProbe;
+/**
+ * A1's provider, hoisted ABOVE `ShellInner` (gap O20).
+ *
+ * It used to be the outermost element of `ShellInner`'s own return, which meant the shell
+ * PROVIDED the mailbox facts and could not read them. That was fine while the only consumers
+ * were leaves — the strip, the Ohbox's empty pane, the injected Settings rows — and stopped
+ * being fine the moment the From line needed the same facts on the WIRE: `sendReply` and the
+ * compose plan are built in `ShellInner`, and a fact the shell cannot see is a fact the mutation
+ * cannot carry. Moving the plan down into the views instead would have split the rule across
+ * two components and left `sendReply` — whose signature is frozen behind `message-chrome.tsx` —
+ * with no mechanism at all.
+ *
+ * `mirrored` moved up with it because the provider needs it and nothing else did.
+ *
+ * Nothing else changed position: `MessageChromeProvider` is still inside `ShellInner`, and the
+ * three existing consumers read a context rather than a position, so none of them notices.
+ */
+function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: ReactNode }) {
+  const engine = useEngine();
+  const version = useEngineVersion();
+  /**
+   * EVERY message in the MIRROR — Screener, Reads and Receipts included, not the Ohbox's rows.
+   *
+   * A1's progress signal. `MailStateProvider` folds it into a stateful growth reducer, and two
+   * surfaces each sampling their own could disagree about whether the mirror is growing, so it
+   * is sampled exactly once — here. The engine calls `notify()` once per drained page, so this
+   * is live with no extra plumbing.
+   */
+  const mirrored = useMemo(() => engine.read().list("message").length, [engine, version]);
+  return (
+    <MailStateProvider probe={probe} mirrored={mirrored}>
+      {children}
+    </MailStateProvider>
+  );
+}
+
+function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection }: {
   accountSection?: ReactNode;
   mailboxSection?: ReactNode;
   billingSection?: ReactNode;
@@ -255,6 +297,12 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
   const t = useTranslations();
   const engine = useEngine();
   const version = useEngineVersion();
+  /**
+   * The account's mailboxes as `GET /mailboxes` reported them, or `null` for "we cannot see"
+   * (Desktop, demo, a Cloud tab before its first poll). Read here — rather than provided here,
+   * as it was until O20 — so the From line and the mutation it describes come from one source.
+   */
+  const { mailboxes: facts } = useMailState();
   const reader = engine.read();
   const toast = useToast();
   const theme = useTheme();
@@ -277,15 +325,6 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
     () => reader.list<MailboxEntity>("mailbox"),
     [reader, version],
   );
-  /**
-   * EVERY message in the MIRROR — Screener, Reads and Receipts included, not the Ohbox's rows.
-   *
-   * A1's progress signal, and the reason it is computed HERE rather than in the surface that
-   * renders it: `MailStateProvider` folds it into a stateful growth reducer, and two surfaces
-   * each sampling their own could disagree about whether the mirror is growing. The engine
-   * calls `notify()` once per drained page, so this is live with no extra plumbing.
-   */
-  const mirrored = useMemo(() => reader.list("message").length, [reader, version]);
   const draft = useMemo(
     () => reader.get<EngineDraft>("draft", "draft-compose") ?? null,
     [reader, version],
@@ -702,24 +741,81 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
    * privately. The editor is only reachable while `replyTo` is this message, so the guard
    * below is a belt on the same waistband.
    */
+  /**
+   * WHICH ADDRESSES THIS ACCOUNT CAN SEND FROM (gap O20). The rule is `compose-from.ts`; this
+   * is the one place the two sources of mailboxes are reconciled.
+   *
+   * `GET /mailboxes` when we have it — it is the only source that knows an address is
+   * `disabled`, and the only one with a `createdAt` to order by. The mirror's `"mailbox"`
+   * entities otherwise, which is the demo and the Desktop: `"mailbox"` is not an `EntityType`
+   * in the change log, so those rows exist only where the FixturesAdapter seeded them.
+   *
+   * An EMPTY list is "nothing can be named", and every consumer below renders no From line and
+   * puts nothing extra on the wire rather than guessing. That is the Desktop, and it is also a
+   * Cloud tab in the moment before its first poll lands.
+   */
+  const fromOptions = useMemo(
+    () => (facts ? optionsFromFacts(facts) : optionsFromMirror(mailboxes)),
+    [facts, mailboxes],
+  );
+
+  /**
+   * The body comes from REACT STATE, not from `readReplyDraft`. Private mode refuses the
+   * `localStorage` write, so re-reading the scratch buffer at press time would send an empty
+   * reply — or, with the empty guard in place, refuse to send at all — for anyone browsing
+   * privately. The editor is only reachable while `replyTo` is this message, so the guard
+   * below is a belt on the same waistband.
+   *
+   * ── AND IT NAMES A MAILBOX ONLY TO OVERRIDE ONE (gap O20) ───────────────────────────────
+   *
+   * A reply sends from the mailbox the message arrived in, and `Engine.enrich` already derives
+   * that from the parent (`engine.ts:671`) — so the ordinary case adds NOTHING here and the
+   * envelope is unchanged. `mailboxId` is attached in exactly one situation: the parent's
+   * mailbox is `disabled` or gone, `resolveReplyFrom` named a substitute, and `InlineReply` is
+   * SAYING SO on screen. The wire and the sentence come from the same call, which is the point
+   * of it being a pure function.
+   *
+   * When nothing can be named the field stays off and `enrich` behaves exactly as before —
+   * `sendingMailboxId`'s newest-message guess is a COMPOSE fallback and must never reach a
+   * reply, where it would silently answer from an address the sender never wrote to.
+   */
   const sendReply = useCallback(
     (messageId: string) => {
       if (messageId !== replyTo) return;
-      mailSend.send({ kind: "mail_send", inReplyTo: messageId, body: replyBody });
+      const parent = reader.get<EngineMessage>("message", messageId) ?? null;
+      const from = resolveReplyFrom(fromOptions, parent?.mailboxId ?? null);
+      mailSend.send({
+        kind: "mail_send",
+        inReplyTo: messageId,
+        body: replyBody,
+        ...(from.substituted && from.mailboxId ? { mailboxId: from.mailboxId } : {}),
+      });
     },
-    [mailSend, replyTo, replyBody],
+    [mailSend, replyTo, replyBody, reader, version, fromOptions],
   );
 
   /**
    * THE COMPOSE PLAN — the mutation, the rejected recipients and the empty-subject note, all
    * derived in one place from the form (`compose.ts`).
    *
-   * `sendingMailboxId` is read from the mirror here rather than left to `Engine.enrich`, even
-   * though enrich would fill the same value: the BUTTON has to know whether a mailbox exists,
-   * because offering Send on an account with nothing to send from is the inert affordance this
-   * slice is closing. One derivation, two consumers — the same discipline as `canSend`.
+   * The mailbox is resolved here rather than left to `Engine.enrich`, even though enrich would
+   * fill a value: the BUTTON has to know whether a mailbox exists, because offering Send on an
+   * account with nothing to send from is the inert affordance U4f closed. One derivation, two
+   * consumers — the same discipline as `canSend`.
+   *
+   * ── AND IT IS NO LONGER `sendingMailboxId` THAT DECIDES (gap O20) ───────────────────────
+   *
+   * `sendingMailboxId` answers with the mailbox of the account's NEWEST MESSAGE, which on an
+   * account with two connected addresses flips the From line every time the other one receives
+   * mail. It survives only as the last resort for the case `resolveComposeFrom` cannot speak
+   * to — no facts and no seeded mirror rows — where it is still better than refusing to send,
+   * and where there is no From line on screen for it to contradict.
    */
-  const composeMailbox = useMemo(() => sendingMailboxId(reader), [reader, version]);
+  const composeFrom = useMemo(
+    () => resolveComposeFrom(fromOptions, compose.fromMailboxId),
+    [fromOptions, compose.fromMailboxId],
+  );
+  const composeMailbox = composeFrom.mailboxId ?? sendingMailboxId(reader);
   const plan = useMemo(() => composePlan(compose, composeMailbox), [compose, composeMailbox]);
   const onComposeFields = useCallback((next: ComposeFields) => {
     setCompose(next);
@@ -1717,10 +1813,9 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
   );
 
   return (
-    // A1 — the ONE place the mailbox state is derived, wrapping every surface that reports it:
-    // the strip below, the Ohbox's empty pane, and the injected Settings → Mailboxes rows.
-    // Outside `MessageChromeProvider` so the reader sheet is inside it too.
-    <MailStateProvider probe={mailboxFacts} mirrored={mirrored}>
+    // A1's `MailStateProvider` used to open here. It is now ABOVE this component
+    // (`MailStateHost`) so the shell can READ the mailbox facts as well as publish them — see
+    // the note there. Every surface that reports mailbox state is still inside it.
     <MessageChromeProvider value={chrome}>
     <div className="app-root">
       <div className="shell">
@@ -1911,6 +2006,7 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
                 draft={draft}
                 fields={compose}
                 onFields={onComposeFields}
+                from={composeFrom}
                 plan={plan}
                 send={mailSend.stateOf(COMPOSE_SEND_KEY)}
                 onSend={sendCompose}
@@ -2127,6 +2223,5 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
       </Dock>
     </div>
     </MessageChromeProvider>
-    </MailStateProvider>
   );
 }

@@ -96,6 +96,20 @@ export const FACTS_POLL_MS = 30_000;
 
 interface MailStateBinding {
   state: MailState;
+  /**
+   * THE FACTS THEMSELVES, not only the sentence derived from them (O20).
+   *
+   * Compose's From selector and the reply's From line need the account's mailboxes — their
+   * ids, their addresses and whether each can still send — which is a different question from
+   * "what should the strip say", and one `MailState` deliberately cannot answer. They are
+   * published from here rather than polled a second time because this provider is already
+   * reading `GET /mailboxes` every 30 s, and two pollers is two answers.
+   *
+   * `null` keeps its meaning exactly: **we cannot see mailboxes**, which is the Desktop, the
+   * demo, and a Cloud tab whose first poll has not landed. It is NOT "there are none". The
+   * From surfaces render nothing rather than guess when it is null — see `compose-from.ts`.
+   */
+  mailboxes: MailboxFacts[] | null;
   /** Re-read the mailbox facts now. The Settings pane calls it after a connect or a resync. */
   refresh: () => void;
 }
@@ -188,8 +202,8 @@ export function MailStateProvider({
   }, [probe, read]);
 
   const binding = useMemo<MailStateBinding>(
-    () => ({ state, refresh: () => void read() }),
-    [state, read],
+    () => ({ state, mailboxes: facts, refresh: () => void read() }),
+    [state, facts, read],
   );
 
   return <MailStateContext.Provider value={binding}>{children}</MailStateContext.Provider>;
@@ -205,4 +219,27 @@ export function useMailState(): MailStateBinding {
     throw new Error("useMailState must be used inside <MailStateProvider>");
   }
   return binding;
+}
+
+/**
+ * The mailbox facts for a surface that can be mounted OUTSIDE the shell — and the ONE reason
+ * this is allowed to be the non-throwing sibling of {@link useMailState}.
+ *
+ * `InlineReply` renders inside `MessagePane`, and `MessagePane` is mounted with no provider in
+ * more than one harness (`mail-send-states.test.ts` renders the editor alone; `action-bar.
+ * test.ts` says so at the assertion). It is also published to the Desktop mirror. A throw there
+ * would take an editor down over a decoration.
+ *
+ * The objection to a non-throwing accessor is real and is answered structurally rather than by
+ * promise: a missing provider must never let the app SUBSTITUTE a sender without saying so. It
+ * cannot. `AppShell` renders `MailStateProvider` above `ShellInner` unconditionally, and it is
+ * `ShellInner` — through the THROWING binding — that decides whether a reply carries a
+ * substitute `mailboxId`. So there is no arrangement in which the wire substitutes and this
+ * line stays quiet: either both see the facts, or neither does and nothing is substituted.
+ *
+ * `null` therefore keeps exactly one meaning at every call site: **we cannot see this account's
+ * mailboxes**. The only thing a caller may do with it is render nothing.
+ */
+export function useMailboxFacts(): MailboxFacts[] | null {
+  return useContext(MailStateContext)?.mailboxes ?? null;
 }

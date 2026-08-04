@@ -390,6 +390,7 @@
   },
   "compose": {
     "title": "Compose",
+    "from": "From",
     "to": "To",
     "toPlaceholder": "name@example.com, separated by commas",
     "toInvalid": "Not an address: {entries}",
@@ -408,6 +409,7 @@
     "statusQueued": "Not sent yet. ohmail is still trying.",
     "statusUnverified": "We couldn't confirm this send. Check your Sent folder before sending it again.",
     "statusFailed": "Not sent: {reason}",
+    "statusMailboxDisabled": "Not sent. That address is disconnected and cannot send.",
     "reasonUnknown": "the server refused it.",
     "toastSent": "Message sent.",
     "toastUseDraft": "Draft moved to the editor.",
@@ -1178,6 +1180,9 @@
   },
   "reply": {
     "to": "Reply to {name}",
+    "from": "From {address}",
+    "fromSubstituted": "{was} is disconnected, so this answers from the address above.",
+    "fromSubstitutedUnknown": "The address this arrived at is disconnected, so this answers from the address above.",
     "placeholder": "Write your reply…",
     "editorAria": "Reply body",
     "send": "Send",
@@ -1191,6 +1196,7 @@
     "statusQueued": "Not sent yet. ohmail is still trying.",
     "statusUnverified": "We couldn't confirm this send. Check your Sent folder before sending it again.",
     "statusFailed": "Not sent: {reason}",
+    "statusMailboxDisabled": "Not sent. That address is disconnected and cannot send.",
     "reasonUnknown": "the server refused it.",
     "toastSent": "Reply sent."
   },

@@ -37,7 +37,19 @@ export function SendStatus({
         : send.phase === "unverified"
           ? { tone: "warn", text: t("statusUnverified") }
           : send.phase === "failed"
-            ? { tone: "error", text: t("statusFailed", { reason: send.reason ?? t("reasonUnknown") }) }
+            /**
+             * A REFUSAL THE PRODUCT HAS ITS OWN WORDS FOR (gap O20).
+             *
+             * `statusFailed` quotes the server, which is right for the long tail of SMTP
+             * refusals and wrong here: `mailbox_disabled` is a state with a control on the same
+             * screen, and "Not sent: This mailbox is disconnected and cannot send. Reconnect it,
+             * or pick another sender." is an API sentence read out to somebody already looking
+             * at the picker it describes. The branch is on the CODE, not on the text, so a
+             * reworded server message cannot silently fall back to the quotation.
+             */
+            ? send.code === "mailbox_disabled"
+              ? { tone: "error", text: t("statusMailboxDisabled") }
+              : { tone: "error", text: t("statusFailed", { reason: send.reason ?? t("reasonUnknown") }) }
             : null;
 
   if (!line) return null;

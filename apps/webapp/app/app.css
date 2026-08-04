@@ -610,6 +610,50 @@ body.reading .shell {
 .c-input:read-only {
   color: var(--ink2);
 }
+/* FROM (gap O20). It is one of the header fields, not a banner about them, so it wears the
+   same chrome as To and Subject: the 56px label gutter, the row hairline, no box of its own.
+
+   With ONE mailbox there is no control — an `<output>`, not a disabled `<select>`. A disabled
+   control invites a click that cannot do anything; this is a fact about the account, and it is
+   here because without it a stranger cannot tell what address they are writing from. */
+.c-static {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* With TWO OR MORE, a select — and the UA's own widget cannot stay, because its border and
+   background are the "bordered box per field" the note above rejects. `appearance: none`
+   removes the caret with it, so the wrapper draws one; without that the row would read as
+   static text and the choice would be invisible, which is this gap wearing a new hat. */
+.c-select {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.c-select select {
+  appearance: none;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+.c-select select:disabled {
+  color: var(--ink2);
+  cursor: default;
+}
+.c-select::after {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid var(--ink3);
+  transform: translateY(-1px);
+}
 /* A REJECTED RECIPIENT, named. Sits directly under the row it belongs to, on the accent's own
    soft surface rather than a red the system does not have; the field's `aria-describedby`
    points at it, so the reason reaches a screen reader with the field and not as a stray line. */
@@ -1974,6 +2018,23 @@ body.reading .shell {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* WHICH ADDRESS IS ANSWERING (gap O20). One recessed line under the "Reply to …" head, in the
+   head's own type size — it is context for the editor, not a heading of its own. */
+.reply-from {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -6px 0 10px;
+  font-size: 11.5px;
+  color: var(--ink3);
+}
+/* THE SUBSTITUTION, and the one line here that is allowed to be loud. It says the reply is
+   going out from an address the sender never wrote to, which is a thing somebody may want to
+   stop before pressing Send — so it carries the accent rather than sitting at `--ink3` with
+   the fact it qualifies. */
+.reply-from-sub {
+  color: var(--accent);
 }
 .reply-editor {
   width: 100%;

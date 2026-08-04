@@ -133,12 +133,22 @@ export function standDownToken(wire: string | null): StandDownReason | null {
  * ONE mailbox, as the shared shell is allowed to know it.
  *
  * Structural and shell-owned, NOT `MailboxDTO`. `apps/webapp/app/api-client.ts` is DENYd from
- * the Desktop mirror, so this file may not name its types; and narrowing to the six fields the
+ * the Desktop mirror, so this file may not name its types; and narrowing to the fields the
  * ladder reads is the honest declaration of what the derivation is entitled to consult.
  * Anything the Cloud client can see and this interface does not name is a fact the copy may
  * not assert.
  */
 export interface MailboxFacts {
+  /**
+   * WHICH mailbox this is — added for the From seam (O20), NOT for the ladder.
+   *
+   * `deriveMailState` must never read it, and does not: every state below is about the account
+   * or about one mailbox already in hand, and an id is not a fact any sentence can assert. It
+   * is here because `compose-from.ts` needs a stable, non-address handle — the From selector's
+   * value is a mailbox id and never an address string, so that an alias landing later cannot
+   * turn one address into two mailboxes' worth of ambiguity.
+   */
+  id: string;
   address: string;
   /** The 3-member lifecycle union, widened to `string` because the wire is a string. */
   status: string;
