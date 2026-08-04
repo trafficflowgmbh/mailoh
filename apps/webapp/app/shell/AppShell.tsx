@@ -1521,7 +1521,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       },
     },
     {
-      // U6. `f` starts a Reply Run over the Answer Later pile, and until this binding there
+      // `f` starts a Reply Run over the Answer Later pile, and until this binding there
       // was NO keyboard way to put anything INTO that pile — `later` was reachable only from
       // the reader's action menu. A keyboard user could start a run they could not fill, and
       // `f` sat permanently `disabled` for them. Found while writing the guard for it, which is

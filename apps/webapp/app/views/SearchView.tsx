@@ -365,7 +365,7 @@ export function SearchView({
    * `scopeDevice` is the load-bearing one: it is what the view says while only local results
    * are in hand, and it names the three fields the local index actually reads.
    *
-   * ── UX6.1: IT USED TO BREAK AT ZERO, AND THE BREAK WAS A CONTRADICTION ─────────────────
+   * ── IT USED TO BREAK AT ZERO, AND THE BREAK WAS A CONTRADICTION ────────────────────────
    *
    * On an empty index the pane rendered **"Nothing on this device."** and, directly beneath it, "…plus the full text of
    * **none**." — the plural's `=0` arm. Two sentences one line apart, the first saying the
@@ -377,7 +377,7 @@ export function SearchView({
    * 400 messages of which none is hydrated still holds subjects, senders and previews — the
    * sentence is true and worth saying. It is `messages === 0` that makes the whole claim vacuous.
    *
-   * ── UX6.2: AND THE COUNT IT NAMED WAS NOT THE COUNT THE READER WOULD COUNT ─────────────
+   * ── AND THE COUNT IT NAMED WAS NOT THE COUNT THE READER WOULD COUNT ────────────────────
    *
    * It said "the 6 you have opened" after three deliberate opens, because the Screener's held
    * previews hydrate a body too and `coverage.full` counts every hydration. Both numbers are

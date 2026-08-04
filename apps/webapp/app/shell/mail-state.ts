@@ -200,7 +200,7 @@ export interface MailboxFacts {
 export const GROWTH_WINDOW_MS = 30_000;
 
 /**
- * How long an import EPISODE survives a mirror that is not moving — O7.
+ * How long an import EPISODE survives a mirror that is not moving.
  *
  * ── THE DEFECT THIS NUMBER EXISTS FOR ───────────────────────────────────────────────────
  *
@@ -302,7 +302,7 @@ export interface MirrorGrowth {
  * tab opening mid-import cannot tell itself apart from a tab opening onto a settled mailbox, so
  * it must claim nothing. It re-enters through `bootstrapping` while its own first drain runs, and
  * after that needs {@link IMPORT_MIN_DELTA} more messages to latch — the cold-start behaviour this
- * module always had, unchanged by O7.
+ * module always had, and the episode timeout above does not change it.
  */
 export function seedGrowth(count: number): MirrorGrowth {
   return {
@@ -399,7 +399,8 @@ export function isImporting(g: MirrorGrowth, bootstrapping: boolean, now: number
  *                     combines it with its own emptiness — a fresh account is mostly Screener
  *                     by design, so this is where an empty Ohbox is CORRECT and needs saying.
  *  4. `blocked`       our own infrastructure is declining to serve the mailbox
- *                     (`syncBlockedReason`, mail 0029). The UI half of A0b.
+ *                     (`syncBlockedReason`, mail 0029) — the UI half of the block the
+ *                     server records on the row.
  *  5. `mailboxError`  the mailbox itself refused us (`status === 'error'`, `errorCode`).
  *  6. `noMailbox`     the probe answered, and there are none. Distinct from "we cannot see".
  *
@@ -410,7 +411,7 @@ export function isImporting(g: MirrorGrowth, bootstrapping: boolean, now: number
  * mirror count is FROZEN, so every claim below about growth is a claim about a number that
  * cannot move. A frozen counter is the same lie in a new font.
  *
- * `failing` now has a SECOND cause — O10. It is reached by the failure streak, as before, and
+ * `failing` has a SECOND cause. It is reached by the failure streak, as before, and
  * also by a single coded 401/403 that the server has not yet re-made (`sync.refused`). Both mean
  * the same thing about the mirror, which is why they share a state and a sentence: the loop is
  * not draining and it intends to try again. What the second one must not do is reach `stopped`,
@@ -683,7 +684,7 @@ function climb(input: MailStateInputs): MailState {
   // And a failing loop means the mirror is FROZEN. `OhboxView`'s counter already stops here;
   // every state below would be reading a number that cannot change.
   //
-  // `sync.refused` joins it, and does NOT get its own key — O10. A coded 401/403 the server has
+  // `sync.refused` joins it, and does NOT get its own key. A coded 401/403 the server has
   // not re-made means the loop has stopped draining and has armed one more ask, which is what
   // `failing` already says and already means; a seventh state would need copy of its own for a
   // condition that resolves in sixty seconds either way. It bypasses `failureStreak` because that

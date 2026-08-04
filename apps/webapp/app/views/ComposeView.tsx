@@ -283,7 +283,7 @@ export function ComposeView({
               <span className="send-note">{t("noSubject")}</span>
             ) : null}
             {/* The scratch buffer, stated exactly as strongly as it is true: this browser, not
-                the mailbox. Server-side drafts are P3. */}
+                the mailbox. Drafts kept on the server are not built yet. */}
             <span className="send-note">{t("draftNote")}</span>
           </div>
 

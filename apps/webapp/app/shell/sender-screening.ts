@@ -356,7 +356,7 @@ export interface ScreeningPlan {
    */
   matched: number;
   /**
-   * Whether the rule this writes will ALSO be applied to mail already on the server (O19-retro).
+   * Whether the rule this writes will ALSO be applied to mail already on the server.
    *
    * False for every plan that writes no rule, and for the explicit opt-out. Never true for
    * `promoted`: a waiting sender's mail is re-routed by `decide` inside the decision itself, so

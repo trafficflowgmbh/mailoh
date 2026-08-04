@@ -204,7 +204,7 @@ export function SenderMenu({
             onClick={() => setMakeRule((on) => !on)}
           >
             {makeRule ? `✓ ${t("ruleToggle")}` : t("ruleToggle")}
-            {/* ── THE RETROACTIVE HALF, SAID BEFORE THE CLICK AND WITH ITS SIZE (O19-retro) ──
+            {/* ── THE RETROACTIVE HALF, SAID BEFORE THE CLICK AND WITH ITS SIZE ──
                 The rule is now applied to mail already on the server, by a worker pass, and this
                 is where the user learns that and how much it is about. It rides the SAME switch
                 rather than getting one of its own: turning the rule off is the opt-out, and
@@ -288,7 +288,7 @@ export function SenderMenu({
             : t("footRule", { sender: sender.address })
           : makeRule
             ? RETRO_DEFAULT_ON
-              // O19-retro: the sentence that used to promise only the future. It now names the
+              // The sentence that used to promise only the future. It now names the
               // past as well, AND the thing that has no undo — mail this moves stays moved when
               // the rule is later revoked, because `DELETE /rules/:id` touches the rules row and
               // nothing else. Saying so here is the "way back" this feature actually has: the

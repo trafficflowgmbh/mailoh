@@ -65,7 +65,7 @@ export interface SyncStatus {
    */
   terminal: boolean;
   /**
-   * OUR api refused this session ONCE, and the claim has not yet been re-made — O10.
+   * OUR api refused this session ONCE, and the claim has not yet been re-made.
    *
    * The shell must not tell a signed-in user to sign in on this. It is published so the strip can
    * say the weaker true thing ("Sync failed. Retrying.") instead of the stronger unverified one,
@@ -530,11 +530,11 @@ export function startSyncScheduler(
    * death for the tab's lifetime, and a reload was the only recovery, while the banner told a
    * signed-in user to sign in. It is cleared by a successful probe (`revalidating`).
    *
-   * And it is no longer set by the FIRST refusal either — that is `refusedAt`, O10.
+   * And it is no longer set by the FIRST refusal either — that is `refusedAt`.
    */
   let terminal = false;
   /**
-   * WHEN a coded refusal arrived that has not been confirmed — O10. Null when there is none.
+   * WHEN a coded refusal arrived that has not been confirmed. Null when there is none.
    *
    * This is where the fact lives between the two asks. The poll is stopped (a refusal is believed
    * that far immediately: continuing to poll an identity the server just refused is exactly the

@@ -204,7 +204,7 @@ export function useMessageAttachments(
           };
         default: {
           /* Exhaustive: a state the engine grows must be given an answer here, never dropped
-             into a catch-all — dropping states into one answer is the whole of AT6. */
+             into a catch-all — dropping states into one answer is what this prevents. */
           const unhandled: never = held;
           return unhandled;
         }

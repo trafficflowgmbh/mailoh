@@ -77,7 +77,7 @@ export type BulkAction =
 /**
  * Which sub-row has taken the bar's place, if any. `null` is the resting bar.
  *
- * It was a `moving` boolean until O13. A second disclosure (More) made two booleans able to
+ * It was a `moving` boolean. A second disclosure (More) made two booleans able to
  * be true at once, which is a state the bar has no rendering for — a union cannot express it.
  */
 type BarPanel = "move" | "more";
@@ -210,7 +210,7 @@ function ActionBar({
     </>
   );
 
-  /* U3. "Move" relocates THIS message; screening decides where this SENDER's mail goes,
+  /* "Move" relocates THIS message; screening decides where this SENDER's mail goes,
      which is a different question and had no control anywhere outside the Screener.
      The anchor is the BUTTON — not a list row found by selector — because in the reader
      sheet the row is behind the overlay and a popover would open under it. */

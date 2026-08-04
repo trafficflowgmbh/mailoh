@@ -52,7 +52,7 @@ import { optionsFromFacts, resolveReplyFrom } from "./compose-from";
 /*
  * The scratch-buffer helpers and `canSend` used to live here and now live in `mail-send.ts`,
  * with the send machine that consumes them — clearing the buffer is part of what "the send
- * landed" means, and `canSend` is shared with Compose since U4f. Keeping them here while
+ * landed" means, and `canSend` is shared with Compose. Keeping them here while
  * `mail-send.ts` imported them would also have made a real import cycle out of what used to
  * be a type-only one.
  */

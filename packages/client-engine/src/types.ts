@@ -310,7 +310,7 @@ export type BodyState = "full" | "snippet" | "loading" | "failed";
  * `html` is a SECOND rendition of the same message, never a replacement for `text`: a
  * surface picks html when it has a renderer for it and falls back to `text` otherwise, and
  * every surface that cannot render html (a stream card's clamped preview, the Screener's
- * consent preview, a notification) keeps reading `text` and is unaffected by O11b.
+ * consent preview, a notification) keeps reading `text` and is unaffected by `html`.
  *
  * `html` is non-null ONLY when `state === "full"`. A snippet is not html, and neither
  * `loading` nor `failed` has a body to describe — reporting one there would be the surface
@@ -715,7 +715,7 @@ export type EngineMutation =
       match: string;
       destination: Folder;
       /**
-       * ALSO APPLY THIS RULE TO MAIL THAT IS ALREADY FILED (O19-retro).
+       * ALSO APPLY THIS RULE TO MAIL THAT IS ALREADY FILED.
        *
        * `RulesService.create` stamps `rules.retro_requested_at` and returns; the worker's
        * `ruleRetroPass` then walks the account's stored mail in bounded, resumable pages and
