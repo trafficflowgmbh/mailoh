@@ -49,6 +49,12 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // binary ships a sync strip whose error line resolves to a raw `mailboxes.err_…` key, which is
   // exactly the failure the abort below exists to prevent.
   "mailboxes",
+  // `rules` arrived with O16 — the surface that lets somebody see and revoke the rules the
+  // Screener writes. The desktop shell renders it (SettingsView is published), and its
+  // FixturesAdapter serves both rule verbs, so unlike `body` and `sync` this one is
+  // genuinely reachable there: without it the pane shows `rules.revokeExplain` where a
+  // sentence about not moving somebody's mail belongs.
+  "rules",
   "shortcuts", "sync", "tag", "triage",
 ] as const;
 
