@@ -143,6 +143,15 @@ export interface EngineMessageExtras {
   trackerNote?: string;
   amount?: string;
   art?: { ariaLabel: string; caption: string };
+  /**
+   * Where this message actually is on the mail server, when `folder` is showing where it is
+   * PRESENTED instead.
+   *
+   * Set only by `presentationReader` (see `consent-cutline.ts`). Mail is presented by who sent
+   * it rather than by where it happens to sit, so the two can differ — and when they do the
+   * product says so rather than pretending the presentation is the location.
+   */
+  physicalFolder?: string;
 }
 
 /**
@@ -331,7 +340,14 @@ export interface RuleDTO {
   match: string;
   destination: Folder;
   priority: number;
-  provenance: "manual" | "migrated" | "promoted";
+  /**
+   * Where this rule came from. `seeded-from-sent` is the onboarding seed: the user had written
+   * to this address, so the rule records consent they had already given by writing.
+   *
+   * `promoted` still conflates a decision the user took in the Screener with one taken for
+   * them, which is a distinction worth splitting the day anything decides on their behalf.
+   */
+  provenance: "manual" | "migrated" | "promoted" | "seeded-from-sent";
   enabled: boolean;
   stats: { hits: number; lastHitAt: ISODateTime | null; demotions: number };
   createdAt: ISODateTime;

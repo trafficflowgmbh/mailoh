@@ -51,6 +51,24 @@ export {
   type WaterlineMeta,
 } from "./types.js";
 
+// Consent, the dormancy cutline, and History — presentation by who wrote, not by where it sits.
+export {
+  DEFAULT_DORMANCY_DAYS,
+  consentIndex,
+  consentPartition,
+  decidedDestination,
+  domainOfAddress,
+  historyView,
+  physicalFolderOf,
+  presentationReader,
+  senderActivity,
+  type ConsentCounts,
+  type ConsentIndex,
+  type ConsentOptions,
+  type ConsentPartition,
+  type SenderActivity,
+} from "./consent-cutline.js";
+
 // Apply core (the convergence oracle) + stores.
 export { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
 export { BaseMirrorStore, MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
