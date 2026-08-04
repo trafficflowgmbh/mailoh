@@ -36,6 +36,21 @@ public enum Smoke {
     /// walk cannot silently drift away from the router.
     public static let routes: [Route] = Route.allCases
 
+    /// THE LINE THE WINDOW ACTUALLY SHOWS OVER THIS WORLD, AND WHY IT IS A CONSTANT.
+    ///
+    /// Both passes below render the sample world, which is what `--demo` opens — and a `--demo`
+    /// window says so in a strip above the deck. Rendering without it would photograph something the
+    /// app never shows, which is the one thing a screenshot pass must not do.
+    ///
+    /// It was previously not passed at all, and the strip appeared anyway: `RootView` built its own
+    /// engine, planned it, and drew whatever the plan said. **That made the artifact depend on the
+    /// machine.** Every shot taken on a developer's laptop carried `Not set: OHMAIL_IMAP_HOST,
+    /// OHMAIL_IMAP_USER, OHMAIL_KEK` across the top; the same command on a machine with those set
+    /// would have produced a different strip or none, so no two runs could be compared and the
+    /// blank-detector thresholds were calibrated against whatever that machine happened to be. A
+    /// constant is what makes a check a check.
+    static let demoNotice = AppRootModel.demoNotice
+
     /// The transient layers, applied on top of a route so they get laid out too.
     public enum Overlay: String, CaseIterable, Sendable {
         case none, reading, palette, focusReply, toast, about, tagPicker
@@ -118,7 +133,7 @@ public enum Smoke {
                     state.route = route
                     state.themePref = scheme == .dark ? .dark : .light
                     let height = viewport.name == "desktop" ? canvasHeight(route) : canvasHeight(route) * 1.4
-                    let view = RootView(state)
+                    let view = RootView(state, notice: demoNotice)
                         .environment(\.colorScheme, scheme)
                         .environment(\.staticRender, true)
                         // ImageRenderer centres content taller than the canvas (frame
@@ -148,7 +163,7 @@ public enum Smoke {
             state.route = .reads
             state.themePref = scheme == .dark ? .dark : .light
             state.streamReadsCur = state.reads.first?.id
-            let view = RootView(state)
+            let view = RootView(state, notice: demoNotice)
                 .environment(\.colorScheme, scheme)
                 .environment(\.staticRender, true)
                 .frame(width: 1440, height: 1900, alignment: .top)
@@ -191,7 +206,7 @@ public enum Smoke {
         hosted.themePref = scheme == .dark ? .dark : .light
         apply(overlay, to: hosted)
         let host = NSHostingController(
-            rootView: RootView(hosted).environment(\.colorScheme, scheme)
+            rootView: RootView(hosted, notice: demoNotice).environment(\.colorScheme, scheme)
         )
         host.view.frame = CGRect(origin: .zero, size: viewport.size)
         host.view.layoutSubtreeIfNeeded()
@@ -211,7 +226,7 @@ public enum Smoke {
         let canvas = CGSize(width: viewport.size.width,
                             height: max(viewport.size.height, canvasHeight(route)))
         let renderer = ImageRenderer(
-            content: RootView(state)
+            content: RootView(state, notice: demoNotice)
                 .environment(\.colorScheme, scheme)
                 .environment(\.staticRender, true)
                 .frame(width: canvas.width, height: canvas.height, alignment: .top)
@@ -287,7 +302,7 @@ public enum Smoke {
     /// alone defers that work, so nothing gets recorded.
     static func renderedIDs(state: AppState, route: Route, viewport: Viewport) -> [String] {
         let log = RenderLog()
-        let view = RootView(state)
+        let view = RootView(state, notice: demoNotice)
             .environment(\.staticRender, true)
             .environment(\.renderLog, log)
             .frame(width: viewport.size.width, height: viewport.size.height, alignment: .top)

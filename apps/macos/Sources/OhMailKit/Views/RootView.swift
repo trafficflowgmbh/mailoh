@@ -28,12 +28,23 @@ public struct RootView: View {
     @State private var toastTask: Task<Void, Never>?
     @State private var visibleToast: ToastState?
     @FocusState private var shellFocused: Bool
-    /// The local engine's lifetime, owned here because the window is what it is scoped to. It holds
-    /// no mail — `AppState` is still the whole mail seam — and it draws nothing unless the engine
-    /// failed to start.
-    @State private var localEngine = EngineBridge()
+    /// One line above the deck, or nothing.
+    ///
+    /// This view used to construct an `EngineBridge` and start it in `onAppear`. That was right
+    /// while the window was the only thing there was, and became a double-spawn the moment a
+    /// composition root above it also needed one: the engine takes an exclusive lock on its data
+    /// directory before it dials anything, so a second copy fails to start, burns the restart budget,
+    /// and publishes a failure whose stated cause — another copy of ohmail is running — is true, and
+    /// is this app.
+    ///
+    /// So the engine's lifetime moved up to the root, and what arrives here is the text rather than
+    /// the machine. That is also the smaller dependency: a view that held the engine could start it.
+    let notice: EngineNoticeText?
 
-    public init(_ s: AppState) { self.s = s }
+    public init(_ s: AppState, notice: EngineNoticeText? = nil) {
+        self.s = s
+        self.notice = notice
+    }
 
     private var scheme: ColorScheme { s.effectiveScheme(system: systemScheme) }
     private var palette: Palette { Palette.of(scheme) }
@@ -58,8 +69,7 @@ public struct RootView: View {
         .focusable()
         .focusEffectDisabled()
         .focused($shellFocused)
-        .onAppear { shellFocused = true; localEngine.start() }
-        .onDisappear { localEngine.stop() }
+        .onAppear { shellFocused = true }
         .background { paletteShortcut }
         .onKeyPress(phases: .down) { handle($0) }
         .onChange(of: s.toast) { _, new in showToast(new) }
@@ -103,7 +113,11 @@ public struct RootView: View {
                        onMenu: { withAnimation(motion(reduceMotion, .blancDrawer)) { s.isRailOpen = true } },
                        onSearch: { s.route = .search })
             }
-            if let notice = localEngine.notice {
+            // The narrow channel: something worth a line while mail is on screen. The root takes the
+            // whole window for anything that happens before the mailbox has ever opened; once it
+            // has, the mail already fetched stays put and a restart is narrated here instead of
+            // replacing it. It is also how the sample world says what it is.
+            if let notice {
                 EngineNoticeStrip(notice: notice)
                     .padding(.horizontal, compact ? Space.deckCompact : Space.deck)
                     .padding(.top, compact ? Space.deckCompact : Space.deck)
