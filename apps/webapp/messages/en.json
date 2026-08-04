@@ -43,7 +43,7 @@
     "usePasskey": "Use a passkey instead",
     "useRecovery": "Use a recovery code",
     "startOver": "Start over",
-    "inviteOnly": "ohmail is invite-only during the beta.",
+    "inviteOnly": "New to ohmail? You can sign up — an invite code is not required.",
     "haveInvite": "Have an invite code?"
   },
   "join": {
