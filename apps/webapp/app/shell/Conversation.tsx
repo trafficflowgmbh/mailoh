@@ -69,6 +69,7 @@
  */
 import { useTranslations } from "next-intl";
 import type { EngineMessage } from "@ohmail/client-engine";
+import { BodyText } from "./BodyText";
 import { displayTime, rowAddress, senderName } from "./format";
 
 /**
@@ -134,7 +135,16 @@ export function ConversationEntries({
             <span className="t num">{displayTime(m, now)}</span>
           </div>
           {alreadySaid === subjectKey(m.subject) ? null : <h3>{m.subject}</h3>}
-          <div className="hm-body">{entryBody(m, t("quotedProtected"))}</div>
+          {/* O11 — THE SAME `BodyText` THE FOCUSED MESSAGE USES, and that is the point of
+              touching this file at all. The pane's body and the siblings' bodies are the same
+              prose problem seen twice; fixing only the pane leaves a fixed message sitting in a
+              thread of raw dumps, which is the "built, tested, unreachable" shape this repo has
+              shipped five times. A sibling's text is a SNIPPET (see the header — siblings are
+              deliberately not hydrated), so in practice it is one paragraph; what it gains is
+              the wrap rule and a real anchor when the snippet ends mid-URL. */}
+          <div className="hm-body">
+            <BodyText text={entryBody(m, t("quotedProtected"))} />
+          </div>
         </article>
       ))}
     </>

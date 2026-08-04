@@ -19,7 +19,25 @@
 .msg-from .t{margin-left:auto;font-size:11.5px;color:var(--ink3);font-variant-numeric:tabular-nums;flex:none;display:flex;gap:10px;align-items:center}
 .msg h2{font-size:24px;font-weight:600;letter-spacing:-.025em;margin:14px 0 14px;line-height:1.25}
 .chips{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 22px;align-items:center}
-.msg-body{font-size:14.5px;line-height:1.72;color:var(--ink);white-space:pre-line;max-width:60ch;margin:0}
+/* O11 — the body is PROSE, not a text dump.
+   `overflow-wrap:anywhere` is the rule the owner's report was actually about: a tracking URL is
+   one unbreakable token, so without it the longest URL in the message sets the pane's width and
+   the panel scrolls sideways at 390px. `pre-line` stays — single newlines inside a paragraph are
+   the sender's line breaks and mail still means them — and the measure opens from 60ch to 68ch
+   now that paragraphs, rather than one wall of text, carry the rhythm. */
+.msg-body{font-size:14.5px;line-height:1.72;color:var(--ink);white-space:pre-line;max-width:68ch;margin:0;overflow-wrap:anywhere}
+/* The paragraphs `BodyText` emits — deliberately NOT scoped under `.msg-body`, because the same
+   component renders the conversation siblings inside `.hm-body`, whose rules live in the app's
+   own stylesheet. One class, one rhythm, wherever a mail body is rendered.
+   14px is the gap `.msg h2` already uses above and below itself; no new spacing value. */
+.msg-p{margin:0 0 14px;overflow-wrap:anywhere}
+.msg-p:last-child{margin-bottom:0}
+/* A link in mail is the accent, quietly: coloured ink and a hairline underline rather than the
+   browser's blue. `overflow-wrap` is inherited from `.msg-p`, so a 300-character tracking URL
+   breaks inside the anchor instead of pushing the panel. */
+.msg-link{color:var(--accent-ink);text-decoration:underline;text-decoration-color:var(--accent-hair);
+  text-underline-offset:2px}
+.msg-link:hover{text-decoration-color:var(--accent)}
 /* U5-BODY — the product speaking about the body, never part of it. Deliberately quieter
    than `.msg-body` and set apart from it, so it cannot be read as the sender's words. */
 .msg-body-state{font-size:12px;color:var(--ink3);margin:12px 0 0;max-width:60ch}

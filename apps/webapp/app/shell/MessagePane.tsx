@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, ProtectedBlock, ReadingPane } from "@ohmail/ui";
+import { BodyText } from "./BodyText";
 import { ConversationEntries, ConversationHead } from "./Conversation";
 import { PLACE_LABEL, avatarHue, displayTime, hueOf, initialsOf, rowAddress, senderName, tagsOfMessage } from "./format";
 import { InlineReply } from "./InlineReply";
@@ -135,6 +136,13 @@ export function MessagePane({
    * (`message-service.ts` `getBody`), so hydration cannot introduce a secret here — but
    * "the text we were given is safe" and "this pane does not render a protected message's
    * text" are two different guarantees, and the second is the one a reader can see.
+   *
+   * AND SINCE O11 IT IS THE ONLY EXPRESSION THAT RENDERS THE MAIL HERE. This pane used to hand
+   * `ReadingPane` a `body` STRING whenever there was no conversation — a third render path, and
+   * the one most messages took, which `ReadingPane` drew as its own `<p className="msg-body">`.
+   * A body fix that only reached `focusedBody` would have been invisible on exactly the common
+   * case. `children` replaces `body` in `ReadingPane`, so the pane composes that slot itself
+   * now, always, and the `body` prop is not passed in any case.
    */
   const focusedBody = isProtected ? (
     <ProtectedBlock
@@ -143,7 +151,13 @@ export function MessagePane({
       policy={<ProtectedPolicy text={message.protected!.policy} />}
     />
   ) : (
-    <p className="msg-body">{body.text}</p>
+    /* O11 — a `<div>` rather than the `<p>` this was, because `BodyText` emits the paragraphs
+       now and a `<p>` may not contain one. `.msg-body` is unchanged and stays the one element
+       that holds the mail and nothing else, which is what `conversation.test.ts` and
+       `inline-reply.test.ts` select on and what a reader is entitled to assume. */
+    <div className="msg-body">
+      <BodyText text={body.text} />
+    </div>
   );
 
   /**
@@ -202,12 +216,6 @@ export function MessagePane({
           </span>
         </>
       }
-      {...(isProtected || showConversation
-        // `children` REPLACES `body` in `ReadingPane`, so the conversation case composes the
-        // whole middle section itself. A message with no conversation keeps exactly the
-        // shape it had before this slice: the `body` prop, or the protected block.
-        ? {}
-        : { body: body.text })}
       bodyNote={bodyNote}
       bodyNoteFailed={body.state === "failed"}
       attachment={
@@ -314,9 +322,14 @@ export function MessagePane({
             now={now}
           />
         </div>
-      ) : isProtected ? (
+      ) : (
+        // O11: `focusedBody`, not `isProtected ? focusedBody : undefined`. The `undefined` arm
+        // was what fell through to `ReadingPane`'s own `body` string; `focusedBody` already
+        // answers both cases, and invariant #1 is unmoved — it is decided where it always was,
+        // by the `isProtected` branch at the top of this component, which is still first and
+        // still never consults `body`.
         focusedBody
-      ) : undefined}
+      )}
     </ReadingPane>
   );
 }
