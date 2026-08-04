@@ -132,11 +132,11 @@ interface ReadsAiChipEntity {
 const frKeyOf = (item: TriagePileEntry): string => item.messageId ?? item.title;
 
 /**
- * WHERE A MESSAGE OPENS — the decision, with nothing else in it (slice U5-OPEN, gap U5c).
+ * WHERE A MESSAGE OPENS — the decision, with nothing else in it.
  *
  * Extracted from `openMessage` because the decision and the navigation are two things and
- * only one of them is checkable without a browser. Every arm below is a claim the owner
- * made a report about, and each is now an assertion rather than a paragraph.
+ * only one of them is checkable without a browser. Every arm below answers a reported
+ * defect, and each is now an assertion rather than a paragraph.
  */
 export type OpenTarget =
   | { kind: "ohbox"; id: string; reader: boolean }
@@ -207,7 +207,7 @@ export function AppShell({
    * to answer — the seventh injected prop, and the same seam as `resolveOwner` for the same
    * reason: `scripts/publish-desktop.mjs` DENYs `app/api-client`, so this shared shell may not
    * call `GET /mailboxes`. The Cloud client supplies one from `(product)/mailbox/CloudShell`;
-   * Desktop and the demo supply nothing, and A1's strip then withholds every mailbox-keyed
+   * Desktop and the demo supply nothing, and the sync strip then withholds every mailbox-keyed
    * state rather than guessing one. See `MailStateProvider` — a probe MUST reject on failure,
    * because an empty array is a claim about the account.
    */
@@ -232,7 +232,7 @@ export function AppShell({
 }) {
   return (
     <EngineProvider demo={demo} resolveOwner={resolveOwner}>
-      {/* ONE keydown listener for the whole client (slice U2). Outside `ShellInner` so
+      {/* ONE keydown listener for the whole client. Outside `ShellInner` so
           every view mounted under it can declare bindings into the same table, which is
           also the table the `?` sheet is generated from. */}
       <KeymapProvider>
@@ -251,7 +251,7 @@ export function AppShell({
 }
 
 /**
- * A1's provider, hoisted ABOVE `ShellInner` (gap O20).
+ * The mail-state provider, hoisted ABOVE `ShellInner`.
  *
  * It used to be the outermost element of `ShellInner`'s own return, which meant the shell
  * PROVIDED the mailbox facts and could not read them. That was fine while the only consumers
@@ -273,7 +273,7 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   /**
    * EVERY message in the MIRROR — Screener, Reads and Receipts included, not the Ohbox's rows.
    *
-   * A1's progress signal. `MailStateProvider` folds it into a stateful growth reducer, and two
+   * The progress signal. `MailStateProvider` folds it into a stateful growth reducer, and two
    * surfaces each sampling their own could disagree about whether the mirror is growing, so it
    * is sampled exactly once — here. The engine calls `notify()` once per drained page, so this
    * is live with no extra plumbing.
@@ -300,7 +300,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   /**
    * The account's mailboxes as `GET /mailboxes` reported them, or `null` for "we cannot see"
    * (Desktop, demo, a Cloud tab before its first poll). Read here — rather than provided here,
-   * as it was until O20 — so the From line and the mutation it describes come from one source.
+   * as it once was — so the From line and the mutation it describes come from one source.
    */
   /**
    * `settled` travels to the piles as a PROP and not through `useMailState()` at their top
@@ -310,8 +310,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * worse). A hook at the top of the view would take that harness down on mount, in every
    * branch, whether or not the list was empty.
    *
-   * It is still derived exactly once, up here, from the one binding — which is the rule A1
-   * established. A prop is how a derivation reaches a component that must be mountable alone.
+   * It is still derived exactly once, up here, from the one binding, which is the rule the
+   * mail-state ladder established. A prop is how a derivation reaches a component that must be mountable alone.
    */
   const { mailboxes: facts, state: mailState } = useMailState();
   const reader = engine.read();
@@ -330,7 +330,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const piles = useMemo(() => triagePiles(reader), [reader, version]);
   const tagGroups = useMemo(() => tagsCrossView(reader), [reader, version]);
   const tags = useMemo(() => reader.list<TagDTO>("tag"), [reader, version]);
-  /** Gap O16 — every rule the consent gate has written, newest first. */
+  /** Every rule the consent gate has written, newest first. */
   const rules = useMemo(() => rulesList(reader), [reader, version]);
   const mailboxes = useMemo(
     () => reader.list<MailboxEntity>("mailbox"),
@@ -348,7 +348,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     () => reader.get<{ email: string }>("view_meta", "account") ?? null,
     [reader, version],
   );
-  /** The demo's VIP block; `/sync` cannot emit `view_meta`, so a live account gets null (U4f). */
+  /** The demo's VIP block; `/sync` cannot emit `view_meta`, so a live account gets null. */
   const notifications = useMemo(
     () => reader.get<NotificationsMeta>("view_meta", "notifications") ?? null,
     [reader, version],
@@ -366,14 +366,13 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   });
   const [screenerFull, setScreenerFull] = useState(false);
   /**
-   * THE READER IS A MESSAGE NOW, NOT A BOOLEAN (slice U5-OPEN).
+   * THE READER IS A MESSAGE NOW, NOT A BOOLEAN.
    *
    * It was `readerOpen: boolean` rendering `selectedOhbox`, which made the overlay a
    * property of ONE pile: nothing outside the Ohbox could open a message, and a message in
    * a folder this client has no view for could not be opened at all. `openMessage` — the
    * one answer to "open it where it lives" — therefore had no way to finish the job for
-   * search hits, which is three of the owner's four reports (U5a, U5c, U5d) meeting at one
-   * missing call.
+   * search hits, which is where three of the four reported defects met: one missing call.
    *
    * An id and not the `EngineMessage`: the mirror re-issues entities on every delta, so a
    * held object would be a snapshot that stops tracking read-state, tags and triage the
@@ -396,12 +395,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [senderMenu, setSenderMenu] = useState<SenderMenuState | null>(null);
   const [senderAudit, setSenderAudit] = useState<SenderAuditState | null>(null);
-  /* The inline reply (U4). The id and the text live HERE, not in `MessagePane`, because
+  /* The inline reply. The id and the text live HERE, not in `MessagePane`, because
      that pane is mounted twice whenever the reader is open — see `message-chrome.tsx`. */
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
   /**
-   * THE COMPOSE FORM (U4f), and why it lives up here rather than in `ComposeView`.
+   * THE COMPOSE FORM, and why it lives up here rather than in `ComposeView`.
    *
    * The view is mounted only while `#/compose` is the route, so state inside it is erased by
    * navigating to the Ohbox and back — which is a message the user has to write twice. Holding
@@ -422,9 +421,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const [tagsOpen, setTagsOpen] = usePersistedFlag(UI_KEYS.tagsOpen, true);
   const [picker, setPicker] = useState<TagPickerState | null>(null);
   /**
-   * WHO THE OPEN TAG PICKER IS ACTUALLY FOR (slice U5-BULK).
+   * WHO THE OPEN TAG PICKER IS ACTUALLY FOR.
    *
-   * `TagPickerState` carries a single `forId` and belongs to another slice's file, so the
+   * `TagPickerState` carries a single `forId` and belongs to another module, so the
    * SET a bulk tag edit acts on is held beside it rather than inside it. `null` means "the
    * one message in `picker.forId`", which is every existing caller; a list means the pick
    * set, and the two things the shell supplies — `assigned` and `onToggle` — are computed
@@ -436,7 +435,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const [jump, setJump] = useState<{ view: "reads" | "receipts"; id: string } | null>(null);
   const [fr, setFr] = useState<{ step: number; items: TriagePileEntry[] } | null>(null);
   /**
-   * U7 — "start a Reply Run once we are on Triage", as an INTENT rather than a race.
+   * "Start a Reply Run once we are on Triage", as an INTENT rather than a race.
    *
    * `f` and the palette both did `go("triage"); setTimeout(startFR, 130)`. The route-transition
    * effect below clears every overlay — `setFr(null)` included — whenever the view changes, so
@@ -451,7 +450,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    */
   const [frPending, setFrPending] = useState(false);
   /**
-   * WHAT THE USER TYPED IN THE RUN, KEYED BY MESSAGE (U9).
+   * WHAT THE USER TYPED IN THE RUN, KEYED BY MESSAGE.
    *
    * This was `Record<number, string>` — keyed by the STEP INDEX — and nothing in the file read
    * it: the overlay wrote into it and `onDone` dispatched `triage_set → none` without ever
@@ -506,7 +505,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   /**
-   * OPENING THE READER — THE ONE GATE (gap UX12).
+   * OPENING THE READER — THE ONE GATE.
    *
    * A live walk at 1440 found the reading experience rendered TWICE: the message painted in
    * the split's 752px column AND a 660px modal over it, with the ghost of that column — and
@@ -521,8 +520,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    *
    * IT IS GATED HERE AND NOT IN THE VIEW, deliberately. A view that asked the media query
    * itself would be a second copy of the predicate, live in one place and drifting from the
-   * two that already exist — the shape U2 deleted from the (i) panel and O13 deleted from
-   * the action bar. The view's contract stays "the user asked to open this message"; what
+   * two that already exist — the shape the keyboard registry deleted from the (i) panel and
+   * the action bar deleted from its own labels. The view's contract stays "the user asked to open this message"; what
    * that MEANS at a given width is the shell's answer, given once.
    *
    * The id still travels (see the call site): this narrows WHETHER, never WHAT.
@@ -537,7 +536,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const waitingLive = screener.waiting.filter((w) => !screener.isExiting(w.id));
 
   /**
-   * READ-STATE, for every view (slice U1).
+   * READ-STATE, for every view.
    *
    * One call site for one mutation. Before this, "seen" meant three different things depending
    * on where you were standing: Reads dispatched `feed_mark_seen`, Receipts kept an unpersisted
@@ -554,7 +553,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   /**
-   * BODY HYDRATION, WIRED ONCE (slice U5-BODY).
+   * BODY HYDRATION, WIRED ONCE.
    *
    * Two callbacks, both stable across version bumps and both reading `engine.read()` at
    * INVOCATION time — the same discipline `conversationOf` documents below. A `useMemo` keyed
@@ -578,7 +577,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   /*
-   * O18 — attachments for the OPEN message only, and released when it changes.
+   * Attachments for the OPEN message only, and released when it changes.
    *
    * The release is not tidiness: the engine hands out `blob:` URLs, and a URL nobody revokes
    * outlives the message that owned it for the life of the tab.
@@ -588,7 +587,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   });
 
   /*
-   * P2 — the spy-pixel blocker's consent half. NOT keyed on the open message: consent is a
+   * The spy-pixel blocker's consent half. NOT keyed on the open message: consent is a
    * decision about a message and it outlives the selection, so a reader who loads images,
    * moves on and comes back does not have to press again.
    *
@@ -640,16 +639,16 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       setShortcutsOpen(false);
       setReplyTo(null);
       if (route.view !== "screener") setScreenerFull(false);
-      // …and only then honour a pending Reply Run, so the clear above cannot undo it (U7).
+      // …and only then honour a pending Reply Run, so the clear above cannot undo it.
       if (route.view === "triage" && frPending) {
         setFrPending(false);
         // NOT `setFrValues({})` — see `startFR`. Wiping the map here is the same data loss.
         setFr({ step: 0, items: piles.replyLater });
       }
-      // …and a pending OPEN, for exactly the same reason (U5-OPEN). `openMessage` sets both
+      // …and a pending OPEN, for exactly the same reason. `openMessage` sets both
       // the destination and the intent to open before the hash changes; the clear above runs
       // first, so without this an Ohbox hit tapped at 390px would navigate and then close the
-      // reader it had just asked for, which is the shape U7 already paid for once.
+      // reader it had just asked for, which is the shape the Reply Run already paid for once.
       if (readerPending) {
         setReaderFor(readerPending);
         setReaderPending(null);
@@ -666,7 +665,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   }, []);
 
   /**
-   * THE INLINE REPLY (slice U4).
+   * THE INLINE REPLY.
    *
    * Opening it does NOT change the route and does not close the reader: that is the whole
    * complaint. The draft is restored from `localStorage` on open, so a reload lands you
@@ -692,8 +691,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   /**
-   * SENDING (slices U4b, U4f). The state machine, the retry driver and the U4e triage clear
-   * all live in `mail-send.ts`; this only says what "the send settled" means to the shell.
+   * SENDING. The state machine, the retry driver and the triage clear all live in
+   * `mail-send.ts`; this only says what "the send settled" means to the shell.
    *
    * For a reply: close the editor, but ONLY if it is still open on that same message. A
    * confirmation can arrive from a retry long after the user moved on, and closing whatever
@@ -703,7 +702,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * machine itself (it must happen even if this view is long gone); this is the in-memory half,
    * and without it the fields would still be full of a message that has already been delivered.
    *
-   * ── AND FOR A REPLY RUN STEP: THIS IS WHERE IT IS DISCHARGED (U9) ───────────────────────
+   * ── AND FOR A REPLY RUN STEP: THIS IS WHERE IT IS DISCHARGED ────────────────────────────
    *
    * `onDone` used to dispatch `triage_set → none` at PRESS time and step forward, with no send
    * anywhere. Adding a send while keeping that would have left TWO independent discharge
@@ -711,7 +710,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * same bug wearing the fix as a costume. So the press only sends, and everything that means
    * "this one is dealt with" happens here: `settle` calls this on a CONFIRMATION and on
    * nothing else, so a step is left behind only by a reply that exists. The triage state
-   * itself is cleared by `settle` (U4e, `mail-send.ts:247-255`), which is now the only rule
+   * itself is cleared by `settle` in `mail-send.ts`, which is now the only rule
    * that clears one.
    */
   const onSendSettled = useCallback((key: string) => {
@@ -753,7 +752,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * below is a belt on the same waistband.
    */
   /**
-   * WHICH ADDRESSES THIS ACCOUNT CAN SEND FROM (gap O20). The rule is `compose-from.ts`; this
+   * WHICH ADDRESSES THIS ACCOUNT CAN SEND FROM. The rule is `compose-from.ts`; this
    * is the one place the two sources of mailboxes are reconciled.
    *
    * `GET /mailboxes` when we have it — it is the only source that knows an address is
@@ -777,7 +776,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * privately. The editor is only reachable while `replyTo` is this message, so the guard
    * below is a belt on the same waistband.
    *
-   * ── AND IT NAMES A MAILBOX ONLY TO OVERRIDE ONE (gap O20) ───────────────────────────────
+   * ── AND IT NAMES A MAILBOX ONLY TO OVERRIDE ONE ─────────────────────────────────────────
    *
    * A reply sends from the mailbox the message arrived in, and `Engine.enrich` already derives
    * that from the parent (`engine.ts:671`) — so the ordinary case adds NOTHING here and the
@@ -811,10 +810,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    *
    * The mailbox is resolved here rather than left to `Engine.enrich`, even though enrich would
    * fill a value: the BUTTON has to know whether a mailbox exists, because offering Send on an
-   * account with nothing to send from is the inert affordance U4f closed. One derivation, two
+   * account with nothing to send from is the inert affordance Compose used to be. One derivation, two
    * consumers — the same discipline as `canSend`.
    *
-   * ── AND IT IS NO LONGER `sendingMailboxId` THAT DECIDES (gap O20) ───────────────────────
+   * ── AND IT IS NO LONGER `sendingMailboxId` THAT DECIDES ─────────────────────────────────
    *
    * `sendingMailboxId` answers with the mailbox of the account's NEWEST MESSAGE, which on an
    * account with two connected addresses flips the From line every time the other one receives
@@ -835,17 +834,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const sendCompose = useCallback(() => mailSend.send(plan.mutation), [mailSend, plan]);
 
   /**
-   * SCREENING FROM ANYWHERE (slice U3) — one call site for every surface.
+   * SCREENING FROM ANYWHERE — one call site for every surface.
    *
    * The plan comes from `sender-screening.ts`, which decides whether the endpoint can be
    * used at all; this only dispatches it and tells the truth about what happened.
    *
-   * ── O19c: THE RULE'S OUTCOME IS AWAITED, AND ONLY THE RULE'S ────────────────────────────
+   * ── THE RULE'S OUTCOME IS AWAITED, AND ONLY THE RULE'S ──────────────────────────────────
    *
    * This used to toast on click for every outcome, which was survivable while the only claim
    * was "your mail moved" — a `move` that fails rolls its own row back on screen. It stopped
    * being survivable the moment the sentence started claiming something about FUTURE mail:
-   * O16's first cut printed "Rule revoked" over a 403 on a live account, and the fixtures
+   * the rules surface's first cut printed "Rule revoked" over a 403 on a live account, and the fixtures
    * adapter never refuses, so every test was green. So `plan.ruleMutations` — and nothing else
    * — is awaited, and `screeningToast` picks the sentence from what the server actually said.
    * The branch lives beside the sentences in `sender-screening.ts`, never here.
@@ -872,7 +871,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   /**
-   * O19b — open the detail view for whichever scope the sheet was showing.
+   * Open the detail view for whichever scope the sheet was showing.
    *
    * The rows are attributed HERE, at open time, rather than inside the panel: the panel then
    * holds a plain snapshot and cannot re-derive a different answer on a re-render caused by a
@@ -897,7 +896,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   }, []);
 
   /**
-   * Clicking a sender's circle or address, in ANY list (U3).
+   * Clicking a sender's circle or address, in ANY list.
    *
    * ONE capture-phase handler on the stage rather than one per view: `MessageRow` renders a
    * `<button>`, so a second interactive control cannot be nested inside it, and every list
@@ -939,7 +938,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   /**
-   * The same verb over a SET (slice U5-BULK) — and it is `tag_assign` fanned out.
+   * The same verb over a SET — and it is `tag_assign` fanned out.
    *
    * No new bulk mutation kind: `tag_assign` is per-message on the wire, the round trips are
    * one per message that actually CHANGES, and a selection is a handful of rows rather than
@@ -976,7 +975,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   /**
-   * Mint a tag and put it on this message (W6).
+   * Mint a tag and put it on this message.
    *
    * ONE mutation, not two. The shell cannot call the API directly — `scripts/publish-desktop.mjs`
    * DENYs `app/api-client` from this shared shell — so the engine is the only wire, and
@@ -1003,7 +1002,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     (action: MessageAction, m: EngineMessage) => {
       switch (action) {
         case "reply":
-          // U4: inline, in place. This used to be `setReaderOpen(false); go("compose")` —
+          // Inline, in place. This used to be `setReaderOpen(false); go("compose")` —
           // the message you were answering left the screen as you started answering it.
           openReply(m.id);
           break;
@@ -1032,7 +1031,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           break;
         case "unread":
           /**
-           * THE READ TOGGLE'S FALLBACK ARM, and it is deliberately not the normal path (O13).
+           * THE READ TOGGLE'S FALLBACK ARM, and it is deliberately not the normal path.
            *
            * In the product the bar's switch presses `u` itself, so this is reached only
            * where that binding does not exist — the desktop shell, or a pane mounted with no
@@ -1057,7 +1056,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           break;
         }
         default: {
-          // `move:<view>` — the destination travels with the action (gap C4). Before
+          // `move:<view>` — the destination travels with the action. Before
           // this the whole branch was a toast reading "Demo — Move isn't wired yet.",
           // rendered on live accounts; the mutation was already on the wire.
           const view = action.slice("move:".length) as OhmailView;
@@ -1073,11 +1072,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   /**
-   * ═══ THE SELECTION'S VERBS (slice U5-BULK, gap U5d) ═════════════════════════════════
+   * ═══ THE SELECTION'S VERBS ══════════════════════════════════════════════════════════
    *
-   * Owner: *"when selecting multiple message the options should not only be mark unseen or
-   * read or esc but also set their screener type and edit tags etc."* They were right and
-   * the count was exact: ⇧U and Escape, in one view.
+   * The requirement: a selection must offer more than mark unseen, mark read and Escape — it
+   * needs the sender's screening and its tags too. The count was exact: ⇧U and Escape, in
+   * one view.
    *
    * The vocabulary is the ACTION BAR's, not a second one invented for bulk — the same three
    * horizons, the same two filing verbs, the same read state. Reply is the one verb that is
@@ -1091,7 +1090,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     (action: BulkAction, ids: string[]) => {
       if (ids.length === 0) return;
       if (action === "read" || action === "unread") {
-        // The batch mutation, unchanged: one request, one transaction, one intent (U1b).
+        // The batch mutation, unchanged: one request, one transaction, one intent.
         markSeen(ids, action === "unread");
         toast(
           t(action === "unread" ? "ohbox.toastBulkUnread" : "ohbox.toastBulkRead", {
@@ -1121,7 +1120,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         return;
       }
       // `move:<view>` — the destination travels with the action, exactly as it does for one
-      // message (gap C4). A message already in the destination is not re-moved: the count in
+      // message. A message already in the destination is not re-moved: the count in
       // the toast is what CHANGED, which is the only count worth reporting.
       const view = action.slice("move:".length) as OhmailView;
       const folder = FOLDER_OF_VIEW[view];
@@ -1169,7 +1168,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         if (!s || seen.has(s.key)) continue;
         seen.add(s.key);
         /**
-         * `makeRule: false`, EXPLICITLY (O19c). The single-sender sheet makes a rule by
+         * `makeRule: false`, EXPLICITLY. The single-sender sheet makes a rule by
          * default; bulk does not, and the reason is its own confirm copy — `bulkConfirm`
          * promises *"No rule is made, so future mail is unchanged"* and `bulkConfirmRules`
          * counts only the senders the SCREENER will rule on. Letting the default through here
@@ -1284,11 +1283,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   /**
-   * OPEN IT WHERE IT LIVES — the one answer, finished (slice U5-OPEN, gap U5c).
+   * OPEN IT WHERE IT LIVES — the one answer, finished.
    *
-   * Owner: *"search does not allow a message to be opened, should open the message where it
-   * lives."* The literal claim was wrong and the ruling says so — a `SearchHit` is a real
-   * `<button>` and has always called this. What was wrong is everything AFTER the routing
+   * Reported as "search does not allow a message to be opened; it should open the message
+   * where it lives". The literal claim was wrong — a `SearchHit` is a real `<button>` and has
+   * always called this. What was wrong is everything AFTER the routing
    * decision, and it is the same seam in every arm: this function set a view and a cursor
    * and then stopped, so on three of the five destinations the user arrived at a list and
    * had to find the thing they had just clicked, and on the fourth they arrived at a pane
@@ -1353,11 +1352,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    *
    * `s` and `e` mean the same thing everywhere or they mean nothing; without one answer to
    * "which message?" they would have to be re-declared per view with per-view semantics,
-   * which is the state U2 exists to end.
+   * which is the state the keyboard registry exists to end.
    */
   const focused: EngineMessage | null =
     /**
-     * AN OPEN READER IS THE CURSOR, WHATEVER VIEW IT IS OVER (slice U5-OPEN).
+     * AN OPEN READER IS THE CURSOR, WHATEVER VIEW IT IS OVER.
      *
      * First, and deliberately: the reader is the innermost thing on screen, so a message
      * verb pressed while it is open acts on the message being READ.
@@ -1369,7 +1368,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
      * What makes the reader generalisable is precisely that it no longer has to be an Ohbox
      * message; the first surface that opens it over a pile with its own cursor would make
      * this load-bearing, and it is cheaper to be right now than to find out then. Coherence,
-     * not a fixed bug — mutation M8 in the report survives, deliberately.
+     * not a fixed bug — nothing observable changes today.
      */
     readerMessage ??
     (route.view === "ohbox"
@@ -1490,7 +1489,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       run: () => selectedOhbox && openReply(selectedOhbox.id),
     },
     {
-      // SENDING FROM THE KEYBOARD (slice U4b). `inInput` is not optional: the editor takes
+      // SENDING FROM THE KEYBOARD. `inInput` is not optional: the editor takes
       // focus the moment it opens, so without it the one place the shortcut is for is the one
       // place it would not fire — the same reasoning Escape's binding already carries.
       //
@@ -1744,7 +1743,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const frSend = frItem?.messageId ? mailSend.stateOf(frItem.messageId) : null;
 
   /**
-   * A REPLY BEGUN BEFORE A RELOAD IS STILL OWED (U9).
+   * A REPLY BEGUN BEFORE A RELOAD IS STILL OWED.
    *
    * Seeded from the same per-message scratch buffer the inline editor uses, so a run resumed
    * in a new tab finds the sentence that was already written. Read AFTER mount rather than in
@@ -1790,7 +1789,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   }, [frPhase, frReason]);
 
   /**
-   * THE CONVERSATION, for whichever message a pane is rendering (slice P6b).
+   * THE CONVERSATION, for whichever message a pane is rendering.
    *
    * `engine.read()` is called at INVOCATION time, not closed over, so the callback is
    * stable across version bumps — the chrome context below would otherwise churn for every
@@ -1824,7 +1823,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   return (
-    // A1's `MailStateProvider` used to open here. It is now ABOVE this component
+    // `MailStateProvider` used to open here. It is now ABOVE this component
     // (`MailStateHost`) so the shell can READ the mailbox facts as well as publish them — see
     // the note there. Every surface that reports mailbox state is still inside it.
     <MessageChromeProvider value={chrome}>
@@ -1851,7 +1850,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           </div>
         ) : null}
 
-        {/* A FAILING SYNC, IN EVERY VIEW (P17). Renders nothing while the loop is healthy,
+        {/* A FAILING SYNC, IN EVERY VIEW. Renders nothing while the loop is healthy,
             and nothing at all in the demo or on the desktop. A sibling of the deck rather
             than a child of any view, so it is outside every list's scroller and no view can
             forget it — see `SyncBar.tsx` for why that placement is the fix and the sentence
@@ -1920,7 +1919,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                    reader holding an id of its own, reading that stale value would open the
                    message the user was on before the one they tapped.
 
-                   It is `enterReader` and no longer `setReaderFor` — see the gate (gap UX12). */
+                   It is `enterReader` and no longer `setReaderFor` — see the gate above. */
                 onEnterReader={enterReader}
                 onMarkSeen={markSeen}
                 doorbellInitials={waitingLive.map((w) => w.initial)}
@@ -2159,7 +2158,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         <TagPicker
           state={picker}
           tags={tags}
-          /* Over a SET, a tag is "assigned" only when EVERY message carries it (U5-BULK).
+          /* Over a SET, a tag is "assigned" only when EVERY message carries it.
              The alternative — any — would render a half-applied tag as done, so pressing it
              would remove it from the two that had it instead of adding it to the eight that
              did not. `pickerIds` is null for every single-message caller, which is the
@@ -2173,7 +2172,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         />
       ) : null}
 
-      {/* Sender screening (U3) — reachable from every list and every open message. */}
+      {/* Sender screening — reachable from every list and every open message. */}
       {senderAudit ? (
         <SenderAuditPanel state={senderAudit} onClose={() => setSenderAudit(null)} />
       ) : null}
@@ -2187,7 +2186,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         />
       ) : null}
 
-      {/* The `?` sheet (U2) — generated from the registry above, never hand-written. */}
+      {/* The `?` sheet — generated from the registry above, never hand-written. */}
       <ShortcutSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       {/* (i) — AND IT MUST KNOW WHICH MODE IT IS IN.

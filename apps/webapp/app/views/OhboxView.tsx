@@ -28,7 +28,7 @@ import type { ScreeningDest } from "../shell/sender-screening";
 import "../shell/action-bar.css";
 
 /**
- * What a selection can be asked to do (slice U5-BULK, gap U5d).
+ * What a selection can be asked to do.
  *
  * Four callbacks and not one, because they are not one kind of thing. `run` and `tag` are
  * ordinary, reversible mail operations; `screen` is a consent decision about SENDERS, and
@@ -88,7 +88,7 @@ export function OhboxView({
   selectedId: string | null;
   onSelect: (id: string) => void;
   /**
-   * Open the reader ON A MESSAGE (slice U5-OPEN).
+   * Open the reader ON A MESSAGE.
    *
    * It took no argument while the shell's reader was a boolean over `selectedOhbox`. It
    * takes one now because `open` below calls `onSelect` and this in the same tick, so the
@@ -96,7 +96,7 @@ export function OhboxView({
    * previously selected message.
    */
   onEnterReader: (messageId: string) => void;
-  /** The shell's `mark_seen` mutation — the one read-state writer (slice U1). */
+  /** The shell's `mark_seen` mutation — the one read-state writer. */
   onMarkSeen: (ids: string[], unread: boolean) => void;
   doorbellInitials: string[];
   /** Per-sender tint hues for the doorbell stack, index-aligned with `doorbellInitials`. */
@@ -122,7 +122,7 @@ export function OhboxView({
   onDoorbell: () => void;
   onAction: (action: MessageAction, message: EngineMessage) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
-  /** The verbs a multi-selection offers (slice U5-BULK). */
+  /** The verbs a multi-selection offers. */
   bulk: BulkVerbs;
 }) {
   const t = useTranslations("ohbox");
@@ -140,7 +140,7 @@ export function OhboxView({
      never costs a render. */
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const anchor = useRef<string | null>(null);
-  /** The bulk bar's open sub-row (slice U5-BULK). Same union shape as `MessagePane`'s. */
+  /** The bulk bar's open sub-row. Same union shape as `MessagePane`'s. */
   const [pickPanel, setPickPanel] = useState<PickPanel | null>(null);
 
   const clearPicked = useCallback(() => {
@@ -207,8 +207,8 @@ export function OhboxView({
   /**
    * Mark everything picked read, in ONE mutation — one request, one transaction, one intent.
    *
-   * `⇧U` and the bar's Read button are THE SAME CALL, which is O13's rule about the read
-   * switch applied to the selection: two paths to one verb is how a button and its key drift
+   * `⇧U` and the bar's Read button are THE SAME CALL, which is the action bar's own rule
+   * about the read switch applied to the selection: two paths to one verb is how a button and its key drift
    * into meaning different things. It used to call `onMarkSeen` directly, so the key marked
    * mail read and said nothing while every other bulk verb reported what it had done.
    */
@@ -284,7 +284,7 @@ export function OhboxView({
    * Opening a message IS reading it — Enter, a second click on the selected row, mobile tap.
    *
    * `onEnterReader` is an unconditional statement of INTENT ("the user asked to open this
-   * message"), not an instruction to raise a sheet. Since UX12 the shell answers it with the
+   * message"), not an instruction to raise a sheet. The shell answers it with the
    * reader only where the reading column is hidden; at a split width the column beside this
    * list IS the open, and a sheet over it was the same message rendered twice.
    *
@@ -293,8 +293,8 @@ export function OhboxView({
    * made it `selected` without anyone choosing it — so the open committed and `ohboxSel`
    * stayed null. The moment the commit moved that row into "Previously seen", the fallback
    * re-resolved to the next unread message and the reader sheet, which renders
-   * `selectedOhbox`, swapped to a message the user had not opened. That is the owner's
-   * "triggering the view to load the latest mail".
+   * `selectedOhbox`, swapped to a message the user had not opened — which from the outside
+   * looks like the view deciding to load the latest mail on its own.
    *
    * And an open SUPERSEDES a dwell: the commit has already happened, so the timer armed by
    * whichever click selected this row has nothing left to do.
@@ -313,7 +313,7 @@ export function OhboxView({
    * cursor is still on it, so the 2 s dwell below arms and marks it read again two seconds
    * later. The mutation fires, the server agrees, and the user's explicit act is reverted
    * by a heuristic while they watch. That is not a subtle bug; it makes `u` useless in the
-   * one view whose keyboard map advertises it, and the U2 overlay would be documenting a
+   * one view whose keyboard map advertises it, and the `?` overlay would be documenting a
    * key that does not do what it says.
    *
    * An explicit "unread" therefore pins the message until the cursor MOVES. A ref rather
@@ -388,7 +388,7 @@ export function OhboxView({
   }, [dwellOn]);
 
   /**
-   * The Ohbox's keys, DECLARED (slice U2).
+   * The Ohbox's keys, DECLARED.
    *
    * These were a sixth `document` listener with the shell's and four other views'; they are
    * now a view layer in the registry, which means two things: they win over the global map
@@ -453,9 +453,9 @@ export function OhboxView({
     },
     {
       /**
-       * THE BULK ACTION, ON THE KEYBOARD (slice U1d).
+       * THE BULK ACTION, ON THE KEYBOARD.
        *
-       * The owner's complaint was "I can't select multiple emails and mark them seen", and
+       * The complaint was that multiple messages could not be selected and marked seen, and
        * the half that shipped could only be finished with a mouse: the bar's buttons are
        * reachable by Tab, but there was no way to say "mark what I picked" from the keys
        * that made the pick, and nothing in the `?` sheet mentioned that marking a selection
@@ -474,12 +474,12 @@ export function OhboxView({
     },
     {
       /**
-       * ESCAPE CANCELS THE OPEN SUB-ROW BEFORE IT CLEARS THE SELECTION (slice U5-BULK).
+       * ESCAPE CANCELS THE OPEN SUB-ROW BEFORE IT CLEARS THE SELECTION.
        *
        * FIRST in this array, and the array's order IS the precedence — `ordered()` walks a
        * layer's bindings in declaration order and the first match runs (`keymap.tsx`). So
        * this is stated where precedence lives rather than as a condition inside the clear
-       * binding, which is the shape S15 records as the one that rots.
+       * binding, which is the shape that rots.
        *
        * It matters most for the confirm row: that row is the last moment before a consent
        * decision commits, and an Escape that blew past it to clear the selection would leave
@@ -500,7 +500,7 @@ export function OhboxView({
        * Escape clears the selection — when nothing is open on top of it.
        *
        * This used to read `picked.size === 0 || chrome.replyTo != null`, and the second
-       * clause is the whole story. `U4-REPLY` went red the moment a selection survived
+       * clause is the whole story. The reply tests went red the moment a selection survived
        * into the reply editor — "r opened an inline editor but Esc did not close it" —
        * because this VIEW binding outranked the shell's Escape cascade unconditionally and
        * cleared the selection instead. The patch taught this view to name ONE of the
@@ -558,7 +558,7 @@ export function OhboxView({
       hasAttachment={m.hasAttachments}
       protected={m.protected != null}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
-      /* `picked` carries BOTH the styling and the ARIA now (slice U1d) — it used to be a
+      /* `picked` carries BOTH the styling and the ARIA now — it used to be a
          class name only, so `aria-selected` was set on zero rows and the selection existed
          for sighted mouse users and nobody else. See `MessageRow`. */
       picked={picked.has(m.id)}
@@ -570,7 +570,7 @@ export function OhboxView({
         } else if (selected?.id === m.id) {
           // Second click on the already-selected row: an explicit OPEN, so it is read — and
           // at a split width that is all it is, because the pane beside this list is already
-          // showing it (gap UX12). Also the FIRST click on the top row of an untouched
+          // showing it. Also the FIRST click on the top row of an untouched
           // Ohbox, which the implicit fallback had already made `selected` — see `open` for
           // what that used to do to the reader.
           open(m);
@@ -617,7 +617,7 @@ export function OhboxView({
               onPress={onDoorbell}
             />
             )}
-            {/* THE SELECTION AFFORDANCE, ABOVE THE SCROLLER (slice U1d).
+            {/* THE SELECTION AFFORDANCE, ABOVE THE SCROLLER.
                 It used to be the scroller's first child, so the count and the bulk action
                 scrolled off the moment you picked something forty rows down — the state was
                 unknowable exactly when it mattered most. `ListPane`'s `header` slot is
@@ -674,7 +674,7 @@ export function OhboxView({
             an option's listbox has to be its actual container. Each is labelled, because an
             unnamed pair of listboxes is worse than none.
 
-            UX13 — AND A HEADING OVER NOTHING IS A HEADING THAT LIES. Both pairs rendered
+            AND A HEADING OVER NOTHING IS A HEADING THAT LIES. Both pairs rendered
             unconditionally, so an empty Ohbox — which is what a real account looks like for
             the whole of its first sync — was two bare words, "New" and "Earlier", with no rows
             under either and (see `SyncState`) nothing else on the pane at all. A section label
@@ -704,7 +704,7 @@ export function OhboxView({
             row above. */}
         {demo ? <div className="tail-row">{t("tail")}</div> : null}
       </ListPane>
-      {/* NO `onEnterReader` ON THE PANE (gap UX12). `ReadingPane` renders a small
+      {/* NO `onEnterReader` ON THE PANE. `ReadingPane` renders a small
           "Open reading mode" button when it is given one, and this column is the ONE place
           that passed it. Below 900px the column is `display:none`, so that button was
           reachable at exactly the widths where the sheet duplicates the pane it is standing
@@ -726,15 +726,15 @@ export function OhboxView({
 }
 
 /**
- * ═══ THE SELECTION'S ACTION BAR (slice U5-BULK, gap U5d) ═══════════════════════════════
+ * ═══ THE SELECTION'S ACTION BAR ════════════════════════════════════════════════════════
  *
- * Owner: *"when selecting multiple message the options should not only be mark unseen or
- * read or esc but also set their screener type and edit tags etc."*
+ * The requirement: a selection must offer more than mark unseen, mark read and Escape — it
+ * needs the sender's screening and its tags too.
  *
  * ── IT IS THE MESSAGE BAR'S GROUPING, NOT A SECOND VOCABULARY ─────────────────────────
  *
- * O13 established what these verbs are and how they group, and the classes below are that
- * bar's own (`action-bar.css`): one segmented control for the three horizons, two filing
+ * The message action bar established what these verbs are and how they group, and the classes
+ * below are that bar's own (`action-bar.css`): one segmented control for the three horizons, two filing
  * verbs adjacent because they answer the same question at two scopes, the read state apart
  * from the verbs, and a More panel that REPLACES the row rather than growing it. A second
  * grouping invented for bulk would mean the same five verbs sit in two different orders
@@ -758,7 +758,7 @@ export function OhboxView({
  * that states the senders, the messages and the rules before anything is dispatched.
  *
  * **There is no undo, and that is why the confirm row exists.** `POST /screener/:id` has no
- * inverse (gap C5), so an Undo affordance would either do nothing or move the mail back
+ * inverse, so an Undo affordance would either do nothing or move the mail back
  * while the rule it created stood — a control that lies about what it reversed. Stating the
  * counts before committing is the honest version of the same protection.
  */
@@ -951,20 +951,20 @@ function BulkBar({
 /**
  * WHY AN EMPTY OHBOX IS EMPTY — the one answer that is this VIEW's to give.
  *
- * ── WHAT THIS PANE USED TO DO, AND WHY IT WAS SILENT FOR THIRTY MINUTES (A1) ─────────────
+ * ── WHAT THIS PANE USED TO DO, AND WHY IT WAS SILENT FOR HALF AN HOUR ────────────────────
  *
- * P16 put a live count here — "Syncing your mailbox · 3 messages so far" — gated on
+ * A live count was put here — "Syncing your mailbox · 3 messages so far" — gated on
  * `SyncStatus.bootstrapping`. That gate is the defect. `bootstrapping` means "this TAB's first
  * drain has not completed", and a fresh account's first drain completes in seconds against an
  * empty server-side mirror. The WORKER's first import is a different clock entirely: measured
  * at 358 s and 373 s for a 1 712-message mailbox. So the counter switched itself off within
  * seconds and the pane then said nothing at all for the entire import — which is exactly the
- * thirty minutes the owner spent looking at "Waiting for first sync" somewhere else.
+ * half hour a first import spends saying "Waiting for first sync" somewhere else.
  *
  * The counter therefore MOVED, and moved UP: it is `SyncBar`'s `importing` state now, keyed on
  * the mirror actually growing (`shell/mail-state.ts`) rather than on a tab-local boolean, and
  * rendered above the deck so it is visible in Reads, Receipts and the Screener too. This is
- * P17's lesson a second time — a view can only speak about itself, and "your mail is arriving"
+ * the same lesson a second time — a view can only speak about itself, and "your mail is arriving"
  * is not a fact about the Ohbox.
  *
  * ── WHAT IS LEFT HERE, AND WHY IT BELONGS HERE ──────────────────────────────────────────
@@ -982,15 +982,14 @@ function BulkBar({
  * "`bootstrapping`, `failures` and `terminal` are deliberately no longer read here", which
  * described the mechanism rather than the rule and is no longer true of the second half of what
  * this pane says. It reads {@link MailState.settled}, which is derived from `bootstrapping` and
- * from the ladder's own verdict, ONCE, up in `mail-state.ts`. The A1 argument is untouched: what
+ * from the ladder's own verdict, ONCE, up in `mail-state.ts`. The argument is untouched: what
  * was wrong was a COUNTER gated on a tab-local boolean that goes false in seconds while the
  * worker's import runs for minutes. Progress still keys on the mirror growing and still lives in
  * the strip. Seconds is exactly the right length for the different question asked here.
  *
  * ── AND THE THIRD STATE THIS PANE USED TO COLLAPSE ──────────────────────────────────────
  *
- * "Empty" and "not looked yet" were one rendering. Owner, 2026-08-04: *"I see 'no messages'"* on
- * a slow connection. The mirror persists in IndexedDB and the client's own first drain had not
+ * "Empty" and "not looked yet" were one rendering, so a slow connection showed "no messages". The mirror persists in IndexedDB and the client's own first drain had not
  * finished, so `Nothing in your Ohbox.` was a statement about 501 messages the app had not yet
  * read. Before the mirror has been read there is no emptiness to report, so this pane reports
  * what is actually happening instead — after {@link LOADING_GRACE_MS}, so a fast connection
@@ -1028,19 +1027,19 @@ function SyncState({ waiting, settled }: { waiting: number; settled: boolean }) 
     );
   }
 
-  /* ── UX13: AND WHEN THERE IS NO EXPLANATION, SAY THE FACT ANYWAY ──────────────────────
+  /* ── AND WHEN THERE IS NO EXPLANATION, SAY THE FACT ANYWAY ────────────────────────────
    *
    * `screenerCandidate` is false for the whole of a first sync — it requires mail to have
-   * landed and the mirror to have settled — so on a real account this returned `null` for the
-   * ~25 minutes that matter most, and the pane rendered NOTHING. Combined with the group labels
+   * landed and the mirror to have settled — so outside the demo this returned `null` for the
+   * whole of the first import, which is the stretch that matters most, and the pane rendered NOTHING. Combined with the group labels
    * above, an empty Ohbox was literally the two words "New" and "Earlier" on an otherwise blank
    * column, which reads as a broken screen rather than an empty one.
    *
    * The sentence is bare on purpose. `SyncBar` is directly above this pane and it is the one
    * place allowed to say WHY the list is empty — it is the only surface that has derived it,
    * and it is already saying "Connected. The first sync has not finished yet." or "Not
-   * syncing — …" or nothing at all. Repeating any of that here would be P17's defect
-   * reintroduced: a view speaking about something that is not a fact about this view. What this
+   * syncing — …" or nothing at all. Repeating any of that here would reintroduce the same
+   * defect: a view speaking about something that is not a fact about this view. What this
    * pane owns is "this list is empty", which is true in every one of those states.
    */
   if (!state.screenerCandidate) {
