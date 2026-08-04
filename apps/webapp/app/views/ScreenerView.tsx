@@ -30,6 +30,88 @@ import { useLoadingGrace } from "../shell/loading-grace";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { goScreener, type ScreenerSegmentId } from "../shell/routing";
 import type { ScreenerState, SpamRow } from "../shell/screener-state";
+import type { SuggestBatchControl } from "../shell/screener-suggest";
+
+/**
+ * ASKING FOR SUGGESTIONS — the control that names the cost before it spends.
+ *
+ * Every part of this is the same rule stated once: nothing here moves a credit until a person
+ * has read a number and pressed a button underneath it. So the price is on screen BEFORE the
+ * confirm exists, the confirm is disabled while the price is unknown, and changing how many
+ * senders to cover re-asks the server rather than multiplying anything locally.
+ *
+ * The batch is bounded because the alternative is not. A backlogged mailbox holds hundreds of
+ * first-time senders; "suggest for all of them" behind one press is a spend nobody can picture
+ * in advance. Sizes come from the state, already clamped to what one request may carry, and
+ * the largest is always "everything you could buy in one go" so the common case is one press.
+ */
+function SuggestControl({ control }: { control: SuggestBatchControl }) {
+  const t = useTranslations("screener");
+  if (control.available === 0) return null;
+
+  if (control.phase === "closed") {
+    return (
+      <Button variant="ghost" onClick={control.open}>
+        {t("suggest.open")}
+      </Button>
+    );
+  }
+
+  const busy = control.phase === "pricing" || control.phase === "running";
+  return (
+    <div className="scn-suggest" role="group" aria-label={t("suggest.aria")}>
+      <span className="scn-sg-lab">{t("suggest.label")}</span>
+      <div className="scn-sg-sizes">
+        {control.sizes.map((n) => (
+          <button
+            key={n}
+            type="button"
+            className={n === control.size ? "scn-sg-size on" : "scn-sg-size"}
+            aria-pressed={n === control.size}
+            disabled={control.phase === "running"}
+            onClick={() => control.choose(n)}
+          >
+            {n === control.available ? t("suggest.sizeAll", { count: n }) : n}
+          </button>
+        ))}
+      </div>
+      {/* THE PRICE, AND ONLY EVER THE SERVER'S. `quote` is what a dry run over this exact
+          sender set answered; while it is null there is no number to show and no confirm to
+          press. A count multiplied by a credit cost held in this file would be a second
+          implementation of who is eligible, quoting one figure while the purchase bought
+          another. */}
+      <span className="scn-sg-price num" role="status">
+        {control.phase === "pricing"
+          ? t("suggest.pricing")
+          : control.phase === "running"
+            ? t("suggest.running")
+            : control.quote
+              ? t("suggest.price", {
+                  senders: control.quote.senders,
+                  credits: control.quote.credits,
+                })
+              : ""}
+      </span>
+      <Button
+        disabled={busy || !control.quote || control.quote.senders === 0}
+        onClick={control.confirm}
+      >
+        {t("suggest.confirm")}
+      </Button>
+      <Button variant="ghost" disabled={control.phase === "running"} onClick={control.cancel}>
+        {t("suggest.cancel")}
+      </Button>
+      {/* Whatever the server said, verbatim — an empty balance, AI switched off, no model
+          connected on this deployment. Each is a different, actionable fact and none of them
+          is inferable from a status code. */}
+      {control.notice ? (
+        <span className="scn-sg-note" role="status">
+          {control.notice}
+        </span>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * The three empty states.
@@ -84,6 +166,7 @@ function Empty({ segment, settled }: { segment: ScreenerSegmentId; settled: bool
 
 export function ScreenerView({
   state,
+  suggest,
   segment,
   selection,
   settled,
@@ -93,6 +176,12 @@ export function ScreenerView({
   onFull,
 }: {
   state: ScreenerState;
+  /**
+   * The purchase control, already bound to the senders it would cover. ABSENT on a surface
+   * with no server behind it — the demo, and any test that does not care — and absent means
+   * the control is not offered at all rather than offered and inert.
+   */
+  suggest?: SuggestBatchControl;
   segment: ScreenerSegmentId;
   selection: Record<ScreenerSegmentId, string | null>;
   /**
@@ -424,6 +513,11 @@ export function ScreenerView({
                     {t("applyAll", { count: state.suggestedCount })}
                   </Button>
                 ) : null}
+                {/* Its own control and not a branch of the one above, because the two are
+                    opposite acts: this one BUYS advice, that one ACTS on advice already
+                    bought. They are both visible while some senders have a suggestion and
+                    others do not, which is the ordinary state of a queue being worked. */}
+                {suggest ? <SuggestControl control={suggest} /> : null}
                 <Button variant="ghost" kbdHint="s" onClick={() => state.markAllSpam(scopeOf)}>
                   {t("markAllSpam")}
                 </Button>

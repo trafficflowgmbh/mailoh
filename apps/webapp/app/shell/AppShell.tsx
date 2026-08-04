@@ -67,6 +67,7 @@ import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane"
 import { useMessageAttachments } from "./attachments";
 import { useRemoteImages } from "./remote-images";
 import { useScreenerState } from "./screener-state";
+import { useScreenerSuggestions } from "./screener-suggest";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
   composePlan,
@@ -353,7 +354,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     () => reader.get<NotificationsMeta>("view_meta", "notifications") ?? null,
     [reader, version],
   );
-  const screener = useScreenerState(engine, version, toast);
+  /**
+   * Suggestions for the Screener — bought explicitly, never as a side effect of looking.
+   *
+   * `active` defers the one read this makes (what has already been bought) until the Screener
+   * is actually open, and the DEMO is excluded outright: `?demo=1` promises that nothing
+   * leaves the tab, and a suggestion fetched from a server would break that promise even
+   * though it costs nothing. Two hooks rather than one because the mirror owns the rows and
+   * this owns the advice about them; `useScreenerState` joins the second onto the first.
+   */
+  const suggestions = useScreenerSuggestions({
+    active: !demo && route.view === "screener",
+    toast,
+  });
+  const screener = useScreenerState(engine, version, toast, suggestions.suggestions);
 
   /* ── view state ── */
   const [ohboxSel, setOhboxSel] = useState<string | null>(null);
@@ -1974,6 +1988,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             {effectiveView === "screener" ? (
               <ScreenerView
                 state={screener}
+                /* Bound HERE, at the render, to the exact list the state computed this
+                   frame — so the set that gets priced and the set that gets bought are one
+                   list rather than two computations that agree today. Withheld from the
+                   demo, which has no server to ask. */
+                suggest={demo ? undefined : suggestions.forSenders(screener.unsuggestedSenders)}
                 segment={route.screenerSegment}
                 selection={scnSel}
                 onSelect={(segment, id) => setScnSel((s) => ({ ...s, [segment]: id }))}

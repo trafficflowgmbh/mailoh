@@ -36,6 +36,7 @@ import {
   type OhmailEngine,
   type ScreenerSenderDTO,
 } from "@ohmail/client-engine";
+import type { SuggestionOverlay } from "./screener-suggest";
 import {
   DECISION_DONE_LABEL,
   type DecisionDestination,
@@ -72,17 +73,26 @@ export interface ScreenerState {
   /**
    * How many of those rows actually CARRY a suggestion.
    *
-   * Never assume this tracks `waitingCount`. On a Cloud account it is always 0:
-   * `selectors.ts` mints `ai: null` for every derived row because `/sync` carries no
-   * suggestion and no classifier runs client-side — and the server has none to give
-   * either, because no classifier is injected into its dependencies yet. Nothing has
-   * ever produced a routing decision for a waiting sender outside the demo, so the
-   * demo's fixture rows are the only ones that carry `ai` at all.
+   * Never assume this tracks `waitingCount`. `selectors.ts` mints `ai: null` for every
+   * derived row — `/sync` carries no suggestion, because a suggestion is advice about mail
+   * rather than a change to it, and no classifier runs client-side — so on a live account
+   * this is 0 until something buys one. What buys one is `shell/screener-suggest.ts`, whose
+   * result arrives here as the `suggestions` overlay; before that surface existed the number
+   * could ONLY be 0 outside the demo, which is why "Apply all" had nothing to apply.
    *
    * It exists so the surface can decline to offer "Apply all suggestions" over an
    * empty set rather than quietly meaning something else.
    */
   suggestedCount: number;
+  /**
+   * The waiting senders with no suggestion yet, in the queue's own order — the batch a
+   * purchase would be composed from.
+   *
+   * Lower-cased addresses, because that is the key the endpoint normalises to, and DERIVED
+   * rows only: a fixture sender does not exist on the server and would come back `not_held`,
+   * padding a batch the user was charged nothing for but had counted.
+   */
+  unsuggestedSenders: string[];
   screenedOut: ScreenerSenderDTO[];
   spam: SpamRow[];
   isExiting: (id: string) => boolean;
@@ -154,6 +164,16 @@ export function useScreenerState(
   engine: OhmailEngine,
   version: number,
   toast: ToastFn,
+  /**
+   * Suggestions bought for this account, keyed by sender — `shell/screener-suggest.ts`.
+   *
+   * OPTIONAL, and absent means exactly what it meant before there was anything to pass:
+   * every derived row's `ai` stays null and the surface says so. It is joined on here rather
+   * than inside `screenerSegments` because the mirror is a record of mail and this is not
+   * mail — the engine has no business holding it, and a client-engine that did would have to
+   * persist and evict it.
+   */
+  suggestions?: SuggestionOverlay,
 ): ScreenerState {
   const t = useTranslations("screener");
   const [, bump] = useReducer((c: number) => c + 1, 0);
@@ -302,11 +322,26 @@ export function useScreenerState(
     });
   };
 
+  /**
+   * Join one bought suggestion onto a row.
+   *
+   * Three guards, and each one is a row this must NOT touch. A fixture row carries the demo's
+   * own `ai` and is not a real sender, so the overlay has nothing true to say about it. A row
+   * that already has an `ai` keeps it — the mirror is never overwritten by this. And a row
+   * with no match is returned UNCHANGED rather than rebuilt, so the identity every `useMemo`
+   * downstream compares stays stable when nothing was bought.
+   */
+  const withSuggestion = (x: ScreenerSenderDTO): ScreenerSenderDTO => {
+    if (!suggestions || x.ai || x.derived !== true) return x;
+    const found = suggestions.get(senderKey(x.from.address));
+    return found ? { ...x, ai: found } : x;
+  };
+
   const waiting = useMemo(() => {
     const overridden = segments.spam.filter((x) => s.overrides.has(x.id));
-    return [...segments.waiting, ...overridden];
+    return [...segments.waiting, ...overridden].map(withSuggestion);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segments, version, s.overrides.size]);
+  }, [segments, version, s.overrides.size, suggestions]);
 
   const visibleWaiting = waiting.filter((x) => !s.pending.has(x.id) || s.out.has(x.id));
   const undecided = waiting.filter((x) => !s.pending.has(x.id));
@@ -314,6 +349,22 @@ export function useScreenerState(
   // Counted over the SAME set the bulk would act on, so the control can never appear for
   // rows that are already on their way out.
   const suggestedCount = undecided.filter((x) => x.ai != null).length;
+  /**
+   * The buy list, from the SAME set and in the SAME order.
+   *
+   * Deduped on the normalised address rather than trusted to be distinct: the queue is one
+   * row per sender, but a spam row pulled back to Waiting by `notSpamToWaiting` joins this
+   * list too, and a batch that named one address twice would reserve two of the user's
+   * chosen 25 slots for one sender. The endpoint dedupes as well — this is so the COUNT the
+   * confirmation shows is the count that gets bought.
+   */
+  const unsuggestedSenders = [
+    ...new Set(
+      undecided
+        .filter((x) => x.derived === true && x.ai == null)
+        .map((x) => senderKey(x.from.address)),
+    ),
+  ];
 
   const bulk = (
     destOf: (x: ScreenerSenderDTO) => DecisionDestination,
@@ -509,6 +560,7 @@ export function useScreenerState(
     waiting: visibleWaiting,
     waitingCount,
     suggestedCount,
+    unsuggestedSenders,
     screenedOut: segments.screenedOut,
     spam,
     isExiting: (id) => s.pending.has(id),
