@@ -934,52 +934,38 @@ body.reading .shell {
   padding-top: 8px;
 }
 
-/* ================= about ================= */
-.about {
-  position: fixed;
-  right: 18px;
-  bottom: 64px;
-  z-index: var(--z-about);
-  width: min(380px, 90vw);
-  border-radius: 22px;
-  background: var(--float);
-  box-shadow: var(--lift-3);
-  padding: 22px 24px;
-  animation: rise 0.26s var(--spring);
-  max-height: 70vh;
-  overflow-y: auto;
+/* ================= Settings → About ohmail =================
+   Formerly the floating (i) panel — a `position:fixed` card over the mail with its own
+   shadow, its own close button and its own everything. It is a settings pane now, so it is
+   styled as one: the section primitive draws the panel, and these rules only set the prose
+   measure inside it. */
+.about-pane {
+  padding-top: 18px;
 }
-.about h3 {
-  font-size: 13px;
-  font-weight: 650;
-  margin: 0 0 9px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.about h3 svg {
-  color: var(--accent-ink);
-}
-.about p {
+.about-line {
   font-size: 12.5px;
   color: var(--ink2);
   line-height: 1.62;
   margin: 0 0 9px;
+  max-width: 58ch;
 }
-.about .x {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: 99px;
+.about-line a {
+  color: var(--accent-ink);
+}
+/* The build string and the keyboard pointer — true, and not what anybody came here to read. */
+.about-build {
+  font-size: 11.5px;
   color: var(--ink3);
+  line-height: 1.6;
+  margin: 0 0 4px;
 }
-.about .x:hover {
-  background: var(--tint);
-  color: var(--ink);
+.about-h {
+  margin-top: 18px;
+}
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
 }
 
 /* ================= gate + login pages ================= */
@@ -1742,6 +1728,13 @@ body.reading .shell {
   margin-bottom: 18px;
 }
 .acct-signout > div { min-width: 0; }
+/* The button is the one thing on this row that must not be squeezed. It sat at the flex
+   default (`shrink:1`) next to a paragraph that wants the full width, so the label broke
+   across two lines — reported as a sign-out button that breaks a line. */
+.acct-signout-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 @media (max-width: 560px) {
   .acct-signout {
     flex-direction: column;

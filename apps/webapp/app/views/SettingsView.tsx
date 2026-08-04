@@ -35,7 +35,7 @@ import {
 import { hueOf } from "../shell/format";
 import { RulesView, type RuleOutcome } from "./RulesView";
 
-type PaneId = "general" | "notifications" | "mailboxes" | "billing" | "tags" | "rules" | "security" | "account";
+type PaneId = "general" | "notifications" | "mailboxes" | "billing" | "tags" | "rules" | "about" | "security" | "account";
 
 /**
  * The notification channels, and why this list is here rather than in the fixtures.
@@ -98,6 +98,7 @@ export function SettingsView({
   mailboxSection,
   billingSection,
   securitySection,
+  aboutSection,
 }: {
   /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
   notifications: NotificationsMeta | null;
@@ -154,6 +155,20 @@ export function SettingsView({
    * reach. Absent ⇒ the pane is not offered at all, rather than offered and dead.
    */
   securitySection?: ReactNode;
+  /**
+   * "About ohmail" — who publishes this, which build is running, where the privacy and
+   * subprocessor pages are.
+   *
+   * The same injected-node seam as the four above, and it has to be one for the same
+   * reason twice over. The live body reads `GET /mailboxes` through `app/api-client`, which
+   * `scripts/publish-desktop.mjs` DENYs from this shared file; and the publisher named in it
+   * is the operator of the HOSTED service, which is not who is running a standalone Desktop
+   * install. Absent ⇒ no pane, rather than a pane naming the wrong company.
+   *
+   * This is where the (i) dock panel's content went. It was an overlay over the mail holding
+   * three facts nobody can find anywhere else; facts belong in settings.
+   */
+  aboutSection?: ReactNode;
 }) {
   const t = useTranslations("settings");
   const toast = useToast();
@@ -178,6 +193,9 @@ export function SettingsView({
     // leading to an empty list on an account that HAS rules is the defect, not the fix.
     ...(rules ? [["rules", t("rules")] as [PaneId, string]] : []),
     ["tags", t("tags")],
+    // After the panes that DO something and before the two that end things. Its content is
+    // facts about the running build and who publishes it — nothing here is a control.
+    ...(aboutSection ? [["about", t("about")] as [PaneId, string]] : []),
     // LAST, and only where there is an account to act on. Last because the pane's only
     // content is irreversible, and a destructive control at the top of a list is one
     // mis-click away from the thing above it.
@@ -351,6 +369,7 @@ export function SettingsView({
             </SettingsSection>
           ) : null}
 
+          {pane === "about" ? aboutSection : null}
           {pane === "security" ? securitySection : null}
           {pane === "account" ? accountSection : null}
         </div>

@@ -489,7 +489,8 @@
     "account": "Account",
     "billing": "Subscription",
     "security": "Security",
-    "rules": "Rules"
+    "rules": "Rules",
+    "about": "About ohmail"
   },
   "palette": {
     "placeholder": "Type a command…",
@@ -511,16 +512,12 @@
   },
   "dock": {
     "command": "Command",
-    "theme": "Toggle theme",
-    "about": "About ohmail"
+    "theme": "Toggle theme"
   },
   "about": {
-    "title": "ohmail — demo",
-    "close": "Close",
     "p1": "A demo mailbox, invented for it — nobody real, nothing real. Every key and every click works, and none of it leaves this tab: there is no network here at all.",
     "p2": "The Screener holds first-time senders until you decide. One click files a sender to Ohbox, Reads or Receipts — the ✓ half also marks the held mail read — and the decision becomes a rule for future mail. Reads and Receipts share a skim stream where scrolling past an item marks it seen at the waterline. Tags group messages across views without moving them.",
     "keys": "Press ? for the keyboard map.",
-    "titleLive": "ohmail",
     "loading": "Reading your mailboxes…",
     "noMailbox": "No mailbox connected. Settings → Mailboxes.",
     "oneMailbox": "{address} — {synced}.",

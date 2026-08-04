@@ -49,6 +49,7 @@ import {
   Icon,
   RailNav,
   Reader,
+  SettingsSection,
   useCommandPalette,
   useTheme,
   useToast,
@@ -405,7 +406,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    */
   const [readerPending, setReaderPending] = useState<string | null>(null);
   const [railOpen, setRailOpen] = useState(false);
-  const [aboutOpen, setAboutOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [senderMenu, setSenderMenu] = useState<SenderMenuState | null>(null);
   const [senderAudit, setSenderAudit] = useState<SenderAuditState | null>(null);
@@ -1423,7 +1423,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     [senderAudit != null, () => setSenderAudit(null)],
     [senderMenu != null, () => setSenderMenu(null)],
     [picker != null, () => setPicker(null)],
-    [aboutOpen, () => setAboutOpen(false)],
     [fr != null, () => setFr(null)],
     [replyTo != null, () => setReplyTo(null)],
     [readerFor != null, () => setReaderFor(null)],
@@ -2070,6 +2069,22 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                    the fixture list, which is the honest thing for it to show. */
                 mailboxSection={demo ? undefined : mailboxSection}
                 billingSection={demo ? undefined : billingSection}
+                /* ABOUT — the one injected pane the demo also gets, because the demo has
+                   something true to say here and no API to say it with. The live body comes
+                   from the Cloud client (which mailbox, synced when, which build, and who
+                   publishes this); the demo body is the two sentences that describe the
+                   fixture world, which are only correct there. */
+                aboutSection={
+                  demo ? (
+                    <SettingsSection>
+                      <p className="set-note-inline">{t("about.p1")}</p>
+                      <p className="set-note-inline">{t("about.p2")}</p>
+                      <p className="set-note-inline">{t("about.keys")}</p>
+                    </SettingsSection>
+                  ) : (
+                    aboutSection
+                  )
+                }
               />
             ) : null}
           </main>
@@ -2208,53 +2223,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       {/* The `?` sheet — generated from the registry above, never hand-written. */}
       <ShortcutSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
-      {/* (i) — AND IT MUST KNOW WHICH MODE IT IS IN.
-          This panel used to be unconditional: every signed-in customer opened it and read
-          "ohmail — demo / This is the real ohmail client running on a fixture mailbox…".
-          It was the implementation talking — the sentence explained the sync engine's
-          bootstrap to somebody who wanted to know whether their own mail was arriving — and
-          on a live account it was also simply false.
-          Live now shows the facts that answer the question actually being asked (which
-          mailbox, synced when, which build), supplied by `aboutSection` because this shared
-          shell cannot call the API. The demo keeps a demo panel, because there it is true. */}
-      {aboutOpen ? (
-        <div className="about" role="dialog" aria-label={demo ? t("about.title") : t("about.titleLive")}>
-          <button
-            type="button"
-            className="x"
-            aria-label={t("about.close")}
-            onClick={() => setAboutOpen(false)}
-          >
-            <Icon name="x" />
-          </button>
-          <h3>
-            <Icon name="open" /> {demo ? t("about.title") : t("about.titleLive")}
-          </h3>
-          {demo ? (
-            <>
-              <p>{t("about.p1")}</p>
-              <p>{t("about.p2")}</p>
-            </>
-          ) : (
-            aboutSection
-          )}
-          {/* This used to be a hand-typed key list ("Keyboard: j/k, ↵, y + o/r/c/n/x…")
-              which is a SECOND copy of the bindings and had already drifted from them.
-              It points at the sheet, which is generated from the registry. */}
-          <p>{t("about.keys")}</p>
-        </div>
-      ) : null}
+      {/* THE (i) PANEL IS GONE, AND ITS CONTENT IS NOT.
+          It was a floating dock button opening a dialog over the mail, holding three facts
+          that are settings — which mailbox is connected, when it last synced, which build —
+          and it was the only place they were readable. Facts do not need an overlay. They
+          are a Settings pane now (`aboutSection`, below), which is where somebody looks for
+          them and where they can be linked to; the dock is back to the two controls that
+          act on what is on screen rather than describe it. */}
 
       {/* floating dock */}
       <Dock>
         <DockKey label={t("dock.command")} kbdHint="⌘K" onPress={palette.openPalette} />
         <span className="dock-sep" />
         <DockIcon icon="sun" label={t("dock.theme")} onPress={theme.toggle} />
-        <DockIcon
-          icon="info"
-          label={t("dock.about")}
-          onPress={() => setAboutOpen((o) => !o)}
-        />
       </Dock>
     </div>
     </MessageChromeProvider>
