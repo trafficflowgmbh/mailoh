@@ -17,6 +17,7 @@ import { createContext, useContext, type ReactNode } from "react";
 import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
 import type { AttachmentsChrome } from "./attachments";
 import type { SendState } from "./mail-send";
+import type { RemoteImagesChrome } from "./remote-images";
 
 export interface MessageChrome {
   /** The message id whose inline reply editor is open, if any. */
@@ -101,6 +102,27 @@ export interface MessageChrome {
    * has already happened twice on this seam (`fetchBody`, `searchServer`).
    */
   attachments?: AttachmentsChrome;
+  /**
+   * P2 — HOW A BLOCKED IMAGE MAY BE LOADED, or ABSENT when it may not be.
+   *
+   * It travels here for the same reason `attachments` does and the case is identical: the
+   * pane is mounted TWICE while the reader is open, both mounts hold the same message, and
+   * two copies of "has this reader consented" is how one pane loads the pictures and the
+   * other keeps showing placeholders.
+   *
+   * ── ABSENCE IS A REAL ANSWER, AND IT IS THE ONE THAT SHIPPED UNTIL NOW ────────────────
+   *
+   * `undefined` means this client cannot proxy an image — `?demo=1` (fixtures, zero network),
+   * the desktop shell, a test with no API. `MessageBody` renders NO "Show images" button for
+   * it rather than a dead one, which is exactly the state `MessageBody.tsx`'s header
+   * describes: *"the consent button is therefore absent rather than dead"*.
+   *
+   * It is NOT optional in the sense of "the shell may forget it". A capability that stays
+   * unsupplied on the LIVE path only is the wiring bug this seam has already shipped twice
+   * (`fetchBody`, `searchServer`), and `remote-images.test.ts` builds the real pane to assert
+   * the rendered frame routes through the proxy rather than that a function exists.
+   */
+  remoteImages?: RemoteImagesChrome;
 }
 
 const noop = (): void => {};

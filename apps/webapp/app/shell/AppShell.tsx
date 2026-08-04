@@ -65,6 +65,7 @@ import {
 import { PLACE_LABEL, avatarHue, firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
 import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
 import { useMessageAttachments } from "./attachments";
+import { useRemoteImages } from "./remote-images";
 import { useScreenerState } from "./screener-state";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
@@ -535,6 +536,18 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
   const attachments = useMessageAttachments(engine, selectedOhbox?.id ?? null, {
     onDownloadAllFailed: () => toast(t("ohbox.toastDownloadAllFailed")),
   });
+
+  /*
+   * P2 — the spy-pixel blocker's consent half. NOT keyed on the open message: consent is a
+   * decision about a message and it outlives the selection, so a reader who loads images,
+   * moves on and comes back does not have to press again.
+   *
+   * The failure sentence is the SERVER'S, through `messageOf`. There is no `en.json` key for
+   * it deliberately: `api-client.ts`'s header is explicit that re-deriving these sentences in
+   * the client is how somebody is told the wrong reason, and a consent write can fail for
+   * reasons this shell has no way to enumerate.
+   */
+  const remoteImages = useRemoteImages({ onFailed: (message) => toast(message) });
 
   /**
    * THE OHBOX'S SPLIT-PANE SELECTION IS THE INTENT.
@@ -1690,10 +1703,10 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
       replySendState: mailSend.stateOf,
       openSenderMenu, conversationOf,
       bodyOf: bodyOfMessage, hydrateBody,
-      attachments,
+      attachments, remoteImages,
     }),
     [replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, openSenderMenu,
-      conversationOf, bodyOfMessage, hydrateBody, attachments],
+      conversationOf, bodyOfMessage, hydrateBody, attachments, remoteImages],
   );
 
   // Resolved here rather than inside the popover so a sender whose last message has just

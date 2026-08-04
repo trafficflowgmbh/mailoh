@@ -480,7 +480,25 @@ export function MessagePane({
        that holds the mail and nothing else, which is what `conversation.test.ts` and
        `inline-reply.test.ts` select on and what a reader is entitled to assume. */
     <div className="msg-body">
-      <MessageBody text={body.text} html={body.html} remoteLoaded={body.loadedRemoteContent} />
+      {/* P2 — the consent path for remote images. `remoteImages` is ABSENT on a client that
+          has no proxy (`?demo=1`, the desktop shell, a test with no API), and `MessageBody`
+          answers that by offering no button at all rather than a dead one.
+
+          `remoteLoaded` is the OR of two facts that mean the same thing to a reader and are
+          stored in different places: the server's `loadedRemoteContent`, which is why images
+          stay loaded across a reload, and this session's press, which is why they appear at
+          the moment it happens. The mirror's body record is not re-fetched on consent —
+          `hydrateBody` returns early on a `ready` record — so without the second term the
+          button would write a row and change nothing on screen. */}
+      <MessageBody
+        text={body.text}
+        html={body.html}
+        remoteLoaded={body.loadedRemoteContent || (chrome.remoteImages?.consented(message.id) ?? false)}
+        imageProxy={chrome.remoteImages ? chrome.remoteImages.proxyFor(message.id) : null}
+        onLoadRemote={
+          chrome.remoteImages ? () => chrome.remoteImages!.consent(message.id) : undefined
+        }
+      />
     </div>
   );
 
