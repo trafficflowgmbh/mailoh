@@ -155,7 +155,7 @@ export function SyncBar() {
     case "importing":
       return (
         <div className="sync-bar busy" role="status" aria-live="polite">
-          <Glyph />
+          <Glyph busy />
           {/* "Syncing", not "Importing your mailbox". The client can see its own mirror
               growing; it cannot see a worker, so a sentence that claims one is asserting
               something this code does not know. The count is the largest TRUE thing here. */}
@@ -175,7 +175,7 @@ export function SyncBar() {
       // was saying it alone, for ever, with no elapsed time and while the mirror grew.
       return (
         <div className="sync-bar busy" role="status" aria-live="polite">
-          <Glyph />
+          <Glyph busy />
           {/* Two sentences rather than one with a clause: "a first sync takes a few minutes" is
               true and useful at four minutes and misleading at forty. The escalated one drops
               the explanation and states the elapsed time — and claims no failure, because at
@@ -192,7 +192,39 @@ export function SyncBar() {
   }
 }
 
-function Glyph({ warn = false }: { warn?: boolean }) {
+/**
+ * The strip's leading mark — an envelope, a warning, or, while work is genuinely in flight,
+ * a spinner.
+ *
+ * ── WHY THE BUSY STATES GET A SPINNER AND NOT AN ENVELOPE ───────────────────────────────
+ *
+ * `importing` and `awaiting` are the two states that report WORK, and both can sit for
+ * minutes. A static ✉ beside a number that changes once every eight seconds reads as a frozen
+ * screen — reported from live use on a mailbox holding 8 824 messages — because between drains
+ * nothing on the strip moves at all. The spinner is the one element here that is continuously
+ * true: it says a process is running without claiming to know how far along it is.
+ *
+ * INDETERMINATE ON PURPOSE. `/sync` answers `hasMore` as a boolean, so the TOTAL is unknowable
+ * until the drain ends; a percentage or a filled track would be invented, and this strip does
+ * not invent. A spinner is the affordance that carries exactly the knowledge available.
+ *
+ * ── WHY `mbx-spin`, A CLASS THE SETTINGS ROWS OWN ───────────────────────────────────────
+ *
+ * Deliberate reuse. `(product)/mailbox/MailboxSection.tsx:428` already renders this exact
+ * spinner for this exact fact — "this mailbox is syncing" — so styling a second one here would
+ * be two spellings of one event, the drift this file's own header argues against. It is
+ * layout-independent (a fixed 11 px ring), built from `--hair`/`--accent`, and its
+ * `prefers-reduced-motion` answer already exists at `app.css:1657`: the ring stays, the
+ * rotation stops, so the affordance survives without motion. The class NAME is the only wart —
+ * `mbx-` means the Settings block. It wants renaming to a shared `.spin`, which is a change to
+ * `app.css`; that file was held by another agent for the whole of this slice.
+ *
+ * `aria-hidden` on all three forms. The strip is a `role="status"` region that already
+ * announces its sentence, and an indeterminate spinner has no value a screen reader could
+ * report; announcing it would add noise, not information.
+ */
+function Glyph({ warn = false, busy = false }: { warn?: boolean; busy?: boolean }) {
+  if (busy) return <span className="mbx-spin" aria-hidden="true" />;
   return (
     <span className="glyph" aria-hidden="true">
       {warn ? "⚠" : "✉"}
