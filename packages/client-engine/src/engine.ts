@@ -298,6 +298,8 @@ export class OhmailEngine {
   private readonly readerView: OverlayReader;
   private searchCache: { version: number; index: SearchIndex } | null = null;
   private syncing: Promise<void> | null = null;
+  /** The in-flight mirror read, so concurrent callers coalesce. See {@link OhmailEngine.hydrate}. */
+  private hydrating: Promise<void> | null = null;
   /** In-flight body fetches by message id — see {@link OhmailEngine.hydrateBody}. */
   private readonly bodyRequests = new Map<string, Promise<void>>();
   /** The archive transport, or `null` when this client has no server behind it. */
@@ -340,9 +342,58 @@ export class OhmailEngine {
 
   // ── lifecycle ────────────────────────────────────────────────────────────
 
+  /**
+   * READ THE DEVICE'S COPY OF THE MAILBOX INTO MEMORY — **and say so.**
+   *
+   * ── THE DEFECT THIS METHOD EXISTS FOR ───────────────────────────────────
+   *
+   * `store.load()` reads the whole persisted mirror and bumps the store's version. It notifies
+   * NOBODY: the listener set lives here, not in the store, and {@link OhmailEngine.notify} was
+   * reachable only from `drain()` and the mutation paths. So a returning user's entire mailbox
+   * was hydrated out of IndexedDB into memory and the UI was never told — `useSyncExternalStore`
+   * holds the snapshot it last read, and the rows appeared only when the FIRST `/sync` page
+   * landed. On a slow connection that is the second of two serial round trips, and the screen
+   * says "Nothing in your Ohbox." for the whole of it, over mail that is already on the device.
+   *
+   * Measured: seed a store, close it, open a new engine over the same database, `load()` →
+   * two messages readable, store version 0 → 1000003, **listeners fired: 0**.
+   *
+   * That the mail sometimes appeared earlier was luck, not design — any unrelated re-render
+   * re-reads the snapshot, and the mailbox probe landing was usually the one that did it.
+   *
+   * ── SINGLE-FLIGHT, AND CLEARED IN `finally` ─────────────────────────────
+   *
+   * `syncOnce()`'s exact pattern, for the first of its reasons and one of its own. Concurrent
+   * callers coalesce onto one read; and the promise is CLEARED when it settles, including when
+   * it REJECTS, so a hydration that failed (IndexedDB blocked, storage refused) can be tried
+   * again on the next wake. A memoized-forever "idempotent" version would turn one transient
+   * storage error into a mirror that can never be read for the lifetime of the tab.
+   *
+   * `notify()` fires only on success. A failed read changed nothing, so there is nothing to
+   * publish — and the scheduler counts the rejection as a failed tick, which is what makes the
+   * retry happen.
+   *
+   * Re-hydrating mid-session (a second call after a drain has applied pages) is not reachable
+   * today: the scheduler latches after the first success and `start()` runs this before its
+   * only drain. It is noted rather than guarded, because a guard nothing can trigger is a claim
+   * no test can put under load.
+   */
+  async hydrate(): Promise<void> {
+    if (this.hydrating) return this.hydrating;
+    this.hydrating = this.store
+      .load()
+      .then(() => {
+        this.notify();
+      })
+      .finally(() => {
+        this.hydrating = null;
+      });
+    return this.hydrating;
+  }
+
   /** Hydrate the mirror, then bootstrap/catch up. */
   async start(): Promise<void> {
-    await this.store.load();
+    await this.hydrate();
     await this.syncOnce();
   }
 
@@ -575,7 +626,41 @@ export class OhmailEngine {
      */
     if (msg.protected != null) return;
     const held = this.read().get<MessageBodyRecord>("message_body", messageId);
-    if (held?.state === "ready") return;
+    /**
+     * ── ALREADY READY — **AND FROM A BUILD THAT KNEW ABOUT `html`** (O11b-CACHE) ──────────
+     *
+     * `19f64ba` shipped the html part and a renderer for it, and the owner still saw the same
+     * message as a text dump ending in a tracking pixel's url. Not a stale deploy (the live
+     * mailbox chunk contains the renderer) and not a missing server field (that message holds
+     * 19 596 characters of `html`): it was THIS LINE.
+     *
+     * `message_body` records are persisted (`IndexedDbMirrorStore`), and one written by any
+     * build before O11b is `{messageId, state, text}` with no `html` key at all. `ready`
+     * suppressed the fetch, `bodyOf` read `rec.html ?? null`, and every message the reader had
+     * already opened stayed frozen in the pre-fix shape for ever — while newly-arrived mail
+     * rendered correctly, which is why the product looked unfixed only to the people already
+     * using it.
+     *
+     * `html !== undefined` and NOT `html != null`, and the difference is the whole of it:
+     *
+     *   `undefined`  no build ever answered this record's question. Ask now.
+     *   `null`       a build DID ask, and the answer was "this message has no html" — a
+     *                plain-text mail, or a sensitive one whose html is deliberately not stored
+     *                (`pipeline.ts`). Re-asking would be a permanent billed poll (invariant
+     *                #10) against a server that will keep answering the same thing.
+     *
+     * It is a re-read, not a migration: {@link MessageBodyRecord} says why inventing `html:
+     * null` for these rows is forbidden — it is indistinguishable from a message that genuinely
+     * has none. And it is not a sweep. `hydrateBody` is called per message on explicit intent,
+     * so this costs ONE extra `GET /messages/:id/body` per message the reader opens again,
+     * once, and nothing for mail they never open.
+     *
+     * IT TERMINATES BECAUSE `fetchBodyInto` ALWAYS WRITES THE KEY — `HttpAdapter.fetchBody`
+     * normalises a missing wire field to `null`, and the `failed` arm sets it explicitly — so
+     * no transport can produce a record that lands back in this branch. `body-hydration.test.ts`
+     * asserts the count, not just the outcome, for exactly that reason.
+     */
+    if (held?.state === "ready" && held.html !== undefined) return;
     // See `retry` above: an automatic trigger must not re-ask a server that already refused.
     if (held?.state === "failed" && !opts.retry) return;
 
@@ -600,6 +685,22 @@ export class OhmailEngine {
       // renderer and it must stay a carry: sanitizing here would put attacker markup through
       // a transform in the engine, where no surface can see what it did and where the result
       // would be written into the mirror. What is stored is what the sender wrote.
+      //
+      // ── `?? null` IS ABOUT THE KEY EXISTING, NOT ABOUT THE VALUE (O11b-CACHE) ───────────
+      //
+      // No string is altered by it: it maps `undefined` — a field this adapter did not answer —
+      // onto the `null` that MEANS "there is no html", so that a record THIS ENGINE WROTE
+      // always carries the key. `hydrateBody` decides a record is pre-O11b, and re-fetches it,
+      // from `html === undefined`; a write that could leave the field absent would land back in
+      // that branch on the next open and poll for ever.
+      //
+      // `HttpAdapter.fetchBody` already normalises, so the shipped path never needed this — and
+      // that is exactly the argument against relying on it. `EngineAdapter.fetchBody` is a seam
+      // with four implementations and no compiler check that a value is present rather than
+      // `undefined`, so the termination of a loop must be a property of the engine and not of
+      // one adapter's manners. Proven, not assumed: this file's own test double answers
+      // `{ text }` alone, and with the plain carry two long-standing "a READY body is not
+      // re-fetched" tests went red the moment `hydrateBody` learned to distrust an absent key.
       await this.putBody(
         messageId,
         wire === null
@@ -608,8 +709,8 @@ export class OhmailEngine {
               messageId,
               state: "ready",
               text: wire.text,
-              html: wire.html,
-              loadedRemoteContent: wire.loadedRemoteContent,
+              html: wire.html ?? null,
+              loadedRemoteContent: wire.loadedRemoteContent === true,
             },
       );
     } catch (err) {

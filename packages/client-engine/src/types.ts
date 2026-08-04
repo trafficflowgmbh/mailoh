@@ -263,6 +263,22 @@ export interface MessageBodyRecord {
    * null` for them would be indistinguishable from a message that genuinely has none.
    * Declaring these required would be the type system asserting something about the
    * store that is false on every existing install. `bodyOf` reads them with `?? null`.
+   *
+   * ── AND THAT ABSENCE IS NOW THE SIGNAL TO RE-ASK (O11b-CACHE) ───────────────────────
+   *
+   * The paragraph above was right that they must not be migrated and wrong about what it
+   * cost to leave them alone. `hydrateBody` returned early on `state === "ready"`, so a
+   * message opened before O11b was never re-fetched and stayed a text dump FOR EVER, on a
+   * build that contains the renderer — which is what the owner reported the night O11b
+   * shipped, over the very mail that defined the gap.
+   *
+   * So `undefined` here is load-bearing and is not merely tolerated: it means "no build
+   * ever answered this record's question", and `hydrateBody` re-asks exactly once for it.
+   * `null` means a build DID ask and the answer was "there is no html", which is the
+   * ordinary state of a plain-text message and of every sensitivity-redacted one, and must
+   * NOT re-ask. Never write `undefined` here from new code — `fetchBodyInto` normalises with
+   * `?? null` so that a record this engine wrote always carries the key, and that is what
+   * makes the re-fetch terminate.
    */
   html?: string | null;
   /** The reader's remote-content decision, as the server last stated it. Optional for the
