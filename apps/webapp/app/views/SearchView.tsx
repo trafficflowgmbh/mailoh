@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * SEARCH — TWO PASSES, AND IT SAYS WHICH ONE IT IS ON (gap O14).
+ * SEARCH — TWO PASSES, AND IT SAYS WHICH ONE IT IS ON.
  *
  *  1. **This device, instantly.** `engine.search()` is synchronous over the mirror: lexical +
  *     prefix + trigram fuzzy ("invoce" finds the invoice). It answers on every keystroke with
@@ -281,10 +281,10 @@ export function SearchView({
   const isEgg = trimmed.toLowerCase() === "blanc" && items.length === 0;
 
   /**
-   * ═══ THE KEYBOARD PATH THAT DID NOT EXIST (slice U5-OPEN, gap U5c) ═══════════════════
+   * ═══ THE KEYBOARD PATH THAT DID NOT EXIST ════════════════════════════════════════════
    *
-   * Owner: *"search does not allow a message to be opened."* Taken literally that is wrong —
-   * every hit is a real `<button>` and has always been clickable — and the ruling says so.
+   * Reported as "search does not allow a message to be opened". Taken literally that is wrong
+   * — every hit is a real `<button>` and has always been clickable.
    * What was true is that **this view declared zero bindings**. In a product whose own `?`
    * sheet is generated from a keyboard registry, the one surface you reach by pressing `/`
    * and then typing could be left only with a mouse. That is the defect.
@@ -301,7 +301,7 @@ export function SearchView({
    *
    * The ruling is explicit: `j`/`k` follow PILE order, never search-hit order. They are the
    * two most-used keys, their meaning is per-view and tested, and a search-session cursor
-   * that survived navigation is exactly the private-state shape S15 warns about. Arrow keys
+   * that survived navigation is exactly the sort of hidden cross-view state this shell avoids. Arrow keys
    * are the ones the box's own focus makes available (`inInput`), and after ↵ opens a hit
    * the pile's own `j`/`k` take over from where the message actually lives.
    */
@@ -367,8 +367,7 @@ export function SearchView({
    *
    * ── UX6.1: IT USED TO BREAK AT ZERO, AND THE BREAK WAS A CONTRADICTION ─────────────────
    *
-   * Walked on a real account against production, 2026-08-04. On an empty index the pane
-   * rendered **"Nothing on this device."** and, directly beneath it, "…plus the full text of
+   * On an empty index the pane rendered **"Nothing on this device."** and, directly beneath it, "…plus the full text of
    * **none**." — the plural's `=0` arm. Two sentences one line apart, the first saying the
    * device holds nothing and the second describing in detail what it holds. Nobody would write
    * that; it was assembled.
@@ -524,7 +523,7 @@ function Hit({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hit]);
 
-  // UX9 — joined, never concatenated: a message with no `Date:` header has no stamp, and the
+  // Joined, never concatenated: a message with no `Date:` header has no stamp, and the
   // template that spelled the separator itself rendered "Ohbox · " with nothing after it. See
   // `shell/format.ts`.
   const where = metaLine(

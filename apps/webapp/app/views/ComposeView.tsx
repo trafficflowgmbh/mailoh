@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * COMPOSE (slice U4f, gap O20) — a new message, and the three things that were wrong with it.
+ * COMPOSE — a new message, and the three things that were wrong with it.
  *
- * ── THE THIRD ONE, AND THE WORST (gap O20) ──────────────────────────────────────────────
+ * ── THE THIRD ONE, AND THE WORST ────────────────────────────────────────────────────────
  *
  * This form rendered To, Subject and an editor, and **no From at all**. The sender was resolved
  * behind it by `sendingMailboxId` — the mailbox holding the account's NEWEST MESSAGE — so on an
@@ -20,12 +20,12 @@
  *
  * Send was a PRIMARY button rendered `aria-disabled` with the title *"Sending is disabled in
  * the demo — no mail leaves this tab."* On a live account that sentence was simply false, and
- * it became sharper the day the inline reply started really sending (U4b): a customer who had
+ * it became sharper the day the inline reply started really sending: a customer who had
  * just answered a message found Compose inert, with an explanation about a demo they were not
  * in. Alongside it, three fields — the AI-draft tag, the editor placeholder and the note next
  * to Send — were read UNCONDITIONALLY out of `@ohmail/fixtures`, so `#/compose` showed a
- * paying customer strings written for Mila's fictional world (invariant #6, and CLAUDE.md's
- * claims-are-contracts rule).
+ * paying customer strings written for a fictional demo world (invariant #6, and the rule that
+ * a claim the product makes is a contract).
  *
  * ── WHAT IT IS NOW ──────────────────────────────────────────────────────────────────────
  *
@@ -69,7 +69,7 @@ export function ComposeView({
   fields: ComposeFields;
   onFields: (next: ComposeFields) => void;
   /**
-   * WHICH ADDRESS THIS SENDS FROM (gap O20) — resolved by the shell, rendered here.
+   * WHICH ADDRESS THIS SENDS FROM — resolved by the shell, rendered here.
    *
    * The same object `plan.mutation.mailboxId` was built from, so the line on screen and the id
    * on the wire cannot be two different answers. This view does not choose; it shows the choice
@@ -86,8 +86,8 @@ export function ComposeView({
   const editorRef = useRef<HTMLTextAreaElement>(null);
 
   /**
-   * Escape leaves. Owner: *"cant even esc out of it with key"* — literally true, this view
-   * had no key bindings at all. `inInput` because the editor is a textarea and is focused
+   * Escape leaves. The complaint that Compose could not be left with the keyboard was
+   * literally true: this view had no key bindings at all. `inInput` because the editor is a textarea and is focused
    * the moment a draft is accepted, so without it the one place you need the exit is the
    * one place it would not work.
    *
@@ -144,7 +144,7 @@ export function ComposeView({
       </div>
       <div className="scroller">
         <div className="compose-wrap">
-          {/* FROM (gap O20). Before To, because it is the question the reader asks first and
+          {/* FROM. Before To, because it is the question the reader asks first and
               because the answer used to be nowhere on this screen at all — compose resolved
               its sender from whichever mailbox had received the newest message, and said
               nothing, so on an account with two addresses the From flipped with the post.

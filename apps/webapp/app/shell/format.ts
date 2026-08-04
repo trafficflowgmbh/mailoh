@@ -50,7 +50,7 @@ export function clockOf(iso: string): string {
 
 /**
  * The row stamp. The rule moved into `@ohmail/client-engine` when the Screener started
- * deriving its own rows (slice C1) and had to mint the same stamp for senders with no
+ * deriving its own rows, and had to mint the same stamp for senders with no
  * fixture behind them; this stays as the app-side name every view already imports, and
  * delegates so the two can never drift apart.
  */
@@ -61,10 +61,9 @@ export function displayTime(m: EngineMessage, now: Date): string {
 /**
  * A META LINE, JOINED — and the separator is never printed without a value on both sides.
  *
- * ── UX9: "Ohbox ·" ──────────────────────────────────────────────────────────────────────
+ * ── "Ohbox ·" ───────────────────────────────────────────────────────────────────────────
  *
- * Walked on a real account against production, 2026-08-04. A message with **no `Date:`
- * header** — which spam and scripts routinely omit, and which nothing in the pipeline
+ * A message with **no `Date:` header** — which spam and scripts routinely omit, and which nothing in the pipeline
  * substitutes for — carries `date: null` all the way to the client, so
  * {@link displayTime} answers `""` (`packages/client-engine/src/selectors.ts:66-77`, and
  * correctly: there is no instant to format). Every surface then interpolated that empty
@@ -135,11 +134,11 @@ export function senderName(m: EngineMessage): string {
 }
 
 /**
- * THE SENDER CIRCLE (slice F10) — the same letter and the same colour for one person, in
+ * THE SENDER CIRCLE — the same letter and the same colour for one person, in
  * every list, on every device, forever.
  *
- * Owner: *"the small circle with the sender / receiver letter in it, use it on the mail
- * list similar to hey does"*. The component already existed — it is what the Screener's
+ * The requirement: the small circle carrying the sender's or receiver's letter belongs on the
+ * mail list too, not only in the Screener. The component already existed — it is what the Screener's
  * rows and the doorbell stack — so the only new thing is the derivation, and the only
  * requirement on the derivation is that it be a pure function of the ADDRESS. Not of the
  * display name, which the same person changes between messages, and not of a random seed,

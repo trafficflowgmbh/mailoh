@@ -16,7 +16,7 @@
  *  - "Not spam → Screener" pulls a fixture spam sender back to Waiting;
  *  - "Delete" hides a spam row.
  *
- * DERIVED ROWS (slice C1). On a Cloud account every row comes out of the
+ * DERIVED ROWS. On a Cloud account every row comes out of the
  * message mirror, not out of a `screener_sender` fixture, and the two are
  * not interchangeable here: `POST /screener/:id` has exactly two outcomes
  * (yes ⇒ INBOX, no ⇒ ohmail/Screened) and resolves only mail still held in
@@ -70,15 +70,14 @@ export interface ScreenerState {
   /** Waiting minus everything decided — rail badge, doorbell, meta. */
   waitingCount: number;
   /**
-   * How many of those rows actually CARRY a suggestion (slice U6-SUGGEST).
+   * How many of those rows actually CARRY a suggestion.
    *
    * Never assume this tracks `waitingCount`. On a Cloud account it is always 0:
    * `selectors.ts` mints `ai: null` for every derived row because `/sync` carries no
    * suggestion and no classifier runs client-side — and the server has none to give
-   * either, `api-vercel/src/deps.ts:174-178` ("no `classifier` is injected here yet").
-   * Verified against production 2026-08-04: 1 045 waiting senders on the owner's
-   * mailbox, 7 884 held messages, and **zero** `routing_decisions` rows joined to any
-   * of them, of any provenance. The demo's fixture rows are the only ones with `ai`.
+   * either, because no classifier is injected into its dependencies yet. Nothing has
+   * ever produced a routing decision for a waiting sender outside the demo, so the
+   * demo's fixture rows are the only ones that carry `ai` at all.
    *
    * It exists so the surface can decline to offer "Apply all suggestions" over an
    * empty set rather than quietly meaning something else.
@@ -100,10 +99,10 @@ export interface ScreenerState {
 
 const OUT_MS = 330;
 /**
- * ═══ UX8 — HOW LONG "UNDO" IS TRUE, AND THE TWO NUMBERS THAT HAVE TO AGREE ═════════════
+ * ═══ HOW LONG "UNDO" IS TRUE, AND THE TWO NUMBERS THAT HAVE TO AGREE ═══════════════════
  *
- * Walked on a real account against production, 2026-08-04: *"Ohbox — filed … Undo"* was still
- * on screen 20+ minutes later, across every view, until another toast replaced it.
+ * Observed in real use: "Ohbox — filed … Undo" was still on screen twenty minutes later,
+ * across every view, until another toast replaced it.
  *
  * ── WHAT IS ACTUALLY REPRODUCIBLE, MEASURED RATHER THAN ASSUMED ────────────────────────
  *
@@ -250,7 +249,7 @@ export function useScreenerState(
       s.out.delete(id);
       restored++;
     }
-    // UX8 — NOTHING RESTORED IS NOT AN UNDO, so it does not get the undo sentence. Every id
+    // NOTHING RESTORED IS NOT AN UNDO, so it does not get the undo sentence. Every id
     // had already committed (or was never pending), the mutation is dispatched, and
     // `toastUndone` at `count: 0` said "Undone — 0 waiting again." to a person who had just
     // pressed the button precisely to find out. Reachable long after the capsule fades,
@@ -352,17 +351,18 @@ export function useScreenerState(
   };
 
   /**
-   * "APPLY ALL SUGGESTIONS" MAY ONLY APPLY SUGGESTIONS THAT EXIST (slice U6-SUGGEST).
+   * "APPLY ALL SUGGESTIONS" MAY ONLY APPLY SUGGESTIONS THAT EXIST.
    *
-   * Owner, from live use: *"screener shows me 'apply all suggestions', but on the actual
-   * mails I don't see what that suggestion would even be"*. He was right, and the button
-   * was worse than dead. It read `x.ai?.dest ?? "ohbox"`, and on a live account `x.ai` is
+   * Reported from live use: the Screener offers "apply all suggestions" while none of the
+   * mail on screen shows what the suggestion would be. That was right, and the button was
+   * worse than dead. It read `x.ai?.dest ?? "ohbox"`, and on a live account `x.ai` is
    * ALWAYS null — so the fallback, not the suggestion, decided every row. One press meant
    * "accept every waiting stranger into the Ohbox and promote a rule for each of them",
    * under a label that said it was applying suggestions the user had never been shown.
    *
-   * On the owner's own mailbox that was 1 045 senders and 7 884 held messages, dispatched
-   * 240 ms apart, with the single Undo toast arriving four minutes later. A consent gate
+   * On a backlogged mailbox that is hundreds of senders and thousands of held messages,
+   * dispatched 240 ms apart, with the single Undo toast arriving minutes after the first
+   * one moved. A consent gate
    * whose bulk control silently grants consent is the product inverted.
    *
    * So the fallback is GONE — not replaced. `only` restricts the bulk to rows that carry a

@@ -1,22 +1,21 @@
 "use client";
 
 /**
- * REPLYING INSIDE THE MESSAGE (slice U4).
+ * REPLYING INSIDE THE MESSAGE.
  *
- * Owner, verbatim: *"writing an email opens the compose dialog which is very unusuful (cant
- * even esc out of it with key)"* · *"must open an inline (within the open mail) classic
- * reply editor which shows me context of the message, allows me to scroll through the
- * actual email conversation"* · *"replys have to be within context of the message"*.
+ * Three requirements that are really one: a reply belongs inside the message it answers.
+ * Compose opened a dialog the keyboard could not leave; it took the message off the screen at
+ * the moment you started answering it; and the conversation has to stay scrollable while you
+ * write.
  *
  * Reply used to navigate `#/ohbox` → `#/compose`: the message you were answering left the
  * screen at the exact moment you started answering it. This renders inside
  * `<article class="msg">`, so the subject, the sender line and the body stay exactly where
  * they were and the editor opens underneath them.
  *
- * ── THE CONVERSATION IS ABOVE IT, AND IT IS NOT THIS COMPONENT'S (slice U5-REPLY) ───────
+ * ── THE CONVERSATION IS ABOVE IT, AND IT IS NOT THIS COMPONENT'S ────────────────────────
  *
- * Owner, verbatim: *"replying repeats the message which is already visible, this is
- * redundant.."*
+ * And the editor must not repeat the message that is already on screen.
  *
  * This used to render a `.reply-context` scroller of its own — the whole conversation,
  * oldest first, 190px tall, including the message being answered. `MessagePane` stood its
@@ -37,8 +36,8 @@
  * one moved.
  *
  * The draft is kept in `localStorage`, per message: this is the client's own scratch
- * buffer, not an IMAP draft. Drafts on the server are P3 and the owner has ruled they must
- * live on the mailbox; nothing here claims they already do.
+ * buffer, not an IMAP draft. Server-side drafts are a later phase and belong on the mailbox
+ * itself; nothing here claims they already exist.
  */
 import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
@@ -79,7 +78,7 @@ export function InlineReply({
   const editor = useRef<HTMLTextAreaElement>(null);
 
   /**
-   * WHICH ADDRESS IS ANSWERING (gap O20).
+   * WHICH ADDRESS IS ANSWERING.
    *
    * A reply goes out from the mailbox the message ARRIVED in — `Engine.enrich` has always
    * derived that from the parent (`engine.ts:671`) and this slice does not change it. What it
@@ -102,7 +101,7 @@ export function InlineReply({
   const from = resolveReplyFrom(facts ? optionsFromFacts(facts) : [], message.mailboxId);
 
   /**
-   * BRING THE EDITOR TO THE READER (slice U5-REPLY).
+   * BRING THE EDITOR TO THE READER.
    *
    * The conversation above is no longer a bounded 190px quote — it is the real thread, as
    * tall as it is, inside the column that scrolls (`.read-col` / `.reader`; the conversation
@@ -142,7 +141,7 @@ export function InlineReply({
         {rowAddress(message) ? <small>{rowAddress(message)}</small> : null}
       </div>
 
-      {/* FROM, and the substitution said out loud (gap O20). Static text, never a control: a
+      {/* FROM, and the substitution said out loud. Static text, never a control: a
           reply has a right answer — the address the sender wrote to — and offering to change it
           here is a different feature from being able to SEE it. */}
       {from.address !== null ? (

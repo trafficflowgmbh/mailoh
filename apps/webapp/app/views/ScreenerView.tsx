@@ -47,9 +47,8 @@ function Empty({ segment, settled }: { segment: ScreenerSegmentId; settled: bool
   /**
    * ── "No one's waiting." IS A FACT ABOUT SENDERS, NOT ABOUT THIS LIST ──────────────────
    *
-   * The live truth suite caught this pane on a real account: *"the Screener is empty — 0 rows,
-   * meta 'all clear' — on a mailbox seeded with dozens of unique first-contact senders"*, while
-   * the database held 323 messages in that pile. The rows come from the mirror
+   * This pane was caught claiming nobody was waiting — 0 rows, meta "all clear" — on a mailbox
+   * that was holding hundreds of messages in that very pile. The rows come from the mirror
    * (`shell/screener-state.ts` reads `engine.read()`), and before the mirror has been read there
    * are no senders to have an opinion about. Every sentence below asserts one.
    *
@@ -102,7 +101,7 @@ export function ScreenerView({
    */
   settled: boolean;
   onSelect: (segment: ScreenerSegmentId, id: string | null) => void;
-  /** Ask for one held message's body. `retry` marks a human asking again (slice U5-BODY). */
+  /** Ask for one held message's body. `retry` marks a human asking again. */
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   full: boolean;
   onFull: (full: boolean) => void;
@@ -147,7 +146,7 @@ export function ScreenerView({
   }, [full]);
 
   /**
-   * THE SELECTED SENDER'S HELD MAIL, IN FULL (slice U5-BODY).
+   * THE SELECTED SENDER'S HELD MAIL, IN FULL.
    *
    * `ScreenerSenderDTO.held` has claimed "every held message, in full" since it was written,
    * and on a live account the claim was false: every row is derived, so every body was the
@@ -191,7 +190,7 @@ export function ScreenerView({
   };
 
   /**
-   * The Screener's keys, DECLARED (slice U2).
+   * The Screener's keys, DECLARED.
    *
    * y/o/r/c/n/x used to live inside `DecisionBar`'s own `document` listener, which meant
    * the shell could not know that `c` is Receipts here and Compose everywhere else — it
@@ -334,7 +333,7 @@ export function ScreenerView({
         <MessageRow
           key={w.id}
           id={w.id}
-          /* NAME AND ADDRESS, AS IN `waiting` (gap UX11). These two segments printed the
+          /* NAME AND ADDRESS, AS IN `waiting`. These two segments printed the
              ADDRESS ALONE, which in the demo world is invisible — every screened and spam
              fixture is an address with no display name — and on a live account throws away
              the half a human recognises. Both are needed and for different reasons: the
@@ -414,7 +413,7 @@ export function ScreenerView({
             />
             {segment === "waiting" && state.waitingCount > 0 ? (
               <div className="scn-bulk">
-                {/* A BULK CONTROL MAY NOT OUTLIVE THE THING IT ACTS ON (slice U6-SUGGEST).
+                {/* A BULK CONTROL MAY NOT OUTLIVE THE THING IT ACTS ON.
                     Gated on `suggestedCount`, never on `waitingCount`: with no suggestions
                     this button used to file every waiting stranger into the Ohbox and
                     promote a rule for each, while its label said it was applying
@@ -438,7 +437,7 @@ export function ScreenerView({
               <span>
                 <Kbd>j</Kbd> <Kbd>k</Kbd> {t("hintMove")}
               </span>
-              {/* TWO FALSEHOODS IN ONE HINT, both fixed here (slice U6-SUGGEST). It read
+              {/* TWO FALSEHOODS IN ONE HINT, both fixed here. It read
                   `y accept suggestion` unconditionally. `y` is bound NOWHERE in the webapp
                   — `DecisionBar` owns that chord behind its `keyboard` prop and this view
                   deliberately stopped passing it (see the keymap note above), so the only
@@ -450,12 +449,12 @@ export function ScreenerView({
                   <Kbd>↵</Kbd> {t("hintAccept")}
                 </span>
               ) : null}
-              {/* THE FILING LEGEND IS GONE, NOT MOVED (gap UX11). It read
+              {/* THE FILING LEGEND IS GONE, NOT MOVED. It read
                   `o r c n x file` and `⇧+key marks read` — five keycaps in the bottom
                   corner of the LIST, naming five destinations that live in the bar at the
                   top of the other pane, with nothing on screen to attach them to. Each key
-                  is now on the capsule it fires, which is `bf4eb08`'s rule for the message
-                  action bar; a legend as well as the caps would be the second list U2
+                  is now on the capsule it fires, which is the message action bar's rule; a
+                  legend as well as the caps would be the second list the keyboard registry
                   deleted from the (i) panel. `j`/`k` and `↵` stay: they act on the LIST,
                   which is the pane this strip belongs to. */}
             </>
@@ -630,7 +629,7 @@ function WaitingPreview({
   scope: DecisionScope;
   onScopeChange: (scope: DecisionScope) => void;
   onDecide: Parameters<typeof DecisionBar>[0]["onDecide"];
-  /** Ask for one held message's body again (slice U5-BODY). */
+  /** Ask for one held message's body again. */
   onRetryBody: (id: string) => void;
   onBack: () => void;
 }) {
@@ -652,18 +651,18 @@ function WaitingPreview({
       />
       <div className="scn-mails">
         {/**
-          * THE ABSENCE OF A SUGGESTION IS ITSELF SOMETHING TO SAY (slice U6-SUGGEST).
+          * THE ABSENCE OF A SUGGESTION IS ITSELF SOMETHING TO SAY.
           *
           * This block used to render only in the `ai` branch, so on a live account — where
           * `ai` is null for every derived row — the preview said nothing at all, and the
-          * owner was left looking for a suggestion the surface had never admitted it did
+          * reader was left looking for a suggestion the surface had never admitted it did
           * not have. "Every mail says why" is published copy; silence does not satisfy it.
           *
           * The FACT is shared with `AiSection`'s `status` line ("no live model is connected
           * yet") and both change together the day a classifier is wired into the server's
           * dependencies — the same trigger `AiSection.tsx` already names.
           *
-          * THE WORDING IS NO LONGER SHARED, and that is the correction UX11 makes. This
+          * THE WORDING IS NO LONGER SHARED, and that is a deliberate correction. This
           * used to end *"Pick a door."*, borrowed from the marketing page's AI-off row.
           * There the metaphor is established one screen earlier — `hero.door` is the
           * landing's own paragraph — and here nothing has ever been called a door: the
