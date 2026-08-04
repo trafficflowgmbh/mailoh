@@ -39,7 +39,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
-import type { AttachmentItem } from "../components/AttachmentStrip";
+import type { AttachmentItem, AttachmentsView } from "../components/AttachmentStrip";
 
 /**
  * What `MessagePane` needs to render one message's strip.
@@ -50,17 +50,22 @@ import type { AttachmentItem } from "../components/AttachmentStrip";
  */
 export interface AttachmentsChrome {
   /**
-   * The files on this message, or an empty list.
+   * THE LIST AND WHAT IS KNOWN ABOUT IT — the engine's outcome, not a flattened array.
    *
-   * `unavailable`, `loading` and `failed` all flatten to `[]` here, and that is the strip's
-   * contract rather than a shortcut: `AttachmentStripProps` is `items`/`onOpen`/
-   * `onDownloadAll`/`downloadingAll`, with no list-level state to render. A metadata read
-   * that fails is therefore SILENT in the strip today — the paperclip is there and the strip
-   * is empty, which is also what an inline-only message looks like. Naming it rather than
-   * hiding it: a list-level failure line is owed and needs the strip's own prop contract to
-   * grow, which belongs to the slice that owns that component.
+   * ## GAP AT6, AND THE ONE LINE IT WAS
+   *
+   * This used to read `held.state === "ready" ? held.items : []`. `unavailable`, `loading` and
+   * `failed` all became the same empty array, so a metadata read that FAILED drew exactly what
+   * an inline-only message draws — nothing, under a paperclip painted from `hasAttachments`.
+   * Two different sentences, one silence, and the failing one invisible.
+   *
+   * The engine had recorded the failure the whole time (`AttachmentsOutcome`, with the server's
+   * `code` and `retryable` since AT6), and it already refuses to re-ask automatically so that a
+   * React effect cannot loop against a server that refused. What was missing was here: the seam
+   * threw the answer away. It no longer does, and {@link AttachmentsView} is the strip's own
+   * type, so the wire `MessagePane` already passes carries the state without that file changing.
    */
-  itemsOf(messageId: string): AttachmentItem[];
+  itemsOf(messageId: string): AttachmentsView;
   /** Fetch (if needed) and SAVE one attachment. The press is the whole intent. */
   open(messageId: string, attachmentId: string): void;
   /** Fetch the whole set as one server-assembled zip and save it. */
@@ -169,10 +174,41 @@ export function useMessageAttachments(
     return () => engine.releaseAttachments(messageId);
   }, [engine, messageId, available]);
 
+  /**
+   * The engine's outcome, carried across unchanged but for one addition: the failed variant
+   * gets the callback that acts on it.
+   *
+   * `retry: true` is not optional decoration. `loadAttachments` returns the HELD failure for an
+   * ordinary call — deliberately, so a React effect whose identity changes per render cannot
+   * hammer a server that already refused — so a "Try again" that omitted the flag would redraw
+   * the same failure without asking anybody, which is the same lie the failed TILE's own copy
+   * was written to avoid.
+   */
   const itemsOf = useCallback(
-    (id: string): AttachmentItem[] => {
+    (id: string): AttachmentsView => {
       const held = engine.attachmentsOf(id);
-      return held.state === "ready" ? held.items : [];
+      switch (held.state) {
+        case "unavailable":
+          return { state: "unavailable" };
+        case "loading":
+          return held.retrying ? { state: "loading", retrying: true } : { state: "loading" };
+        case "ready":
+          return { state: "ready", items: held.items };
+        case "failed":
+          return {
+            state: "failed",
+            error: held.error,
+            code: held.code,
+            retryable: held.retryable,
+            onRetry: () => void engine.loadAttachments(id, { retry: true }),
+          };
+        default: {
+          /* Exhaustive: a state the engine grows must be given an answer here, never dropped
+             into a catch-all — dropping states into one answer is the whole of AT6. */
+          const unhandled: never = held;
+          return unhandled;
+        }
+      }
     },
     [engine],
   );

@@ -143,9 +143,33 @@ export interface AttachmentItem {
  */
 export type AttachmentsOutcome =
   | { state: "unavailable" }
-  | { state: "loading" }
+  /**
+   * `retrying` is set ONLY when a human pressed the list's own retry over a held `failed`
+   * (gap AT6). A surface renders the first ask as nothing — the read is one indexed row and a
+   * skeleton on every message open would be noise — but it must NOT go silent again the moment
+   * somebody presses "Try again": the row they pressed would vanish for the whole round-trip
+   * and come back, which reads as "it worked" followed by "no it didn't". The flag is what lets
+   * the failure row stay put and say it is asking again.
+   */
+  | { state: "loading"; retrying?: boolean }
   | { state: "ready"; items: AttachmentItem[] }
-  | { state: "failed"; error: string };
+  /**
+   * `code` and `retryable` are the SERVER'S OWN CLASSIFICATION, carried through rather than
+   * re-derived from the sentence (gap AT6 — before it, only `error` survived the catch and the
+   * surface had no way to tell "you are offline" from "that message is not yours").
+   *
+   * WHAT CAN ACTUALLY LAND HERE, because copy written for the wrong failure is a lie:
+   * `GET /messages/:id/attachments` is `cost: "read"` and `AttachmentsService.listForMessage`
+   * opens no IMAP adapter, so this call NEVER touches the user's mail server. `mailbox_busy`
+   * (429, `packages/api/src/attachments-adapter.ts`) therefore cannot reach it — that refusal
+   * belongs to the two `cost: "connection"` byte routes. What reaches it is `code: "network"`
+   * (the fetch itself rejected — `HttpAdapter.request`), a 5xx from ohmail's own API, or a
+   * definite 4xx refusal (401 after a session ends, 404 for a message this account cannot see).
+   *
+   * `retryable` is TRUE for anything the client could not classify: an unclassified throw means
+   * we never established that the server refused, and re-asking costs one indexed row.
+   */
+  | { state: "failed"; error: string; code: string | null; retryable: boolean };
 
 /**
  * The MIME types whose bytes may keep their real content type on a client-minted Blob.
@@ -827,7 +851,7 @@ export class OhmailEngine {
     const q = query.trim();
     if (q === "") return { state: "ready", items: [], total: 0 };
 
-    const key = `${opts.limit ?? ""} ${q}`;
+    const key = `${opts.limit ?? ""}\u0000${q}`;
     const inFlight = this.serverSearches.get(key);
     if (inFlight) return inFlight;
 
@@ -921,7 +945,11 @@ export class OhmailEngine {
     // is open. A human pressing Retry passes `retry`.
     if (held && held.state === "failed" && !opts.retry) return held;
 
-    this.attachmentLists.set(messageId, { state: "loading" });
+    // `retrying` marks a HUMAN re-ask over a failure, and nothing else: the first ask of a
+    // message must stay `{ state: "loading" }` with the field absent, because that is the state
+    // the surface renders as silence.
+    const retrying = opts.retry === true && held?.state === "failed";
+    this.attachmentLists.set(messageId, retrying ? { state: "loading", retrying: true } : { state: "loading" });
     this.notify();
 
     const request = list.call(this.adapter, messageId)
@@ -929,9 +957,16 @@ export class OhmailEngine {
         const items = wire.filter((a) => !a.inline).map(toAttachmentItem);
         return { state: "ready", items };
       })
+      // The adapter's own classification, kept. `MutationRejectedError` is the one thing
+      // `HttpAdapter` throws — for a non-2xx (`rejectionOf`: the server's code, and `retryable`
+      // defaulted from the status) and for a fetch that rejected outright (`code: "network"`).
+      // Anything else reaching here is unclassified, and unclassified means we never established
+      // that the server refused, so asking again is honest. See {@link AttachmentsOutcome}.
       .catch((err: unknown): AttachmentsOutcome => ({
         state: "failed",
         error: err instanceof Error ? err.message : String(err),
+        code: err instanceof MutationRejectedError ? err.code : null,
+        retryable: err instanceof MutationRejectedError ? err.retryable : true,
       }))
       .then((outcome) => {
         this.attachmentLists.set(messageId, outcome);
@@ -1019,10 +1054,15 @@ export class OhmailEngine {
    *
    * An earlier shape wrote `{state: "failed"}` over the message's list here. That was wrong twice:
    * the metadata is still perfectly good — only the archive request failed — so replacing the list
-   * would blank a strip the user is looking at, discarding every `ready` object URL in it; and the
-   * strip has no per-list error surface anyway (`AttachmentStripProps` is `items`, `onOpen`,
-   * `onDownloadAll`, `downloadingAll`), so the state was overwritten and restored in the same tick
-   * and no render could ever observe it. A state nothing can render is not error handling.
+   * would blank a strip the user is looking at, discarding every `ready` object URL in it; and at
+   * the time the strip had no per-list error surface at all, so the state was overwritten and
+   * restored in the same tick and no render could ever observe it. A state nothing can render is
+   * not error handling.
+   *
+   * THE SECOND HALF OF THAT IS NO LONGER TRUE — gap AT6 gave the strip a list state, and `failed`
+   * now reaches it. The FIRST half is why this still must not use it: a failed zip says nothing
+   * about the metadata, and a list-level failure row here would claim the files are unknown when
+   * they are on screen.
    *
    * So the signal is the return value and the caller says so — a toast, next to the button that
    * was pressed.

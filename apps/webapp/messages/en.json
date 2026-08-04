@@ -1221,5 +1221,19 @@
     "showing": "Images loaded for this message.",
     "frameTitle": "Message content",
     "unsupported": "Showing the plain-text version of this message."
+  },
+  "attachments": {
+    "count": "{count, plural, one {# attachment} other {# attachments}}",
+    "groupAria": "Attachments",
+    "downloadAll": "Download all",
+    "downloadingAll": "Fetching…",
+    "idle": "{size} · in your mailbox",
+    "loading": "Fetching from your mailbox…",
+    "failed": "Couldn't fetch — try again",
+    "tooLarge": "{size} · too large to fetch",
+    "listFailed": "Couldn't load this message's files.",
+    "listOffline": "Couldn't reach ohmail — check your connection.",
+    "listRetry": "Try again",
+    "listRetrying": "Looking again…"
   }
 }
