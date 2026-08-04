@@ -17,7 +17,7 @@
  */
 import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import type { TagDTO } from "@ohmail/client-engine";
+import type { Folder, RuleDTO, TagDTO } from "@ohmail/client-engine";
 import {
   Button,
   SegmentedControl,
@@ -33,8 +33,9 @@ import {
   type ThemePreference,
 } from "@ohmail/ui";
 import { hueOf } from "../shell/format";
+import { RulesView, type RuleOutcome } from "./RulesView";
 
-type PaneId = "general" | "notifications" | "mailboxes" | "billing" | "tags" | "security" | "account";
+type PaneId = "general" | "notifications" | "mailboxes" | "billing" | "tags" | "rules" | "security" | "account";
 
 /**
  * The notification channels, and why this list is here rather than in the fixtures.
@@ -92,6 +93,7 @@ export function SettingsView({
   mailboxes,
   tags,
   tagCounts,
+  rules,
   accountSection,
   mailboxSection,
   billingSection,
@@ -102,6 +104,35 @@ export function SettingsView({
   mailboxes: MailboxEntity[];
   tags: TagDTO[];
   tagCounts: Record<string, number>;
+  /**
+   * THE RULES PANE (gap O16) — ONE PROP, ALL THREE PARTS, OR NO PANE AT ALL.
+   *
+   * ── WHY IT IS NOT A `ReactNode` SEAM ────────────────────────────────────────────────────
+   *
+   * Account, Mailboxes, Subscription and Security are all injected nodes because each one
+   * needs `app/api-client`, which `scripts/publish-desktop.mjs` DENYs from this shared file.
+   * Rules needs nothing of the sort: `rule` is a real `/sync` entity, so the list comes from
+   * the mirror via `rulesList(reader)`, and both verbs are engine mutations on the same wire
+   * `tag_assign` uses. Desktop and `?demo=1` are therefore correct without a special case —
+   * the FixturesAdapter serves `rule_delete` and `rule_update` out of `mutationEffects` like
+   * every other verb.
+   *
+   * ── WHY IT IS ONE OBJECT AND NOT THREE PROPS ────────────────────────────────────────────
+   *
+   * Three optional props can be half-supplied: a shell that passes the list and forgets a
+   * callback yields a pane whose buttons throw, which is the shape this gap is about. As one
+   * object the state space is two — wired, or absent — and `undefined` means "this shell has
+   * not wired rules yet", which removes the pane from the nav entirely rather than offering
+   * an empty list on an account that has four. An EMPTY `items` array is the other thing
+   * altogether: a real account that has decided nothing yet, and it renders as such.
+   */
+  rules?: {
+    /** Newest first — `rulesList(reader)`. */
+    items: RuleDTO[];
+    /** `engine.mutate({ kind: "rule_delete", ruleId })` — the RESULT decides what is said. */
+    onRevoke: (ruleId: string) => Promise<RuleOutcome>;
+    onRetarget: (ruleId: string, destination: Folder) => Promise<RuleOutcome>;
+  };
   /** The Cloud client's Account pane, or absent — see the header. */
   accountSection?: ReactNode;
   /**
@@ -141,6 +172,11 @@ export function SettingsView({
     // Only where there is something to bill. Desktop is free and standalone; a Subscription
     // pane there would be offering to sell what the tier already gives away.
     ...(billingSection ? [["billing", t("billing")] as [PaneId, string]] : []),
+    // BEFORE Tags. A tag is something the user chose to make; a rule is something the
+    // product made on their behalf while they were deciding about a sender, and that is the
+    // one that has to be findable. Present only where the shell wired it — a nav entry
+    // leading to an empty list on an account that HAS rules is the defect, not the fix.
+    ...(rules ? [["rules", t("rules")] as [PaneId, string]] : []),
     ["tags", t("tags")],
     // LAST, and only where there is an account to act on. Last because the pane's only
     // content is irreversible, and a destructive control at the top of a list is one
@@ -287,6 +323,10 @@ export function SettingsView({
           ) : null}
 
           {pane === "billing" ? billingSection : null}
+
+          {pane === "rules" && rules ? (
+            <RulesView rules={rules.items} onRevoke={rules.onRevoke} onRetarget={rules.onRetarget} />
+          ) : null}
 
           {pane === "tags" ? (
             <SettingsSection>

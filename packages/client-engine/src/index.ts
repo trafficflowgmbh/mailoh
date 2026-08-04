@@ -72,6 +72,7 @@ export {
   ohboxView,
   readsPartition,
   receiptsByDay,
+  rulesList,
   screenerSegments,
   senderKey,
   sendingMailboxId,

@@ -177,21 +177,52 @@ export interface EngineMessage extends EngineMessageExtras {
 /**
  * `GET /messages/:id/body`, as much of it as this client reads.
  *
- * The endpoint answers `{messageId, text, html, headers, loadedRemoteContent}`. Only `text`
- * is declared, because only `text` is rendered — contract §8's forward-compatible parsing
- * means an unread field is not an error. Two of the omissions are deliberate rather than
- * pending:
+ * The endpoint answers `{messageId, text, html, headers, loadedRemoteContent}`.
  *
- *  · `html` is NOT read. Rendering sender-authored HTML would need a sanitiser, and it is
- *    also where a tracking pixel re-enters a product whose spy-pixel blocker is a feature.
- *    Filed as owed; `text` is what every surface clamps today anyway.
- *  · `text` is ALREADY sensitivity-redacted server-side (invariant #1, `message-service.ts`
- *    `getBody`: "returned as-is, never re-derived"). This client stores exactly what it was
- *    given and never attempts a redaction of its own — a second implementation of that rule
- *    is a second place for it to be wrong.
+ * ── `html` USED TO BE DROPPED HERE, AND THAT WAS THE WHOLE OF O11b ───────────────────
+ *
+ * This interface was `{ text: string }`, with a comment saying html was not read because
+ * rendering it "would need a sanitiser, and it is also where a tracking pixel re-enters a
+ * product whose spy-pixel blocker is a feature". Both objections were correct and both are
+ * now answered — by `apps/webapp/app/components/MessageBody.tsx`, which sanitizes with
+ * DOMPurify and renders into a sandboxed frame that fetches nothing remote.
+ *
+ * What the narrowing COST, until 2026-08-04: the html part reached this process and was
+ * thrown away one line before it was needed, so every reading surface rendered
+ * mailparser's `htmlToText` rendition — the `text/plain` alternative — and a real billing
+ * mail read as `Claude [claude.ai/images/email/claude_logo_chip.p…]` with a tracking
+ * pixel's url as its last visible line. No amount of work in the renderer could fix that,
+ * because the renderer was being handed the wrong input.
+ *
+ * `text` is ALSO still carried, and is not a legacy field: sensitive mail stores NO html at
+ * all (`pipeline.ts` — `html: p.sensitivity.sensitive ? null : …`), plain-text-only mail has
+ * none to store, and the html can be refused by the sanitizer. `text` is what all three
+ * render.
+ *
+ * `text` is ALREADY sensitivity-redacted server-side (invariant #1, `message-service.ts`
+ * `getBody`: "returned as-is, never re-derived"). This client stores exactly what it was
+ * given and never attempts a redaction of its own — a second implementation of that rule is
+ * a second place for it to be wrong. The same holds for `html`: the redaction decision is
+ * that html is not stored, and this client neither re-derives nor second-guesses it.
+ *
+ * `headers` is still deliberately unread (contract §8: an unread field is not an error).
  */
 export interface MessageBodyWire {
   text: string;
+  /**
+   * The stored `text/html` part, or `null`. NEVER rendered as-is by anything: it is
+   * attacker-authored markup, and the one component allowed to touch it sanitizes it first.
+   * It may also be TRUNCATED mid-tag — `prepareHtmlForStorage` cuts at 256 KiB and appends
+   * an html comment — which is why the renderer must go through a parser that repairs, and
+   * not a string transform.
+   */
+  html: string | null;
+  /**
+   * Whether the reader has already said yes to remote content for this message
+   * (`message_bodies.loaded_remote_content`, flipped by `POST /messages/:id/load-remote`).
+   * `false` is the default and the state every message starts in.
+   */
+  loadedRemoteContent: boolean;
 }
 
 /**
@@ -218,6 +249,14 @@ export interface MessageBodyRecord {
   state: "loading" | "ready" | "failed";
   /** The endpoint's already-redacted text. Empty while loading and after a failure. */
   text: string;
+  /**
+   * The endpoint's html part (O11b), or `null` — for a message with none, for sensitive
+   * mail, and for every record that is not `ready`. Held here rather than on the message
+   * row for exactly the reason the text is: a `/sync` delta must not be able to erase it.
+   */
+  html: string | null;
+  /** The reader's remote-content decision for this message, as the server last stated it. */
+  loadedRemoteContent: boolean;
   /** Why the fetch failed, for the console — never rendered to the user. */
   error?: string;
 }
@@ -238,10 +277,25 @@ export interface MessageBodyRecord {
  */
 export type BodyState = "full" | "snippet" | "loading" | "failed";
 
-/** The text to render plus what it actually is. See {@link BodyState}. */
+/**
+ * The body to render plus what it actually is. See {@link BodyState}.
+ *
+ * `html` is a SECOND rendition of the same message, never a replacement for `text`: a
+ * surface picks html when it has a renderer for it and falls back to `text` otherwise, and
+ * every surface that cannot render html (a stream card's clamped preview, the Screener's
+ * consent preview, a notification) keeps reading `text` and is unaffected by O11b.
+ *
+ * `html` is non-null ONLY when `state === "full"`. A snippet is not html, and neither
+ * `loading` nor `failed` has a body to describe — reporting one there would be the surface
+ * rendering a stale document while saying it is still asking for it.
+ */
 export interface MessageBody {
   text: string;
   state: BodyState;
+  /** The sender's html part, unsanitized. `null` unless `state === "full"`. */
+  html: string | null;
+  /** Whether the reader has consented to remote content for this message. */
+  loadedRemoteContent: boolean;
 }
 
 export interface RuleDTO {
@@ -543,7 +597,48 @@ export type EngineMutation =
       subject?: string;
       to?: EmailAddress[];
     }
-  | { kind: "draft_accept"; draftId: string };
+  | { kind: "draft_accept"; draftId: string }
+  /**
+   * REVOKE A RULE, AND CHANGE WHERE ONE FILES (gap O16) — the undo for the consent gate.
+   *
+   * ── WHY THESE ARE ENGINE MUTATIONS AND NOT `app/api-client` CALLS ───────────────────────
+   *
+   * Exactly the argument `tag_assign.createName` makes, and it is not a preference: the
+   * surface lives in `apps/webapp/app/views`, which `scripts/publish-desktop.mjs` copies
+   * into the public desktop mirror, and that mirror does not contain `app/api-client` at
+   * all (the same script DENYs it). The engine is the only wire a shared-shell view has.
+   *
+   * ── THE PRECEDENT THIS IS DELIBERATELY FOLLOWING ────────────────────────────────────────
+   *
+   * `tag_assign` threw {@link UnsupportedMutationError} for the whole of Stage 2 while a
+   * finished tag UI sat on top of it, so every real account painted a tag optimistically
+   * and watched the overlay roll it back with no error on screen — green against fixtures
+   * the entire time. `DELETE /rules/:id` and `PATCH /rules/:id` are mounted, tested and
+   * were reachable from nothing. Adding the surface WITHOUT these two cases would have
+   * reproduced that failure verbatim, one entity along.
+   *
+   * ── WHAT A REVOKE DOES NOT DO ───────────────────────────────────────────────────────────
+   *
+   * It does not move mail. `RulesService.remove` deletes the `rules` row and appends one
+   * `rule` delete to the change log; it never touches `folder_state`, so every message the
+   * rule ever filed stays exactly where it is. The same is true of a destination change:
+   * `rules` is consulted when mail ARRIVES (`packages/core/src/rules.ts` → the routing
+   * pass), never retroactively. The surface is required to say so BEFORE the user commits,
+   * because "undo the rule" silently re-sorting a backlog is a worse surprise than the rule
+   * was — see `RulesView`.
+   */
+  | { kind: "rule_delete"; ruleId: string }
+  /**
+   * `destination` only, though `PATCH /rules/:id` accepts kind/match/priority/enabled too.
+   *
+   * Destination is the field the user has a mental model for — "this sender goes to the
+   * wrong pile" is the whole of gap C5 — and it is the only one whose new value the surface
+   * can offer as a closed set of six folders it already renders names for. `match` is a
+   * free-text field whose validity is a server concern, and re-keying a rule's `kind` turns
+   * one sender's decision into a whole domain's without saying so. Both are refused here
+   * rather than offered thinly.
+   */
+  | { kind: "rule_update"; ruleId: string; destination: Folder };
 
 // ── errors ─────────────────────────────────────────────────────────────────
 

@@ -24,12 +24,14 @@ import {
   ohboxView,
   readsPartition,
   receiptsByDay,
+  rulesList,
   sendingMailboxId,
   tagsCrossView,
   threadOf,
   triagePiles,
   type EngineDraft,
   type EngineMessage,
+  type Folder,
   type OhmailView,
   type SearchHit,
   type TagDTO,
@@ -207,6 +209,8 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
   const piles = useMemo(() => triagePiles(reader), [reader, version]);
   const tagGroups = useMemo(() => tagsCrossView(reader), [reader, version]);
   const tags = useMemo(() => reader.list<TagDTO>("tag"), [reader, version]);
+  /** Gap O16 — every rule the consent gate has written, newest first. */
+  const rules = useMemo(() => rulesList(reader), [reader, version]);
   const mailboxes = useMemo(
     () => reader.list<MailboxEntity>("mailbox"),
     [reader, version],
@@ -596,6 +600,16 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
       openSenderMenu(id, el.closest<HTMLElement>(".row"));
     },
     [openSenderMenu],
+  );
+
+  const revokeRule = useCallback(
+    (ruleId: string) => engine.mutate({ kind: "rule_delete", ruleId }),
+    [engine],
+  );
+
+  const retargetRule = useCallback(
+    (ruleId: string, destination: Folder) => engine.mutate({ kind: "rule_update", ruleId, destination }),
+    [engine],
   );
 
   const toggleTag = useCallback(
@@ -1401,6 +1415,7 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
                 tagCounts={Object.fromEntries(
                   tagGroups.map((g) => [g.tag.id, g.messages.length]),
                 )}
+                rules={{ items: rules, onRevoke: revokeRule, onRetarget: retargetRule }}
                 /* `demo` is the ENGINE's answer, not the server's floor (see the note on
                    AppShell): `?demo=1` runs on fixtures with no session and no account, so
                    an Account pane there would offer to erase something that does not

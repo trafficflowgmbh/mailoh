@@ -8,6 +8,7 @@ import {
   type MessageBodyRecord,
   type MessageStateDTO,
   type OhmailView,
+  type RuleDTO,
   type ScreenerHeldMail,
   type ScreenerSegment,
   type ScreenerSenderDTO,
@@ -135,13 +136,32 @@ export function bodyOf(
   reader: EntityReader,
   m: Pick<EngineMessage, "id" | "snippet"> & { body?: string },
 ): MessageBody {
-  if (m.body !== undefined) return { text: m.body, state: "full" };
+  // O11b — `html` IS NULL ON EVERY BRANCH BUT ONE, and that is the contract rather than an
+  // omission ({@link MessageBody}). The demo's rows carry text and no html; a snippet is not
+  // html; and `loading`/`failed` have no body to describe. Only `ready` has a document, so
+  // only `ready` may report one — otherwise a surface could render a stale frame underneath
+  // a "still loading" line.
+  if (m.body !== undefined) {
+    return { text: m.body, state: "full", html: null, loadedRemoteContent: false };
+  }
   const rec = reader.get<MessageBodyRecord>("message_body", m.id);
-  if (!rec) return { text: m.snippet, state: "snippet" };
-  if (rec.state === "ready") return { text: rec.text, state: "full" };
+  if (!rec) return { text: m.snippet, state: "snippet", html: null, loadedRemoteContent: false };
+  if (rec.state === "ready") {
+    return {
+      text: rec.text,
+      state: "full",
+      html: rec.html ?? null,
+      loadedRemoteContent: rec.loadedRemoteContent === true,
+    };
+  }
   // Loading and failed both keep the snippet on screen — it is the only text there is — and
   // differ in what the surface says about it. Neither may read as "this is the whole mail".
-  return { text: m.snippet, state: rec.state === "loading" ? "loading" : "failed" };
+  return {
+    text: m.snippet,
+    state: rec.state === "loading" ? "loading" : "failed",
+    html: null,
+    loadedRemoteContent: false,
+  };
 }
 
 // ── Conversations ──────────────────────────────────────────────────────────
@@ -506,6 +526,65 @@ export function tagsCrossView(reader: EntityReader): TagGroup[] {
     tag,
     messages: messages.filter((m) => m.labels.includes(tag.id)).sort(byDateDesc),
   }));
+}
+
+// ── Rules: the consent gate's memory (gap O16) ─────────────────────────────
+
+/**
+ * EVERY ROUTING RULE THIS ACCOUNT HAS, NEWEST FIRST.
+ *
+ * The Screener writes a `rules` row on every decision — `POST /screener/:id` creates one
+ * per yes/no (`screener-service.ts:364`), and the DecisionBar, "apply to all", "mark all
+ * spam" and the sender menu all reach that endpoint — so a product whose thesis is a
+ * consent gate accumulates these faster than any other entity the user did not ask for.
+ * Until this selector existed nothing in any client read them: `rule` has been an
+ * `EntityType` in the change log since Phase 1 (`packages/db/src/change-log.ts:45`) and a
+ * `SyncEntityType` here, the mirror has been storing them all along, and `/rules` had zero
+ * references across the whole web app.
+ *
+ * ── WHY THE MIRROR AND NOT `GET /rules` ────────────────────────────────────────────────
+ *
+ * The same argument `sendingMailboxId` makes about mailboxes, with the opposite outcome,
+ * and the difference is worth stating because it is the reason this one is a selector at
+ * all. A mailbox is NOT an entity type in the change log, so `/sync` can never send one and
+ * a Cloud surface has to reach `app/api-client` — which the shared shell may not import
+ * (`scripts/publish-desktop.mjs` DENYs it). A rule IS one. `SyncService` replays it from
+ * `change_log` like any other entity (`sync-service.ts:93-116`), the webapp passes no
+ * `types` filter so the drain carries every type, and nothing prunes `change_log` —
+ * `minRetainedSeq` only READS the minimum — so a bootstrap re-materializes rules created
+ * long before this client existed. Reading the mirror therefore costs no request, works
+ * offline, and shows the optimistic overlay: a rule the user has just revoked is gone from
+ * this list before the wire has answered.
+ *
+ * ── NEWEST FIRST, AND WHY THAT IS THE ORDER ────────────────────────────────────────────
+ *
+ * `RulesService.list` orders by `id` — a random uuid, i.e. no order at all to a reader.
+ * The rule a user wants to inspect or undo is overwhelmingly the one they just caused, and
+ * on this surface every row was caused by an act they may not have realised was a rule. So
+ * recency, with the id as a deterministic tie-break for rules minted inside the same
+ * `createdAt` resolution (a bulk "apply to all" mints several at once).
+ *
+ * ── WHAT IS DELIBERATELY NOT COMPUTED HERE ─────────────────────────────────────────────
+ *
+ * "How many messages has this rule filed?" `RuleDTO.stats` carries `hits`, `lastHitAt` and
+ * `demotions`, and NOTHING IN THE REPOSITORY EVER WRITES THEM — the columns exist
+ * (`packages/db/src/schema.ts:378-380`), `materializeRule` faithfully reports them
+ * (`materialize.ts:223`), and every one of them is the `default(0)` / `null` it was
+ * inserted with. Surfacing that as a count would put "0 messages" beside a rule that has
+ * silently filed three thousand. The surface says the count is not recorded instead; see
+ * `RulesView`.
+ *
+ * A count of mirror messages CURRENTLY sitting in the rule's destination would be
+ * computable and is also refused, for a second reason: it reads as "these will move back",
+ * which is exactly the false promise revocation must not make.
+ */
+export function rulesList(reader: EntityReader): RuleDTO[] {
+  return reader.list<RuleDTO>("rule").sort((a, b) => {
+    const ta = a.createdAt ? Date.parse(a.createdAt) : 0;
+    const tb = b.createdAt ? Date.parse(b.createdAt) : 0;
+    if (ta !== tb) return tb - ta;
+    return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+  });
 }
 
 // ── Counts ─────────────────────────────────────────────────────────────────

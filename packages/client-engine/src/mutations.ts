@@ -355,5 +355,44 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       if (!draft) return [];
       return [{ type: "draft", id: draft.id, entity: { ...draft, accepted: true, updatedAt: iso } }];
     }
+
+    /**
+     * REVOKE — a tombstone, and NOTHING ELSE (gap O16).
+     *
+     * The absent effects are the specification. `screener_decide` produces one rule effect
+     * AND a `move` per held message, because deciding at the gate genuinely re-files mail.
+     * Revoking does not: `RulesService.remove` deletes the row and appends a `rule` delete,
+     * and never reads `folder_state`. If this branch also emitted moves, the optimistic view
+     * would re-sort a backlog the server is not going to touch, and the next drain would
+     * silently put it all back — the user watching a thousand rows move and then un-move.
+     *
+     * An unknown id yields [] ⇒ the engine rejects locally with `not_found` and nothing goes
+     * on the wire, which is the right answer for a rule a concurrent drain already removed.
+     */
+    case "rule_delete": {
+      const rule = reader.get<RuleDTO>("rule", m.ruleId);
+      if (!rule) return [];
+      return [{ type: "rule", id: rule.id, entity: null }];
+    }
+
+    /**
+     * Same rule about mail, same reason: `PATCH /rules/:id` writes the `rules` row and the
+     * change log, and the routing pass consults rules when mail ARRIVES. Nothing already
+     * filed moves, so nothing here produces a `message` effect.
+     *
+     * A no-op patch (the destination it already has) still yields an effect rather than [],
+     * because [] is the engine's "target not found" signal and reporting a rejection for a
+     * request the server would happily accept is the wrong error. The surface does not offer
+     * the current destination as a choice anyway.
+     */
+    case "rule_update": {
+      const rule = reader.get<RuleDTO>("rule", m.ruleId);
+      if (!rule) return [];
+      return [{
+        type: "rule",
+        id: rule.id,
+        entity: { ...rule, destination: m.destination, updatedAt: iso } satisfies RuleDTO,
+      }];
+    }
   }
 }
