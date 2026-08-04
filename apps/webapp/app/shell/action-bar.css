@@ -43,6 +43,33 @@
   min-width: 0;
 }
 
+/* ── THE SAME BAR OVER A SELECTION (slice U5-BULK) ────────────────────────────────────
+ *
+ * `.pick-bar` (app.css, not ours to edit) is `display:flex;flex-wrap:wrap` with a count
+ * before the bar and Clear after it. Giving the bar its own full-width line is the same
+ * move `.msg-actions > .abar` makes above and for the same reason: the density ladder at
+ * the foot of this file is a CONTAINER query, so the bar must be the thing that owns the
+ * width, not one flex item competing with two labels for it.
+ *
+ * The three overrides below are `.pick-bar`'s own button and span rules reaching into the
+ * bar — it styles `button` and `span` bare, which is correct for the two controls it was
+ * written for and wrong for a bar with fifteen. Narrowed rather than reversed: the accent
+ * treatment on Clear and on the count is untouched. */
+.pick-bar > .abar {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.pick-bar .abar-b {
+  padding: 6px 8px;
+  font-weight: 550;
+  color: var(--ink);
+}
+.pick-bar .abar-b.primary { color: var(--on-accent); }
+.pick-bar .abar-lab {
+  font-weight: 550;
+  color: var(--ink3);
+}
+
 .abar {
   container-type: inline-size;
   container-name: abar;

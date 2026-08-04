@@ -42,6 +42,8 @@ import {
 } from "@ohmail/client-engine";
 import { Facets, SearchBox, SearchHit, type FacetGroup } from "@ohmail/ui";
 import { displayTime, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
+import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import "./search-keys.css";
 
 interface Filter {
   group: string;
@@ -279,6 +281,85 @@ export function SearchView({
   const isEgg = trimmed.toLowerCase() === "blanc" && items.length === 0;
 
   /**
+   * ═══ THE KEYBOARD PATH THAT DID NOT EXIST (slice U5-OPEN, gap U5c) ═══════════════════
+   *
+   * Owner: *"search does not allow a message to be opened."* Taken literally that is wrong —
+   * every hit is a real `<button>` and has always been clickable — and the ruling says so.
+   * What was true is that **this view declared zero bindings**. In a product whose own `?`
+   * sheet is generated from a keyboard registry, the one surface you reach by pressing `/`
+   * and then typing could be left only with a mouse. That is the defect.
+   *
+   * ── THE CURSOR IS VISIBLE, WHICH IS THE HALF THAT IS NOT THE BINDING ────────────────
+   *
+   * `at` is an index into the RENDERED rows, clamped rather than remembered: the list is
+   * re-derived on every keystroke and when the archive lands, so an index held across those
+   * changes would point at a different message than the one that was highlighted. Reset to
+   * the top whenever the question changes — a cursor that survived the query would be
+   * pointing into an answer to something else.
+   *
+   * ── AND `j`/`k` ARE DELIBERATELY NOT BOUND HERE ─────────────────────────────────────
+   *
+   * The ruling is explicit: `j`/`k` follow PILE order, never search-hit order. They are the
+   * two most-used keys, their meaning is per-view and tested, and a search-session cursor
+   * that survived navigation is exactly the private-state shape S15 warns about. Arrow keys
+   * are the ones the box's own focus makes available (`inInput`), and after ↵ opens a hit
+   * the pile's own `j`/`k` take over from where the message actually lives.
+   */
+  const shown = items.slice(0, SHOWN);
+  const [at, setAt] = useState(0);
+  useEffect(() => setAt(0), [trimmed]);
+  const cursor = shown.length === 0 ? -1 : Math.min(at, shown.length - 1);
+
+  const keys: KeyBinding[] = [
+    {
+      chord: "ArrowDown",
+      group: "navigate",
+      label: t("keyNext"),
+      // The box has focus the moment this view mounts (`autoFocus`), so a binding without
+      // this is a binding that never fires — the same reason Escape and ⌘K opt in.
+      inInput: true,
+      disabled: shown.length === 0,
+      run: () => setAt((i) => Math.min(i + 1, shown.length - 1)),
+    },
+    {
+      chord: "ArrowUp",
+      group: "navigate",
+      label: t("keyPrev"),
+      inInput: true,
+      disabled: shown.length === 0,
+      run: () => setAt((i) => Math.max(i - 1, 0)),
+    },
+    {
+      chord: "Enter",
+      group: "message",
+      label: t("keyOpen"),
+      inInput: true,
+      /**
+       * `disabled` WHEN THERE IS NOTHING TO OPEN — a statement to the `?` sheet, not a
+       * guard, and it is worth being exact about which.
+       *
+       * `SearchBox` fires `onSubmit` from its own `onKeyDown` (that is how Enter re-asks the
+       * archive), and the registry's dispatcher does not stop it: `preventDefault` suppresses
+       * the browser's default, not another listener. So the two DO both run when a hit is
+       * open — harmless, because the view unmounts on navigation and the archive effect's
+       * cleanup cancels its own debounce before it can spend anything.
+       *
+       * What this line buys is that the sheet reads "open the result where it lives" as inert
+       * on an empty search, which is the registry's rule for every other binding in the
+       * product: listed because it exists, greyed because there is nothing to act on.
+       */
+      disabled: cursor < 0,
+      run: () => {
+        // `shown[cursor]`, never `shown[0]`. The cursor is the whole point of the two
+        // bindings above; opening the first hit regardless would make ↓ decoration.
+        const target = shown[cursor];
+        if (target) onOpen(target.hit);
+      },
+    },
+  ];
+  useKeyBindings(keys);
+
+  /**
    * THE HONEST SENTENCE. One of five, and one of them is always on screen while a query is.
    *
    * `scopeDevice` is the load-bearing one: it is what the view says while only local results
@@ -360,15 +441,20 @@ export function SearchView({
                   A `.search-scope` rule of its own is owed. */}
               <div className="results-head">{scope}</div>
               <div className="search-cols">
+                {/* `aria-activedescendant` is not used: the hits are real buttons that keep
+                    their own focusability, and the box keeps DOM focus so typing continues
+                    to filter. The cursor is a wrapper class plus `aria-current`, which is
+                    what a screen reader can act on without moving focus off the input. */}
                 <div>
-                  {items.slice(0, SHOWN).map(({ hit, archiveOnly }) => (
-                    <Hit
+                  {shown.map(({ hit, archiveOnly }, i) => (
+                    <div
                       key={hit.message.id}
-                      hit={hit}
-                      now={now}
-                      onOpen={onOpen}
-                      archiveOnly={archiveOnly}
-                    />
+                      className={i === cursor ? "hit-w cur" : "hit-w"}
+                      data-hit={hit.message.id}
+                      {...(i === cursor ? { "aria-current": "true" as const } : {})}
+                    >
+                      <Hit hit={hit} now={now} onOpen={onOpen} archiveOnly={archiveOnly} />
+                    </div>
                   ))}
                 </div>
                 <Facets groups={facetGroups} onPick={onFacet} />

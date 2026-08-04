@@ -11,6 +11,7 @@ import { useTranslations } from "next-intl";
 import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
 import {
   Doorbell,
+  Icon,
   Kbd,
   ListGroupLabel,
   ListPane,
@@ -18,10 +19,35 @@ import {
   MessageRow,
   ReadColumn,
 } from "@ohmail/ui";
-import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { PLACE_LABEL, avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useMailState } from "../shell/MailStateProvider";
-import { MessagePane, type MessageAction } from "../shell/MessagePane";
+import { MessagePane, MOVE_TARGETS, type BulkAction, type MessageAction, type MoveTarget } from "../shell/MessagePane";
+import type { ScreeningDest } from "../shell/sender-screening";
+import "../shell/action-bar.css";
+
+/**
+ * What a selection can be asked to do (slice U5-BULK, gap U5d).
+ *
+ * Four callbacks and not one, because they are not one kind of thing. `run` and `tag` are
+ * ordinary, reversible mail operations; `screen` is a consent decision about SENDERS, and
+ * `screenPreview` exists so the surface can state what will persist BEFORE committing it.
+ * Sharing a bar is right; sharing commit semantics would be the design error.
+ */
+export interface BulkVerbs {
+  run: (action: BulkAction, ids: string[]) => void;
+  tag: (ids: string[], anchor: HTMLElement | null) => void;
+  screenPreview: (
+    ids: string[],
+    dest: ScreeningDest,
+  ) => { senders: number; messages: number; rules: number };
+  screen: (ids: string[], dest: ScreeningDest) => void;
+}
+
+/** Which sub-row the bulk bar is showing; `null` is the resting bar. Mirrors `BarPanel`. */
+type PickPanel =
+  | { kind: "move" | "more" | "screen" }
+  | { kind: "confirm"; dest: MoveTarget };
 
 /**
  * How long a split-pane selection must survive before it counts as read.
@@ -50,6 +76,7 @@ export function OhboxView({
   onAction,
   onAddTag,
   onAttachment,
+  bulk,
 }: {
   /** Fixture world or a real mailbox — decides the "older mail" tail. See its use below. */
   demo: boolean;
@@ -59,7 +86,15 @@ export function OhboxView({
   now: Date;
   selectedId: string | null;
   onSelect: (id: string) => void;
-  onEnterReader: () => void;
+  /**
+   * Open the reader ON A MESSAGE (slice U5-OPEN).
+   *
+   * It took no argument while the shell's reader was a boolean over `selectedOhbox`. It
+   * takes one now because `open` below calls `onSelect` and this in the same tick, so the
+   * shell's own selection has not re-rendered yet — a reader that read it would show the
+   * previously selected message.
+   */
+  onEnterReader: (messageId: string) => void;
   /** The shell's `mark_seen` mutation — the one read-state writer (slice U1). */
   onMarkSeen: (ids: string[], unread: boolean) => void;
   doorbellInitials: string[];
@@ -70,6 +105,8 @@ export function OhboxView({
   onAction: (action: MessageAction, message: EngineMessage) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
   onAttachment: () => void;
+  /** The verbs a multi-selection offers (slice U5-BULK). */
+  bulk: BulkVerbs;
 }) {
   const t = useTranslations("ohbox");
 
@@ -86,9 +123,12 @@ export function OhboxView({
      never costs a render. */
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const anchor = useRef<string | null>(null);
+  /** The bulk bar's open sub-row (slice U5-BULK). Same union shape as `MessagePane`'s. */
+  const [pickPanel, setPickPanel] = useState<PickPanel | null>(null);
 
   const clearPicked = useCallback(() => {
     if (picked.size > 0) setPicked(new Set());
+    setPickPanel(null);
     anchor.current = null;
   }, [picked.size]);
 
@@ -119,12 +159,43 @@ export function OhboxView({
     });
   }, [all, togglePick]);
 
-  /** Mark everything picked read, in ONE mutation — one request, one transaction, one intent. */
-  const markPicked = useCallback(() => {
-    const ids = all.filter((m) => picked.has(m.id)).map((m) => m.id);
-    onMarkSeen(ids, false);
-    clearPicked();
-  }, [all, picked, onMarkSeen, clearPicked]);
+  /**
+   * The selection IN LIST ORDER, which is the order every verb acts in.
+   *
+   * A `Set`'s iteration order is insertion order, so a range built upwards and one built
+   * downwards would dispatch in different orders for the same visible selection. Deriving it
+   * from `all` means the mutations follow what is on screen.
+   */
+  const pickedIds = useMemo(
+    () => all.filter((m) => picked.has(m.id)).map((m) => m.id),
+    [all, picked],
+  );
+
+  /**
+   * Run a bulk verb and drop the selection.
+   *
+   * Clearing afterwards is the rule `markPicked` has always had: the verb has been applied
+   * to exactly these messages, so a set that survived would invite a second application of
+   * a verb that has already happened — and after a move or a screening the rows are not
+   * even in this list any more.
+   */
+  const runBulk = useCallback(
+    (action: BulkAction) => {
+      bulk.run(action, pickedIds);
+      clearPicked();
+    },
+    [bulk, pickedIds, clearPicked],
+  );
+
+  /**
+   * Mark everything picked read, in ONE mutation — one request, one transaction, one intent.
+   *
+   * `⇧U` and the bar's Read button are THE SAME CALL, which is O13's rule about the read
+   * switch applied to the selection: two paths to one verb is how a button and its key drift
+   * into meaning different things. It used to call `onMarkSeen` directly, so the key marked
+   * mail read and said nothing while every other bulk verb reported what it had done.
+   */
+  const markPicked = useCallback(() => runBulk("read"), [runBulk]);
 
   // Ids that vanished from the list (moved, filed, deleted) leave with it — a count that
   // outlives its rows is a count that acts on nothing.
@@ -210,7 +281,7 @@ export function OhboxView({
     setDwellOn(null);
     onSelect(m.id);
     if (m.unread) onMarkSeen([m.id], false);
-    onEnterReader();
+    onEnterReader(m.id);
   }, [onSelect, onMarkSeen, onEnterReader]);
 
   /**
@@ -325,7 +396,10 @@ export function OhboxView({
       label: t("keyOpen"),
       // ↵ on a focused button presses the button; that is the browser's and it stays so.
       when: (e) => (e.target as HTMLElement).tagName !== "BUTTON",
-      run: () => (selected ? open(selected) : onEnterReader()),
+      // The `: onEnterReader()` arm is gone with the boolean it depended on. It meant
+      // "open the reader on nothing" — with an empty list there is no message to read, and
+      // the sheet it opened rendered a `<span/>`.
+      run: () => selected && open(selected),
     },
     {
       chord: "t",
@@ -375,6 +449,29 @@ export function OhboxView({
       label: t("keyMarkPicked"),
       disabled: picked.size === 0,
       run: () => markPicked(),
+    },
+    {
+      /**
+       * ESCAPE CANCELS THE OPEN SUB-ROW BEFORE IT CLEARS THE SELECTION (slice U5-BULK).
+       *
+       * FIRST in this array, and the array's order IS the precedence — `ordered()` walks a
+       * layer's bindings in declaration order and the first match runs (`keymap.tsx`). So
+       * this is stated where precedence lives rather than as a condition inside the clear
+       * binding, which is the shape S15 records as the one that rots.
+       *
+       * It matters most for the confirm row: that row is the last moment before a consent
+       * decision commits, and an Escape that blew past it to clear the selection would leave
+       * the user with neither the confirmation nor the set they had built.
+       *
+       * NO NEW `document` LISTENER — there are already five, measured. This is a registry
+       * binding in the view layer, which the shell's `overlay` scope still outranks, so a `?`
+       * sheet or the palette opened over this closes first and the sub-row survives.
+       */
+      chord: "Escape",
+      group: "message",
+      label: t("keyCancelBulk"),
+      disabled: pickPanel == null,
+      run: () => setPickPanel(null),
     },
     {
       /**
@@ -495,9 +592,15 @@ export function OhboxView({
             {picked.size > 0 ? (
               <div className="pick-bar" role="status">
                 <span>{t("picked", { count: picked.size })}</span>
-                <button type="button" onClick={markPicked}>
-                  {t("pickedMarkSeen")} <Kbd>⇧U</Kbd>
-                </button>
+                <BulkBar
+                  ids={pickedIds}
+                  panel={pickPanel}
+                  onPanel={setPickPanel}
+                  onRun={runBulk}
+                  onMarkSeen={markPicked}
+                  bulk={bulk}
+                  onDone={clearPicked}
+                />
                 <button type="button" className="quiet" onClick={clearPicked}>
                   {t("pickedClear")} <Kbd>esc</Kbd>
                 </button>
@@ -553,7 +656,7 @@ export function OhboxView({
             message={selected}
             tags={tags}
             now={now}
-            onEnterReader={onEnterReader}
+            onEnterReader={() => onEnterReader(selected.id)}
             onAction={(a) => onAction(a, selected)}
             onAddTag={onAddTag}
             onAttachment={onAttachment}
@@ -561,6 +664,229 @@ export function OhboxView({
         ) : null}
       </ReadColumn>
     </section>
+  );
+}
+
+/**
+ * ═══ THE SELECTION'S ACTION BAR (slice U5-BULK, gap U5d) ═══════════════════════════════
+ *
+ * Owner: *"when selecting multiple message the options should not only be mark unseen or
+ * read or esc but also set their screener type and edit tags etc."*
+ *
+ * ── IT IS THE MESSAGE BAR'S GROUPING, NOT A SECOND VOCABULARY ─────────────────────────
+ *
+ * O13 established what these verbs are and how they group, and the classes below are that
+ * bar's own (`action-bar.css`): one segmented control for the three horizons, two filing
+ * verbs adjacent because they answer the same question at two scopes, the read state apart
+ * from the verbs, and a More panel that REPLACES the row rather than growing it. A second
+ * grouping invented for bulk would mean the same five verbs sit in two different orders
+ * depending on how many messages you have selected, which is the kind of thing a user
+ * experiences as the app changing its mind.
+ *
+ * Two deliberate divergences, both forced:
+ *
+ *   · **No Reply.** There is no such act over eleven messages. The leading slot the accent
+ *     verb occupies is taken by Tag, which is the instant, reversible verb here.
+ *   · **Read and Unread are two buttons, not a switch.** `role="switch"` reports a current
+ *     state, and a selection has a mixed one; a toggle over it would mark six read and five
+ *     unread in a gesture that reads as one decision.
+ *
+ * ── AND SCREENING GETS A CEREMONY THE OTHERS DO NOT ───────────────────────────────────
+ *
+ * Everything else here is a mail operation on the messages you picked. Screening is a
+ * decision about SENDERS: for a sender still waiting at the gate it promotes a rule that
+ * governs all their future mail, and it moves every message that sender has in the mirror,
+ * not only the ones in the selection. So it is two steps — pick a destination, then a row
+ * that states the senders, the messages and the rules before anything is dispatched.
+ *
+ * **There is no undo, and that is why the confirm row exists.** `POST /screener/:id` has no
+ * inverse (gap C5), so an Undo affordance would either do nothing or move the mail back
+ * while the rule it created stood — a control that lies about what it reversed. Stating the
+ * counts before committing is the honest version of the same protection.
+ */
+function BulkBar({
+  ids,
+  panel,
+  onPanel,
+  onRun,
+  onMarkSeen,
+  bulk,
+  onDone,
+}: {
+  ids: string[];
+  panel: PickPanel | null;
+  onPanel: (next: PickPanel | null) => void;
+  onRun: (action: BulkAction) => void;
+  /** Mark-read keeps its own path: ⇧U's handler, so the bar and the key are one call. */
+  onMarkSeen: () => void;
+  bulk: BulkVerbs;
+  onDone: () => void;
+}) {
+  const t = useTranslations("ohbox");
+  const tr = useTranslations("screening");
+
+  const defer = (
+    <>
+      <button type="button" className="abar-b" onClick={() => onRun("later")}>
+        {t("actionLater")}
+      </button>
+      <button type="button" className="abar-b" onClick={() => onRun("aside")}>
+        {t("actionSetAside")}
+      </button>
+      <button type="button" className="abar-b" onClick={() => onRun("resurface")}>
+        {t("actionResurface")}
+      </button>
+    </>
+  );
+
+  const file = (
+    <>
+      <button type="button" className="abar-b" onClick={() => onPanel({ kind: "screen" })}>
+        {tr("action")}
+      </button>
+      <button type="button" className="abar-b" onClick={() => onPanel({ kind: "move" })}>
+        {t("actionMove")}
+      </button>
+    </>
+  );
+
+  const tagButton = (anchorClass: string) => (
+    <button
+      type="button"
+      className={anchorClass}
+      onClick={(e) => {
+        bulk.tag(ids, (e.currentTarget as HTMLElement | null) ?? null);
+        onDone();
+      }}
+    >
+      {t("tagChip")}
+    </button>
+  );
+
+  if (panel?.kind === "move" || panel?.kind === "screen") {
+    const screening = panel.kind === "screen";
+    return (
+      <div className="abar">
+        <div className="abar-panel">
+          <span className="abar-lab">{screening ? tr("bulkTo") : t("moveLabel")}</span>
+          {MOVE_TARGETS.map((v) => (
+            <button
+              key={v}
+              type="button"
+              className="abar-b abar-solo"
+              onClick={() =>
+                screening ? onPanel({ kind: "confirm", dest: v }) : onRun(`move:${v}`)
+              }
+            >
+              → {PLACE_LABEL[v] ?? v}
+            </button>
+          ))}
+          <button type="button" className="abar-b" onClick={() => onPanel(null)}>
+            {t("moveCancel")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (panel?.kind === "confirm") {
+    /**
+     * THE LAST MOMENT BEFORE CONSENT, and it states what will PERSIST separately from what
+     * will move. The counts come from the same `planScreeningChange` that will run — not
+     * from `ids.length`, which is a different and smaller number whenever a picked sender
+     * has other mail in the mirror. Reporting the selection size here would be a
+     * confirmation of something other than what happens.
+     */
+    const plan = bulk.screenPreview(ids, panel.dest);
+    const place = PLACE_LABEL[panel.dest] ?? panel.dest;
+    return (
+      <div className="abar">
+        <div className="abar-panel">
+          <span className="abar-lab">
+            {plan.senders === 0
+              ? /* Nothing to confirm, said as itself. "0 senders → Ohbox. 0 messages move."
+                   is a confirmation of nothing, and a user reading it would reasonably press
+                   the button to find out what it meant. */
+                tr("bulkConfirmNothing", { place })
+              : plan.rules > 0
+                ? tr("bulkConfirmRules", {
+                    place,
+                    senders: plan.senders,
+                    count: plan.messages,
+                    rules: plan.rules,
+                  })
+                : tr("bulkConfirm", { place, senders: plan.senders, count: plan.messages })}
+          </span>
+          <button
+            type="button"
+            className="abar-b abar-solo primary"
+            disabled={plan.senders === 0}
+            onClick={() => {
+              bulk.screen(ids, panel.dest);
+              onDone();
+            }}
+          >
+            {tr("bulkCommit")}
+          </button>
+          <button type="button" className="abar-b" onClick={() => onPanel({ kind: "screen" })}>
+            {t("moveCancel")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (panel?.kind === "more") {
+    return (
+      <div className="abar">
+        <div className="abar-panel">
+          <span className="abar-lab">{t("actionMore")}</span>
+          <span className="abar-pg abar-p-defer">{defer}</span>
+          <span className="abar-pg abar-p-file">{file}</span>
+          <button type="button" className="abar-b" onClick={() => onPanel(null)}>
+            {t("moveCancel")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="abar">
+      <div className="abar-row">
+        <div className="abar-g">{tagButton("abar-b abar-solo")}</div>
+
+        <div className="abar-g abar-seg abar-defer" role="group" aria-label={t("groupDefer")}>
+          {defer}
+        </div>
+
+        <div className="abar-g abar-seg abar-file" role="group" aria-label={t("groupFile")}>
+          {file}
+        </div>
+
+        <div className="abar-g abar-read-g">
+          <span className="abar-g abar-seg" role="group" aria-label={t("groupRead")}>
+            <button type="button" className="abar-b" onClick={onMarkSeen}>
+              {t("pickedMarkSeen")} <Kbd>⇧U</Kbd>
+            </button>
+            <button type="button" className="abar-b" onClick={() => onRun("unread")}>
+              {t("pickedMarkUnseen")}
+            </button>
+          </span>
+          <button
+            type="button"
+            className="abar-b abar-solo abar-more"
+            aria-haspopup="true"
+            aria-expanded={false}
+            aria-label={t("actionMore")}
+            title={t("actionMore")}
+            onClick={() => onPanel({ kind: "more" })}
+          >
+            <Icon name="chev" size={12} className="abar-chev" />
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

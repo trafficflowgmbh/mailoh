@@ -25,12 +25,15 @@ import {
   readsPartition,
   receiptsByDay,
   rulesList,
+  senderKey,
   sendingMailboxId,
   tagsCrossView,
   threadOf,
   triagePiles,
   type EngineDraft,
   type EngineMessage,
+  type EngineMutation,
+  type EntityReader,
   type Folder,
   type OhmailView,
   type SearchHit,
@@ -60,7 +63,7 @@ import {
   type OwnerResolver,
 } from "./engine";
 import { PLACE_LABEL, avatarHue, firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
-import { MessagePane, type MessageAction } from "./MessagePane";
+import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
 import { useScreenerState } from "./screener-state";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
@@ -115,6 +118,59 @@ interface ReadsAiChipEntity {
  * replies, the done set and the pile row cannot drift apart over what counts as "this item".
  */
 const frKeyOf = (item: TriagePileEntry): string => item.messageId ?? item.title;
+
+/**
+ * WHERE A MESSAGE OPENS — the decision, with nothing else in it (slice U5-OPEN, gap U5c).
+ *
+ * Extracted from `openMessage` because the decision and the navigation are two things and
+ * only one of them is checkable without a browser. Every arm below is a claim the owner
+ * made a report about, and each is now an assertion rather than a paragraph.
+ */
+export type OpenTarget =
+  | { kind: "ohbox"; id: string; reader: boolean }
+  | { kind: "stream"; view: "reads" | "receipts"; id: string }
+  | { kind: "screener"; segment: ScreenerSegmentId; row: string | null }
+  | { kind: "reader"; id: string };
+
+/**
+ * @param narrow  the reading column is `display:none` — under 900px, `app.css`.
+ * @param rowFor  the Screener row that speaks for this sender, or null when none is held.
+ */
+export function openTargetFor(
+  m: EngineMessage,
+  narrow: boolean,
+  rowFor: (m: EngineMessage, segment: ScreenerSegmentId) => string | null,
+): OpenTarget {
+  const view: OhmailView | undefined = VIEW_OF_FOLDER[m.folder];
+  if (view === "ohbox") return { kind: "ohbox", id: m.id, reader: narrow };
+  if (view === "reads" || view === "receipts") return { kind: "stream", view, id: m.id };
+  if (view === "screener" || view === "screened" || view === "spam") {
+    const segment: ScreenerSegmentId =
+      view === "screener" ? "waiting" : view === "screened" ? "screened" : "spam";
+    return { kind: "screener", segment, row: rowFor(m, segment) };
+  }
+  // A folder no view owns. `Folder` is a closed six-member union today, so this is not
+  // reachable from the wire — see `openMessage` for why it is written anyway.
+  return { kind: "reader", id: m.id };
+}
+
+/**
+ * The tags EVERY message in `ids` carries — the intersection, not the union.
+ *
+ * The picker renders a tag as assigned or not, and pressing an assigned one REMOVES it. Over
+ * a set, "any of them has it" would therefore draw a half-applied tag as done, and the next
+ * press would strip it from the two that had it instead of adding it to the eight that did
+ * not — the opposite of what the row appears to offer. One message is the one-element case
+ * of the same rule, so there is one derivation and no branch.
+ */
+function tagsOnAll(reader: EntityReader, ids: string[]): string[] {
+  const lists = ids.map((id) => reader.get<EngineMessage>("message", id)?.labels ?? []);
+  if (lists.length === 0) return [];
+  return lists.reduce<string[]>(
+    (acc, labels) => acc.filter((tagId) => labels.includes(tagId)),
+    [...lists[0]!],
+  );
+}
 
 /**
  * `demo` here is the SERVER's answer, and it is only a floor — `EngineProvider` re-derives
@@ -253,7 +309,32 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
     spam: null,
   });
   const [screenerFull, setScreenerFull] = useState(false);
-  const [readerOpen, setReaderOpen] = useState(false);
+  /**
+   * THE READER IS A MESSAGE NOW, NOT A BOOLEAN (slice U5-OPEN).
+   *
+   * It was `readerOpen: boolean` rendering `selectedOhbox`, which made the overlay a
+   * property of ONE pile: nothing outside the Ohbox could open a message, and a message in
+   * a folder this client has no view for could not be opened at all. `openMessage` — the
+   * one answer to "open it where it lives" — therefore had no way to finish the job for
+   * search hits, which is three of the owner's four reports (U5a, U5c, U5d) meeting at one
+   * missing call.
+   *
+   * An id and not the `EngineMessage`: the mirror re-issues entities on every delta, so a
+   * held object would be a snapshot that stops tracking read-state, tags and triage the
+   * moment the reader is open — exactly the window in which they change.
+   */
+  const [readerFor, setReaderFor] = useState<string | null>(null);
+  /**
+   * An open that has to SURVIVE the route transition it travels with (the `frPending`
+   * shape, and for the same reason).
+   *
+   * `openMessage` navigates and opens in one gesture. The route-transition effect below
+   * closes every overlay when the view changes — `setReaderFor(null)` included — so an
+   * open written directly would be erased by the navigation that was meant to carry it.
+   * The effect honours this flag in the same pass, after its own clear, so the order is a
+   * rule rather than a race between two `setState`s and a `hashchange`.
+   */
+  const [readerPending, setReaderPending] = useState<string | null>(null);
   const [railOpen, setRailOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -283,6 +364,16 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
   // Survives a reload; see `persisted-ui.ts` for why it is local and read after mount.
   const [tagsOpen, setTagsOpen] = usePersistedFlag(UI_KEYS.tagsOpen, true);
   const [picker, setPicker] = useState<TagPickerState | null>(null);
+  /**
+   * WHO THE OPEN TAG PICKER IS ACTUALLY FOR (slice U5-BULK).
+   *
+   * `TagPickerState` carries a single `forId` and belongs to another slice's file, so the
+   * SET a bulk tag edit acts on is held beside it rather than inside it. `null` means "the
+   * one message in `picker.forId`", which is every existing caller; a list means the pick
+   * set, and the two things the shell supplies — `assigned` and `onToggle` — are computed
+   * over it. The picker component itself is unchanged and does not know the difference.
+   */
+  const [pickerIds, setPickerIds] = useState<string[] | null>(null);
   const [chipState, setChipState] = useState<ReadsChipState>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [jump, setJump] = useState<{ view: "reads" | "receipts"; id: string } | null>(null);
@@ -332,6 +423,30 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
   );
   const selectedOhbox =
     allOhbox.find((m) => m.id === ohboxSel) ?? allOhbox[0] ?? null;
+
+  /**
+   * What the reader is showing, read from the mirror on every render.
+   *
+   * `?? null` and never a fallback to `selectedOhbox`: the reader shows the message it was
+   * opened on or it shows nothing. A fallback here would re-create the defect
+   * `OhboxView.open` documents — the sheet swapping to a message nobody opened the moment
+   * the list re-partitioned underneath it.
+   */
+  const readerMessage: EngineMessage | null = readerFor
+    ? (reader.get<EngineMessage>("message", readerFor) ?? null)
+    : null;
+
+  /**
+   * Is the reading column absent? Under 900px `app.css` sets `display:none` on it, so a
+   * split-pane selection shows the user nothing and "opened" has to mean the reader sheet.
+   * One predicate, used by `openReply` (which had it inline) and by `openMessage`.
+   */
+  const readColumnHidden = useCallback(
+    () =>
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(max-width: 900px)").matches === true,
+    [],
+  );
 
   const waitingLive = screener.waiting.filter((w) => !screener.isExiting(w.id));
 
@@ -408,8 +523,9 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
     const prev = prevRoute.current;
     if (prev.view !== route.view || prev.screenerSegment !== route.screenerSegment || prev.tagId !== route.tagId) {
       screener.flush();
-      setReaderOpen(false);
+      setReaderFor(null);
       setPicker(null);
+      setPickerIds(null);
       setFr(null);
       setRailOpen(false);
       setSenderMenu(null);
@@ -422,6 +538,14 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
         // NOT `setFrValues({})` — see `startFR`. Wiping the map here is the same data loss.
         setFr({ step: 0, items: piles.replyLater });
       }
+      // …and a pending OPEN, for exactly the same reason (U5-OPEN). `openMessage` sets both
+      // the destination and the intent to open before the hash changes; the clear above runs
+      // first, so without this an Ohbox hit tapped at 390px would navigate and then close the
+      // reader it had just asked for, which is the shape U7 already paid for once.
+      if (readerPending) {
+        setReaderFor(readerPending);
+        setReaderPending(null);
+      }
     }
     prevRoute.current = route;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -429,6 +553,7 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
 
   /* ── shared actions ── */
   const openTagPicker = useCallback((messageId: string, anchor: HTMLElement | null) => {
+    setPickerIds(null);
     setPicker({ forId: messageId, ...placePicker(anchor) });
   }, []);
 
@@ -445,10 +570,8 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
     // MOBILE. Under 900px the reading column is `display:none` (app.css), so an inline
     // reply would mount into a pane nobody can see and `r` would look broken — measured on
     // the shipped build at 390px. There, the reader IS the open message, so open it.
-    if (typeof window !== "undefined" && window.matchMedia?.("(max-width: 900px)").matches) {
-      setReaderOpen(true);
-    }
-  }, []);
+    if (readColumnHidden()) setReaderFor(messageId);
+  }, [readColumnHidden]);
 
   const closeReply = useCallback(() => setReplyTo(null), []);
 
@@ -622,6 +745,43 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
   );
 
   /**
+   * The same verb over a SET (slice U5-BULK) — and it is `tag_assign` fanned out.
+   *
+   * No new bulk mutation kind: `tag_assign` is per-message on the wire, the round trips are
+   * one per message that actually CHANGES, and a selection is a handful of rows rather than
+   * a pile. Inventing a bulk kind would mean a second server route to keep honest for a cost
+   * nobody has measured — the brief asks for a measurement before that claim, and there is
+   * none, so the fan-out stands.
+   *
+   * Messages that already agree with the target state are skipped. `tag_assign` is
+   * idempotent, so this is not correctness — it is not asking a server to restate forty
+   * things it already holds.
+   */
+  const bulkToggleTag = useCallback(
+    (ids: string[], tagId: string, assigned: boolean) => {
+      const name = tags.find((x) => x.id === tagId)?.name ?? tagId;
+      const targets = ids.filter((id) => {
+        const m = reader.get<EngineMessage>("message", id);
+        return m != null && m.labels.includes(tagId) !== assigned;
+      });
+      if (targets.length === 0) return;
+      for (const messageId of targets) {
+        void engine.mutate({ kind: "tag_assign", messageId, tagId, assigned });
+      }
+      if (targets.length === 1) {
+        toast(assigned ? t("tag.toastTagged", { name }) : t("tag.toastUntagged", { name }));
+        return;
+      }
+      toast(
+        assigned
+          ? t("tag.toastTaggedMany", { name, count: targets.length })
+          : t("tag.toastUntaggedMany", { name, count: targets.length }),
+      );
+    },
+    [engine, reader, tags, toast, t],
+  );
+
+  /**
    * Mint a tag and put it on this message (W6).
    *
    * ONE mutation, not two. The shell cannot call the API directly — `scripts/publish-desktop.mjs`
@@ -656,7 +816,7 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
         case "draft":
           // The AI draft-review flow is still its own view (it is a card with sources and
           // a regenerate step, not a text box). It now leaves on Escape; see ComposeView.
-          setReaderOpen(false);
+          setReaderFor(null);
           go("compose");
           break;
         case "later":
@@ -718,6 +878,173 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
     [engine, toast, t, piles.replyLater.length, now, openReply, markSeen],
   );
 
+  /**
+   * ═══ THE SELECTION'S VERBS (slice U5-BULK, gap U5d) ═════════════════════════════════
+   *
+   * Owner: *"when selecting multiple message the options should not only be mark unseen or
+   * read or esc but also set their screener type and edit tags etc."* They were right and
+   * the count was exact: ⇧U and Escape, in one view.
+   *
+   * The vocabulary is the ACTION BAR's, not a second one invented for bulk — the same three
+   * horizons, the same two filing verbs, the same read state. Reply is the one verb that is
+   * dropped, because "reply to eleven messages" is not a thing the product can mean.
+   *
+   * Everything here dispatches through the ordinary engine path, one mutation per message,
+   * and says ONE sentence at the end. A per-message toast over a selection of forty is not
+   * feedback, it is a denial of service on your own screen.
+   */
+  const onBulkAction = useCallback(
+    (action: BulkAction, ids: string[]) => {
+      if (ids.length === 0) return;
+      if (action === "read" || action === "unread") {
+        // The batch mutation, unchanged: one request, one transaction, one intent (U1b).
+        markSeen(ids, action === "unread");
+        toast(
+          t(action === "unread" ? "ohbox.toastBulkUnread" : "ohbox.toastBulkRead", {
+            count: ids.length,
+          }),
+        );
+        return;
+      }
+      if (action === "later" || action === "aside" || action === "resurface") {
+        const state = action === "later" ? "reply_later" : action === "aside" ? "set_aside" : "bubbled_up";
+        const when = action === "resurface" ? nextFridayNine(now) : null;
+        for (const messageId of ids) {
+          void engine.mutate({
+            kind: "triage_set",
+            messageId,
+            state,
+            ...(when ? { bubbleUpAt: when } : {}),
+          });
+        }
+        toast(
+          action === "resurface"
+            ? t("ohbox.toastBulkResurface", { count: ids.length, when: resurfaceLabel(when!) })
+            : t(action === "later" ? "ohbox.toastBulkLater" : "ohbox.toastBulkAside", {
+                count: ids.length,
+              }),
+        );
+        return;
+      }
+      // `move:<view>` — the destination travels with the action, exactly as it does for one
+      // message (gap C4). A message already in the destination is not re-moved: the count in
+      // the toast is what CHANGED, which is the only count worth reporting.
+      const view = action.slice("move:".length) as OhmailView;
+      const folder = FOLDER_OF_VIEW[view];
+      let moved = 0;
+      for (const messageId of ids) {
+        const m = reader.get<EngineMessage>("message", messageId);
+        if (!m || m.folder === folder) continue;
+        void engine.mutate({ kind: "move", messageId, folder });
+        moved++;
+      }
+      toast(t("ohbox.toastBulkMoved", { count: moved, place: PLACE_LABEL[view] ?? view }));
+    },
+    [engine, reader, markSeen, toast, t, now],
+  );
+
+  /**
+   * THE BULK SCREENING PLAN — grouped by SENDER, because that is what screening is about.
+   *
+   * A screener decision is not a per-message action, and a selection routinely mixes the two
+   * cases the single-sender path already distinguishes: a sender still WAITING is decided
+   * through `POST /screener/:id`, which promotes a **rule that governs all their future
+   * mail**; a sender whose mail has left the Screener is a composition of `move`s with no
+   * lasting effect at all. Ten messages from six senders, two of them waiting, is two
+   * permanent consent records and four one-off moves — and a naive bulk apply would report
+   * "10 messages moved" and never mention the two.
+   *
+   * So this returns the counts SEPARATELY and the surface states them before committing.
+   * `planScreeningChange` per sender, never a bulk shortcut: forty senders decided through a
+   * path that skips `screener_decide` would fork the consent record from the one
+   * `screener-service.decide` writes.
+   *
+   * NOTE THE COUNT THIS DELIBERATELY REPORTS. The plan moves every message the mirror holds
+   * from that sender, not only the ones that were picked — that IS what screening a sender
+   * means, and it is precisely why the number has to be on screen before the button commits.
+   */
+  const planBulkScreening = useCallback(
+    (ids: string[], dest: ScreeningDest) => {
+      const seen = new Set<string>();
+      const plans: EngineMutation[] = [];
+      let senders = 0;
+      let messages = 0;
+      let rules = 0;
+      for (const id of ids) {
+        const s = senderScreening(reader, id);
+        if (!s || seen.has(s.key)) continue;
+        seen.add(s.key);
+        const plan = planScreeningChange(s, dest);
+        if (plan.mutations.length === 0) continue;
+        senders++;
+        messages += plan.moved;
+        if (plan.rule) rules++;
+        plans.push(...plan.mutations);
+      }
+      return { senders, messages, rules, mutations: plans };
+    },
+    [reader],
+  );
+
+  const onBulkScreen = useCallback(
+    (ids: string[], dest: ScreeningDest) => {
+      const plan = planBulkScreening(ids, dest);
+      const place = PLACE_LABEL[dest] ?? dest;
+      if (plan.mutations.length === 0) {
+        toast(t("screening.toastBulkNothing", { place }));
+        return;
+      }
+      for (const m of plan.mutations) void engine.mutate(m);
+      // Two sentences because there are two outcomes, and the second one is permanent. The
+      // single-sender path already says which happened; this keeps that vocabulary and adds
+      // the only thing bulk introduces — that a selection can contain both.
+      toast(
+        plan.rules > 0
+          ? t("screening.toastBulkRuled", {
+              place,
+              senders: plan.senders,
+              count: plan.messages,
+              rules: plan.rules,
+            })
+          : t("screening.toastBulkMoved", {
+              place,
+              senders: plan.senders,
+              count: plan.messages,
+            }),
+      );
+    },
+    [engine, planBulkScreening, toast, t],
+  );
+
+  /** Tag a whole selection: the shell's picker, pointed at a set. See `pickerIds`. */
+  const openBulkTagPicker = useCallback((ids: string[], anchor: HTMLElement | null) => {
+    if (ids.length === 0) return;
+    setPickerIds(ids);
+    setPicker({ forId: ids[0]!, ...placePicker(anchor) });
+  }, []);
+
+  /**
+   * The four callbacks the bulk bar takes, as one stable object.
+   *
+   * `screenPreview` deliberately drops the mutation list `planBulkScreening` also returns:
+   * the confirm row renders on every keystroke of a re-render and must not be able to
+   * dispatch anything. Committing is `screen`, which recomputes from the same function — so
+   * the numbers on screen and the mutations that run come from one derivation, and a
+   * selection that changed between the two cannot commit a plan nobody was shown.
+   */
+  const bulkVerbs = useMemo(
+    () => ({
+      run: onBulkAction,
+      tag: openBulkTagPicker,
+      screenPreview: (ids: string[], dest: ScreeningDest) => {
+        const { senders, messages, rules } = planBulkScreening(ids, dest);
+        return { senders, messages, rules };
+      },
+      screen: onBulkScreen,
+    }),
+    [onBulkAction, openBulkTagPicker, planBulkScreening, onBulkScreen],
+  );
+
   const readsMarkSeen = useCallback(
     (id: string) => {
       void engine.mutate({
@@ -729,27 +1056,86 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
     [engine, partition.waterline?.afterId],
   );
 
-  const openMessage = useCallback((m: EngineMessage) => {
-    const view = VIEW_OF_FOLDER[m.folder];
-    if (view === "ohbox") {
-      setOhboxSel(m.id);
-      go("ohbox");
-    } else if (view === "reads") {
-      setReadsCur(m.id);
-      setJump({ view: "reads", id: m.id });
-      go("reads");
-    } else if (view === "receipts") {
-      setReceiptsCur(m.id);
-      setJump({ view: "receipts", id: m.id });
-      go("receipts");
-    } else if (view === "spam") {
-      goScreener("spam");
-    } else if (view === "screened") {
-      goScreener("screened");
-    } else {
-      go("screener");
-    }
-  }, []);
+  /**
+   * The Screener row that speaks for `m`, in `segment`.
+   *
+   * The Screener's rows are SENDERS, not messages: a derived row's id is the newest held
+   * message from that address (`screener-state.ts`), which is almost never the message
+   * somebody clicked in a search result. Matching on `senderKey` is therefore the only
+   * lookup that can land on the right row, and it is the same key the selectors and the
+   * server group by. Null when this client holds no row for them — the caller navigates
+   * without a selection rather than inventing one.
+   */
+  const screenerRowFor = useCallback(
+    (m: EngineMessage, segment: ScreenerSegmentId): string | null => {
+      const want = senderKey(m.from.address);
+      const rows =
+        segment === "waiting"
+          ? screener.waiting
+          : segment === "screened"
+            ? screener.screenedOut
+            : screener.spam.map((r) => r.sender);
+      return rows.find((r) => senderKey(r.from.address) === want)?.id ?? null;
+    },
+    [screener.waiting, screener.screenedOut, screener.spam],
+  );
+
+  /**
+   * OPEN IT WHERE IT LIVES — the one answer, finished (slice U5-OPEN, gap U5c).
+   *
+   * Owner: *"search does not allow a message to be opened, should open the message where it
+   * lives."* The literal claim was wrong and the ruling says so — a `SearchHit` is a real
+   * `<button>` and has always called this. What was wrong is everything AFTER the routing
+   * decision, and it is the same seam in every arm: this function set a view and a cursor
+   * and then stopped, so on three of the five destinations the user arrived at a list and
+   * had to find the thing they had just clicked, and on the fourth they arrived at a pane
+   * that is `display:none` at their screen width.
+   *
+   *   · **ohbox** — the split pane IS the open, so the cursor is enough… on a desktop. Under
+   *     900px the reading column is hidden, so the reader sheet is what "opened" means
+   *     there, exactly as `OhboxView`'s own tap handler already decided.
+   *   · **reads / receipts** — cursor plus a `jump`, which scrolls the stream to the card.
+   *     Unchanged: these piles open IN PLACE and the clamp is their contract.
+   *   · **screener / screened / spam** — now SELECTS THE SENDER as well as navigating. The
+   *     segment alone was the misroute the ruling named third: a consent surface that drops
+   *     you at a queue of strangers when you asked about one of them.
+   *   · **anything else** — a folder this client has no view for. There is no pile to route
+   *     to, so the message opens in the reader over wherever you are. This arm is defensive
+   *     rather than reachable: `Folder` is a closed six-member union and `MessageDTO.folder`
+   *     is typed to it, so `VIEW_OF_FOLDER` is total today and no hit can fall here. The gap
+   *     row's "a hit in Sent falls into the Screener" is therefore NOT reachable — see the
+   *     report. It is written because the contract says a server may add folders a shipped
+   *     client has never heard of, and the honest answer to one is the message itself.
+   */
+  const openMessage = useCallback(
+    (m: EngineMessage) => {
+      const target = openTargetFor(m, readColumnHidden(), screenerRowFor);
+      switch (target.kind) {
+        case "ohbox":
+          setOhboxSel(target.id);
+          // The reader, and via `readerPending` because `go` is about to clear it.
+          if (target.reader) setReaderPending(target.id);
+          go("ohbox");
+          return;
+        case "stream":
+          (target.view === "reads" ? setReadsCur : setReceiptsCur)(target.id);
+          setJump({ view: target.view, id: target.id });
+          go(target.view);
+          return;
+        case "screener":
+          if (target.row) {
+            const row = target.row;
+            setScnSel((s) => ({ ...s, [target.segment]: row }));
+          }
+          goScreener(target.segment);
+          return;
+        default:
+          // No navigation, so no `readerPending` is needed: nothing will clear this.
+          setReaderFor(target.id);
+      }
+    },
+    [readColumnHidden, screenerRowFor],
+  );
 
   const startFR = useCallback(() => {
     // NO `setFrValues({})`. Keyed by message, what is in that map is a reply somebody wrote
@@ -767,13 +1153,29 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
    * which is the state U2 exists to end.
    */
   const focused: EngineMessage | null =
-    route.view === "ohbox"
+    /**
+     * AN OPEN READER IS THE CURSOR, WHATEVER VIEW IT IS OVER (slice U5-OPEN).
+     *
+     * First, and deliberately: the reader is the innermost thing on screen, so a message
+     * verb pressed while it is open acts on the message being READ.
+     *
+     * NO GUARD FAILS IF THIS LINE IS DELETED, and that is stated rather than hidden — the
+     * same honesty `OhboxView.pinnedUnread` uses about its own key. Every path that opens
+     * the reader today also sets the pile's cursor to the same message (`OhboxView.open`,
+     * `openMessage`'s Ohbox arm, `openReply` on mobile), so the two cannot yet disagree.
+     * What makes the reader generalisable is precisely that it no longer has to be an Ohbox
+     * message; the first surface that opens it over a pile with its own cursor would make
+     * this load-bearing, and it is cheaper to be right now than to find out then. Coherence,
+     * not a fixed bug — mutation M8 in the report survives, deliberately.
+     */
+    readerMessage ??
+    (route.view === "ohbox"
       ? selectedOhbox
       : route.view === "reads"
         ? (readsCur ? (reader.get<EngineMessage>("message", readsCur) ?? null) : null)
         : route.view === "receipts"
           ? (receiptsCur ? (reader.get<EngineMessage>("message", receiptsCur) ?? null) : null)
-          : null;
+          : null);
 
   /**
    * ESCAPE HAS ONE OWNER, and this ORDERED LIST is it.
@@ -805,7 +1207,7 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
     [aboutOpen, () => setAboutOpen(false)],
     [fr != null, () => setFr(null)],
     [replyTo != null, () => setReplyTo(null)],
-    [readerOpen, () => setReaderOpen(false)],
+    [readerFor != null, () => setReaderFor(null)],
   ];
   const closeInnermost = escapeLayers.find(([open]) => open)?.[1] ?? null;
 
@@ -1305,7 +1707,13 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
                 now={now}
                 selectedId={selectedOhbox?.id ?? null}
                 onSelect={setOhboxSel}
-                onEnterReader={() => setReaderOpen(true)}
+                /* The ID travels, and that is not tidiness. This was `() => setReaderOpen(true)`
+                   against a reader hard-wired to `selectedOhbox`, so the indirection hid a
+                   staleness: `OhboxView.open` calls `onSelect(id)` and this in the SAME tick,
+                   so the shell's `selectedOhbox` here is still the PREVIOUS row. With the
+                   reader holding an id of its own, reading that stale value would open the
+                   message the user was on before the one they tapped. */
+                onEnterReader={setReaderFor}
                 onMarkSeen={markSeen}
                 doorbellInitials={waitingLive.map((w) => w.initial)}
                 doorbellHues={waitingLive.map((w) => avatarHue(w.from.address))}
@@ -1314,6 +1722,7 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
                 onAttachment={() => toast(t("ohbox.toastAttachment"))}
+                bulk={bulkVerbs}
               />
             ) : null}
 
@@ -1447,16 +1856,16 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
           reader owning it too, closing the inline reply would also close the message it
           was quoting, in the same keypress. */}
       <Reader
-        open={readerOpen && selectedOhbox != null}
+        open={readerMessage != null}
         closeOnEscape={false}
-        onClose={() => setReaderOpen(false)}
+        onClose={() => setReaderFor(null)}
       >
-        {selectedOhbox ? (
+        {readerMessage ? (
           <MessagePane
-            message={selectedOhbox}
+            message={readerMessage}
             tags={tags}
             now={now}
-            onAction={(a) => onMessageAction(a, selectedOhbox)}
+            onAction={(a) => onMessageAction(a, readerMessage)}
             onAddTag={openTagPicker}
             onAttachment={() => toast(t("ohbox.toastAttachment"))}
           />
@@ -1537,12 +1946,17 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
         <TagPicker
           state={picker}
           tags={tags}
-          assigned={
-            reader.get<EngineMessage>("message", picker.forId)?.labels ?? []
+          /* Over a SET, a tag is "assigned" only when EVERY message carries it (U5-BULK).
+             The alternative — any — would render a half-applied tag as done, so pressing it
+             would remove it from the two that had it instead of adding it to the eight that
+             did not. `pickerIds` is null for every single-message caller, which is the
+             one-element case of the same rule. */
+          assigned={tagsOnAll(reader, pickerIds ?? [picker.forId])}
+          onToggle={(tagId, assigned) =>
+            bulkToggleTag(pickerIds ?? [picker.forId], tagId, assigned)
           }
-          onToggle={(tagId, assigned) => toggleTag(picker.forId, tagId, assigned)}
           onCreate={(name) => { createTag(picker.forId, name); setPicker(null); }}
-          onClose={() => setPicker(null)}
+          onClose={() => { setPicker(null); setPickerIds(null); }}
         />
       ) : null}
 

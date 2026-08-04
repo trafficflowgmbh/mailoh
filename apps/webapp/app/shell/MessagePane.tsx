@@ -44,7 +44,34 @@ export type MessageAction =
   | `move:${MoveTarget}`;
 
 /** The DecisionBar's vocabulary, so filing means the same thing everywhere. */
-const MOVE_TARGETS: MoveTarget[] = ["ohbox", "reads", "receipts", "screened", "spam"];
+export const MOVE_TARGETS: MoveTarget[] = ["ohbox", "reads", "receipts", "screened", "spam"];
+
+/**
+ * THE SAME VERBS, OVER A SELECTION (slice U5-BULK, gap U5d).
+ *
+ * Declared beside {@link MessageAction} rather than in the view that renders the bulk bar,
+ * because the point of the slice is that there is ONE vocabulary. The owner's selection
+ * offered ⇧U and Escape; what it gets is the action bar's own grouping minus the one verb
+ * that cannot mean anything over a set.
+ *
+ *   · `later` / `aside` / `resurface` — the three horizons, unchanged in meaning.
+ *   · `move:<view>` — this message, relocated. Per message, no rule.
+ *   · `read` / `unread` — DIRECTIONS, not a toggle, and that is the one deliberate
+ *     divergence from the single-message bar. `MessageAction["unread"]` is a flip because
+ *     one message has a read state to flip; a selection has a MIXED one, and "toggle eleven
+ *     messages" would mark six read and five unread in a gesture that reads as one decision.
+ *
+ * Screening is NOT in this union. It is a decision about senders with a consent ceremony of
+ * its own (a confirm row stating what will persist), so it travels as its own callback —
+ * folding it in here would be the design error the ruling names by name.
+ */
+export type BulkAction =
+  | "later"
+  | "aside"
+  | "resurface"
+  | "read"
+  | "unread"
+  | `move:${MoveTarget}`;
 
 /**
  * Which sub-row has taken the bar's place, if any. `null` is the resting bar.

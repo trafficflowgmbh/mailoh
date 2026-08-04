@@ -212,7 +212,16 @@
     "actionMarkUnread": "Mark unread",
     "actionMore": "More",
     "groupDefer": "Not now",
-    "groupFile": "File it"
+    "groupFile": "File it",
+    "pickedMarkUnseen": "Unread",
+    "groupRead": "Read state",
+    "keyCancelBulk": "cancel the open row",
+    "toastBulkRead": "{count, plural, one {1 message} other {# messages}} marked read.",
+    "toastBulkUnread": "{count, plural, one {1 message} other {# messages}} marked unread.",
+    "toastBulkLater": "{count, plural, one {1 message} other {# messages}} queued in Answer Later.",
+    "toastBulkAside": "{count, plural, one {1 message} other {# messages}} parked.",
+    "toastBulkResurface": "{count, plural, one {1 message} other {# messages}} resurface {when}.",
+    "toastBulkMoved": "{count, plural, =0 {Nothing to move — already in {place}.} one {1 message moved to {place}.} other {# messages moved to {place}.}}"
   },
   "reads": {
     "title": "Reads",
@@ -344,7 +353,9 @@
     "pickerFoot": "↵ toggles",
     "pickerAria": "Add tag",
     "pickerCreate": "Create “{name}”",
-    "notOnServer": "Tags are stored by ohmail, not in your mailbox. Your folders are real IMAP folders and survive if you leave; tags don’t — erasing your account erases them."
+    "notOnServer": "Tags are stored by ohmail, not in your mailbox. Your folders are real IMAP folders and survive if you leave; tags don’t — erasing your account erases them.",
+    "toastTaggedMany": "Tagged {count, plural, one {1 message} other {# messages}} “{name}”.",
+    "toastUntaggedMany": "Untagged {count, plural, one {1 message} other {# messages}} “{name}”."
   },
   "search": {
     "title": "Search",
@@ -371,7 +382,11 @@
     "scopeArchive": "Searched the whole archive — {total, plural, =0 {nothing matched} one {1 message matches} other {# messages match}}.",
     "scopeFailed": "The archive could not be searched — {reason} These results cover this device only.",
     "scopeRetry": "Search the archive again",
-    "hitArchiveOnly": "from the archive"
+    "hitArchiveOnly": "from the archive",
+    "hitAria": "Result {n} of {total} — open it",
+    "keyNext": "next result",
+    "keyPrev": "previous result",
+    "keyOpen": "open the result where it lives"
   },
   "compose": {
     "title": "Compose",
@@ -1094,7 +1109,15 @@
     "footNoRule": "This moves the mail that is here. It makes no rule, so future mail is unchanged.",
     "toastRuled": "{place} — {count, plural, one {1 message} other {# messages}} from {sender} moved. Future mail from them files there too.",
     "toastMoved": "{place} — {count, plural, one {1 message} other {# messages}} from {sender} moved. No rule was made, so future mail is unchanged.",
-    "toastAlready": "{sender} is already in {place}."
+    "toastAlready": "{sender} is already in {place}.",
+    "bulkTo": "screen to",
+    "bulkCommit": "Screen them",
+    "bulkConfirm": "{senders, plural, one {1 sender} other {# senders}} → {place}. {count, plural, one {1 message moves} other {# messages move}}. No rule is made, so future mail is unchanged.",
+    "bulkConfirmRules": "{senders, plural, one {1 sender} other {# senders}} → {place}. {count, plural, one {1 message moves} other {# messages move}}, and {rules, plural, one {1 of them is still waiting, so this becomes a rule for their future mail} other {# of them are still waiting, so this becomes a rule for their future mail}}. There is no undo.",
+    "toastBulkNothing": "Nothing to do — that mail is already in {place}.",
+    "toastBulkMoved": "{place} — {count, plural, one {1 message} other {# messages}} from {senders, plural, one {1 sender} other {# senders}} moved. No rule was made, so future mail is unchanged.",
+    "toastBulkRuled": "{place} — {count, plural, one {1 message} other {# messages}} from {senders, plural, one {1 sender} other {# senders}} moved, and {rules, plural, one {1 rule was made} other {# rules were made}}: future mail from them files there too.",
+    "bulkConfirmNothing": "That mail is already in {place}. Nothing would move and no rule would be made."
   },
   "reply": {
     "to": "Reply to {name}",
