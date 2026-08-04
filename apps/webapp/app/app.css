@@ -275,94 +275,76 @@ body.reading .shell {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-/* ================= ohbox doorbell: wrap, never clip (O12) =================
-   Reported live by the owner at 390px: the strip read
+/* ============ ohbox doorbell: ONE compact line, never clipped (O12-COMPACT) ============
+   The owner, on O12's two-line result: *"uses up two lines now, which is way worse UI,
+   keep it compact one line."* Their call. This block is the other trade.
 
-     2 unread of 1240
-     1,042 new senders waiting          ← rendered "1,042 new senders wait…"
-     Screener ›
+   ── WHAT O12 GOT RIGHT AND THIS KEEPS ───────────────────────────────────────────────
+   O12 fixed a real defect: at 390px `.db-txt` wanted 186px, was given 128px, and the 58px
+   it discarded ended exactly on the noun — the owner could not see "waiting". Its two
+   editorial fixes are untouched and must stay: each count names what it counts (messages
+   versus senders), and both go through ICU so `1,240` and `1,043` are grouped alike rather
+   than one raw and one formatted. `doorbellAria` keeps its plural rules and its `=0`
+   branch. Nothing here reintroduces an ellipsis.
 
-   Two defects, and the editorial one comes first. The counts are DIFFERENT
-   quantities — mail sitting in the Ohbox (`ohbox.meta`) versus senders held at
-   the Screener (`ohbox.doorbell`) — but neither line named its noun, so at the
-   owner's real numbers (1 240 and 1 042) they read as one number said twice.
-   Both strings now say what they count ("messages" / "first-time senders", the
-   Screener's own word, see `ohbox.metaWaiting`), and both go through ICU
-   `number` so 1 240 is grouped the way 1 042 already was.
+   ── WHY ONE LINE FITS NOW WHEN O12 MEASURED THAT IT COULD NOT ───────────────────────
+   O12's arithmetic was right and its conclusion followed from ONE assumption: that the
+   sentence had to be "1,043 first-time senders waiting" and the faces had to stay. It
+   measured `paneWidth − 210` for the sentence and got 7 lines at 320px and 8 lines four
+   characters wide at 1440px. Both inputs move here instead:
 
-   The CSS half is this block. `doorbell.css:14` sets
-   `white-space:nowrap; overflow:hidden; text-overflow:ellipsis` on `.db-txt`,
-   so the first thing the strip throws away under pressure is the last word —
-   which is the noun, the only thing that told the two counts apart. Measured
-   here at 390px before the fix: `.db-txt` wanted 186px and was given 128px, so
-   58px of a 32-character sentence was discarded. An ellipsis is therefore the
-   WRONG lever: it hides precisely the word the owner could not read. So is
-   shrinking the type — a 1 042 that needs 10px is not legible either. The
-   sentence gets a row of its own instead, which is the same call `.pick-bar`
-   above already makes for the same reason at the same width. */
-/* WHERE THE SENTENCE GOES — one composition at every width, deliberately.
+     · THE TEXT SHRANK. `ohbox.doorbell` is now `<b>1,043</b> waiting` — the number and the
+       verb. The noun did not vanish, it moved to `doorbellAria`, which is the string
+       assistive tech actually reads: `Doorbell` puts an `aria-label` on the button, so this
+       subtree is never announced in DOM order. ~32 characters became ~13.
+     · THE FACES YIELD FIRST. They are decorative by the component's own design ("a texture,
+       not a census" — `Doorbell.tsx`), so `doorbell.css` drops the whole strip below a
+       309px CONTENT box. That returns the ~124px the strip costs at the owner's numbers
+       (four faces + a "+1039" counter) exactly where it is needed. Measured against the real
+       build: the row needs 287px of content at the owner's numbers and 303px at 99,999, and
+       the app gives it 246px at a 320px viewport (faces drop), 316px at 390px and 322px in
+       the desktop split column (faces stay). The full table is in `doorbell.css`.
 
-     [faces] ················ Screener ›
-     1,042 first-time senders waiting
+   The measurement instrument changed too, and that is the part worth keeping: the drop is a
+   CONTAINER query on the doorbell, not a media query — O12's inversion is real, a 390px
+   phone gives the doorbell LESS room (316px of content) than the desktop split column
+   (322px), so no viewport breakpoint can express "is there room".
 
-   The sentence takes the whole of the second row (`flex-basis:100%`) and is
-   ordered after the action (`order:1`) so the faces and "Screener ›" share the
-   first. Without the `order` the sentence lands between them and pushes
-   "Screener ›" onto a third row — measured, 104px of doorbell against 74px this
-   way. Reordering inside the button is safe for assistive tech: `Doorbell` puts
-   an `aria-label` on the button, so this subtree is not announced in DOM order
-   at all — `ohbox.doorbellAria` is what gets read, and it spells out the same
-   sentence in full.
+   One correction to O12 while re-measuring, because it changes where the narrow case lives:
+   the desktop column is 400px, not 320px. `.view.split` collapses to `1fr` below 900px, and
+   above it the `1fr` sibling always leaves the first track room for its 400px MAXIMUM, so the
+   `minmax(320px,400px)` floor is unreachable. The narrowest doorbell in the product is the
+   SMALL PHONE. Verified in Chrome against `next build` with the owner's numbers in the live
+   DOM: 320px, 390px and 1440px all render ONE line (36px or 44px tall, never the 74px a
+   second row costs), 0px clipped, and zero clipping ancestors between the sentence and the
+   pane.
 
-   NO BREAKPOINT, and that is the point. The doorbell is WIDER on a phone than on
-   a desktop: at ≤900px it spans the viewport (342px of box at 390px), while
-   above it the Ohbox is a split grid whose column is `--split` =
-   `minmax(320px,400px)`, so the doorbell is 268–348px. Keeping the sentence
-   beside the faces is therefore only viable inside a narrow band of widths, and
-   it fails hard on both sides of it. With the avatar band at the owner's real
-   numbers (four faces + a "+1038" counter = 124px) and "Screener ›" at 62px, the
-   column left for the sentence is `paneWidth − 210`, and measured:
+   ── NOTHING CLIPS, AND THAT IS ENFORCED RATHER THAN HOPED ───────────────────────────
+   `.db-txt` is `flex:none` — it never shrinks, so it can never be the thing that gives —
+   and it carries no ellipsis. Under pressure the FACES go and the sentence is untouched,
+   which inverts `doorbell.css`'s base behaviour where the sentence was the first casualty.
 
-     320px viewport →  36px → 7 lines
-     390px viewport → 106px → 2 lines   ← the only width where it looks deliberate
-     1440px (320px pane) → 32px → 8 lines, four characters wide
-
-   Giving it the full row instead costs 20px of height at 390px (74 vs 54) and
-   holds the sentence on ONE line from 1920px down to a ~266px viewport, with no
-   media query to get wrong and nothing that a longer translation can tip over.
-
-   Scoped `.view-ohbox .doorbell` (0,2,0 / 0,3,0 against `doorbell.css`'s 0,1,0
-   and 0,2,0) so these win on specificity rather than on CSS import order — the
-   Ohbox is the only view that mounts a `Doorbell`. */
-.view-ohbox .doorbell {
-  flex-wrap: wrap;
-}
-.view-ohbox .doorbell .db-txt {
-  order: 1;
-  flex-basis: 100%;
-}
-/* `.doorbell`'s own `overflow:hidden` is load-bearing for the `.gone` collapse —
-   `height:0` has to clip what is inside it — so it is kept THERE and dropped
-   everywhere else, rather than removed outright. An expanded doorbell now has no
-   clipping ancestor at all, which is the property the guard asserts. */
+   Still scoped `.view-ohbox .doorbell` (0,2,0 / 0,3,0 against `doorbell.css`'s 0,1,0 and
+   0,2,0) so it wins on specificity rather than on CSS import order — Next decides that
+   order from the module graph and it is not a property this repo controls. */
 .view-ohbox .doorbell:not(.gone) {
+  /* `.doorbell`'s own `overflow:hidden` is load-bearing for the `.gone` collapse —
+     `height:0` has to clip what is inside it — so it is dropped only while EXPANDED
+     rather than removed outright. An expanded doorbell has no clipping ancestor at all. */
   overflow: visible;
 }
 .view-ohbox .doorbell .db-txt {
-  white-space: normal;
+  /* One line, and immovable. `flex:none` is the whole guard: a shrinkable sentence in a
+     flex row is a sentence that ellipsizes, which is the O12 defect by another route. */
+  flex: none;
+  white-space: nowrap;
   overflow: visible;
   text-overflow: clip;
-  overflow-wrap: break-word;
-  /* Two short lines rather than one long line and one orphan. Progressive: where
-     `balance` is unsupported the text simply wraps normally, which is already the
-     fix. */
-  text-wrap: balance;
 }
-/* The overflow counter, sized to its own digits. `.av.more` inherits `.av.s`'s
-   fixed 26px box, which was built for "+82"; the owner's mailbox holds 1 045
-   waiting senders, so it renders "+1038" — 34px of text measured inside a 26px
-   box, spilling 8px onto the avatar beside it. Same defect as the ellipsis in
-   miniature: the box was sized for a number smaller than the real one. */
+/* The overflow counter, sized to its own digits. `.av.more` inherits `.av.s`'s fixed 26px
+   box, which was built for "+82"; the owner's mailbox holds ~1,045 waiting senders, so it
+   renders "+1039" — 34px of text measured inside a 26px box, spilling 8px onto the avatar
+   beside it. Kept from O12: wherever the strip IS shown, it must still fit its own number. */
 .view-ohbox .doorbell .avs .av.more {
   width: auto;
   min-width: 26px;
@@ -819,10 +801,26 @@ body.reading .shell {
 .tagp li.none:hover {
   background: none;
 }
+/* The create row (W6). Reads as an action rather than as one more tag in the list, because it
+   is the only row here that WRITES something new. */
+.tagp li.mk {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
 .tagp-foot {
   padding: 7px 14px 9px;
   font-size: 10.5px;
   color: var(--ink3);
+}
+/* The honest note about where a tag lives. Quiet — it is a fact worth knowing before you rely
+   on tags, not a warning about a mistake. Wraps, because the sentence is the point. */
+.tagp-note {
+  padding: 0 14px 10px;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--ink3);
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
 }
 
 /* ================= about ================= */
