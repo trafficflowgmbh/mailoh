@@ -334,9 +334,35 @@ export function OhboxView({
     if (pinnedUnread.current && pinnedUnread.current !== dwellOn) pinnedUnread.current = null;
   }, [dwellOn]);
 
-  const toggleUnread = useCallback((m: EngineMessage) => {
-    pinnedUnread.current = m.unread ? null : m.id;
-    onMarkSeen([m.id], !m.unread);
+  /**
+   * ═══ TWO DIRECTIONS, NOT ONE TOGGLE ═══════════════════════════════════════════════════
+   *
+   * This was a single `toggleUnread` on a single key. It is now two idempotent commands, and
+   * the reason is what a toggle does to a SET: "invert eleven messages" turns a mixed
+   * selection into a different mixed selection, so pressing the key twice is not a no-op and
+   * pressing it once has an outcome nobody can predict without counting first. A direction
+   * always produces the same state from any state, which is why Gmail binds two keys for this
+   * and why the bulk vocabulary (`BulkAction`) has always had `read` and `unread` as separate
+   * members rather than one flip. The single-message case is the one-element case of that
+   * rule, and it should not disagree with it.
+   *
+   * ── THE PIN IS THE WHOLE REASON THESE ARE NOT `onMarkSeen` AT THE CALL SITE ────────────
+   *
+   * Marking unread inside the dwell window arms nothing new, but the timer that was already
+   * ticking would fire two seconds later and mark it read again — the message would silently
+   * un-unread itself. `pinnedUnread` is what the dwell checks when it fires. So an explicit
+   * unread SURVIVES the next open, which is the behaviour that was asked for, and it survives
+   * it because of this ref rather than because of anything the dwell does differently.
+   */
+  const markUnread = useCallback((m: EngineMessage) => {
+    pinnedUnread.current = m.id;
+    onMarkSeen([m.id], true);
+  }, [onMarkSeen]);
+
+  const markRead = useCallback((m: EngineMessage) => {
+    // Reading it is consent for the dwell to have been right, so the pin is released.
+    pinnedUnread.current = null;
+    onMarkSeen([m.id], false);
   }, [onMarkSeen]);
 
   /**
@@ -445,11 +471,31 @@ export function OhboxView({
       run: () => selected && togglePick(selected.id),
     },
     {
+      /**
+       * THE PAIR, AND WHY IT IS NOT GMAIL'S EXACT PAIR.
+       *
+       * Gmail is ⇧I to mark read and ⇧U to mark unread, and it is the precedent worth
+       * following — but `shift+u` is taken here, by the bulk "mark what I picked" verb
+       * declared a few lines below, and taking it back would break a shipped shortcut to
+       * match a convention. So: `⇧I` is Gmail's, verbatim, and `u` keeps the key this
+       * product has always used for unread — which is also the better mnemonic of the two.
+       *
+       * `u` USED TO BE A TOGGLE. See `markUnread` for why a direction is the right shape.
+       * Both are listed in the `?` sheet because both declare a label, and the sheet is
+       * generated from this registry.
+       */
       chord: "u",
       group: "message",
-      label: t("keyUnread"),
+      label: t("keyMarkUnread"),
       disabled: selected == null,
-      run: () => selected && toggleUnread(selected),
+      run: () => selected && markUnread(selected),
+    },
+    {
+      chord: "shift+i",
+      group: "message",
+      label: t("keyMarkRead"),
+      disabled: selected == null,
+      run: () => selected && markRead(selected),
     },
     {
       /**

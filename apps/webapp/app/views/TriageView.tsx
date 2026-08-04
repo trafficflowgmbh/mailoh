@@ -136,12 +136,20 @@ export function TriageView({
             `packages/ui`, which is shared with the desktop shell and has no business knowing
             that this host routes by pile. */}
         <PilesStack piles={[PILE_OF[pile](piles, t, frDone)]} />
-        <div className="triage-cta">
-          <Button variant="primary" icon="spark" kbdHint="f" onClick={onStartFR}>
-            {t("cta")}
-          </Button>
-          <span>{t("ctaNote")}</span>
-        </div>
+        {/* THE REPLY RUN BELONGS TO ONE PILE, SO IT IS ON ONE PANE.
+            It was under all three, saying "Steps through the Answer Later pile, one message
+            per screen" while Parked was on screen — a primary action that operates on a
+            different pile than the one being looked at reads as misplacement, and it is: the
+            run's items are `piles.replyLater` whichever pane you start it from. Scoped rather
+            than re-worded, because no wording makes a button that acts elsewhere belong here. */}
+        {pile === "reply" ? (
+          <div className="triage-cta">
+            <Button variant="primary" icon="spark" kbdHint="f" onClick={onStartFR}>
+              {t("cta")}
+            </Button>
+            <span>{t("ctaNote")}</span>
+          </div>
+        ) : null}
       </div>
     </section>
   );

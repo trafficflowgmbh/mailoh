@@ -166,6 +166,8 @@ function ActionBar({
   const t = useTranslations("ohbox");
   const tr = useTranslations("screening");
   const press = useKeyPress();
+  /** Hoisted above `toggleRead`, which needs it to decide WHICH key it is standing in for. */
+  const read = !message.unread;
 
   /**
    * A label whose key is not in `messages/en.json` yet.
@@ -184,9 +186,19 @@ function ActionBar({
    * because the memoised binding array holds closures from the last SHAPE change and `u`'s
    * shape does not change when read-state does. `press` resolves the handler when it is
    * called, exactly as the keydown dispatcher does. See `Registry.press`.
+   *
+   * ── ONE BUTTON, TWO KEYS, AND THAT IS DELIBERATE ──────────────────────────────────────
+   *
+   * The KEYBOARD gets two idempotent directions (`u` unread, `⇧I` read) because a toggle over
+   * a mixed selection inverts it into a different mixed selection — see `OhboxView.markUnread`.
+   * The BUTTON is one control, because there is only one message under it and one of the two
+   * directions is always a no-op: offering both would put a dead control on the bar half the
+   * time. So the button presses whichever key is the live one, which keeps every path through
+   * `pinnedUnread` and means the button can never do something the key refuses to.
    */
+  const markChord = read ? "u" : "shift+i";
   const toggleRead = () => {
-    if (!press("u")) onAction("unread");
+    if (!press(markChord)) onAction("unread");
   };
 
   const defer = (
@@ -278,7 +290,6 @@ function ActionBar({
     );
   }
 
-  const read = !message.unread;
   return (
     <div className="abar">
       <div className="abar-row">
@@ -311,23 +322,28 @@ function ActionBar({
 
         <div className="abar-g abar-read-g">
           {/*
-           * `role="switch"` and not a pair of buttons: the control must state the CURRENT
-           * state, because a one-way "Mark read" leaves no way back and mislabels
-           * itself the moment it has been pressed. A switch labelled "Read" reports the
-           * state in its label AND in `aria-checked`, and what pressing it does is in the
-           * title — which is the only wording that has to change with the state.
+           * THE LABEL SAYS WHAT PRESSING IT WILL DO, and that is the correction.
+           *
+           * This was `role="switch"` labelled "Read", reporting the CURRENT state with the
+           * action hidden in the `title`. A switch is the right shape for a setting; read-state
+           * is a thing you DO to a message, and a control whose visible word is the state
+           * leaves the reader to work out which way pressing it goes. "Mark unread" on a read
+           * message answers that without being hovered — and it is the same sentence the
+           * keyboard's own two verbs use, so the bar and the `?` sheet read alike.
+           *
+           * The keycap follows the direction: `u` marks unread, `⇧I` marks read, and the
+           * button shows the one it is about to stand in for. `<Key>` reads the live registry,
+           * so a chord that moves takes the hint with it and a chord that is not bound here
+           * (the desktop shell, a pane with no provider) shows nothing at all.
            */}
           <button
             type="button"
-            role="switch"
-            aria-checked={read}
             className="abar-b abar-solo abar-read"
-            title={read ? copy("actionMarkUnread", "Mark unread") : copy("actionMarkRead", "Mark read")}
             onClick={toggleRead}
           >
             <span className="abar-dot" aria-hidden="true" />
-            {copy("actionRead", "Read")}
-            <Key chord="u" />
+            {read ? copy("actionMarkUnread", "Mark unread") : copy("actionMarkRead", "Mark read")}
+            <Key chord={markChord} />
           </button>
 
           {/*
