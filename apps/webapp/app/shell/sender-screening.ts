@@ -51,14 +51,33 @@
  * which one happened. Making the rule is the DEFAULT (`makeRule`), and the move-only path
  * survives as the explicit opt-out, which is what O19(d) asks for.
  *
- * ── WHAT "APPLY TO ALL PREVIOUS" DOES AND DOES NOT COVER ────────────────────────────────
+ * ── WHAT "APPLY TO ALL PREVIOUS" DOES, AND WHERE IT NOW HAPPENS (O19-retro) ─────────────
  *
- * The plan already moves every message the MIRROR holds from the subject, in every folder —
- * so "previous" is covered for the mail this client has synced, and the count is on screen
- * before the click. It is NOT covered for mail the mirror has never seen; that is a bounded
- * server-side pass (`packages/services/src/sensitive-rescreen.ts` is the precedent, including
- * its plan/apply split and its rule that a message the user has already acted on is not ours
- * to move) and it is NOT shipped here. The copy therefore never says "every message".
+ * This comment used to say the retroactive half was covered "for the mail this client has
+ * synced" and not for the rest, and that a bounded server-side pass was owed. **The first half
+ * was misleading and the second is now shipped.** The mirror is not a window: `/sync` replays
+ * the whole `change_log` from seq 0 and `Engine.drain` loops until `hasMore` is false, so the
+ * mirror holds every message in the account. The SET this planner computed was already right.
+ *
+ * What was wrong was the SHAPE. One `move` mutation per matching message is one
+ * `POST /messages/:id/move` per message — thousands of requests from a browser tab, each taking
+ * the account's `account_sync_state` row lock, fired unawaited, and abandoned half-done if the
+ * tab is closed. So the retroactive half now belongs to the server: `rule_create` carries
+ * `applyRetro`, `RulesService` stamps `rules.retro_requested_at`, and the worker's
+ * `ruleRetroPass` walks the backlog in bounded, resumable pages, writing desired-state the
+ * reconciler turns into real IMAP moves. It inherits `sensitive-rescreen`'s rule that a message
+ * the user has already acted on is not ours to move.
+ *
+ * The client still moves what the user can SEE — {@link RETRO_VISIBLE_MOVES} of it — because the
+ * alternative is a click with no visible effect until a worker cycle, a reconcile and a drain
+ * have all happened. Both writers write the same `desired_folder` with `lastSetBy: 'us'`, so the
+ * second is a no-op and the pass's candidate query drops the row; this is NOT the double-move
+ * the domain-scope comment further down refuses, because there is no second side effect and no
+ * consent record to fork.
+ *
+ * The copy therefore still never says "every message", for two reasons that survive: the pass
+ * re-evaluates through `evaluateRules` and a higher-priority deny rule can keep a message where
+ * it is, and its cursor is a random UUID so a still-draining backlog can outrun it.
  *
  * This module is pure: it reads the mirror and returns mutations. `SenderMenu` renders it
  * and `AppShell` dispatches them, so the mapping below is testable without a DOM.
@@ -113,6 +132,44 @@ export const WIRE_DECIDE_FOLDER: Record<"yes" | "no", Folder> = {
  * `kind` of the rule the server promotes.
  */
 export type ScreeningScope = "sender" | "domain";
+
+/**
+ * WHETHER "ALSO APPLY IT TO MY EXISTING MAIL" IS ON WHEN THE SHEET OPENS — **it is**.
+ *
+ * Owner: *"apply it to ALL messages future and previous, this should be the default behaviour to
+ * efficiently manage the mailbox."* The request is about the DEFAULT; an opt-in would have
+ * changed nothing about managing a mailbox. The server agrees — `RulesService.create` treats an
+ * absent `applyRetro` as `true` — and the surface sends the value explicitly anyway, so what
+ * ships is decided here, in one line, rather than by a field's absence.
+ *
+ * ── THE PREREQUISITE, CHECKED RATHER THAN ASSUMED ────────────────────────────────────────
+ *
+ * `WORKLIST.md` O19-RISK makes O16 a blocker for this default, and it is right about why:
+ * *"shipping default rule-creation without that surface builds a mailbox the user cannot
+ * un-organize."* That row is now STALE. O16 shipped in `09fc5ab` — `app/views/RulesView.tsx`
+ * (245 lines) is imported and rendered by `SettingsView.tsx:328` with `onRevoke` and
+ * `onRetarget`, wired in `AppShell`, and `test/rules-surface.test.ts` holds 20 tests over it.
+ * So every rule this default writes is visible, retargetable and revocable at Settings → Rules
+ * before it is written, which is the condition the row actually asks for.
+ *
+ * What revoking does NOT do is move mail back — `DELETE /rules/:id` touches the rules row and
+ * the change log and nothing else. That is why the way back offered here is the count and the
+ * opt-out BEFORE the click, and why the sheet must not imply a restore that does not exist.
+ */
+export const RETRO_DEFAULT_ON = true;
+
+/**
+ * How many messages the CLIENT still moves itself, newest first.
+ *
+ * Not a limit on what the user asked for — the server pass applies the rule to all of it. This
+ * is only the optimistic half: the rows the user is looking at move at once instead of waiting
+ * for a worker cycle, a reconcile and a `/sync` drain. Past what a screen can show, an extra
+ * `POST /messages/:id/move` buys nothing a person can see and costs the account's write lock.
+ *
+ * It is also a bound on the pre-existing defect: this fan-out had NO cap at all, so a domain
+ * scope on a big provider fired one request per message, thousands of them, from a browser.
+ */
+export const RETRO_VISIBLE_MOVES = 50;
 
 /** One scope's worth of facts. The sheet renders whichever the user has chosen. */
 export interface ScreeningSubject {
@@ -284,8 +341,29 @@ export interface ScreeningPlan {
    * question it answers is whose future mail follows and not which row was written.
    */
   ruleScope: ScreeningScope | null;
-  /** Messages this will relocate. */
+  /**
+   * Messages the CLIENT moves itself — capped at {@link RETRO_VISIBLE_MOVES}.
+   *
+   * This is no longer the number to put in front of a user, and the toast no longer does: it is
+   * the optimistic half only. {@link ScreeningPlan.matched} is the honest one.
+   */
   moved: number;
+  /**
+   * How much of this subject's mail is OUT OF PLACE and therefore in scope for the rule.
+   *
+   * The number the sheet shows before the click. It is a statement about MATCHING MAIL and never
+   * a promise of how much will move: the server pass re-evaluates each message through
+   * `evaluateRules`, so a higher-priority deny rule keeps its mail where it is.
+   */
+  matched: number;
+  /**
+   * Whether the rule this writes will ALSO be applied to mail already on the server (O19-retro).
+   *
+   * False for every plan that writes no rule, and for the explicit opt-out. Never true for
+   * `promoted`: a waiting sender's mail is re-routed by `decide` inside the decision itself, so
+   * a retroactive pass over it would be a second mover for mail already handled.
+   */
+  retro: boolean;
   /** Distinct addresses whose mail this touches — the number the domain copy states. */
   senders: number;
   /**
@@ -325,6 +403,7 @@ export function planScreeningChange(
   dest: ScreeningDest,
   scope: ScreeningScope = "sender",
   makeRule = true,
+  applyRetro = RETRO_DEFAULT_ON,
 ): ScreeningPlan {
   const wanted = FOLDER_OF_VIEW[dest];
   const subject = s.scopes[scope];
@@ -381,6 +460,9 @@ export function planScreeningChange(
         ruleKind: scope,
         match: ruleMatchOf(s, scope),
         destination: wanted,
+        // The retroactive half, and it is the DEFAULT (O19c). The server stamps the request and
+        // the worker walks the backlog; nothing about it happens in this process.
+        applyRetro,
       });
     }
   }
@@ -420,9 +502,25 @@ export function planScreeningChange(
     }
   }
 
-  const toMove = subject.messages.filter((m) => m.folder !== wanted && !movedByDecide.has(m.id));
+  /**
+   * ── THE FAN-OUT IS CAPPED, AND IT USED TO BE UNBOUNDED (O19-retro) ────────────────────────
+   *
+   * Every one of these becomes its own `POST /messages/:id/move`, and every one of those takes
+   * the account's `account_sync_state` row lock for its transaction (R1). Uncapped, a domain
+   * scope on a shared provider fired one request per message — thousands, from a browser tab,
+   * fire-and-forget, serializing the account's whole write path and leaving the remainder
+   * unmoved for ever if the tab was closed halfway.
+   *
+   * `messages` is already sorted newest-first, so the slice is the mail the user is looking at.
+   * The REST is not dropped: when `applyRetro` is on, the server pass owns it and is resumable.
+   * When it is off, the user asked for a move and not for a rule, and the cap is then a genuine
+   * limit — which is why the toast for that case counts what it actually moved.
+   */
+  const outOfPlace = subject.messages.filter((m) => m.folder !== wanted && !movedByDecide.has(m.id));
+  const toMove = outOfPlace.slice(0, RETRO_VISIBLE_MOVES);
   for (const m of toMove) mutations.push({ kind: "move", messageId: m.id, folder: wanted });
 
+  const retro = applyRetro && (ruleState === "created" || ruleState === "retargeted");
   return {
     mutations,
     ruleMutations,
@@ -430,7 +528,11 @@ export function planScreeningChange(
     rule: ruleState !== "none",
     ruleScope: ruleState !== "none" ? scope : null,
     moved: toMove.length + movedByDecide.size,
+    // What the sheet states before the click: how much of this subject's mail is out of place.
+    // `movedByDecide` is included because the decide relocates it too.
+    matched: outOfPlace.length + movedByDecide.size,
     senders: subject.senders,
+    retro,
     unsubscribes: promoted && DECISION_OF_DEST[dest] === "no",
   };
 }

@@ -1171,7 +1171,10 @@
     },
     "auditWhyGate": "Waiting at the Screener. Nothing has been decided about this sender yet.",
     "auditWhyArrival": "Filed when it arrived. No rule of yours covers it, so something else decided — most often that you had already replied to this sender.",
-    "auditSuggestion": "Suggested by AI: {rationale}"
+    "auditSuggestion": "Suggested by AI: {rationale}",
+    "ruleRetro": "· applies to the {count, plural, one {1 message} other {# messages}} already here",
+    "footWillRuleRetro": "Future mail from {sender} files there too, and ohmail applies the rule to the mail already in your mailbox. Messages you have replied to, filed yourself or set aside are left alone. Mail that moves stays moved if you later revoke the rule.",
+    "footWillRuleRetroDomain": "Future mail from anyone at {domain} files there too, and ohmail applies the rule to the mail already in your mailbox. Messages you have replied to, filed yourself or set aside are left alone. Mail that moves stays moved if you later revoke the rule."
   },
   "reply": {
     "to": "Reply to {name}",

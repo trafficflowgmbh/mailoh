@@ -58,6 +58,7 @@ import { avatarHue, initialsOf } from "./format";
 import "./sender-sheet.css";
 import {
   DECISION_OF_DEST,
+  RETRO_DEFAULT_ON,
   SCREENING_DESTS,
   planScreeningChange,
   type ScreeningDest,
@@ -202,6 +203,20 @@ export function SenderMenu({
             onClick={() => setMakeRule((on) => !on)}
           >
             {makeRule ? `✓ ${t("ruleToggle")}` : t("ruleToggle")}
+            {/* ── THE RETROACTIVE HALF, SAID BEFORE THE CLICK AND WITH ITS SIZE (O19-retro) ──
+                The rule is now applied to mail already on the server, by a worker pass, and this
+                is where the user learns that and how much it is about. It rides the SAME switch
+                rather than getting one of its own: turning the rule off is the opt-out, and
+                `planScreeningChange` reports `retro: false` for every plan that writes no rule,
+                so the control and the behaviour cannot come apart.
+
+                It says "apply the rule to", never "move" and never "every message". The pass
+                re-evaluates each message through `evaluateRules`, so a higher-priority deny rule
+                keeps its mail where it is; and it skips anything the user has already acted on.
+                A promise about the outcome would be false for both. */}
+            {makeRule && RETRO_DEFAULT_ON ? (
+              <small>{t("ruleRetro", { count: subject.messages.length })}</small>
+            ) : null}
           </button>
         </div>
       ) : null}
@@ -271,9 +286,18 @@ export function SenderMenu({
             ? t("footRuleDomain", { domain: sender.domain })
             : t("footRule", { sender: sender.address })
           : makeRule
-            ? scope === "domain"
-              ? t("footWillRuleDomain", { domain: sender.domain })
-              : t("footWillRule", { sender: sender.address })
+            ? RETRO_DEFAULT_ON
+              // O19-retro: the sentence that used to promise only the future. It now names the
+              // past as well, AND the thing that has no undo — mail this moves stays moved when
+              // the rule is later revoked, because `DELETE /rules/:id` touches the rules row and
+              // nothing else. Saying so here is the "way back" this feature actually has: the
+              // count and the choice, before the click.
+              ? scope === "domain"
+                ? t("footWillRuleRetroDomain", { domain: sender.domain })
+                : t("footWillRuleRetro", { sender: sender.address })
+              : scope === "domain"
+                ? t("footWillRuleDomain", { domain: sender.domain })
+                : t("footWillRule", { sender: sender.address })
             : t("footNoRule")}
       </div>
     </div>

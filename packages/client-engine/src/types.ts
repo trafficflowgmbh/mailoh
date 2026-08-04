@@ -697,6 +697,28 @@ export type EngineMutation =
        */
       match: string;
       destination: Folder;
+      /**
+       * ALSO APPLY THIS RULE TO MAIL THAT IS ALREADY FILED (O19-retro).
+       *
+       * `RulesService.create` stamps `rules.retro_requested_at` and returns; the worker's
+       * `ruleRetroPass` then walks the account's stored mail in bounded, resumable pages and
+       * writes `folder_state` desired-state, which the reconciler turns into real IMAP moves.
+       * So this one boolean is the difference between a rule that changes the future and one
+       * that also reorganizes the past.
+       *
+       * ── IT IS SENT EXPLICITLY, NEVER OMITTED, AND THAT IS DELIBERATE ────────────────────
+       *
+       * The SERVER defaults an absent field to `true`, because that is the owner's request and
+       * the honest API contract. The SURFACE still sends the value on every call, so what ships
+       * is decided by one constant in the webapp
+       * (`sender-screening.ts#RETRO_DEFAULT_ON`) rather than by a field's absence. That is what
+       * makes the default orderable against O16 — see the constant, which names the reason.
+       *
+       * The paragraph above `mutationEffects`' `rule_create` case is now WRONG for this flag and
+       * says so there: the effects are still rule-only, but the mail really does re-sort
+       * afterwards, and it arrives through `/sync` rather than through an overlay.
+       */
+      applyRetro?: boolean;
     };
 
 // ── errors ─────────────────────────────────────────────────────────────────
