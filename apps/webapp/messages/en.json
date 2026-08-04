@@ -190,6 +190,7 @@
     "doorbellAction": "Screener ›",
     "doorbellAria": "{count, plural, =0 {All clear, nobody waiting — open the Screener} one {1 first-time sender waiting — open the Screener} other {# first-time senders waiting — open the Screener}}",
     "threadMeta": "thread ({count})",
+    "emptyPlain": "Nothing in your Ohbox.",
     "emptyScreenerTitle": "Nothing in your Ohbox yet.",
     "emptyScreenerHint": "{count, plural, one {1 first-time sender is} other {# first-time senders are}} waiting in the Screener. Nothing reaches the Ohbox until you say yes.",
     "emptyFiledTitle": "Nothing in your Ohbox.",
@@ -221,8 +222,7 @@
     "toastBulkLater": "{count, plural, one {1 message} other {# messages}} queued in Answer Later.",
     "toastBulkAside": "{count, plural, one {1 message} other {# messages}} parked.",
     "toastBulkResurface": "{count, plural, one {1 message} other {# messages}} resurface {when}.",
-    "toastBulkMoved": "{count, plural, =0 {Nothing to move — already in {place}.} one {1 message moved to {place}.} other {# messages moved to {place}.}}",
-    "emptyPlain": "Nothing in your Ohbox."
+    "toastBulkMoved": "{count, plural, =0 {Nothing to move — already in {place}.} one {1 message moved to {place}.} other {# messages moved to {place}.}}"
   },
   "reads": {
     "title": "Reads",
@@ -302,6 +302,7 @@
     "toastSpam": "Marked spam — {target}.",
     "toastUndo": "Undo",
     "toastUndone": "{count, plural, one {Undone — 1 waiting again.} other {Undone — # waiting again.}}",
+    "toastUndoExpired": "Too late to undo — that decision has already been sent.",
     "toastBulkDecided": "{count} decided — {parts}",
     "toastBulkSpam": "{count} moved to Spam",
     "toastAllowed": "Allowed — {count} held + future mail from {sender} go to {dest}.",
@@ -324,8 +325,7 @@
     "keyAllSpam": "mark every waiting sender spam",
     "keyFile": "file this sender to {dest}",
     "keyFileRead": "file to {dest} and mark read",
-    "retry": "Retry",
-    "toastUndoExpired": "Too late to undo — that decision has already been sent."
+    "retry": "Retry"
   },
   "triage": {
     "title": "Triage",
@@ -950,6 +950,11 @@
     "loading": "Reading your mailboxes…",
     "noneYet": "No mailbox connected yet.",
     "connect": "Connect a mailbox",
+    "blocked_email_unverified": "Connecting a mailbox needs a confirmed address. Open the link in the mail we sent when you signed up.",
+    "blocked_no_subscription": "Choose a plan to connect a mailbox.",
+    "blocked_subscription_inactive": "This subscription is not in a state that can take on another mailbox.",
+    "blocked_at_limit": "Every mailbox this plan includes is already connected.",
+    "blocked_where": "Settings → Subscription has the plans and the billing portal.",
     "inPlace": "ohmail organizes these mailboxes in place — real folders on the real server. Disconnect and the folders stay.",
     "status_connected": "connected",
     "status_connecting": "connecting",
@@ -986,7 +991,7 @@
     "syncError": "Sync failed",
     "syncNow": "Sync now",
     "err_auth": "Sync failed — the mailbox rejected the password.",
-    "err_connect": "Sync failed — the mail server could not be reached.",
+    "err_connect": "Sync failed — the mail server is not available.",
     "err_tls": "Sync failed — the mail server's certificate was refused.",
     "err_timeout": "Sync failed — the mail server stopped responding.",
     "err_storage": "Sync failed — ohmail could not store this mail. This one is on us.",
@@ -1100,13 +1105,13 @@
     "blocked_lease_unreadable": "Not syncing — ohmail cannot read its own folder on that server. It keeps trying.",
     "blocked_awaiting_credentials": "Not syncing — no mailbox password is stored for this mailbox.",
     "blocked_at_capacity": "Not syncing — ohmail did not pick this mailbox up. This one is on us.",
+    "blocked_organized_elsewhere_local": "Not organized here — ohmail on your own machine has claimed this mailbox.",
+    "blocked_organized_elsewhere_cloud": "Not organized here — another ohmail Cloud install has claimed this mailbox.",
+    "blocked_organized_elsewhere_unknown": "Not organized here — another ohmail organizer has claimed this mailbox.",
     "blockedUnknown": "Not syncing this mailbox.",
     "sinceMinutes": "{minutes, plural, one {for 1 minute} other {for # minutes}}",
     "sinceHours": "{hours, plural, one {for 1 hour} other {for # hours}}",
-    "noMailbox": "No mailbox connected, so nothing can arrive.",
-    "blocked_organized_elsewhere_local": "Not organized here — ohmail on your own machine has claimed this mailbox.",
-    "blocked_organized_elsewhere_cloud": "Not organized here — another ohmail Cloud install has claimed this mailbox.",
-    "blocked_organized_elsewhere_unknown": "Not organized here — another ohmail organizer has claimed this mailbox."
+    "noMailbox": "No mailbox connected, so nothing can arrive."
   },
   "screening": {
     "action": "Screening",
