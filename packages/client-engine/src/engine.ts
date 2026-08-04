@@ -355,6 +355,90 @@ export class OhmailEngine {
     }
   }
 
+  /**
+   * A drain that is guaranteed to have STARTED AFTER the caller's write committed (gap O3-ENGINE).
+   *
+   * ## THE DEFECT THIS EXISTS FOR
+   *
+   * `syncOnce()` coalesces: a second caller gets the drain already running. For a poll or a wake
+   * that is exactly right — they only ever want "catch up", and one drain does. For a mutation
+   * reconciling its own write it is WRONG, and wrong in the way that is hardest to see: a drain
+   * issued BEFORE the POST committed read the change log at a seq below the mutation's row, so it
+   * cannot carry it however long it takes to come back. `dispatch` awaited it anyway, concluded
+   * the write had landed, deleted the optimistic overlay — and the mail snapped back to the
+   * Screener until the next 8 s poll.
+   *
+   * Reported twice by the owner as "when I select one as ohbox, it does not seem to work", and
+   * then it does. It depends on whether a poll happens to be in flight when the click lands, which
+   * is why it looked intermittent: unpredictable by construction, not by luck.
+   *
+   * ## WHY "STARTED AFTER THE POST RETURNED" IS SUFFICIENT — AND WHAT WOULD BREAK IT
+   *
+   * `allocateSeq` (`packages/db/src/change-log.ts:77-85`) allocates through an `UPDATE … RETURNING`
+   * on the account's `account_sync_state` row, inside the mutation's own transaction, and
+   * `recordChange` appends the `change_log` row in that same transaction. So the row lock makes
+   * seq order equal COMMIT order per account: seq N is durable before N+1 is ever handed out. A
+   * drain issued after our POST returned therefore reads a log in which our row is already
+   * visible, and no concurrent drain can move the cursor PAST our seq while our row is still
+   * invisible. That is the whole argument, and it rests entirely on that lock — a future
+   * `bigserial` seq (allocated outside the transaction, committed out of order) would leave every
+   * test here green while making this silently unsound.
+   *
+   * This is deliberately NOT a wait for `cursor >= outcome.seq`. That is unsound in a way this is
+   * not: `SyncService` sets the cursor to the max seq actually RETURNED, computed after the
+   * `types` filter, so with `EngineOptions.types` set a seq belonging to a filtered-out entity
+   * type is never reached and the wait never terminates. It also needs a fallback anyway —
+   * `rule_delete`'s 404 and any absent or non-finite `X-Sync-Seq` give `seq: null` — and a wait
+   * loop is unbounded requests (invariant #10) where this is exactly one drain.
+   *
+   * ## WHAT IT COSTS, WHICH IS NOTHING IN THE COMMON CASE
+   *
+   * No drain in flight ⇒ `syncOnce()` starts one NOW, which is already "after". That is the same
+   * single drain the mutation paid for before this existed: no extra round trip, no doubled
+   * request rate.
+   *
+   * A drain in flight ⇒ ONE follow-up, chained behind it and shared by every mutation that lands
+   * in the same window. Three clicks during one poll are three overlays and one extra drain, not
+   * three.
+   *
+   * That bound comes from `syncOnce()` itself and needs no bookkeeping here, which is worth
+   * stating because the obvious "remember the queued drain" field is redundant and was removed
+   * after being written: every mutation waiting on the same in-flight drain has its callback on
+   * that ONE promise's reaction list, so the callbacks run as consecutive microtasks; the first
+   * calls `syncOnce()`, which assigns `this.syncing` SYNCHRONOUSLY before returning; every
+   * sibling therefore finds it set and coalesces. No macrotask can interleave between adjacent
+   * microtasks, and a drain cannot finish inside that window because its own first step is an
+   * `await`. Proven by experiment rather than argued: with the sharing field disabled the whole
+   * suite — including the three-clicks-in-one-window bound — stayed green.
+   *
+   * Drains therefore never overlap. NOT because of `getCursor()`, which is a plain synchronous
+   * field read that serializes nothing, but because the follow-up is created by calling
+   * `syncOnce()` from inside a `.then` on the drain it is waiting for, so the single-flight is
+   * never bypassed. Concurrency stays 1, which is the property
+   * `apps/webapp/app/shell/sync-scheduler.ts` states and `sync-liveness.test.ts` asserts.
+   *
+   * Two costs are accepted rather than engineered away. A mutation that lands during the ~37-page
+   * cold bootstrap now waits for the bootstrap AND a follow-up before it confirms — the overlay
+   * keeps the screen correct throughout, and the mutation was already hostage to that bootstrap
+   * through `syncOnce`'s coalescing. And a POST that returned before the current drain STARTED
+   * chains one drain it did not need: the client cannot tell that case from the broken one,
+   * because the only happens-before it owns is "the POST returned". The over-approximation is
+   * sound and bounded at one drain; distinguishing it would need a wall clock, and the only clock
+   * here is the injectable `now` seam that fixtures freeze.
+   */
+  private syncFresh(): Promise<void> {
+    const inFlight = this.syncing;
+    // Nothing running ⇒ this starts a drain now, which is already after the commit.
+    if (!inFlight) return this.syncOnce();
+    return inFlight
+      // The IN-FLIGHT drain's failure is not this mutation's failure — it is a poll that has
+      // nothing to do with the write, and this mutation still needs its own drain afterwards.
+      // Its rejection still reaches its own caller (the scheduler counts it and arms backoff):
+      // `.catch` derives a NEW promise and steals no handler.
+      .catch(() => { /* see above */ })
+      .then(() => this.syncOnce());
+  }
+
   /** Hook an SSE/EventSource (or push relay) as a wake signal: `sync` events nudge a drain. */
   attachWakeSignal(source: WakeSignalSource, event = "sync"): () => void {
     const onWake = (): void => {
@@ -598,8 +682,43 @@ export class OhmailEngine {
         // delta that will arrive at the same seq.
         await this.store.applyChanges(outcome.changes);
       } else {
-        // No echo body (triage/screener) — pull the authoritative delta now.
-        await this.syncOnce();
+        /**
+         * NO ECHO BODY — pull the authoritative delta from a drain that STARTED after this POST
+         * returned. See {@link OhmailEngine.syncFresh} for why merely "a drain" is not enough.
+         *
+         * This is not the screener's branch, or triage's. EVERY mutation kind can reach it:
+         * `triage_set`, `screener_decide`, `mark_seen`, `tag_assign`, `rule_delete` and
+         * `mail_send` answer `changes: []` unconditionally, and `move`, `rule_update` and
+         * `feed_mark_seen` degrade to it whenever `X-Sync-Seq` is absent or non-finite
+         * (`http-adapter.ts` `noteSeq`) — a proxy that strips the header puts the whole product
+         * on this path. Only `draft_accept` cannot, because the HTTP adapter refuses it outright.
+         *
+         * ── ITS FAILURE IS NOT THE MUTATION'S FAILURE ────────────────────────────────────────
+         *
+         * `adapter.mutate` RESOLVED: the server answered 2xx and committed its `change_log` row.
+         * A reconciliation drain that then fails — a hidden tab (the webapp's `SyncGate` aborts
+         * the next page), a blip, a second 410 — used to fall into the `catch` below, be wrapped
+         * NON-retryable, and report `rolled_back` for a write that had already succeeded.
+         *
+         * For `mail_send` that is a delivered email reported as failed, and it does not stop at a
+         * wrong label: `useMailSend.absorb` (`apps/webapp/app/shell/mail-send.ts`) releases the
+         * send lock on every status except `queued` and runs `settle` on `confirmed` ONLY, so the
+         * draft survives and the next press mints a NEW Idempotency-Key — a SECOND delivery of
+         * the same mail (invariant #2). "Press Send, then switch apps" is enough to reach it.
+         *
+         * So the drain's failure is swallowed, and that is strictly more truthful rather than
+         * less: the overlay is dropped either way, so the screen is identical, and `confirmed` is
+         * the true statement about a write the server took. What is NOT swallowed is a rejection
+         * from `adapter.mutate` itself — the server refusing is the only thing that means the
+         * mutation failed, and it still rolls back or queues in the `catch` below.
+         *
+         * The residual: on a failed drain the mirror has not caught up, so the row reverts on
+         * screen until the next poll. That is the O3 symptom in the one case where the network
+         * genuinely broke, rather than in the ordinary case of a poll being in flight.
+         */
+        try {
+          await this.syncFresh();
+        } catch { /* see above — the write landed; the mirror catches up on the next poll */ }
       }
       this.overlays.delete(p.id);
       this.overlayRev++;
