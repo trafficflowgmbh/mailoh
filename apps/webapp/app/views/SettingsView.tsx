@@ -88,12 +88,122 @@ export interface MailboxEntity {
   status: string;
 }
 
+/**
+ * ONE TAG, AND THE TWO THINGS THAT CAN BE DONE TO IT.
+ *
+ * A row with three states — resting, renaming, confirming a delete — held as a union rather
+ * than two booleans, for the reason `MessagePane`'s `BarPanel` gives: two booleans can both
+ * be true, which is a state there is no rendering for.
+ *
+ * ── THE DELETE STATES THE COUNT, AND THE COUNT IS A FLOOR ─────────────────────────────
+ *
+ * "Delete Invoices?" with no number is a question nobody can answer. The count comes from
+ * `tagsCrossView` over the local mirror, so on an account whose mirror is still filling it
+ * counts the messages this client has drained and not the account's total. It is therefore
+ * worded as what it is — how many of YOUR messages carry it — rather than as an absolute,
+ * and the sentence next to it says the messages themselves do not move, which is true
+ * regardless of the number: `TagsService.remove` deletes the assignment rows and never
+ * touches `folder_state`.
+ */
+type RowMode = { kind: "rest" } | { kind: "rename"; draft: string } | { kind: "confirm" };
+
+function TagRow({
+  tag,
+  count,
+  admin,
+  t,
+}: {
+  tag: TagDTO;
+  count: number;
+  admin?: { onRename: (tagId: string, name: string) => void; onDelete: (tagId: string) => void };
+  t: ReturnType<typeof useTranslations<"settings">>;
+}) {
+  const [mode, setMode] = useState<RowMode>({ kind: "rest" });
+
+  if (mode.kind === "rename") {
+    const next = mode.draft.trim();
+    // Unchanged or empty is not a rename. The server answers 400 on empty and would accept a
+    // no-op PATCH, but a Save that does nothing is a control that lies about having acted.
+    const canSave = next.length > 0 && next !== tag.name;
+    const save = () => {
+      if (!canSave) return;
+      admin?.onRename(tag.id, next);
+      setMode({ kind: "rest" });
+    };
+    return (
+      <div className="set-row set-tag-edit">
+        <TagDot hue={hueOf(tag)} />
+        <input
+          className="join-input set-tag-input"
+          autoFocus
+          value={mode.draft}
+          aria-label={t("tagRename")}
+          onChange={(e) => setMode({ kind: "rename", draft: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); save(); }
+            // Escape belongs to this input while it is open. The shell's ladder never sees it,
+            // which is correct: the innermost open thing is this field.
+            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setMode({ kind: "rest" }); }
+          }}
+        />
+        <span className="set-tag-acts">
+          <Button variant="primary" disabled={!canSave} onClick={save}>{t("tagSave")}</Button>
+          <Button variant="ghost" onClick={() => setMode({ kind: "rest" })}>{t("tagCancel")}</Button>
+        </span>
+      </div>
+    );
+  }
+
+  if (mode.kind === "confirm") {
+    return (
+      <div className="set-row set-tag-edit">
+        <TagDot hue={hueOf(tag)} />
+        <div className="lab">
+          <b>{t("tagDeleteAsk", { name: tag.name })}</b>
+          <span>{t("tagDeleteWhat", { count })}</span>
+        </div>
+        <span className="set-tag-acts">
+          <Button
+            variant="primary"
+            className="danger"
+            onClick={() => { admin?.onDelete(tag.id); setMode({ kind: "rest" }); }}
+          >
+            {t("tagDelete")}
+          </Button>
+          <Button variant="ghost" onClick={() => setMode({ kind: "rest" })}>{t("tagCancel")}</Button>
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <SettingsRow
+      leading={<TagDot hue={hueOf(tag)} />}
+      label={tag.name}
+      description={t("tagMessages", { count })}
+      control={
+        admin ? (
+          <span className="set-tag-acts">
+            <Button variant="ghost" onClick={() => setMode({ kind: "rename", draft: tag.name })}>
+              {t("tagRename")}
+            </Button>
+            <Button variant="ghost" onClick={() => setMode({ kind: "confirm" })}>
+              {t("tagDelete")}
+            </Button>
+          </span>
+        ) : undefined
+      }
+    />
+  );
+}
+
 export function SettingsView({
   notifications,
   mailboxes,
   tags,
   tagCounts,
   rules,
+  tagAdmin,
   accountSection,
   mailboxSection,
   billingSection,
@@ -134,6 +244,23 @@ export function SettingsView({
     onRevoke: (ruleId: string) => Promise<RuleOutcome>;
     onRetarget: (ruleId: string, destination: Folder) => Promise<RuleOutcome>;
   };
+  /**
+   * RENAME AND DELETE — one object, or a read-only list.
+   *
+   * The same rule as {@link rules} and for the same reason: two optional callbacks can be
+   * half-supplied, and a pane that renders Delete without an `onDelete` is exactly the shape
+   * this is fixing. What shipped was worse than half-supplied — both buttons were present and
+   * both called `toast("Renaming and deleting tags isn't wired up yet.")`, which is a control
+   * whose only function is to say it has none.
+   *
+   * Absent ⇒ the list renders with no verbs. That is right for a shell that has not wired
+   * them and it is never the live one: both are ordinary engine mutations on the same wire
+   * `tag_assign` uses, so the demo and the desktop shell get them too.
+   */
+  tagAdmin?: {
+    onRename: (tagId: string, name: string) => void;
+    onDelete: (tagId: string) => void;
+  };
   /** The Cloud client's Account pane, or absent — see the header. */
   accountSection?: ReactNode;
   /**
@@ -171,6 +298,8 @@ export function SettingsView({
   aboutSection?: ReactNode;
 }) {
   const t = useTranslations("settings");
+  /** The `tag` namespace owns what a tag IS; `settings` owns this pane's chrome. */
+  const tg = useTranslations("tag");
   const toast = useToast();
   const { preference, setTheme } = useTheme();
   const [pane, setPane] = useState<PaneId>("general");
@@ -347,25 +476,25 @@ export function SettingsView({
 
           {pane === "tags" ? (
             <SettingsSection>
+              {tags.length === 0 ? <p className="set-note-inline">{t("tagsEmpty")}</p> : null}
               {tags.map((tag) => (
-                <SettingsRow
+                <TagRow
                   key={tag.id}
-                  leading={<TagDot hue={hueOf(tag)} />}
-                  label={tag.name}
-                  description={t("tagMessages", { count: tagCounts[tag.id] ?? 0 })}
-                  control={
-                    <span style={{ marginLeft: "auto", display: "inline-flex", gap: 7 }}>
-                      <Button variant="ghost" onClick={() => toast(t("toastTagEditing"))}>
-                        {t("tagRename")}
-                      </Button>
-                      <Button variant="ghost" onClick={() => toast(t("toastTagEditing"))}>
-                        {t("tagDelete")}
-                      </Button>
-                    </span>
-                  }
+                  tag={tag}
+                  count={tagCounts[tag.id] ?? 0}
+                  admin={tagAdmin}
+                  t={t}
                 />
               ))}
               <p className="set-note-inline">{t("tagNote")}</p>
+              {/* THE OWNERSHIP SENTENCE, SAID ONCE, WHERE THE VERBS ARE.
+                  A tag is a row in ohmail's database keyed by message — never an IMAP folder
+                  — so it is the one thing on this screen that does not live in the user's own
+                  mailbox. Somebody about to name and organise a taxonomy is entitled to know
+                  that before they build one. It is `tag.notOnServer` verbatim rather than a
+                  second wording: the picker already says it, and two copies of a claim about
+                  what survives leaving is how one of them ends up false. */}
+              <p className="set-note-inline">{tg("notOnServer")}</p>
             </SettingsSection>
           ) : null}
 

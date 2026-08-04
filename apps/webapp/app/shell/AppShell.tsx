@@ -78,6 +78,7 @@ import {
   type ComposeFields,
 } from "./compose";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
+import { TagCreate, TAG_CREATE_ROW_ID } from "./TagCreate";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
@@ -406,6 +407,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    */
   const [readerPending, setReaderPending] = useState<string | null>(null);
   const [railOpen, setRailOpen] = useState(false);
+  /** The sidebar's "New tag" dialog. See `TagCreate` for why it is not an inline rail input. */
+  const [tagCreateOpen, setTagCreateOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [senderMenu, setSenderMenu] = useState<SenderMenuState | null>(null);
   const [senderAudit, setSenderAudit] = useState<SenderAuditState | null>(null);
@@ -649,6 +652,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       setPickerIds(null);
       setFr(null);
       setRailOpen(false);
+      setTagCreateOpen(false);
       setSenderMenu(null);
       setShortcutsOpen(false);
       setReplyTo(null);
@@ -1010,6 +1014,53 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       toast(t("tag.toastTagged", { name }));
     },
     [engine, toast, t],
+  );
+
+  /**
+   * ═══ THE TAG, WITHOUT A MESSAGE ═══════════════════════════════════════════════════════
+   *
+   * Reported as: the sidebar should let you add tags, and Settings → Tags is not implemented.
+   * Both had one cause — `tag_assign`'s tag-or-create was the only way to mint a tag, so a
+   * name had to be attached to a message to exist, and there was no rename or delete verb at
+   * all. `POST /tags`, `PATCH /tags/:id` and `DELETE /tags/:id` had been mounted the whole
+   * time with no caller; these three are the callers.
+   *
+   * The id is minted here for the optimistic row only. `POST /tags` lets the DATABASE choose
+   * the id (unlike tag-or-create, which mints under the client's), so this uuid names a row
+   * that lives exactly as long as the overlay — see the mutation's own comment.
+   */
+  const createTagAlone = useCallback(
+    (name: string) => {
+      void engine.mutate({ kind: "tag_create", tagId: crypto.randomUUID(), name });
+      toast(t("tag.toastCreated", { name }));
+    },
+    [engine, toast, t],
+  );
+
+  const renameTag = useCallback(
+    (tagId: string, name: string) => {
+      void engine.mutate({ kind: "tag_rename", tagId, name });
+      toast(t("tag.toastRenamed", { name }));
+    },
+    [engine, toast, t],
+  );
+
+  /**
+   * The name is read BEFORE the mutation. Afterwards the optimistic effect has already
+   * tombstoned the row, so `reader.get` answers undefined and the sentence would be about a
+   * tag it could not name.
+   */
+  const deleteTag = useCallback(
+    (tagId: string) => {
+      const name = reader.get<TagDTO>("tag", tagId)?.name ?? "";
+      void engine.mutate({ kind: "tag_delete", tagId });
+      toast(t("tag.toastDeleted", { name }));
+    },
+    [engine, reader, toast, t],
+  );
+  const tagAdmin = useMemo(
+    () => ({ onRename: renameTag, onDelete: deleteTag }),
+    [renameTag, deleteTag],
   );
 
   const onMessageAction = useCallback(
@@ -1422,6 +1473,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     // the innermost thing on screen whenever it exists.
     [senderAudit != null, () => setSenderAudit(null)],
     [senderMenu != null, () => setSenderMenu(null)],
+    [tagCreateOpen, () => setTagCreateOpen(false)],
     [picker != null, () => setPicker(null)],
     [fr != null, () => setFr(null)],
     [replyTo != null, () => setReplyTo(null)],
@@ -1703,12 +1755,22 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           // desktop shell, which has no `localStorage`, keeps working untouched.
           open: tagsOpen,
           onOpenChange: setTagsOpen,
-          items: tagGroups.map((g) => ({
-            id: g.tag.id,
-            label: g.tag.name,
-            hue: hueOf(g.tag),
-            count: g.messages.length,
-          })),
+          items: [
+            ...tagGroups.map((g) => ({
+              id: g.tag.id,
+              label: g.tag.name,
+              hue: hueOf(g.tag),
+              count: g.messages.length,
+            })),
+            /* "New tag" — the affordance the sidebar did not have. It is a row in this list
+               rather than a control inside the group because `RailNav` (packages/ui, shared
+               with the desktop shell) exposes no slot there, and growing the design system to
+               serve one host is what its own header argues against for the collapse state.
+               `onNavigateTag` intercepts the id; `TagCreate` owns the input. It sits LAST so
+               it does not move when tags are added, and it carries no count — an empty
+               `count` renders as nothing, which is what distinguishes it from a real tag. */
+            { id: TAG_CREATE_ROW_ID, label: t("rail.tagNew"), hue: "moss" as const },
+          ],
         },
       },
       {
@@ -1904,7 +1966,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             activeTagId={route.tagId ?? undefined}
             onNavigateTag={(id) => {
               setRailOpen(false);
-              goTag(id);
+              // The sentinel row, not a tag. See `railGroups` for why the affordance is a row.
+              if (id === TAG_CREATE_ROW_ID) setTagCreateOpen(true);
+              else goTag(id);
             }}
             mailboxesLabel={t("rail.mailboxes")}
             mailboxes={mailboxes.map((m) => ({
@@ -2056,6 +2120,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                   tagGroups.map((g) => [g.tag.id, g.messages.length]),
                 )}
                 rules={{ items: rules, onRevoke: revokeRule, onRetarget: retargetRule }}
+                /* Rename and delete. Not gated on `demo`, unlike the four injected panes:
+                   both are ordinary engine mutations, so the FixturesAdapter serves them out
+                   of `mutationEffects` and the demo is correct with no special case. */
+                tagAdmin={tagAdmin}
                 /* `demo` is the ENGINE's answer, not the server's floor (see the note on
                    AppShell): `?demo=1` runs on fixtures with no session and no account, so
                    an Account pane there would offer to erase something that does not
@@ -2203,6 +2271,15 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           }
           onCreate={(name) => { createTag(picker.forId, name); setPicker(null); }}
           onClose={() => { setPicker(null); setPickerIds(null); }}
+        />
+      ) : null}
+
+      {/* New tag, from the sidebar — the standalone mint that did not exist. */}
+      {tagCreateOpen ? (
+        <TagCreate
+          tags={tags}
+          onCreate={(name) => { createTagAlone(name); setTagCreateOpen(false); }}
+          onClose={() => setTagCreateOpen(false)}
         />
       ) : null}
 

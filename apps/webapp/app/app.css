@@ -857,6 +857,71 @@ body.reading .shell {
 }
 
 /* ================= tag picker ================= */
+/* ── New tag, from the sidebar ─────────────────────────────────────────────────────────
+   A centred card rather than a popover anchored on the rail row: the same control opens
+   from the docked rail at 1440 and from the drawer at 390, where the row is inside an
+   overlay that is about to close. Same float/lift/rise family as `.tagp`. */
+.tagn-bg {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-pal);
+  background: var(--scrim, oklch(0 0 0 / 0.28));
+}
+.tagn {
+  position: fixed;
+  z-index: var(--z-pal);
+  left: 50%;
+  top: 22vh;
+  transform: translateX(-50%);
+  width: min(340px, calc(100vw - 32px));
+  border-radius: 18px;
+  background: var(--float);
+  box-shadow: var(--lift-3);
+  padding: 18px 20px 16px;
+  animation: rise 0.2s var(--spring);
+}
+.tagn h3 {
+  font-size: 13px;
+  font-weight: 650;
+  margin: 0 0 10px;
+}
+.tagn .join-input {
+  width: 100%;
+}
+.tagn-warn {
+  font-size: 11.5px;
+  color: var(--danger-ink, var(--ink2));
+  margin: 8px 0 0;
+}
+.tagn-acts {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.tagn-note {
+  font-size: 11px;
+  color: var(--ink3);
+  line-height: 1.5;
+  margin: 14px 0 0;
+  border-top: 1px solid var(--hair-soft);
+  padding-top: 10px;
+}
+
+/* Settings → Tags: the rename field and the delete confirmation take the row's place. */
+.set-tag-edit {
+  gap: 10px;
+}
+.set-tag-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.set-tag-acts {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+
 .tagp {
   position: fixed;
   z-index: var(--z-pal);
