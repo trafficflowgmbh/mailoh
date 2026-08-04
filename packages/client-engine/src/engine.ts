@@ -1,4 +1,4 @@
-import type { EngineAdapter } from "./adapters/adapter.js";
+import type { AttachmentWire, EngineAdapter } from "./adapters/adapter.js";
 import { mutationEffects, replySubject, type MutationEffect } from "./mutations.js";
 import { SearchIndex, type LocalSearchResult } from "./search.js";
 import { sendingMailboxId } from "./selectors.js";
@@ -89,6 +89,99 @@ export type ServerSearchOutcome =
   | { state: "unavailable" }
   | { state: "ready"; items: EngineMessage[]; total: number }
   | { state: "failed"; error: string };
+
+// ── attachments (gap O18) ──────────────────────────────────────────────────
+//
+// ohmail STORES NO ATTACHMENT BYTES, anywhere, ever. Metadata is synced at ingest; the bytes live
+// only in the user's own IMAP mailbox and are pulled from it at the moment somebody asks. What the
+// types below model is therefore a CACHE WITH NO BACKING STORE: everything here dies with the tab,
+// and that is the feature, not a limitation to be engineered away later.
+
+/**
+ * One attachment as a surface renders it.
+ *
+ * `mimeType` (not the wire's `contentType`) and a non-null `filename` — the shape the strip is
+ * built against. {@link toAttachmentItem} is the ONE place the wire becomes this, so the fallback
+ * name and the rename cannot drift into two answers.
+ *
+ * `state` is per ITEM because that is how it behaves: a message's strip is a list where one file
+ * is open, one is still arriving and one failed, all at once. `objectUrl` is present only in
+ * `ready`, and only until {@link OhmailEngine.releaseAttachments} revokes it.
+ */
+export interface AttachmentItem {
+  id: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  state: "idle" | "loading" | "ready" | "failed" | "too_large";
+  /**
+   * A `blob:` URL for the fetched bytes, valid ONLY in the document that minted it.
+   *
+   * SAFE FOR `<img src>` AND `<a download>`. NOT safe to navigate to top-level: a `blob:` URL
+   * inherits the app's origin, so a document type the browser will RENDER (SVG, HTML) executes
+   * sender-controlled script as ohmail, with the session cookie in scope. The engine defends this
+   * at the point the Blob is built — see {@link RENDERABLE_MIME} — rather than trusting every call
+   * site to remember.
+   */
+  objectUrl?: string;
+  /** The server's own sentence when `state` is `failed` or `too_large`. */
+  error?: string;
+}
+
+/**
+ * The outcome of one message's metadata read. Never rejects, for the reason
+ * {@link ServerSearchOutcome} does not: the caller is a React effect.
+ *
+ * `unavailable` is a first-class answer — the demo and the desktop tier have no server to ask —
+ * and `ready` with an EMPTY `items` is a different, also-true answer that the surface must render
+ * differently. The second one is COMMON, not an edge case: measured against production on
+ * 2026-08-04, 755 of 1,766 attachment-flagged messages (43%) carry only `inline` parts, which
+ * {@link toAttachmentItem}'s caller filters out. The paperclip is painted from `hasAttachments`,
+ * which counts those parts, so a paperclip over an empty strip is a state the UI has to be able to
+ * say something honest about. (The absolute numbers drift — the corpus syncs continuously — but the
+ * ratio has been stable across two measurements an hour apart.)
+ */
+export type AttachmentsOutcome =
+  | { state: "unavailable" }
+  | { state: "loading" }
+  | { state: "ready"; items: AttachmentItem[] }
+  | { state: "failed"; error: string };
+
+/**
+ * The MIME types whose bytes may keep their real content type on a client-minted Blob.
+ *
+ * Everything else is minted `application/octet-stream`, which makes a browser DOWNLOAD it rather
+ * than render it. This closes the one hole the server's own defences cannot: `GET /attachments/:id`
+ * sets `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`, but an object URL
+ * created here from the response body carries NEITHER — the headers described the response, and the
+ * Blob is a new thing with only a type. An `image/svg+xml` attachment opened in a tab would then
+ * run its own `<script>` on ohmail's origin.
+ *
+ * The list is what a strip actually renders inline, and nothing more. SVG is deliberately absent
+ * despite being an image: it is a document format that executes script. 18 such attachments exist
+ * in the live corpus, so this is a real case and not a hypothetical one.
+ */
+const RENDERABLE_MIME = new Set([
+  "image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf",
+]);
+
+/**
+ * Wire → surface, in one place (the mapper the whole strip is rendered from).
+ *
+ * The filename fallback is `attachment-${id}.bin`, which is the SERVER'S own stem for a nameless
+ * part (`attachments-service.ts` `uniqueName`). Matching it deliberately: the name in the strip is
+ * then the same name that appears in a download-all zip entry, so a user reading both sees one
+ * file, not two.
+ */
+function toAttachmentItem(wire: AttachmentWire): AttachmentItem {
+  return {
+    id: wire.id,
+    filename: wire.filename?.trim() || `attachment-${wire.id}.bin`,
+    mimeType: wire.contentType || "application/octet-stream",
+    sizeBytes: wire.sizeBytes,
+    state: "idle",
+  };
+}
 
 export interface EngineOptions {
   adapter: EngineAdapter;
@@ -181,6 +274,22 @@ export class OhmailEngine {
   private readonly serverSearchFn: ServerSearchFn | null;
   /** In-flight archive passes by query key — see {@link OhmailEngine.searchServer}. */
   private readonly serverSearches = new Map<string, Promise<ServerSearchOutcome>>();
+
+  /**
+   * Attachment metadata + byte state by message id (gap O18).
+   *
+   * IN MEMORY, NEVER `store.putLocal`, and that is a correctness requirement rather than a
+   * preference. ohmail stores no attachment bytes anywhere — not server-side, not here — and an
+   * `objectUrl` is only valid for the lifetime of the document that minted it. A record persisted
+   * to IndexedDB would come back after a reload still holding a `blob:` string pointing at nothing,
+   * and the surface would render a `ready` attachment whose image is permanently broken. Scoping
+   * this to the tab is what makes "fetched on demand, held for the session" true.
+   */
+  private readonly attachmentLists = new Map<string, AttachmentsOutcome>();
+  /** In-flight metadata reads by message id — single-flight, see {@link OhmailEngine.loadAttachments}. */
+  private readonly attachmentListRequests = new Map<string, Promise<AttachmentsOutcome>>();
+  /** In-flight byte fetches by attachment id — see {@link OhmailEngine.openAttachment}. */
+  private readonly attachmentRequests = new Map<string, Promise<void>>();
 
   constructor(opts: EngineOptions) {
     this.adapter = opts.adapter;
@@ -364,18 +473,38 @@ export class OhmailEngine {
   }
 
   private async fetchBodyInto(messageId: string): Promise<void> {
-    await this.putBody(messageId, { messageId, state: "loading", text: "" });
+    await this.putBody(messageId, {
+      messageId, state: "loading", text: "", html: null, loadedRemoteContent: false,
+    });
     try {
       const wire = await this.adapter.fetchBody(messageId);
       // `null` ⇒ this adapter serves no bodies (the fixtures world). Tombstone the loading
       // marker rather than leaving a surface saying "loading…" forever; `bodyOf` then falls
       // back to the snippet, which is the honest answer for an adapter with no endpoint.
-      await this.putBody(messageId, wire === null ? null : { messageId, state: "ready", text: wire.text });
+      //
+      // O11b — `html` rides along, UNTOUCHED. This is the one hop between the wire and the
+      // renderer and it must stay a carry: sanitizing here would put attacker markup through
+      // a transform in the engine, where no surface can see what it did and where the result
+      // would be written into the mirror. What is stored is what the sender wrote.
+      await this.putBody(
+        messageId,
+        wire === null
+          ? null
+          : {
+              messageId,
+              state: "ready",
+              text: wire.text,
+              html: wire.html,
+              loadedRemoteContent: wire.loadedRemoteContent,
+            },
+      );
     } catch (err) {
       await this.putBody(messageId, {
         messageId,
         state: "failed",
         text: "",
+        html: null,
+        loadedRemoteContent: false,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -605,5 +734,263 @@ export class OhmailEngine {
 
     this.serverSearches.set(key, request);
     return request;
+  }
+
+  // ── attachments (gap O18) ────────────────────────────────────────────────
+
+  /**
+   * Can this client open attachments at all?
+   *
+   * `false` for the demo (`?demo=1` is fixtures and zero network, invariants #6/#8), where the
+   * paperclip must not offer a control that cannot work. Resolved from the adapter's own optional
+   * capability, so it cannot disagree with what the methods below will do.
+   */
+  attachmentsAvailable(): boolean {
+    return typeof this.adapter.listAttachments === "function"
+      && typeof this.adapter.fetchAttachment === "function";
+  }
+
+  /**
+   * What the surface renders RIGHT NOW for one message. Synchronous, no side effects.
+   *
+   * Separate from {@link OhmailEngine.loadAttachments} on purpose: React renders far more often
+   * than it should fetch, so the render path reads state and the effect path asks for it. A method
+   * that fetched on read would issue a request per render (invariant #10).
+   */
+  attachmentsOf(messageId: string): AttachmentsOutcome {
+    if (!this.attachmentsAvailable()) return { state: "unavailable" };
+    return this.attachmentLists.get(messageId) ?? { state: "loading" };
+  }
+
+  /**
+   * Read one message's attachment METADATA — filenames, types, sizes. No bytes, no IMAP.
+   *
+   * `cost: "read"` on the route: this is an indexed row read against the caller's own account and
+   * nothing here reaches the mail server, which is what makes it acceptable to call when a message
+   * is opened. The bytes are a separate, deliberate act.
+   *
+   * ## INLINE PARTS ARE FILTERED OUT, AND THE PAPERCLIP DOES NOT KNOW
+   *
+   * `inline` parts are `cid:` images the HTML body already references — a newsletter's logo, a
+   * signature graphic. They are not files a person means when they say "attachment", and the server
+   * agrees: both `GET /files` and per-message `download-all` exclude them. Filtering here keeps the
+   * strip consistent with the zip.
+   *
+   * It also exposes a real inconsistency rather than hiding one. `hasAttachments` is derived from
+   * ALL parts (`mime.ts` — `attachments.length > 0`), so 755 of 1,766 flagged messages in production
+   * (43%, measured 2026-08-04) are flagged for inline parts ONLY and will render a paperclip over an
+   * EMPTY strip. That is honest about the data and wrong about the mail. The fix belongs where the
+   * flag is computed, and is deliberately NOT done here: filtering this list to match the flag would
+   * mean listing tracking pixels and signature logos as files, and widening the flag's definition is
+   * an ingest change plus a backfill of every affected row. Filed as its own gap.
+   *
+   * Never rejects: single-flight per message, and the failure is a value the UI can render.
+   */
+  async loadAttachments(messageId: string, opts: { retry?: boolean } = {}): Promise<AttachmentsOutcome> {
+    const list = this.adapter.listAttachments;
+    if (!list || !this.attachmentsAvailable()) return { state: "unavailable" };
+
+    const inFlight = this.attachmentListRequests.get(messageId);
+    if (inFlight) return inFlight;
+
+    const held = this.attachmentLists.get(messageId);
+    // Already answered. Re-reading would discard the per-item byte state (`ready` object URLs and
+    // all) for a list that cannot have changed — attachments are immutable parts of a stored message.
+    if (held && held.state === "ready") return held;
+    // See `hydrateBody`'s `retry` note: an automatic trigger must not re-ask a server that refused,
+    // or a React effect whose identity changes per render loops against it for as long as the view
+    // is open. A human pressing Retry passes `retry`.
+    if (held && held.state === "failed" && !opts.retry) return held;
+
+    this.attachmentLists.set(messageId, { state: "loading" });
+    this.notify();
+
+    const request = list.call(this.adapter, messageId)
+      .then((wire): AttachmentsOutcome => {
+        const items = wire.filter((a) => !a.inline).map(toAttachmentItem);
+        return { state: "ready", items };
+      })
+      .catch((err: unknown): AttachmentsOutcome => ({
+        state: "failed",
+        error: err instanceof Error ? err.message : String(err),
+      }))
+      .then((outcome) => {
+        this.attachmentLists.set(messageId, outcome);
+        this.notify();
+        return outcome;
+      })
+      .finally(() => {
+        this.attachmentListRequests.delete(messageId);
+      });
+
+    this.attachmentListRequests.set(messageId, request);
+    return request;
+  }
+
+  /**
+   * FETCH ONE ATTACHMENT'S BYTES from the user's IMAP mailbox and mint a Blob URL for it.
+   *
+   * `cost: "connection"` — this opens a real IMAP connection to somebody's mail server, which is
+   * the most expensive read in the product. So it fires on an explicit human act only: a click on
+   * that file. Never on render, never on selection, never speculatively for a strip.
+   *
+   * Never rejects (the caller is a click handler). The outcome is the item's `state`:
+   *
+   *   · `too_large` — the server refused at its size ceiling (`payload_too_large`). A distinct
+   *     state, not a failure, because the answer is permanent and a Retry button would be a lie.
+   *   · `failed`    — anything else, carrying the server's own sentence.
+   *
+   * Single-flight per attachment id: a double-click is one fetch, not two IMAP connections.
+   */
+  async openAttachment(messageId: string, attachmentId: string, opts: { retry?: boolean } = {}): Promise<void> {
+    const fetchOne = this.adapter.fetchAttachment;
+    if (!fetchOne) return;
+
+    const inFlight = this.attachmentRequests.get(attachmentId);
+    if (inFlight) return inFlight;
+
+    const current = this.itemOf(messageId, attachmentId);
+    if (!current) return;
+    // Already fetched, and the URL is still live — the bytes are in the tab, nothing to ask for.
+    if (current.state === "ready" && current.objectUrl) return;
+    // A refusal at the ceiling cannot become a success by asking again.
+    if (current.state === "too_large") return;
+    if (current.state === "failed" && !opts.retry) return;
+
+    this.patchAttachment(messageId, attachmentId, { state: "loading", error: undefined });
+
+    const request = fetchOne.call(this.adapter, attachmentId)
+      .then((blob) => {
+        // REVOKE BEFORE RE-MINTING. A retry over a `failed` item that had somehow minted a URL,
+        // or any second pass, would otherwise leak the old one for the life of the document.
+        this.revokeItem(messageId, attachmentId);
+        const objectUrl = this.mintObjectUrl(blob, current.mimeType);
+        this.patchAttachment(messageId, attachmentId, {
+          state: "ready",
+          ...(objectUrl ? { objectUrl } : {}),
+        });
+      })
+      .catch((err: unknown) => {
+        const code = (err as { code?: unknown } | null)?.code;
+        const message = err instanceof Error ? err.message : String(err);
+        this.patchAttachment(messageId, attachmentId, {
+          state: code === "payload_too_large" ? "too_large" : "failed",
+          error: message,
+        });
+      })
+      .finally(() => {
+        this.attachmentRequests.delete(attachmentId);
+      });
+
+    this.attachmentRequests.set(attachmentId, request);
+    return request;
+  }
+
+  /**
+   * FETCH EVERY non-inline attachment on a message as ONE zip, assembled server-side.
+   *
+   * One request and one IMAP connection for the whole set, which is why this is not a loop over
+   * {@link OhmailEngine.openAttachment} — N files would otherwise mean N logins to the user's mail
+   * server, and providers throttle exactly that pattern.
+   *
+   * Returns the Blob for the caller to save (`<a download>`), or `null` when this client has no
+   * server or the archive could not be built.
+   *
+   * ## THE FAILURE IS THE CALLER'S TO REPORT, AND THE LIST IS LEFT ALONE
+   *
+   * An earlier shape wrote `{state: "failed"}` over the message's list here. That was wrong twice:
+   * the metadata is still perfectly good — only the archive request failed — so replacing the list
+   * would blank a strip the user is looking at, discarding every `ready` object URL in it; and the
+   * strip has no per-list error surface anyway (`AttachmentStripProps` is `items`, `onOpen`,
+   * `onDownloadAll`, `downloadingAll`), so the state was overwritten and restored in the same tick
+   * and no render could ever observe it. A state nothing can render is not error handling.
+   *
+   * So the signal is the return value and the caller says so — a toast, next to the button that
+   * was pressed.
+   *
+   * The zip may legitimately be missing files: the server skips a part it cannot fetch and names it
+   * in `_errors.txt` inside the archive. A non-null answer is therefore NOT a promise that every
+   * file is present.
+   */
+  async downloadAllAttachments(messageId: string): Promise<Blob | null> {
+    const fetchAll = this.adapter.fetchAllAttachments;
+    if (!fetchAll) return null;
+    try {
+      return await fetchAll.call(this.adapter, messageId);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Revoke every object URL held for a message and forget its byte state.
+   *
+   * MUST be called when the surface stops rendering the message (a pane unmount, a different
+   * message selected). A `blob:` URL pins its bytes in memory until it is revoked or the document
+   * dies, so a session spent opening PDFs in a long-lived tab would otherwise accumulate every one
+   * of them — the exact cost the "nothing is stored" design exists to avoid, reintroduced in the
+   * browser instead of the database.
+   */
+  releaseAttachments(messageId: string): void {
+    const held = this.attachmentLists.get(messageId);
+    if (held?.state === "ready") {
+      for (const item of held.items) this.revokeUrl(item.objectUrl);
+    }
+    this.attachmentLists.delete(messageId);
+    this.notify();
+  }
+
+  /** Revoke everything, for a teardown that is losing the whole engine. */
+  releaseAllAttachments(): void {
+    for (const messageId of [...this.attachmentLists.keys()]) this.releaseAttachments(messageId);
+  }
+
+  private itemOf(messageId: string, attachmentId: string): AttachmentItem | undefined {
+    const held = this.attachmentLists.get(messageId);
+    if (held?.state !== "ready") return undefined;
+    return held.items.find((i) => i.id === attachmentId);
+  }
+
+  /** Replace one item in a message's list and re-render. */
+  private patchAttachment(messageId: string, attachmentId: string, patch: Partial<AttachmentItem>): void {
+    const held = this.attachmentLists.get(messageId);
+    if (held?.state !== "ready") return;
+    this.attachmentLists.set(messageId, {
+      state: "ready",
+      items: held.items.map((i) => (i.id === attachmentId ? { ...i, ...patch } : i)),
+    });
+    this.notify();
+  }
+
+  private revokeItem(messageId: string, attachmentId: string): void {
+    this.revokeUrl(this.itemOf(messageId, attachmentId)?.objectUrl);
+  }
+
+  private revokeUrl(url: string | undefined): void {
+    if (!url) return;
+    const U = (globalThis as { URL?: { revokeObjectURL?: (u: string) => void } }).URL;
+    U?.revokeObjectURL?.(url);
+  }
+
+  /**
+   * Mint a Blob URL, DOWNGRADING the content type of anything a browser would render as a document.
+   *
+   * See {@link RENDERABLE_MIME}. The re-typing happens at construction because that is the only
+   * point that governs every consumer: a call site can forget to check a type, and the two the
+   * server sets (`Content-Disposition`, `nosniff`) describe the RESPONSE and do not survive into a
+   * Blob made from its body.
+   *
+   * Returns `undefined` where there is no `URL.createObjectURL` — SSR and the node test
+   * environment — so a `ready` item there simply carries no URL rather than throwing inside a
+   * render.
+   */
+  private mintObjectUrl(blob: Blob, declaredMime: string): string | undefined {
+    const U = (globalThis as {
+      URL?: { createObjectURL?: (b: Blob) => string };
+    }).URL;
+    if (typeof U?.createObjectURL !== "function") return undefined;
+    const safeType = RENDERABLE_MIME.has(declaredMime.toLowerCase()) ? declaredMime : "application/octet-stream";
+    const typed = blob.type === safeType ? blob : new Blob([blob], { type: safeType });
+    return U.createObjectURL(typed);
   }
 }

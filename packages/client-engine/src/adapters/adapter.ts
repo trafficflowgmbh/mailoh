@@ -26,6 +26,27 @@ export interface MutationOutcome {
   seq: number | null;
 }
 
+/**
+ * One attachment's METADATA as the server sends it (`GET /messages/:id/attachments`).
+ *
+ * Deliberately the wire shape, field-for-field, including `contentType` rather than the UI's
+ * `mimeType` and a nullable `filename`: the adapter's job is to read the protocol, and exactly one
+ * place — `toAttachmentItem` in the engine — decides what the surface sees. Renaming here would
+ * put that decision in two files and let them drift.
+ *
+ * `inline` is a `cid:` part referenced by the HTML body (a newsletter's logo, a signature image),
+ * NOT something a user thinks of as a file. It arrives so the engine can filter on it rather than
+ * guess.
+ */
+export interface AttachmentWire {
+  id: string;
+  filename: string | null;
+  contentType: string;
+  sizeBytes: number;
+  inline: boolean;
+  messageId: string;
+}
+
 export interface EngineAdapter {
   /** Fetch one /sync page. Throws CursorExpiredError on a 410 (§3.2). */
   sync(params: SyncParams): Promise<SyncResponse>;
@@ -65,4 +86,47 @@ export interface EngineAdapter {
    * never be conflated — one is a missing capability, the other is a real result.
    */
   searchServer?(query: string, opts: { limit?: number }): Promise<ServerSearchWire | null>;
+
+  // ── attachments (gap O18) ────────────────────────────────────────────────
+  //
+  // ohmail STORES NO ATTACHMENT BYTES. Metadata is synced at ingest and lives server-side; the
+  // bytes are fetched from the user's own IMAP mailbox at the moment they are asked for, held for
+  // the session, and never written anywhere. That is why this is three methods and not a field on
+  // MessageDTO: `listAttachments` is a cheap row read, and the two byte methods each open a real
+  // IMAP connection to the user's mail server.
+  //
+  // ALL THREE ARE OPTIONAL, for the reason `searchServer` is: absence is a real answer. The
+  // FixturesAdapter has no server to fetch from, and a `?demo=1` tab must issue zero requests
+  // (invariant #6) — so it must keep NOT having these, and the surface reads their absence as
+  // "this client cannot open attachments" instead of rendering a control that cannot work.
+
+  /**
+   * `GET /messages/:id/attachments` — metadata for one message, WITHOUT fetching any bytes.
+   *
+   * This is the call the strip renders from: filenames, types and sizes for every part, at the
+   * cost of one indexed row read and no IMAP connection at all. Nothing here touches the mail
+   * server, which is what makes it safe to issue on opening a message.
+   */
+  listAttachments?(messageId: string): Promise<AttachmentWire[]>;
+
+  /**
+   * `GET /attachments/:id` — ONE attachment's bytes, fetched live from IMAP.
+   *
+   * Returns a Blob so the browser can render or save it directly. A non-2xx THROWS, carrying the
+   * server's own sentence, for the same reason `fetchBody` does: resolving an empty Blob on a
+   * refusal would render a blank image where an explanation belongs. A 413 (`payload_too_large`)
+   * is the size ceiling and is distinguishable by the rejection's `code`.
+   */
+  fetchAttachment?(attachmentId: string): Promise<Blob>;
+
+  /**
+   * `POST /messages/:id/attachments/download-all` — every non-inline attachment on one message,
+   * as a zip assembled server-side from IMAP.
+   *
+   * One request and one IMAP connection for the whole set, rather than N of each — which is the
+   * only reason this exists as its own method instead of the surface looping `fetchAttachment`.
+   * A part that cannot be fetched is skipped and named in the archive's `_errors.txt` rather than
+   * failing the download, so a 200 here does NOT promise every file is present.
+   */
+  fetchAllAttachments?(messageId: string): Promise<Blob>;
 }
