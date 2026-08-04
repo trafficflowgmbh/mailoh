@@ -28,6 +28,10 @@ public struct RootView: View {
     @State private var toastTask: Task<Void, Never>?
     @State private var visibleToast: ToastState?
     @FocusState private var shellFocused: Bool
+    /// The local engine's lifetime, owned here because the window is what it is scoped to. It holds
+    /// no mail — `AppState` is still the whole mail seam — and it draws nothing unless the engine
+    /// failed to start.
+    @State private var localEngine = EngineBridge()
 
     public init(_ s: AppState) { self.s = s }
 
@@ -54,7 +58,8 @@ public struct RootView: View {
         .focusable()
         .focusEffectDisabled()
         .focused($shellFocused)
-        .onAppear { shellFocused = true }
+        .onAppear { shellFocused = true; localEngine.start() }
+        .onDisappear { localEngine.stop() }
         .background { paletteShortcut }
         .onKeyPress(phases: .down) { handle($0) }
         .onChange(of: s.toast) { _, new in showToast(new) }
@@ -97,6 +102,11 @@ public struct RootView: View {
                 TopBar(title: s.route.title,
                        onMenu: { withAnimation(motion(reduceMotion, .blancDrawer)) { s.isRailOpen = true } },
                        onSearch: { s.route = .search })
+            }
+            if let notice = localEngine.notice {
+                EngineNoticeStrip(notice: notice)
+                    .padding(.horizontal, compact ? Space.deckCompact : Space.deck)
+                    .padding(.top, compact ? Space.deckCompact : Space.deck)
             }
             deck(compact: compact)
         }
