@@ -1,4 +1,4 @@
-/* ================= the sender sheet's O19 additions =================
+/* ================= the sender sheet's later additions =================
    The scope switch, the auto-unsubscribe disclosure and the audit panel.
 
    ── WHY THIS IS ITS OWN FILE AND NOT `app/app.css` ─────────────────────────────────────
@@ -10,8 +10,8 @@
    component that needs them.
 
    The popover's own box (`.senderm`, `.sm-head`, `.sm-now`, `.sm-foot`) stays in `app.css`
-   untouched: the owner asked for the sheet to be left as it is, and moving its rules would
-   be a diff that claims to be a redesign. Everything below sits INSIDE that popover: the
+   untouched: the sheet was to be left exactly as it is, and moving its rules would be a diff
+   that claims to be a redesign. Everything below sits INSIDE that popover: the
    sheet grows a little taller and nothing that was in it moved. */
 .sm-scope {
   display: flex;
@@ -130,7 +130,7 @@
   background: var(--tint);
 }
 
-/* ================= the audit panel (slice O19b) =================
+/* ================= the audit panel =================
    Every message from an address or a domain, and what accounts for where each one sits.
    Same overlay construction as the `?` sheet: a scrim, a floating card, Escape owned by
    AppShell's single ordered layer list. */

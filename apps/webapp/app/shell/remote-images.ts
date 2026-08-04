@@ -1,10 +1,11 @@
 "use client";
 
 /**
- * ── P2 — THE SPY-PIXEL BLOCKER'S CONSENT HALF, AND THE FIRST CONSUMER `GET /img` HAS EVER
+ * ── THE SPY-PIXEL BLOCKER'S CONSENT HALF, AND THE FIRST CONSUMER `GET /img` HAS EVER
  *    HAD ────────────────────────────────────────────────────────────────────────────────
  *
- * `MessageBody.tsx` has blocked every remote reference since O11b, and its header states the
+ * `MessageBody.tsx` has blocked every remote reference from the day it landed, and its
+ * header states the
  * one thing it deliberately does NOT do: *"It does not fetch a blocked image after consent,
  * and the consent button is therefore absent rather than dead."* This module is that consent
  * path. It is the whole of what was missing, and it is small on purpose — the sanitizer,

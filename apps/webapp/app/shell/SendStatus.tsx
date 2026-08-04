@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * WHAT A SEND THAT HAS NOT ARRIVED SAYS (slices U4b, U4f).
+ * WHAT A SEND THAT HAS NOT ARRIVED SAYS.
  *
  * One line, one component, both surfaces. It exists as a component rather than as two blocks
  * of JSX because the thing it gets right is not layout — it is that `queued` and `unverified`
@@ -38,7 +38,7 @@ export function SendStatus({
           ? { tone: "warn", text: t("statusUnverified") }
           : send.phase === "failed"
             /**
-             * A REFUSAL THE PRODUCT HAS ITS OWN WORDS FOR (gap O20).
+             * A REFUSAL THE PRODUCT HAS ITS OWN WORDS FOR.
              *
              * `statusFailed` quotes the server, which is right for the long tail of SMTP
              * refusals and wrong here: `mailbox_disabled` is a state with a control on the same

@@ -288,9 +288,9 @@ export function EngineProvider({
  *
  * The argument for silence was "it is normally two or three hundred milliseconds, and a
  * sentence that flashes is worse than a quiet frame", and that is still true — of a normal
- * connection. The owner's is not: `GET /auth/session` is the FIRST of two serial round trips
- * before a single row can paint, and on a slow link the whole of it was a blank page followed
- * by "Nothing in your Ohbox.".
+ * connection. A slow one is not: `GET /auth/session` is the FIRST of two serial round trips
+ * before a single row can paint, and over a slow link the whole of it was a blank page
+ * followed by "Nothing in your Ohbox.".
  *
  * `useLoadingGrace` keeps both promises rather than picking one. Below the grace this renders
  * exactly what it always did — an empty, busy, live region. Above it, the region gains a

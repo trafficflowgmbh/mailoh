@@ -64,7 +64,7 @@ export function ReadsView({
   /** Mark one Reads message seen through the engine. */
   markSeen: (id: string) => void;
   isSeen: (m: EngineMessage) => boolean;
-  /** The card's text and what it is — `bodyOf` over the live mirror (slice U5-BODY). */
+  /** The card's text and what it is — `bodyOf` over the live mirror. */
   bodyOf: (m: EngineMessage) => MessageBody;
   /**
    * Ask for one message's body. Idempotent and single-flight; `retry` is what distinguishes
@@ -111,7 +111,7 @@ export function ReadsView({
   }, [jumpTo, onCur, onJumped]);
 
   /**
-   * Keep the row the USER selected in view — `cur`, never `current` (slice U1f).
+   * Keep the row the USER selected in view — `cur`, never `current`.
    *
    * `current` on line 76 is `cur` OR, when nothing has been selected, whichever message
    * happens to be the first unread one. Keyed on that, this effect scrolled the list on
@@ -130,7 +130,7 @@ export function ReadsView({
   }, [cur]);
 
   /**
-   * BECOMING CURRENT IS THE INTENT (slice U5-BODY).
+   * BECOMING CURRENT IS THE INTENT.
    *
    * The card under the cursor is the one being read — put there by a click, by j/k, or by
    * the scroll-spy as somebody scrolls the stream — so that is where the body is asked for.

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The `?` sheet (slice U2) — every binding that is live right now, and nothing else.
+ * The `?` sheet — every binding that is live right now, and nothing else.
  *
  * It renders `groupedBindings(useKeymap().bindings)` and holds no list of its own. That is
  * the property worth protecting: the previous "documentation" was a sentence in the (i)
@@ -36,7 +36,7 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
     // Any keypress dismisses. The registry's own listener still runs the binding for that
     // key — the sheet is in the way of nothing.
     //
-    // ── EXCEPT A BARE MODIFIER, AND THAT EXCEPTION IS THE WHOLE OF U2-TOGGLE ────────────
+    // ── EXCEPT A BARE MODIFIER, AND THAT EXCEPTION IS THE WHOLE OF THE TOGGLE ──────────
     //
     // "Any key dismisses and then does its normal job" is the peek design, and a modifier
     // held down on its own has no normal job — it is the first half of a chord the user has
@@ -46,8 +46,8 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
     // it. Pressing `?` to close the sheet left the sheet open.
     //
     // Not cosmetic — the sheet is `position: fixed` over the whole deck, so a sheet that
-    // will not close swallows the click the user makes next. It ate U1-BULK's "Mark read"
-    // for weeks and was read as a bulk-selection bug.
+    // will not close swallows the click the user makes next. It ate the bulk bar's "Mark
+    // read" for weeks and was read as a bulk-selection bug.
     //
     // With modifiers ignored the chord behaves: `Shift` does nothing, then `?` both
     // dismisses here and toggles in the registry — and those AGREE, because both are

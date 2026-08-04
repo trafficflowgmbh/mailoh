@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * RULES — what the consent gate remembered, and the only way to take it back (gap O16).
+ * RULES — what the consent gate remembered, and the only way to take it back.
  *
  * ── THE DEFECT THIS EXISTS TO CLOSE ─────────────────────────────────────────────────────
  *
@@ -40,8 +40,8 @@
  *
  * `SettingsView` renders it as a pane, because a top-level view would need `shell/routing.ts`
  * and the rail. Keeping the component here means a test imports THIS and not the whole
- * settings screen, and it means O19 — domain rules over all mail, past and future, as the
- * default — can promote it to a route by adding one branch, with no code moving.
+ * settings screen, and it means domain rules over all mail — past and future, as the default
+ * — can promote it to a route by adding one branch, with no code moving.
  */
 import { useState } from "react";
 import { useTranslations } from "next-intl";

@@ -3,7 +3,7 @@
 /**
  * Receipts — the same two-pane pattern as Reads with amounts on the
  * right and day-grouped rows over the engine's receiptsByDay selector.
- * Seen-marking goes through the shell's `mark_seen` mutation (slice U1),
+ * Seen-marking goes through the shell's `mark_seen` mutation,
  * so it reaches `\Seen` on the user's own IMAP server; the local
  * `justSeen` set below is only the fade, not the state.
  */
@@ -38,7 +38,7 @@ export function ReceiptsView({
   unreadCount: number;
   isUnread: (m: EngineMessage) => boolean;
   markSeen: (id: string) => void;
-  /** The card's text and what it is — `bodyOf` over the live mirror (slice U5-BODY). */
+  /** The card's text and what it is — `bodyOf` over the live mirror. */
   bodyOf: (m: EngineMessage) => MessageBody;
   /** Ask for one message's body. `retry` marks a human asking again — see `ReadsView`. */
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
@@ -78,7 +78,7 @@ export function ReceiptsView({
   }, [jumpTo, onCur, onJumped]);
 
   /**
-   * Keep the row the USER selected in view — `cur`, never `current` (slice U1f).
+   * Keep the row the USER selected in view — `cur`, never `current`.
    * `current` on line 48 falls back to the first unread message, so keying this effect on
    * it made an untouched view scroll itself on mount and re-scroll every time a commit
    * moved the fallback. Same reasoning, and the same defect, as `ReadsView`.

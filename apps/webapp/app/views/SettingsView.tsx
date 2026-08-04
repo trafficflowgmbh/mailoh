@@ -41,7 +41,7 @@ type PaneId = "general" | "notifications" | "mailboxes" | "billing" | "tags" | "
  * The notification channels, and why this list is here rather than in the fixtures.
  *
  * It used to be `notificationSettings` from `@ohmail/fixtures`, rendered unconditionally, which
- * put two kinds of demo content on every live account's Settings screen (slice U4f). The
+ * put two kinds of demo content on every live account's Settings screen. The
  * channel labels were merely MISFILED — they are ordinary product copy that a live account
  * legitimately sees, so they moved to `messages/en.json` and the ids below are their keys.
  *
@@ -105,7 +105,7 @@ export function SettingsView({
   tags: TagDTO[];
   tagCounts: Record<string, number>;
   /**
-   * THE RULES PANE (gap O16) — ONE PROP, ALL THREE PARTS, OR NO PANE AT ALL.
+   * THE RULES PANE — ONE PROP, ALL THREE PARTS, OR NO PANE AT ALL.
    *
    * ── WHY IT IS NOT A `ReactNode` SEAM ────────────────────────────────────────────────────
    *
@@ -252,7 +252,7 @@ export function SettingsView({
                   }
                 />
               ))}
-              {/* THE DEMO'S VIP BLOCK (U4f). Present only where the mirror carries the row,
+              {/* THE DEMO'S VIP BLOCK. Present only where the mirror carries the row,
                   which `/sync` can never do — see `NotificationsMeta`. */}
               {notifications ? (
                 <>

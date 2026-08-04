@@ -46,10 +46,10 @@ export function TagPicker({
   assigned: string[];
   onToggle: (tagId: string, assigned: boolean) => void;
   /**
-   * Mint a tag that does not exist yet and put it on this message (W6).
+   * Mint a tag that does not exist yet and put it on this message.
    *
    * The picker had no create affordance at all until the backend landed, which was survivable
-   * only while the tag set came from fixtures: on a real account the list starts EMPTY, so a
+   * only while the tag set came from fixtures: outside the demo the list starts EMPTY, so a
    * picker that can only filter an existing list is a feature nobody can reach. Separate from
    * `onToggle` because the shell mints the id — see `AppShell.toggleTag`.
    */

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * ═══ GAP O18 — THE LAST TEN CENTIMETRES: A PRESS BECOMES A FILE ═══════════════════════════
+ * ═══ THE LAST TEN CENTIMETRES: A PRESS BECOMES A FILE ═════════════════════════════════════
  *
  * The engine holds every attachment's state and mints the Blob URL; `AttachmentStrip` draws
  * it. Neither of them puts a file on somebody's disk, and neither of them can: saving is a
@@ -52,7 +52,7 @@ export interface AttachmentsChrome {
   /**
    * THE LIST AND WHAT IS KNOWN ABOUT IT — the engine's outcome, not a flattened array.
    *
-   * ## GAP AT6, AND THE ONE LINE IT WAS
+   * ## THE DEFECT, AND THE ONE LINE IT WAS
    *
    * This used to read `held.state === "ready" ? held.items : []`. `unavailable`, `loading` and
    * `failed` all became the same empty array, so a metadata read that FAILED drew exactly what
@@ -60,7 +60,7 @@ export interface AttachmentsChrome {
    * Two different sentences, one silence, and the failing one invisible.
    *
    * The engine had recorded the failure the whole time (`AttachmentsOutcome`, with the server's
-   * `code` and `retryable` since AT6), and it already refuses to re-ask automatically so that a
+   * `code` and `retryable`), and it already refuses to re-ask automatically so that a
    * React effect cannot loop against a server that refused. What was missing was here: the seam
    * threw the answer away. It no longer does, and {@link AttachmentsView} is the strip's own
    * type, so the wire `MessagePane` already passes carries the state without that file changing.

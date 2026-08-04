@@ -1,11 +1,11 @@
 "use client";
 
 /**
- * WHY YOUR MAIL WENT WHERE IT WENT (slice O19b) — the product's first "why" surface.
+ * WHY YOUR MAIL WENT WHERE IT WENT — the product's first "why" surface.
  *
- * Owner: *"allow basically clicking on a detailed view which shows me all messages from that
- * address / domain and how they are classified."* Until now nothing in ohmail answered that
- * question at all: mail appeared in a pile and the reasoning was invisible.
+ * The requirement: click through to a detailed view of every message from one address or
+ * domain, and how each was classified. Until this, nothing in ohmail answered that question
+ * at all — mail appeared in a pile and the reasoning was invisible.
  *
  * ── THE HARD PART IS REFUSING TO SAY MORE THAN IS KNOWN ─────────────────────────────────
  *
@@ -18,7 +18,7 @@
  *    the message is actually in**. Read the tense: it says *a rule sends mail from here to
  *    this place*, which is true right now and checkable. It does NOT say "this rule filed
  *    this message", which would be false for every message older than its rule — and once
- *    O19 makes rules routine, that is most of them.
+ *    rules become routine, that is most of them.
  *  · `arrival` — everything else, claiming NOTHING. This is the important one. A yes decision
  *    also writes a `contacts` row and the pipeline routes known senders independently of
  *    rules; `contacts` is not in the mirror's entity vocabulary at all

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * A1 — THE OBSERVATIONS the ladder in `mail-state.ts` judges, made ONCE.
+ * THE OBSERVATIONS the ladder in `mail-state.ts` judges, made ONCE.
  *
  * `mail-state.ts` is pure: numbers in, a state out. This file is the impure half — it samples
  * the mirror, holds the clock, and reads `GET /mailboxes` through an injected probe — and it
@@ -11,7 +11,7 @@
  *
  * The growth sampler is STATEFUL. Two consumers each running their own would eventually
  * disagree about whether the mirror is growing, and a disagreement between two surfaces about
- * the same fact is P17's bug with extra steps. So it is folded here, once.
+ * the same fact is the original bug with extra steps. So it is folded here, once.
  *
  * Three surfaces consume it: the shell's strip (`SyncBar`), the Ohbox's empty pane, and the
  * Settings → Mailboxes rows. The third is why it cannot be a prop: `MailboxSection` is
@@ -20,8 +20,9 @@
  * it at all. `useSyncStatus`'s header makes the same argument for the same reason.
  *
  * `useMailState()` THROWS without a provider rather than returning a resting value. A default
- * would make a forgotten provider render a permanently silent strip — which is P17 exactly:
- * the sentence exists, the wiring does not, and nothing anywhere says so.
+ * would make a forgotten provider render a permanently silent strip — which is exactly the
+ * failure this strip was built for: the sentence exists, the wiring does not, and nothing
+ * anywhere says so.
  *
  * ── WHY THE MAILBOX FACTS ARRIVE AS A FUNCTION ──────────────────────────────────────────
  *
@@ -97,7 +98,7 @@ export const FACTS_POLL_MS = 30_000;
 interface MailStateBinding {
   state: MailState;
   /**
-   * THE FACTS THEMSELVES, not only the sentence derived from them (O20).
+   * THE FACTS THEMSELVES, not only the sentence derived from them.
    *
    * Compose's From selector and the reply's From line need the account's mailboxes — their
    * ids, their addresses and whether each can still send — which is a different question from

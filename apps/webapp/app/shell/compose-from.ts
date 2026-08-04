@@ -1,5 +1,5 @@
 /**
- * WHICH ADDRESS IS ANSWERING (gap O20) — one rule, four surfaces.
+ * WHICH ADDRESS IS ANSWERING — one rule, four surfaces.
  *
  * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
  *

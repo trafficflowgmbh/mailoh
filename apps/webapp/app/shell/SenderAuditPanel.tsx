@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * EVERY MESSAGE FROM THIS SENDER, AND WHAT ACCOUNTS FOR WHERE IT SITS (slice O19b).
+ * EVERY MESSAGE FROM THIS SENDER, AND WHAT ACCOUNTS FOR WHERE IT SITS.
  *
- * Owner: *"allow basically clicking on a detailed view which shows me all messages from that
- * address / domain and how they are classified."*
+ * The requirement: click through to a detailed view showing every message from one address or
+ * domain, and how each of them was classified.
  *
  * The vocabulary — and the three things it refuses to claim — is decided in `sender-audit.ts`
  * and nothing is invented here. This file is the rendering, plus two pieces of honesty that

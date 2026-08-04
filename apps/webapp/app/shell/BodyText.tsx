@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * THE MESSAGE BODY AS PROSE — paragraphs, and real links (slice O11).
+ * THE MESSAGE BODY AS PROSE — paragraphs, and real links.
  *
  * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
  *
- * Owner, 2026-08-04: reading a message "looks like a plain text code editor" — URLs render as
- * a wall of raw query string, the text overflows the panel, no paragraph rhythm. All three
+ * Reading a message looked like reading a plain-text code editor: URLs rendered as a wall of
+ * raw query string, the text overflowed the panel, and there was no paragraph rhythm. All three
  * symptoms came out of ONE expression, `<p className="msg-body">{body.text}</p>`: mailparser's
  * `htmlToText` output, dropped into a single `<p>` with no break rule and no block structure.
  *

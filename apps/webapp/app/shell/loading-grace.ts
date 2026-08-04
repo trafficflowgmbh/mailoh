@@ -7,9 +7,9 @@
  *
  * `engine.tsx` argues, correctly, that the session gate carries no text because it is
  * "normally two or three hundred milliseconds, and a sentence that flashes is worse than a
- * quiet frame". Owner, 2026-08-04: *"sometimes takes several seconds to load, it should
- * actually load instantly optimally out from cache or so, or in case of loading actually show
- * loading messages."* Both are right, about different connections. A single answer has to be
+ * quiet frame". Against that: over a slow link the same wait runs to several seconds, and a
+ * screen that says nothing for several seconds is a screen that looks broken. Both are right,
+ * about different connections. A single answer has to be
  * wrong for one of them.
  *
  * So the answer is a function of TIME rather than a constant. Nothing is said while the wait is
