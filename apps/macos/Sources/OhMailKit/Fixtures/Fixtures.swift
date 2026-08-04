@@ -273,12 +273,21 @@ public enum Fixtures {
 
     public static let readsWaterline = "last visit · Mon 18:40"
 
+    /// The classifier's reading of the newest issue. The number and the reason are
+    /// facts about **that message**, so they live here with the rest of Mila's
+    /// invented world — `Copy` carries the vocabulary around them and nothing else.
+    public static let newestReadsClassification = Classification(
+        dest: .reads, confidence: 0.87, reason: "newsletter fingerprint", correction: .ohbox)
+
     public static func reads() -> [Message] {
-        func m(_ id: String, _ from: String, _ addr: String, _ subj: String, _ prev: String, _ time: String, unread: Bool) -> Message {
-            Message(id: id, place: .reads, from: from, addr: addr, subj: subj, time: time, unread: unread, seen: !unread, preview: prev)
+        func m(_ id: String, _ from: String, _ addr: String, _ subj: String, _ prev: String, _ time: String,
+               unread: Bool, classification: Classification? = nil) -> Message {
+            Message(id: id, place: .reads, from: from, addr: addr, subj: subj, time: time, unread: unread, seen: !unread, preview: prev,
+                    classification: classification)
         }
         return [
-            m("f1", "Skylark Notes", "mara@skylarknotes.com", "#118 — the joy of small tools", "Plus: a lamp, a ladle, and one very good pencil.", "07:02", unread: true),
+            m("f1", "Skylark Notes", "mara@skylarknotes.com", "#118 — the joy of small tools", "Plus: a lamp, a ladle, and one very good pencil.", "07:02", unread: true,
+              classification: newestReadsClassification),
             m("f2", "Blattgang", "post@blattgang.press", "Why paper keeps winning", "Three hundred years of interface design, still undefeated.", "06:31", unread: true),
             m("f3", "Wohnfalz", "news@wohnfalz.ch", "Ideen für kleine Räume", "Neu diese Woche: Klappbares für Balkon und Flur.", "05:44", unread: true),
             m("f4", "The Maker’s Dozen", "hello@makersdozen.studio", "#41 — twelve things makers loved", "A kiln timer, a broom, and a very honest pricing essay.", "05:12", unread: true),

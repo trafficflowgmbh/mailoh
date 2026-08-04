@@ -959,7 +959,7 @@ final class OhMailKitTests: XCTestCase {
         "Answer Later", "Parked", "Resurface",  // the three triage piles
     ]
 
-    /// No file under `Views/` may spell a string the fixture world spells. This is
+    /// Nothing the app **says** may spell a string the fixture world spells. This is
     /// the audit that catches a view which imports nothing, names nothing, and
     /// simply types a demo persona's name into a `Text`.
     ///
@@ -968,26 +968,83 @@ final class OhMailKitTests: XCTestCase {
     /// `"Petra Wyss"`, it said `"Petra Wyss added to VIP."`, and a fixture identity
     /// inside a longer sentence is exactly as much of a leak as one on its own.
     /// Containment costs one extra benign hit across the whole view layer.
-    func testNoViewCarriesAFixtureString() throws {
+    ///
+    /// `Copy.swift` is audited alongside `Views/` for the same reason and by the
+    /// same rule. It is not under `Views/`, so it was outside every audit here
+    /// while it held `readsChipPending = "Reads — AI 0.87: newsletter fingerprint"`
+    /// — a confidence and a fingerprint, which are facts about one message, in a
+    /// constant rendered over whatever mail was newest. Nothing caught it, because
+    /// nothing was looking at this file.
+    func testNothingTheAppSaysCarriesAFixtureString() throws {
         let fixtures = Set(SourceScan(try Self.source("Fixtures/Fixtures.swift")).literals
             .filter { $0.count >= 4 })
         XCTAssertGreaterThan(fixtures.count, 200, "the audit did not read the fixture corpus")
 
         var collided: Set<String> = []
-        for (name, source) in try Self.viewSources() {
+        for (name, source) in try Self.spokenSources() {
             for spoken in SourceScan(source).literals {
                 for fixture in fixtures where spoken.contains(fixture) {
                     collided.insert(fixture)
                     XCTAssertTrue(Self.chromeVocabulary.contains(fixture),
                                   "\(name) says “\(spoken)”, which carries the fixture string "
-                                  + "“\(fixture)” — content reaches a view through AppState, "
-                                  + "never as a literal")
+                                  + "“\(fixture)” — mail content reaches the screen through the "
+                                  + "model, never as a literal")
                 }
             }
         }
         // A reviewed exception that no longer applies is not an exception.
         XCTAssertEqual(Self.chromeVocabulary.subtracting(collided), [],
                        "these chrome-vocabulary exemptions no longer collide with anything — delete them")
+    }
+
+    /// **No `Copy` constant may carry a decimal number.** A decimal in shared
+    /// microcopy is a measurement — a confidence, a score, a size — and `Copy` is
+    /// rendered over every message at once, so a measurement in it is a claim about
+    /// mail it has never seen. This is the second, independent guard on the same
+    /// defect: `readsChipPending` carried `0.87`, and even a containment audit
+    /// would have missed it had the fixture not happened to spell the reason too.
+    func testNoCopyConstantStatesAMeasurement() throws {
+        let spoken = SourceScan(try Self.source("Copy.swift")).literals
+        XCTAssertGreaterThan(spoken.count, 40, "the audit did not read Copy.swift")
+        let decimal = try NSRegularExpression(pattern: #"[0-9]+\.[0-9]+"#)
+        for line in spoken {
+            let ns = line as NSString
+            XCTAssertNil(decimal.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)),
+                         "Copy says “\(line)” — a decimal number is a measurement of one message, "
+                         + "and Copy is said over all of them. It belongs on the model.")
+        }
+    }
+
+    /// The chip states the message's own numbers, and tracks them when they change.
+    /// Asserting the format against a hard-coded sentence would only re-bake the
+    /// constant into the test, so every expectation here is derived from the value.
+    func testReadsChipStatesTheMessagesOwnClassification() {
+        let s = AppState()
+        guard let newest = s.readsUnseen.first, let c = newest.classification else {
+            return XCTFail("the newest issue carries no classification — the chip has nothing to state")
+        }
+        let pending = Copy.readsChip(c)
+        XCTAssertEqual(c.decision, .pending, "a classification arrives undecided")
+        XCTAssertTrue(pending.hasPrefix(c.dest.label), "the chip names where it filed the mail")
+        XCTAssertTrue(pending.contains(c.confidenceText), "…the confidence it had")
+        XCTAssertTrue(pending.contains(c.reason), "…and why")
+
+        var other = c
+        other.confidence = 0.4
+        other.reason = "receipt fingerprint"
+        XCTAssertNotEqual(Copy.readsChip(other), pending,
+                          "the chip must track the message, not a constant")
+        XCTAssertTrue(Copy.readsChip(other).contains("0.40"),
+                      "the confidence is spoken on the classifier's own two-decimal scale")
+
+        // The two answers state their consequence, and the corrected line names the
+        // destination the model carries rather than one the copy picked.
+        var corrected = c; corrected.decision = .corrected
+        XCTAssertTrue(Copy.readsChip(corrected).contains(c.correction.label))
+        XCTAssertTrue(Copy.readsChipCorrectedToast(c.correction).contains(c.correction.label))
+        var approved = c; approved.decision = .approved
+        XCTAssertEqual(Copy.readsChip(approved), Copy.readsChipApproved)
+        XCTAssertTrue(Copy.readsChipApprovedToast.hasPrefix(Copy.readsChipApproved))
     }
 
     /// No file under `Views/` may reach a data source, a file, a process or a
@@ -1453,6 +1510,14 @@ final class OhMailKitTests: XCTestCase {
             }
         }
         return names
+    }
+
+    /// Every file that puts words on screen: the views, plus `Copy.swift`. The
+    /// string audit reads all of them, because a fixture fact baked into shared
+    /// microcopy is the same leak as one typed into a `Text`, and `Copy.swift` sits
+    /// outside `Views/`.
+    static func spokenSources() throws -> [(String, String)] {
+        try viewSources() + [("Copy.swift", try source("Copy.swift"))]
     }
 
     /// Every file under `Views/`, for the source audits.

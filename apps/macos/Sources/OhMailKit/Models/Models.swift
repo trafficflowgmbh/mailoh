@@ -114,6 +114,48 @@ public enum MailContent: Sendable {
     public static let imageMarker = "[[img]]"
 }
 
+// MARK: - Classification — a per-message fact, never chrome
+
+/// What the classifier decided about **one message**, and where that decision
+/// stands with the reader.
+///
+/// It is a value on the mail rather than a line in `Copy` because a confidence
+/// and a reason are measurements of a specific message: the mailbox owns them,
+/// and no two messages have to share them. `Copy.readsChipPending` used to be a
+/// constant reading *"Reads — AI 0.87: newsletter fingerprint"*, rendered under
+/// whatever the newest issue happened to be — against a real source that chip
+/// stated an invented number about somebody's actual mail.
+public struct Classification: Sendable, Equatable {
+    /// Where the classifier filed it.
+    public var dest: Destination
+    /// The classifier's confidence, 0…1.
+    public var confidence: Double
+    /// What it matched on, in the classifier's own words.
+    public var reason: String
+    /// Where correcting it sends this sender's mail instead. Carried by the value
+    /// so that neither a view nor a copy constant has to pick a destination on a
+    /// message's behalf.
+    public var correction: Destination
+    /// How far the reader has got with it. Nothing was applied silently — the mail
+    /// is already filed by rule, and answering only teaches the rule.
+    public var decision: Decision
+
+    public enum Decision: String, Sendable, Equatable, CaseIterable {
+        case pending, approved, corrected
+    }
+
+    public init(dest: Destination, confidence: Double, reason: String,
+                correction: Destination, decision: Decision = .pending) {
+        self.dest = dest; self.confidence = confidence; self.reason = reason
+        self.correction = correction; self.decision = decision
+    }
+
+    /// The confidence as it is spoken — two decimals, the classifier's own scale.
+    /// Formatting lives with the number so that no shared microcopy has to carry
+    /// one; `Copy` is audited for exactly that.
+    public var confidenceText: String { String(format: "%.2f", confidence) }
+}
+
 // MARK: - Message (one unified item, everywhere)
 
 public struct Message: Identifiable, Sendable {
@@ -135,6 +177,10 @@ public struct Message: Identifiable, Sendable {
     public var tracker: String?      // spy-pixel chip
     public var attach: String?       // "Name.pdf (1.2 MB)"
     public var amount: String?       // receipts
+    /// What the classifier made of this message, if it has been through one.
+    /// `nil` is the ordinary case: most mail is filed by a rule that was settled
+    /// long ago and has nothing left to state.
+    public var classification: Classification?
 
     /// Conversation count badge. **Derived** — `nil` unless there really are
     /// several rendered messages behind this row.
@@ -160,11 +206,13 @@ public struct Message: Identifiable, Sendable {
     public init(id: String, place: Place, from: String, addr: String, subj: String, time: String,
                 content: MailContent, earlier: [HeldMail] = [],
                 unread: Bool = false, seen: Bool = false, rationale: String? = nil,
-                tracker: String? = nil, attach: String? = nil, amount: String? = nil) {
+                tracker: String? = nil, attach: String? = nil, amount: String? = nil,
+                classification: Classification? = nil) {
         self.id = id; self.place = place; self.from = from; self.addr = addr; self.subj = subj
         self.time = time; self.content = content; self.earlier = earlier
         self.unread = unread; self.seen = seen; self.rationale = rationale
         self.tracker = tracker; self.attach = attach; self.amount = amount
+        self.classification = classification
     }
 
     /// Ordinary mail.
@@ -172,11 +220,12 @@ public struct Message: Identifiable, Sendable {
                 unread: Bool = false, seen: Bool = false,
                 preview: String? = nil, body: String? = nil, earlier: [HeldMail] = [],
                 rationale: String? = nil, tracker: String? = nil, attach: String? = nil,
-                amount: String? = nil) {
+                amount: String? = nil, classification: Classification? = nil) {
         self.init(id: id, place: place, from: from, addr: addr, subj: subj, time: time,
                   content: .plain(body: body, preview: preview), earlier: earlier,
                   unread: unread, seen: seen, rationale: rationale,
-                  tracker: tracker, attach: attach, amount: amount)
+                  tracker: tracker, attach: attach, amount: amount,
+                  classification: classification)
     }
 
     /// Protected-class mail. The signature has no body or preview parameter, so

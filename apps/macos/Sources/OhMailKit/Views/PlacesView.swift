@@ -20,7 +20,11 @@ public struct ReadsView: View {
                     Rows {
                         ForEach(Array(s.readsUnseen.enumerated()), id: \.element.id) { i, m in
                             row(m)
-                            if i == 0 { ReadsClassifierChip(s).padding(.vertical, 2) }
+                            // The chip belongs to a message, so it appears only when
+                            // that message has a classification to state.
+                            if i == 0, let c = m.classification {
+                                ReadsClassifierChip(s, of: c).padding(.vertical, 2)
+                            }
                         }
                     }
                     WaterlineView(meta: s.readsWaterlineMeta)
@@ -95,27 +99,50 @@ public struct ReceiptsView: View {
 /// The pending-classification chip under the newest issue: the AI states what it
 /// thinks and why, and offers the two answers. Nothing has been decided silently —
 /// the mail is already filed by rule; this only teaches the rule.
+///
+/// **Every fact on this chip comes from the message.** The destination, the
+/// confidence and the reason are that issue's classification; `Copy` supplies the
+/// sentence they sit in and nothing else.
 struct ReadsClassifierChip: View {
     @Environment(\.palette) private var p
     let s: AppState
-    init(_ s: AppState) { self.s = s }
+    let classification: Classification
+    init(_ s: AppState, of classification: Classification) {
+        self.s = s; self.classification = classification
+    }
+
+    /// The classification as it currently stands with the reader.
+    ///
+    /// The reader's answer is still shell state (`AppState.readsChipState`) rather
+    /// than an intent the source hears about, so the *decision* is read from there
+    /// while everything the chip asserts about the mail comes from the model. When
+    /// answering becomes a `MailIntent`, this collapses to `classification`.
+    private var stated: Classification {
+        var c = classification
+        switch s.readsChipState {
+        case .pending: c.decision = .pending
+        case .approved: c.decision = .approved
+        case .corrected: c.decision = .corrected
+        }
+        return c
+    }
 
     var body: some View {
         HStack {
-            switch s.readsChipState {
+            switch stated.decision {
             case .approved:
-                Chip(Copy.readsChipApproved, glyph: .check)
+                Chip(Copy.readsChip(stated), glyph: .check)
             case .corrected:
-                Chip(Copy.readsChipCorrected, glyph: .route)
+                Chip(Copy.readsChip(stated), glyph: .route)
             case .pending:
-                Chip(Copy.readsChipPending, glyph: .spark, pending: true) {
+                Chip(Copy.readsChip(stated), glyph: .spark, pending: true) {
                     HStack(spacing: 4) {
                         MiniButton("Approve") { s.readsChipState = .approved
-                            s.showToast("Approved — saved as a rule.") }
+                            s.showToast(Copy.readsChipApprovedToast) }
                         Text("·").foregroundStyle(p.ink3.color.opacity(0.4))
                             .accessibilityHidden(true)
                         MiniButton("Correct") { s.readsChipState = .corrected
-                            s.showToast("Corrected — this sender goes to Ohbox next time.") }
+                            s.showToast(Copy.readsChipCorrectedToast(stated.correction)) }
                     }
                 }
             }

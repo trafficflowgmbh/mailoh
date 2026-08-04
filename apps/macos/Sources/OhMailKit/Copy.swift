@@ -31,9 +31,29 @@ public enum Copy {
         "All \(shown) receipt\(shown == 1 ? "" : "s") shown. Search reaches older ones on your server."
     }
     public static let streamSeenHint = "scrolling past marks seen"
-    public static let readsChipPending = "Reads — AI 0.87: newsletter fingerprint"
+
+    /// The classifier chip, stated from **one message's own classification**.
+    ///
+    /// A function rather than a constant, and that is the whole of it: this line
+    /// used to be `readsChipPending = "Reads — AI 0.87: newsletter fingerprint"`,
+    /// a shared constant rendered over whatever the newest issue happened to be.
+    /// A confidence and a reason are facts the mailbox owns about one message, so
+    /// against a real source that constant stated an invented number about
+    /// somebody's actual mail. The number and the reason now come from
+    /// `Classification`; the vocabulary around them is all that is left here.
+    public static func readsChip(_ c: Classification) -> String {
+        switch c.decision {
+        case .pending: return "\(c.dest.label) — AI \(c.confidenceText): \(c.reason)"
+        case .approved: return readsChipApproved
+        case .corrected: return "Corrected — goes to \(c.correction.label) next time"
+        }
+    }
     public static let readsChipApproved = "Approved — saved as a rule"
-    public static let readsChipCorrected = "Corrected — goes to Ohbox next time"
+    /// The same two statements as sentences, for the toast that follows the answer.
+    public static let readsChipApprovedToast = readsChipApproved + "."
+    public static func readsChipCorrectedToast(_ dest: Destination) -> String {
+        "Corrected — this sender goes to \(dest.label) next time."
+    }
 
     // MARK: Protected (sensitive-mail invariant, stated as fact)
 

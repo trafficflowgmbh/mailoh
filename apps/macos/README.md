@@ -5,19 +5,32 @@ design system. This is the Tier-1 *preview*: it runs entirely on Mila's fixture
 world with no network at all. A real mail engine lands behind the same views
 later, through [`MailSource`](Sources/OhMailKit/State/MailSource.swift).
 
-Nothing in `Views/` reaches past `AppState` — not even for a string. That used to
-be an assertion in this file and is now three tests: the audits in
-`OhMailKitTests` read every file under `Views/` and fail on a fixture or source
-type named, a fixture string spoken, or a reach for the network, the filesystem or
-a second copy of the world. Worth having, because the claim was **false** when it
-was first written down — a settings card typed a demo persona's name into three
-string literals — and the substring check that was guarding it could not see that.
+**Mail reaches a view only through `AppState`.** No content, no fixture, no
+sender — the views know the model and nothing behind it. Chrome vocabulary is the
+one thing they read directly: `Copy.swift` and `Theme/` are imported by name, and
+they hold the app's own words and tokens, which state no fact about any message.
+
+That used to read *"not even for a string"*, which was never quite true and was
+hiding a real defect on the wrong side of the line: `Copy` held a constant reading
+`"Reads — AI 0.87: newsletter fingerprint"`, rendered under whatever issue was
+newest. A confidence and a reason are per-message facts, so against a real mailbox
+that chip asserted an invented number about somebody's actual mail. It is a
+`Classification` on the message now, and `Copy.readsChip(_:)` formats it.
+
+The claim is four tests: the audits in `OhMailKitTests` read every file under
+`Views/` and fail on a fixture or source type named or a reach for the network,
+the filesystem or a second copy of the world; they read `Views/` **and
+`Copy.swift`** for any string the fixture world spells; and they fail on any
+decimal number in `Copy`, because a measurement in shared microcopy is a claim
+about mail it has never seen. Worth having, because the first version of the claim
+was **false** — a settings card typed a demo persona's name into three string
+literals — and the substring check guarding it could not see that.
 
 ## Run
 
 ```bash
 swift build --package-path apps/macos          # compile
-swift test  --package-path apps/macos          # 114 model/logic/fidelity tests
+swift test  --package-path apps/macos          # 116 model/logic/fidelity tests
 swift run   --package-path apps/macos OhMail   # open the app
 ```
 
@@ -85,7 +98,7 @@ testable from the command line with no Xcode project in the loop:
 |---|---|---|
 | `OhMailKit` | library | `Theme/` (Blanc tokens), `Models/`, `Fixtures/`, `State/`, `Views/`, `App/`, `Copy.swift` |
 | `OhMail` | executable | `main.swift` — dispatches `--smoke` / `--shot` / the app |
-| `OhMailKitTests` | test | 114 tests over counts, seen-semantics, lossless screener moves, undo, triage, tags, search, token fidelity, the view boundary, the source seam, no-collapse |
+| `OhMailKitTests` | test | 116 tests over counts, seen-semantics, lossless screener moves, undo, triage, tags, search, token fidelity, the view boundary, the source seam, no-collapse |
 
 `main.swift` deliberately avoids `@main`: the `--smoke` path has to run before any
 `App` scene exists.
