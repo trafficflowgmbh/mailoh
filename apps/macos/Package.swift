@@ -16,10 +16,14 @@ import PackageDescription
 // `OhMailEngine` is the exception that comment anticipated, and it takes v6. It is
 // the only target with threads in it — a supervisor, a frame reader and a stderr
 // drain per run of the child — so it is the only one where the compiler checking
-// what crosses between them buys anything. Foundation only: no SwiftUI, no
-// URLSession, no Security. the packaging step fails the build if the
-// shipped Mach-O links CFNetwork, Network or Security, and that check is what
-// keeps the download's "no network code" disclosure honest.
+// what crosses between them buys anything. No SwiftUI: it imports Foundation and
+// Security, the latter to keep this install's key in the Keychain rather than on
+// disk. A blanket "does it link Security" check would therefore be red on every
+// build from here on, so the packaging step checks the imported SYMBOLS instead —
+// an allowlist naming the exact Keychain and response-parsing entries, with
+// Network.framework and libnetwork still refused outright. That is what keeps the
+// download's "no network code" disclosure honest; see `scripts/package-macos.mjs`
+// for why per-symbol is stricter here than per-library, not looser.
 let package = Package(
     name: "OhMail",
     platforms: [.macOS(.v15)],
