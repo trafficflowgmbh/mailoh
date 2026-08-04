@@ -15,6 +15,17 @@ export const VIEWS = [
   "receipts",
   "screener",
   "triage",
+  /**
+   * HISTORY — mail from senders nobody has ever decided about, that went quiet long ago.
+   *
+   * Not "archive". Archive is a VERB in every other mail client, an action this mail never
+   * received, and plenty of mailboxes have a real server-side Archive folder whose contents
+   * this view is not showing.
+   *
+   * It sits after the piles and before the utilities because it is a place mail is, rather
+   * than a tool — but it is deliberately NOT one of `PILE_IDS`, so the number keys skip it.
+   */
+  "history",
   "search",
   "compose",
   "settings",

@@ -91,6 +91,7 @@ export function SearchView({
   query,
   onQuery,
   onOpen,
+  placeOf,
   onServerSearch,
 }: {
   engine: OhmailEngine;
@@ -99,6 +100,23 @@ export function SearchView({
   query: string;
   onQuery: (q: string) => void;
   onOpen: (hit: EngineSearchHit) => void;
+  /**
+   * WHERE EACH MESSAGE IS PRESENTED — a folder, or `null` for History.
+   *
+   * Search reads the engine's own index, which is built over the mirror as the mail server has
+   * it, and that is right: a message must be findable by what it says, not by which pile the
+   * consent model puts it in. But the CHIP on a hit answers "where do I go to find this
+   * again?", and for a History message the folder is the INBOX while the place is History —
+   * so a chip derived from the folder alone would send somebody to a pile the message is not
+   * presented in.
+   *
+   * A map rather than a projected reader, deliberately: wrapping the index would change what
+   * is searchable, and mail in History has to stay searchable.
+   *
+   * Absent on a host with no consent partition (the desktop's fixture shell), where every
+   * message presents in its own folder and the folder is the honest answer.
+   */
+  placeOf?: ReadonlyMap<string, string | null>;
   /**
    * @deprecated The archive is searched by this view now, so nothing calls this. It is still
    * declared because `app/shell/AppShell.tsx` still passes it and that file belongs to another
@@ -477,7 +495,7 @@ export function SearchView({
                       data-hit={hit.message.id}
                       {...(i === cursor ? { "aria-current": "true" as const } : {})}
                     >
-                      <Hit hit={hit} now={now} onOpen={onOpen} archiveOnly={archiveOnly} />
+                      <Hit hit={hit} now={now} onOpen={onOpen} archiveOnly={archiveOnly} placeOf={placeOf} />
                     </div>
                   ))}
                 </div>
@@ -496,12 +514,14 @@ function Hit({
   now,
   onOpen,
   archiveOnly,
+  placeOf,
 }: {
   hit: EngineSearchHit;
   now: Date;
   onOpen: (hit: EngineSearchHit) => void;
   /** The archive returned it and this device's mirror has no row for it — say so. */
   archiveOnly: boolean;
+  placeOf?: ReadonlyMap<string, string | null>;
 }) {
   const t = useTranslations("search");
   const m = hit.message;
@@ -526,8 +546,15 @@ function Hit({
   // Joined, never concatenated: a message with no `Date:` header has no stamp, and the
   // template that spelled the separator itself rendered "Ohbox · " with nothing after it. See
   // `shell/format.ts`.
+  //
+  // THE PLACE, NOT THE FOLDER. `placeOf` holds `null` for a History message — a real answer
+  // rather than a missing one, which is why the map is asked with `has` before `get`. A `??`
+  // here would read "presented in History" and "this map says nothing about that id" alike,
+  // and send a History hit to the Ohbox.
+  const known = placeOf?.has(m.id) === true;
+  const presented = known ? (placeOf as ReadonlyMap<string, string | null>).get(m.id)! : m.folder;
   const where = metaLine(
-    placeLabel(m.folder),
+    known && presented === null ? t("hitHistory") : placeLabel(presented ?? m.folder),
     displayTime(m, now),
     archiveOnly ? t("hitArchiveOnly") : null,
   );

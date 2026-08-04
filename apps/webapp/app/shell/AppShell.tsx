@@ -21,7 +21,10 @@ import {
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
   bodyOf,
+  consentPartition,
   ohboxView,
+  physicalFolderOf,
+  presentationReader,
   readsPartition,
   receiptsByDay,
   rulesList,
@@ -30,6 +33,7 @@ import {
   tagsCrossView,
   threadOf,
   triagePiles,
+  type ConsentPartition,
   type EngineDraft,
   type EngineMessage,
   type EngineMutation,
@@ -67,6 +71,7 @@ import { PLACE_LABEL, avatarHue, firstName, hueOf, nextFridayNine, resurfaceLabe
 import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
 import { useMessageAttachments } from "./attachments";
 import { useRemoteImages } from "./remote-images";
+import { useConsentState } from "./consent-state";
 import { useScreenerState } from "./screener-state";
 import { useScreenerSuggestions } from "./screener-suggest";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
@@ -104,6 +109,7 @@ import {
   go, goScreener, goTag, goTriage, useHashRoute,
   type ScreenerSegmentId, type TriagePileId,
 } from "./routing";
+import { HistoryView } from "../views/HistoryView";
 import { OhboxView } from "../views/OhboxView";
 import { ReadsView, type ReadsChipState } from "../views/ReadsView";
 import { ReceiptsView } from "../views/ReceiptsView";
@@ -368,6 +374,14 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * mail-state ladder established. A prop is how a derivation reaches a component that must be mountable alone.
    */
   const { mailboxes: facts, state: mailState } = useMailState();
+  /**
+   * THE MIRROR AS IT IS. Where each message physically sits on the server.
+   *
+   * Every mutation, every body open and the search index read from THIS reader and never from
+   * the projected one below. A mutation reads a message's current folder to work out what it
+   * is moving from; handing it a presentation would make it move from a place the server has
+   * never heard of.
+   */
   const reader = engine.read();
   const toast = useToast();
   const theme = useTheme();
@@ -377,12 +391,83 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const palette = useCommandPalette({ bindKey: false });
   const now = useMemo(() => (demo ? DEMO_NOW : new Date()), [demo]);
 
+  /* ── consent: what is PRESENTED, as opposed to where it sits ────────────────────────────
+   *
+   * Mail is shown by who sent it and whether the user has decided about them, not by which
+   * folder the mail server has it in. A consented sender's whole backlog appears in the Ohbox
+   * while every message of it is still physically in the Screener folder, and mail from
+   * senders who went quiet years ago and were never screened presents in History. Nothing
+   * moves; this is a filter over the same mirror.
+   */
+  const consent = useConsentState(!demo);
+  /**
+   * The account's OWN addresses, from `GET /mailboxes` — passed EXPLICITLY and not left to
+   * the default.
+   *
+   * `consentPartition` falls back to the mirror's `mailbox` entities, and a live `/sync` feed
+   * carries none: the fallback is an empty set on exactly the surface that matters. With an
+   * empty set the user is not recognised as themselves, and their own mail — a note to
+   * themselves, a forward from another account — lands in their own Screener queue asking
+   * whether they would like to hear from themselves. The demo's mirror DOES hold mailbox rows,
+   * so no fixture test could ever have shown this.
+   */
+  const ownAddresses = useMemo(() => facts?.map((m) => m.address) ?? [], [facts]);
+  const consentView: ConsentPartition | null = useMemo(
+    // THE DEMO IS NOT PARTITIONED, and this is a fact about the data rather than a shortcut.
+    //
+    // Consent is derived from rules, and the fixture world has none — nobody has ever screened
+    // anybody in it, because there is no server to screen against. Run over that mirror the
+    // partition is right and useless: every read message older than the window is undecided
+    // and dormant, so the whole curated world empties into History and the tour has nothing to
+    // show. The fixture placements were AUTHORED to demonstrate the piles; they are not a
+    // record of decisions this model can read, and pretending otherwise is what would be
+    // dishonest here.
+    //
+    // AND NOTHING IS PARTITIONED BEFORE THE SERVER HAS ANSWERED. `consent.known` is false
+    // until `GET /consent` lands, and false for ever if it never does. That is the safe
+    // direction and the only one: partitioning on a guessed window would move mail out of the
+    // piles and into History on the strength of a default the account may not be using, and a
+    // request that simply failed would silently hide somebody's mail. Unpartitioned is what
+    // the product did before consent existed — every message in the pile its folder names —
+    // so a tab that cannot reach the endpoint degrades to showing MORE, never less.
+    () =>
+      demo || !consent.known
+        ? null
+        : consentPartition(reader, { now, dormancyDays: consent.dormancyDays, ownAddresses }),
+    [demo, consent.known, reader, version, now, consent.dormancyDays, ownAddresses],
+  );
+  /**
+   * The same mirror, with every message sitting where it is PRESENTED.
+   *
+   * Fed to the pile selectors and to nothing else. They group by folder, and after this
+   * projection grouping by folder IS grouping by place — which is what lets History exist
+   * without a single server-side move. History's own contents are absent from it entirely and
+   * are read from `consentView.history`.
+   */
+  const presented = useMemo(
+    () => (consentView ? presentationReader(reader, consentView) : reader),
+    [reader, consentView],
+  );
+
   /* ── engine-derived world (recomputed exactly when the mirror moves) ── */
-  const ohbox = useMemo(() => ohboxView(reader), [reader, version]);
-  const partition = useMemo(() => readsPartition(reader), [reader, version]);
-  const receiptGroups = useMemo(() => receiptsByDay(reader, now), [reader, version, now]);
-  const piles = useMemo(() => triagePiles(reader), [reader, version]);
-  const tagGroups = useMemo(() => tagsCrossView(reader), [reader, version]);
+  const ohbox = useMemo(() => ohboxView(presented), [presented, version]);
+  const partition = useMemo(() => readsPartition(presented), [presented, version]);
+  const receiptGroups = useMemo(() => receiptsByDay(presented, now), [presented, version, now]);
+  const piles = useMemo(() => triagePiles(presented), [presented, version]);
+  const tagGroups = useMemo(() => tagsCrossView(presented), [presented, version]);
+  /**
+   * History: dormant, undecided, and read by construction. Newest first.
+   *
+   * Every row is stamped with `physicalFolder`, which the projection does not do for History
+   * (it removes those messages rather than re-placing them). That stamp is the single rule the
+   * reading pane goes by: **if a message carries one, what you are looking at is not where it
+   * is, and the pane says where it is.** Without it, History would be the one place in the
+   * product that shows mail somewhere other than its folder and does not admit to it.
+   */
+  const history = useMemo(
+    () => (consentView?.history ?? []).map((m) => ({ ...m, physicalFolder: m.folder })),
+    [consentView],
+  );
   const tags = useMemo(() => reader.list<TagDTO>("tag"), [reader, version]);
   /** Every rule the consent gate has written, newest first. */
   const rules = useMemo(() => rulesList(reader), [reader, version]);
@@ -1923,6 +2008,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       },
       {
         items: [
+          /**
+           * HISTORY CARRIES NO COUNT, AND THAT IS A PROPERTY RATHER THAN A STYLE CHOICE.
+           *
+           * A sender with ANY unread mail is active whatever its age, so nothing unread can
+           * reach History — the engine's cutline guarantees it by construction. A place that
+           * cannot contain anything unread has nothing to demand, so a badge here would be a
+           * number that is always the size of the past and never a call to act.
+           *
+           * `count` is therefore ABSENT rather than zero: `RailNav` renders an absent count as
+           * nothing at all, and a literal `0` would draw a badge saying nothing is there.
+           * `rail-history.test.tsx` asserts the key is missing, because a future edit adding
+           * `count: history.length` would look like an improvement.
+           */
+          { id: "history", label: t("rail.history"), title: t("rail.historyTitle") },
           { id: "search", label: t("rail.search"), kbdHint: "/" },
           { id: "settings", label: t("rail.settings") },
         ],
@@ -2032,6 +2131,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     receipts: t("rail.receipts"),
     screener: t("rail.screener"),
     triage: t("rail.triage"),
+    history: t("rail.history"),
     search: t("rail.search"),
     compose: t("rail.compose"),
     settings: t("rail.settings"),
@@ -2337,6 +2437,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
               />
             ) : null}
 
+            {effectiveView === "history" ? (
+              <HistoryView
+                messages={history}
+                tags={tags}
+                now={now}
+                /* The SAME opener every other list uses. Opening a History message renders it
+                   in full, with its thread, and the sender sheet one press away offering the
+                   screening decision inline — the whole point of History being a presentation
+                   rather than a quarantine. */
+                onOpen={openMessage}
+              />
+            ) : null}
+
             {effectiveView === "search" ? (
               <SearchView
                 engine={engine}
@@ -2345,6 +2458,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 query={searchQuery}
                 onQuery={setSearchQuery}
                 onOpen={(hit: SearchHit) => openMessage(hit.message)}
+                /* The chip on a hit answers "where do I go to find this again?", and for a
+                   History message the folder and the place are different answers. The INDEX is
+                   deliberately not projected — mail in History must stay searchable. */
+                placeOf={consentView?.placeOf}
                 onServerSearch={() => toast(t("search.toastServer"))}
               />
             ) : null}

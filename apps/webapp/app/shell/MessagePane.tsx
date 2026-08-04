@@ -575,7 +575,24 @@ export function MessagePane({
          nothing after the separator, and a threadless one rendered an empty stamp. The key no
          longer carries the punctuation and `metaLine` prints a separator only between two
          values that exist. */
-      time={metaLine(threadCount ? t("threadMeta", { count: threadCount }) : null, displayTime(message, now))}
+      /**
+       * WHERE IT ACTUALLY IS, whenever that is not where it is being shown.
+       *
+       * `physicalFolder` is set by the consent projection on exactly the messages whose place
+       * and folder differ — a consented sender's backlog presented in the Ohbox while it sits
+       * in the Screener folder, and everything in History. Those are the only cases; a message
+       * shown in the pile it is filed in says nothing extra, because there is nothing to say.
+       *
+       * It matters because the product's promise is to organise a mailbox in place. A reader
+       * who wants to find this message in Apple Mail needs the server's answer, not ours, and
+       * a presentation that never admitted to being one would be the product quietly claiming
+       * to have moved mail it deliberately did not move.
+       */
+      time={metaLine(
+        threadCount ? t("threadMeta", { count: threadCount }) : null,
+        message.physicalFolder ? t("onServer", { folder: message.physicalFolder }) : null,
+        displayTime(message, now),
+      )}
       subject={message.subject}
       onEnterReader={onEnterReader}
       chips={

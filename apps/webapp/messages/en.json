@@ -154,6 +154,8 @@
     "tagNew": "New tag",
     "numberHint": "Press 1–{last} to switch piles.",
     "numberHintGot": "Got it",
+    "history": "History",
+    "historyTitle": "Old mail from senders you never screened",
     "search": "Search",
     "settings": "Settings",
     "mailboxes": "Mailboxes",
@@ -194,6 +196,7 @@
     "doorbellAction": "Screener ›",
     "doorbellAria": "{count, plural, =0 {All clear, nobody waiting — open the Screener} one {1 first-time sender waiting — open the Screener} other {# first-time senders waiting — open the Screener}}",
     "threadMeta": "thread ({count})",
+    "onServer": "on your server: {folder}",
     "loading": "Loading your mail.",
     "emptyPlain": "Nothing in your Ohbox.",
     "emptyScreenerTitle": "Nothing in your Ohbox yet.",
@@ -368,6 +371,14 @@
     "frEmptyCta": "Back to Triage",
     "keyReplyRun": "start the Reply Run"
   },
+  "history": {
+    "title": "History",
+    "metaCount": "{count, plural, one {1 message} other {# messages}}",
+    "explainer": "Mail from people you never screened, who haven't written in a while. It's all read, so nothing here is waiting on you. It hasn't moved — each message is still where your mail server keeps it.",
+    "emptyTitle": "Nothing has settled here yet.",
+    "emptyHint": "History holds old mail from senders you never made a decision about. If one of them writes again, they go to the Screener and bring this mail with them.",
+    "placeChip": "History"
+  },
   "tag": {
     "metaCount": "{count, plural, one {1 message} other {# messages}}",
     "emptyTitle": "Nothing carries this tag yet.",
@@ -418,6 +429,7 @@
     "scopeFailed": "The archive could not be searched — {reason} These results cover this device only.",
     "scopeRetry": "Search the archive again",
     "hitArchiveOnly": "from the archive",
+    "hitHistory": "History",
     "hitAria": "Result {n} of {total} — open it",
     "keyNext": "next result",
     "keyPrev": "previous result",

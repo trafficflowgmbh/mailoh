@@ -86,6 +86,19 @@ body.reading .shell {
   justify-content: center;
 }
 
+/* One quiet sentence above a list, explaining what the list IS. Used by History, where the
+   word on the heading is one this product uses in a way no other mail client does. Sized and
+   coloured like the settings notes rather than like body copy: it is furniture, not content,
+   and it must never compete with the first row for attention. */
+.view-note {
+  margin: 0;
+  padding: 0 14px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink3);
+  border-bottom: 1px solid var(--hair-soft);
+}
+
 /* ================= demo ribbon ================= */
 .demo-ribbon {
   flex: none;
