@@ -1,3 +1,4 @@
+import type { ServerSearchWire } from "../engine.js";
 import type { EngineMutation, MessageBodyWire, SyncChange, SyncResponse } from "../types.js";
 
 /**
@@ -53,4 +54,15 @@ export interface EngineAdapter {
    * an empty message as though that were the mail.
    */
   fetchBody(messageId: string): Promise<MessageBodyWire | null>;
+
+  /**
+   * `GET /search` — the full-corpus archive, or absent when this client has no archive
+   * (fixtures, desktop).
+   *
+   * Optional on purpose: absence is what lets the surface say "this client cannot reach the
+   * archive" instead of claiming an empty one. Resolving `null` means the same thing;
+   * resolving `{items: []}` means the archive answered and matched nothing, and the two must
+   * never be conflated — one is a missing capability, the other is a real result.
+   */
+  searchServer?(query: string, opts: { limit?: number }): Promise<ServerSearchWire | null>;
 }

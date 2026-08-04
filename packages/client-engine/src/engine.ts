@@ -39,8 +39,65 @@ interface PendingMutation {
   mutation: EngineMutation;
 }
 
+/**
+ * WHAT `GET /search` ANSWERS, as much of it as this client reads (gap O14).
+ *
+ * The route returns `{ items, facets, total }`. `items` are canonical `MessageDTO`s, and an
+ * {@link EngineMessage} is exactly a `MessageDTO` plus optional fixture extras, so a DTO IS
+ * one — no conversion, no second shape. `facets` is deliberately NOT read: the server's facet
+ * keys are raw folder paths (`SearchService.folderExpr` → `desired_folder` / the native
+ * locator), while the local index keys its facets by VIEW id or by folder leaf, and rendering
+ * the server's keys would put a namespaced IMAP path straight on screen. The surface keeps its
+ * local facets; forward-compatible parsing (§8) means the extra field is not an error.
+ */
+export interface ServerSearchWire {
+  items: EngineMessage[];
+  /** Matches for the query across the WHOLE corpus, which is more than `items.length`. */
+  total: number;
+}
+
+/**
+ * The transport `searchServer` runs on. Optional everywhere: the demo has no server, the
+ * desktop tier has no Cloud, and neither may be given one.
+ */
+export type ServerSearchFn = (
+  query: string,
+  opts: { limit?: number },
+) => Promise<ServerSearchWire | null>;
+
+/**
+ * The adapter capability this reaches for when no `serverSearch` was injected.
+ *
+ * Declared structurally HERE rather than as a member of `EngineAdapter` because the engine is
+ * the only thing that calls it and the two adapters answer it differently in kind — the
+ * FixturesAdapter has no server to ask and the HttpAdapter has one endpoint. An adapter
+ * without the method is not broken; it is a client with no archive behind it, which
+ * {@link OhmailEngine.serverSearchAvailable} reports and the UI states.
+ */
+interface ServerSearchCapableAdapter {
+  searchServer?: ServerSearchFn;
+}
+
+/**
+ * The outcome of one archive pass. It NEVER rejects — see {@link OhmailEngine.searchServer}.
+ *
+ * `unavailable` is a first-class answer and not an error: it is what the demo and the desktop
+ * get, and the difference between "there is no archive behind this client" and "the archive
+ * refused" is the difference between two true sentences the UI has to be able to tell apart.
+ */
+export type ServerSearchOutcome =
+  | { state: "unavailable" }
+  | { state: "ready"; items: EngineMessage[]; total: number }
+  | { state: "failed"; error: string };
+
 export interface EngineOptions {
   adapter: EngineAdapter;
+  /**
+   * Override the archive transport. The shipped path takes it from the adapter (see
+   * {@link ServerSearchCapableAdapter}); this exists so a test can drive the whole seam
+   * without an adapter, and so a host that reaches `/search` some other way can supply it.
+   */
+  serverSearch?: ServerSearchFn;
   /** Defaults to an in-memory mirror (SSR/tests); pass IndexedDbMirrorStore on web. */
   store?: MirrorStore;
   /** Optional `?types=` filter for /sync. */
@@ -120,9 +177,20 @@ export class OhmailEngine {
   private syncing: Promise<void> | null = null;
   /** In-flight body fetches by message id — see {@link OhmailEngine.hydrateBody}. */
   private readonly bodyRequests = new Map<string, Promise<void>>();
+  /** The archive transport, or `null` when this client has no server behind it. */
+  private readonly serverSearchFn: ServerSearchFn | null;
+  /** In-flight archive passes by query key — see {@link OhmailEngine.searchServer}. */
+  private readonly serverSearches = new Map<string, Promise<ServerSearchOutcome>>();
 
   constructor(opts: EngineOptions) {
     this.adapter = opts.adapter;
+    // The adapter's own capability is the shipped path; the option is the override. Resolved
+    // ONCE, here, so `serverSearchAvailable()` cannot answer differently from what
+    // `searchServer` will do a moment later.
+    this.serverSearchFn =
+      opts.serverSearch ??
+      (opts.adapter as ServerSearchCapableAdapter).searchServer?.bind(opts.adapter) ??
+      null;
     this.store = opts.store ?? new MemoryMirrorStore();
     this.types = opts.types;
     this.syncLimit = opts.syncLimit;
@@ -439,11 +507,103 @@ export class OhmailEngine {
 
   // ── local search ─────────────────────────────────────────────────────────
 
+  /**
+   * THE FAST PATH, and it stays the fast path.
+   *
+   * Synchronous, no round trip, answers from the mirror on every keystroke. It reads
+   * subject, sender, the ≤200-character snippet and whatever body text this device holds —
+   * `LocalSearchResult.coverage` says how much of the corpus that was, and the surface is
+   * required to say so rather than let the count of hits imply completeness (gap O14).
+   */
   search(query: string, opts: { limit?: number } = {}): LocalSearchResult {
     const version = this.readerView.version();
     if (!this.searchCache || this.searchCache.version !== version) {
       this.searchCache = { version, index: SearchIndex.build(this.readerView) };
     }
     return this.searchCache.index.search(query, opts);
+  }
+
+  // ── the archive pass (gap O14) ───────────────────────────────────────────
+
+  /**
+   * Is there a server archive behind this client at all?
+   *
+   * `false` for the demo (`?demo=1` is fixtures and zero network, invariants #6/#8) and for
+   * the desktop tier, whose master is the IMAP mailbox and which has no Cloud API. Both are
+   * states the UI must be able to STATE, not states it should hide: "there is no archive
+   * here" and "the archive has not answered yet" are different sentences.
+   */
+  serverSearchAvailable(): boolean {
+    return this.serverSearchFn !== null;
+  }
+
+  /**
+   * SEARCH THE WHOLE CORPUS — `GET /search`, the RRF-ranked hybrid that had zero callers.
+   *
+   * This is the SECOND answer, never the first. {@link OhmailEngine.search} has already
+   * painted; this arrives after and extends it. A surface that awaited this before rendering
+   * would have traded an instant local result for a round trip, which is the one thing the
+   * local index exists to prevent.
+   *
+   * ── THE RESULT DOES NOT GO IN THE MIRROR ────────────────────────────────────────────────
+   *
+   * Same rule as U5-BODY's, for a sharper reason. `/sync` owns the mirror: rows arrive at a
+   * seq, deletes arrive at a seq, and `applyToRecords` reconciles by seq. A search hit has no
+   * seq. Writing one in would create a row no delta can ever update or remove — a message
+   * that outlives its own deletion, in a store whose whole contract is that it converges. So
+   * the items are RETURNED, the caller renders them, and they are gone when the query changes.
+   *
+   * In practice a Cloud mirror already holds the message ROW for nearly every hit (the
+   * bootstrap drains all of them); what it lacked was the body TEXT to match on. The caller
+   * should therefore prefer its own mirror entity by id — that one carries the optimistic
+   * overlay — and fall back to the wire item only for a row the mirror does not have.
+   *
+   * ── SINGLE-FLIGHT, AND WHY IT NEVER REJECTS ─────────────────────────────────────────────
+   *
+   * Concurrent callers for the same query join one request. And the caller is a React effect
+   * behind a debounce: a rejection there is an unhandled promise over somebody's mailbox, so
+   * the outcome is a VALUE — `unavailable`, `ready`, or `failed` with the server's own
+   * sentence — which is a thing the UI can render. A 402 from the spend gate arrives as its
+   * message, not as an error boundary.
+   *
+   * `GET /search` is `cost: "read"` (`packages/api/src/routes/search.ts`), so wiring this
+   * caller changes no cost class and no line of the route-cost census. It reads rows already
+   * stored for the caller's own account, writes nothing, opens no socket and calls no metered
+   * third party. It is not, however, free of judgement: it is one request per settled query,
+   * fired from a debounce and never per keystroke, for the same reason `hydrateBody` fires on
+   * explicit intent only (invariant #10).
+   */
+  async searchServer(query: string, opts: { limit?: number } = {}): Promise<ServerSearchOutcome> {
+    const fn = this.serverSearchFn;
+    if (fn === null) return { state: "unavailable" };
+    const q = query.trim();
+    if (q === "") return { state: "ready", items: [], total: 0 };
+
+    const key = `${opts.limit ?? ""} ${q}`;
+    const inFlight = this.serverSearches.get(key);
+    if (inFlight) return inFlight;
+
+    const request = fn(q, opts)
+      .then((wire): ServerSearchOutcome => {
+        // `null` ⇒ this transport serves no archive. Same shape as `fetchBody`'s `null`, and
+        // it must not become an empty `ready`: "we searched everything and found nothing" is
+        // a claim, and this is the case where we searched nothing at all.
+        if (wire === null) return { state: "unavailable" };
+        return {
+          state: "ready",
+          items: Array.isArray(wire.items) ? wire.items : [],
+          total: typeof wire.total === "number" ? wire.total : (wire.items?.length ?? 0),
+        };
+      })
+      .catch((err: unknown): ServerSearchOutcome => ({
+        state: "failed",
+        error: err instanceof Error ? err.message : String(err),
+      }))
+      .finally(() => {
+        this.serverSearches.delete(key);
+      });
+
+    this.serverSearches.set(key, request);
+    return request;
   }
 }

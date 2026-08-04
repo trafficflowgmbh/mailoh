@@ -309,6 +309,20 @@ export function createSyncGate(): SyncGate {
          * below exists to keep visible.
          */
         fetchBody: (messageId: string): Promise<MessageBodyWire | null> => adapter.fetchBody(messageId),
+
+        /*
+         * FORWARDED, NOT GATED — the same rule as `fetchBody` above: one request per settled
+         * query, from a tab the user is looking at, bounded by the act of typing. Invariant
+         * #10 is about a HIDDEN tab paging through a bootstrap nobody asked for, which this
+         * is not.
+         *
+         * SPREAD rather than always defined, and that is the whole point: an adapter WITHOUT
+         * the capability must keep not having it, because the surface reads absence as "this
+         * client cannot reach the archive" and says so. Defining it unconditionally would
+         * make the demo claim an archive it has no server for — and would do it on the live
+         * path only, which is the wiring bug `transport` exists to keep visible.
+         */
+        ...(adapter.searchServer ? { searchServer: adapter.searchServer.bind(adapter) } : {}),
       } satisfies EngineAdapter & { transport: EngineAdapter };
     },
   };

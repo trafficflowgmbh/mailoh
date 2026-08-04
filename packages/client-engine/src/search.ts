@@ -1,12 +1,43 @@
 import type { EntityReader } from "./store.js";
-import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage } from "./types.js";
+import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage, type MessageBodyRecord } from "./types.js";
 
 /**
- * The minimal instant local search over the mirror (brief §1: "the client should
- * ALSO run instant local search over its mirror"). Lexical tokens over
- * subject/from/snippet/body with field weighting, plus a padded-trigram fuzzy
+ * The instant local search over the mirror (brief §1: "the client should ALSO run instant
+ * local search over its mirror"). Lexical tokens over subject / from / snippet / whatever
+ * body text this device actually holds, with field weighting, plus a padded-trigram fuzzy
  * arm (pg_trgm-style) so the canonical 'invoce' → "Invoice" typo case matches.
- * `/search` remains the full-corpus fallback — this covers the hot mirror.
+ *
+ * ── WHAT THIS INDEX CAN SEE, AND THE TWO SENTENCES THAT USED TO BE HERE (gap O14) ────────
+ *
+ * This header used to say it indexed "subject/from/snippet/body" and that "`/search` remains
+ * the full-corpus fallback". Both were false, and together they are why a live account was
+ * told its local results were complete:
+ *
+ *  · **`body` is a fixtures-only extra.** It is declared on `EngineMessageExtras` in
+ *    `types.ts`; the wire `MessageDTO` carries `snippet` and has no body field at all, so on a
+ *    Cloud account `m.body` is `undefined` for every row. `snippet` is `bodySnippet()` in
+ *    `packages/core/src/pipeline.ts` — whitespace-collapsed and `.slice(0, 200)`.
+ *  · **`/search` was not a fallback.** It was mounted, spend-classed `read`, RRF-ranked and
+ *    contract-tested, with ZERO callers on any surface. Nothing had ever asked it anything.
+ *
+ * Measured against production on 2026-08-04 (Supabase, 9 339 stored bodies): 8 262 of them
+ * (88.5 %) are longer than 200 characters, 9 034 (96.7 %) are longer than their own message's
+ * snippet, the median body is 1 566 characters, and 1 699 803 of 27 273 952 stored body
+ * characters — **6.23 %** — are inside a snippet and therefore reachable from here. 599
+ * messages have an empty snippet and contribute nothing at all.
+ *
+ * So the index reports {@link SearchCoverage} with every result, and the UI states it. A
+ * surface that renders these hits without saying what was searched is making the same claim
+ * the toast used to make in words.
+ *
+ * ── HOW COVERAGE GROWS ───────────────────────────────────────────────────────────────────
+ *
+ * Hydrated bodies ARE indexed: slice U5-BODY stores `GET /messages/:id/body` in a client-local
+ * `message_body` record, and {@link SearchIndex.build} reads them. So a message the user has
+ * opened becomes fully searchable on this device, permanently, without a second request. That
+ * is a real widening and it is still not the corpus — reading a message is how a body gets
+ * here, and nobody has read 9 339 of them. The rest is what `OhmailEngine.searchServer` is
+ * for.
  */
 
 export interface SearchMatch {
@@ -31,9 +62,27 @@ export interface SearchFacets {
   unread: { true: number; false: number };
 }
 
+/**
+ * WHAT THE LOCAL INDEX WAS ABLE TO READ — reported with every result, because a surface
+ * that shows these hits is implicitly making a claim about the corpus.
+ *
+ * `full` counts messages whose whole text is on this device: a fixture row's own `body`, or a
+ * `message_body` record slice U5-BODY hydrated. Everything else contributed its subject, its
+ * sender and at most 200 characters of preview. On the demo `full === messages`; on a live
+ * account it starts at 0 and grows by one every time somebody opens a message.
+ */
+export interface SearchCoverage {
+  /** Messages in the mirror when this index was built. */
+  messages: number;
+  /** …of which the FULL text was indexable. Never greater than `messages`. */
+  full: number;
+}
+
 export interface LocalSearchResult {
   items: SearchHit[];
   facets: SearchFacets;
+  /** What this answer is an answer OVER. See {@link SearchCoverage}. */
+  coverage: SearchCoverage;
 }
 
 const FIELD_WEIGHT = { subject: 3, from: 2, text: 1 } as const;
@@ -67,11 +116,31 @@ export class SearchIndex {
   private readonly postings = new Map<string, Map<string, Posting>>();
   private readonly trigramCache = new Map<string, Set<string>>();
   private readonly messages = new Map<string, EngineMessage>();
+  private full = 0;
 
+  /**
+   * Build over the mirror — messages AND the bodies U5-BODY has hydrated.
+   *
+   * The `message_body` pass is what makes `add`'s second argument worth having. Reading the
+   * records into a map first is not an optimisation: `reader.list` is O(n) per call, and
+   * looking one up per message would be O(n²) on a 9 339-row mirror, on every keystroke.
+   */
   static build(reader: EntityReader): SearchIndex {
     const idx = new SearchIndex();
-    for (const m of reader.list<EngineMessage>("message")) idx.add(m);
+    const bodies = new Map<string, string>();
+    for (const b of reader.list<MessageBodyRecord>("message_body")) {
+      // Only `ready` is text. `loading` and `failed` records carry `text: ""` and indexing
+      // them would count a message as covered because we ASKED for its body, not because we
+      // have it — which is exactly the shape of claim this gap is about.
+      if (b.state === "ready") bodies.set(b.messageId, b.text);
+    }
+    for (const m of reader.list<EngineMessage>("message")) idx.add(m, bodies.get(m.id));
     return idx;
+  }
+
+  /** What this index was able to read. Reported with every result — see {@link SearchCoverage}. */
+  coverage(): SearchCoverage {
+    return { messages: this.messages.size, full: this.full };
   }
 
   private index(term: string, messageId: string, weight: number): void {
@@ -85,11 +154,22 @@ export class SearchIndex {
     if (!existing || existing.weight < weight) map.set(messageId, { weight });
   }
 
-  add(m: EngineMessage): void {
+  /**
+   * `hydrated` is the `message_body` record's text when this device has one. `m.body` is the
+   * fixture world's own field and is `undefined` on every Cloud row — the two are separate
+   * arguments rather than one because `types.ts` keeps them in separate records deliberately:
+   * a `mark_seen` echo replaces the message entity and would wipe a body written onto it.
+   */
+  add(m: EngineMessage, hydrated?: string): void {
     this.messages.set(m.id, m);
+    const whole = m.body ?? hydrated;
+    if (whole !== undefined) this.full++;
     for (const t of tokenize(m.subject)) this.index(t, m.id, FIELD_WEIGHT.subject);
     for (const t of tokenize(`${m.from.name ?? ""} ${m.from.address}`)) this.index(t, m.id, FIELD_WEIGHT.from);
-    for (const t of tokenize(`${m.snippet} ${m.body ?? ""}`)) this.index(t, m.id, FIELD_WEIGHT.text);
+    // The snippet is indexed even when the whole text is here: it is a REDACTED preview for a
+    // sensitive message, so the two strings are not always prefix-related, and dropping it
+    // would lose terms on exactly the rows invariant #1 governs.
+    for (const t of tokenize(`${m.snippet} ${whole ?? ""}`)) this.index(t, m.id, FIELD_WEIGHT.text);
   }
 
   /**
@@ -99,7 +179,7 @@ export class SearchIndex {
    */
   search(query: string, opts: { limit?: number } = {}): LocalSearchResult {
     const qTokens = tokenize(query);
-    if (qTokens.length === 0) return { items: [], facets: emptyFacets() };
+    if (qTokens.length === 0) return { items: [], facets: emptyFacets(), coverage: this.coverage() };
 
     // messageId → accumulated { score, matches }
     let candidates: Map<string, { score: number; matches: SearchMatch[] }> | null = null;
@@ -161,7 +241,7 @@ export class SearchIndex {
       .sort((a, b) => b.score - a.score)
       .slice(0, opts.limit ?? 50);
 
-    return { items, facets: facetsOf(items) };
+    return { items, facets: facetsOf(items), coverage: this.coverage() };
   }
 }
 
