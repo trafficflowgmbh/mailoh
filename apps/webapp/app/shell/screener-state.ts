@@ -69,6 +69,21 @@ export interface ScreenerState {
   waiting: ScreenerSenderDTO[];
   /** Waiting minus everything decided — rail badge, doorbell, meta. */
   waitingCount: number;
+  /**
+   * How many of those rows actually CARRY a suggestion (slice U6-SUGGEST).
+   *
+   * Never assume this tracks `waitingCount`. On a Cloud account it is always 0:
+   * `selectors.ts` mints `ai: null` for every derived row because `/sync` carries no
+   * suggestion and no classifier runs client-side — and the server has none to give
+   * either, `api-vercel/src/deps.ts:174-178` ("no `classifier` is injected here yet").
+   * Verified against production 2026-08-04: 1 045 waiting senders on the owner's
+   * mailbox, 7 884 held messages, and **zero** `routing_decisions` rows joined to any
+   * of them, of any provenance. The demo's fixture rows are the only ones with `ai`.
+   *
+   * It exists so the surface can decline to offer "Apply all suggestions" over an
+   * empty set rather than quietly meaning something else.
+   */
+  suggestedCount: number;
   screenedOut: ScreenerSenderDTO[];
   spam: SpamRow[];
   isExiting: (id: string) => boolean;
@@ -239,14 +254,20 @@ export function useScreenerState(
   }, [segments, version, s.overrides.size]);
 
   const visibleWaiting = waiting.filter((x) => !s.pending.has(x.id) || s.out.has(x.id));
-  const waitingCount = waiting.filter((x) => !s.pending.has(x.id)).length;
+  const undecided = waiting.filter((x) => !s.pending.has(x.id));
+  const waitingCount = undecided.length;
+  // Counted over the SAME set the bulk would act on, so the control can never appear for
+  // rows that are already on their way out.
+  const suggestedCount = undecided.filter((x) => x.ai != null).length;
 
   const bulk = (
     destOf: (x: ScreenerSenderDTO) => DecisionDestination,
     scopeOf: (x: ScreenerSenderDTO) => DecisionScope,
     summary: (snaps: Array<{ id: string; dest: DecisionDestination }>) => string,
+    /** Restricts the bulk to rows it can honestly speak for. Absent ⇒ every waiting row. */
+    only?: (x: ScreenerSenderDTO) => boolean,
   ) => {
-    const items = waiting.filter((x) => !s.pending.has(x.id));
+    const items = waiting.filter((x) => !s.pending.has(x.id) && (only ? only(x) : true));
     if (!items.length || s.bulkBusy) return;
     s.bulkBusy = true;
     const snaps: Array<{ id: string; dest: DecisionDestination }> = [];
@@ -267,9 +288,29 @@ export function useScreenerState(
     }, items.length * BULK_STEP_MS + 160);
   };
 
+  /**
+   * "APPLY ALL SUGGESTIONS" MAY ONLY APPLY SUGGESTIONS THAT EXIST (slice U6-SUGGEST).
+   *
+   * Owner, from live use: *"screener shows me 'apply all suggestions', but on the actual
+   * mails I don't see what that suggestion would even be"*. He was right, and the button
+   * was worse than dead. It read `x.ai?.dest ?? "ohbox"`, and on a live account `x.ai` is
+   * ALWAYS null — so the fallback, not the suggestion, decided every row. One press meant
+   * "accept every waiting stranger into the Ohbox and promote a rule for each of them",
+   * under a label that said it was applying suggestions the user had never been shown.
+   *
+   * On the owner's own mailbox that was 1 045 senders and 7 884 held messages, dispatched
+   * 240 ms apart, with the single Undo toast arriving four minutes later. A consent gate
+   * whose bulk control silently grants consent is the product inverted.
+   *
+   * So the fallback is GONE — not replaced. `only` restricts the bulk to rows that carry a
+   * suggestion, and `dest` is read from that suggestion with no default, so a row this
+   * cannot speak for is never decided by it. With no suggestions anywhere the set is empty
+   * and the whole thing is a no-op; the surface additionally declines to render the control
+   * (`ScreenerView.tsx`), because an inert button is its own small lie.
+   */
   const applyAll = (scopeOf: (x: ScreenerSenderDTO) => DecisionScope) =>
     bulk(
-      (x) => (x.ai?.dest ?? "ohbox") as DecisionDestination,
+      (x) => x.ai!.dest as DecisionDestination,
       scopeOf,
       (snaps) => {
         const n = (d: DecisionDestination) => snaps.filter((x) => x.dest === d).length;
@@ -282,6 +323,7 @@ export function useScreenerState(
         ].filter(Boolean);
         return t("toastBulkDecided", { count: snaps.length, parts: parts.join(" · ") });
       },
+      (x) => x.ai != null,
     );
 
   const markAllSpam = (scopeOf: (x: ScreenerSenderDTO) => DecisionScope) =>
@@ -403,6 +445,7 @@ export function useScreenerState(
   return {
     waiting: visibleWaiting,
     waitingCount,
+    suggestedCount,
     screenedOut: segments.screenedOut,
     spam,
     isExiting: (id) => s.pending.has(id),

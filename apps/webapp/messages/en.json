@@ -255,8 +255,9 @@
         "hint": "Auto-detected spam lands here for review — nothing is deleted unseen."
       }
     },
-    "applyAll": "Apply all suggestions",
+    "applyAll": "Apply {count, plural, one {1 suggestion} other {# suggestions}}",
     "markAllSpam": "Mark all spam",
+    "noSuggestion": "No suggestion — no model is connected yet. Pick a door.",
     "hintMove": "move",
     "hintAccept": "accept suggestion",
     "hintFile": "file",

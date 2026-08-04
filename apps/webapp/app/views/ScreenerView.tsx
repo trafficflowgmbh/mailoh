@@ -175,6 +175,14 @@ export function ScreenerView({
       ?.scrollIntoView({ block: "nearest" });
   };
   const decidable = waiting && current != null && !("pinned" in current);
+  /**
+   * Enter means "accept THE SUGGESTION", so it exists only when there is one.
+   *
+   * It read `current.ai?.dest ?? "ohbox"`, which on a live account made Enter a silent
+   * "file to Ohbox" wearing the label "accept the suggested destination". The five
+   * destination keys (o/r/c/n/x) are unaffected — those name what they do.
+   */
+  const suggested = decidable ? (current as ScreenerSenderDTO).ai : null;
 
   const keys: KeyBinding[] = [
     {
@@ -202,17 +210,17 @@ export function ScreenerView({
       chord: "Enter",
       group: "screener",
       label: t("keyAccept"),
-      disabled: !decidable,
+      disabled: !suggested,
       when: (e) => (e.target as HTMLElement).tagName !== "BUTTON",
-      run: (e) =>
-        decidable &&
-        decideCurrent(((current as ScreenerSenderDTO).ai?.dest ?? "ohbox") as never, e.shiftKey),
+      run: (e) => suggested && decideCurrent(suggested.dest as never, e.shiftKey),
     },
     {
       chord: "a",
       group: "screener",
       label: t("keyApplyAll"),
-      disabled: !waiting || state.waitingCount === 0,
+      // Same gate as the button, so the `?` sheet stops listing a key that would decide
+      // 1 045 senders by falling back to a destination nobody suggested.
+      disabled: !waiting || state.suggestedCount === 0,
       run: () => state.applyAll(scopeOf),
     },
     {
@@ -352,9 +360,17 @@ export function ScreenerView({
             />
             {segment === "waiting" && state.waitingCount > 0 ? (
               <div className="scn-bulk">
-                <Button kbdHint="a" onClick={() => state.applyAll(scopeOf)}>
-                  {t("applyAll")}
-                </Button>
+                {/* A BULK CONTROL MAY NOT OUTLIVE THE THING IT ACTS ON (slice U6-SUGGEST).
+                    Gated on `suggestedCount`, never on `waitingCount`: with no suggestions
+                    this button used to file every waiting stranger into the Ohbox and
+                    promote a rule for each, while its label said it was applying
+                    suggestions the user was never shown. `markAllSpam` says exactly what it
+                    does and needs no such gate. */}
+                {state.suggestedCount > 0 ? (
+                  <Button kbdHint="a" onClick={() => state.applyAll(scopeOf)}>
+                    {t("applyAll", { count: state.suggestedCount })}
+                  </Button>
+                ) : null}
                 <Button variant="ghost" kbdHint="s" onClick={() => state.markAllSpam(scopeOf)}>
                   {t("markAllSpam")}
                 </Button>
@@ -368,9 +384,18 @@ export function ScreenerView({
               <span>
                 <Kbd>j</Kbd> <Kbd>k</Kbd> {t("hintMove")}
               </span>
-              <span>
-                <Kbd>y</Kbd> {t("hintAccept")}
-              </span>
+              {/* TWO FALSEHOODS IN ONE HINT, both fixed here (slice U6-SUGGEST). It read
+                  `y accept suggestion` unconditionally. `y` is bound NOWHERE in the webapp
+                  — `DecisionBar` owns that chord behind its `keyboard` prop and this view
+                  deliberately stopped passing it (see the keymap note above), so the only
+                  bound accept is Enter. And "accept suggestion" was offered on accounts
+                  that have none. Now: the real key, shown only when there is something to
+                  accept. */}
+              {state.suggestedCount > 0 ? (
+                <span>
+                  <Kbd>↵</Kbd> {t("hintAccept")}
+                </span>
+              ) : null}
               <span>
                 <Kbd>o</Kbd> <Kbd>r</Kbd> <Kbd>c</Kbd> <Kbd>n</Kbd> <Kbd>x</Kbd> {t("hintFile")}
               </span>
@@ -571,6 +596,19 @@ function WaitingPreview({
         onBack={onBack}
       />
       <div className="scn-mails">
+        {/**
+          * THE ABSENCE OF A SUGGESTION IS ITSELF SOMETHING TO SAY (slice U6-SUGGEST).
+          *
+          * This block used to render only in the `ai` branch, so on a live account — where
+          * `ai` is null for every derived row — the preview said nothing at all, and the
+          * owner was left looking for a suggestion the surface had never admitted it did
+          * not have. "Every mail says why" is published copy; silence does not satisfy it.
+          *
+          * The wording is the site's own, kept deliberately in step with `AiSection`'s
+          * `status` line ("no live model is connected in production yet") and its AI-off
+          * row ("pick a door"). Both change together the day a classifier is injected in
+          * `apps/api-vercel/src/deps.ts` — the same trigger `AiSection.tsx` already names.
+          */}
         {sender.ai ? (
           <div className="scn-why">
             <Icon name="spark" />
@@ -584,7 +622,11 @@ function WaitingPreview({
               <span className="why">{t("aiWhy", { why: sender.ai.rationale })}</span>
             </span>
           </div>
-        ) : null}
+        ) : (
+          <div className="scn-why scn-why-none">
+            <span>{t("noSuggestion")}</span>
+          </div>
+        )}
         {sender.held.length > 1 ? (
           <div className="scn-caption num">
             {t("heldCaption", {

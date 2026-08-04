@@ -339,6 +339,12 @@ body.reading .shell {
 .scn-why .why {
   color: var(--ink3);
 }
+/* The no-suggestion state: stated, not advertised. It carries no spark glyph — the icon
+   means "a model said something" and there is no model. Quieter than the AI line because
+   it is a standing condition, not a per-sender finding. */
+.scn-why-none {
+  color: var(--ink3);
+}
 .scn-caption {
   font-size: 11px;
   color: var(--ink3);
