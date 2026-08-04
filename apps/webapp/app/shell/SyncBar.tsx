@@ -198,7 +198,7 @@ export function SyncBar() {
  *
  * `importing` and `awaiting` are the two states that report WORK, and both can sit for
  * minutes. A static ✉ beside a number that changes once every eight seconds reads as a frozen
- * screen — reported from live use on a mailbox holding 8 824 messages — because between drains
+ * screen — reported from live use on a full mailbox — because between drains
  * nothing on the strip moves at all. The spinner is the one element here that is continuously
  * true: it says a process is running without claiming to know how far along it is.
  *

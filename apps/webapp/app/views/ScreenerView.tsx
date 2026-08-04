@@ -255,7 +255,7 @@ export function ScreenerView({
       group: "screener",
       label: t("keyApplyAll"),
       // Same gate as the button, so the `?` sheet stops listing a key that would decide
-      // 1 045 senders by falling back to a destination nobody suggested.
+      // every waiting sender by falling back to a destination nobody suggested.
       disabled: !waiting || state.suggestedCount === 0,
       run: () => state.applyAll(scopeOf),
     },

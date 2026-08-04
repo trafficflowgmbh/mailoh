@@ -24,8 +24,8 @@
  *    *whether or not* it still has a backlog. So a mailbox thirty seconds into a thirty-minute
  *    import already carries a stamp.
  *
- * And separately it lands LATE: the first attach was measured at 358 s and again at 373 s for
- * a 1 712-message mailbox, twice, in production, and attaches are serial — so a second
+ * And separately it lands LATE: the first attach has been measured at around six minutes,
+ * twice, on a mailbox of a few thousand messages, and attaches are serial — so a second
  * mailbox legitimately waits behind the first with a null stamp the whole time.
  *
  * **Therefore the growing state keys on THE MIRROR GROWING — the client's own message count
@@ -571,9 +571,9 @@ const QUIET: MailState = {
  * When a first import has taken longer than one is measured to take.
  *
  * TEN minutes, and the number is set against a measurement rather than a feeling:
- * `mailbox_attach_started → mailbox_attached` took 358 s and 373 s for a 1 712-message
- * mailbox, twice, in production. So SIX minutes with an empty mirror is NORMAL, and escalating
- * at three would dress a healthy large-mailbox import as a fault — the opposite defect to the
+ * `mailbox_attach_started → mailbox_attached` has been timed at around six minutes, twice, on
+ * a mailbox of a few thousand messages. So SIX minutes with an empty mirror is NORMAL, and
+ * escalating at three would dress a healthy large-mailbox import as a fault — the opposite defect to the
  * one this slice fixes, and just as false. Attaches are serial, so a second mailbox waits
  * behind the first; ten leaves room for that.
  *
@@ -840,7 +840,7 @@ function climb(input: MailStateInputs): MailState {
    * stays quiet about the young one. Deliberate, and the division is: the STRIP makes
    * account-wide statements; a per-mailbox statement belongs on the per-mailbox ROW
    * (`(product)/mailbox/MailboxSection.tsx`, in this slice, from this same state). `some`
-   * would put "nothing has arrived" over a mirror holding 1 700 messages from the other
+   * would put "nothing has arrived" over a mirror already full of mail from the other
    * mailbox — a new false claim rather than a missing true one.
    */
   const noCycleYet = connected.every((m) => m.lastSyncAt === null);

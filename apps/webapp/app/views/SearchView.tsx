@@ -17,9 +17,9 @@
  * This view used to offer the archive on Enter and answer with a toast: *"Searching the
  * server archive isn't wired up yet. These local results are complete."* They were not. The
  * local index reads subject, sender and the ≤200-character `snippet` — `m.body` is a
- * fixtures-only extra the wire `MessageDTO` has no field for — and on production that is
- * 6.23 % of stored body text: 8 262 of 9 339 bodies are longer than 200 characters, median
- * 1 566. A term past character 200 of a live-shaped row was simply not findable.
+ * fixtures-only extra the wire `MessageDTO` has no field for — and a mail body is routinely
+ * many times longer than 200 characters, so most of the stored text is not on the device at
+ * all. A term past character 200 of a live-shaped row was simply not findable.
  *
  * So the scope line is not decoration. Local results arrive first and are shown first, and
  * for as long as they are all we have the view says exactly that; when the archive answers it

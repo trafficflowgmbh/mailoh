@@ -108,7 +108,7 @@ export function OhboxView({
    *
    * Three sentences on this pane are claims about the user's own mail rather than about the
    * list: the meta count, the doorbell's "All clear", and the empty pane. All three were
-   * rendered before the first drain had finished, on a mailbox holding 501 messages.
+   * rendered before the first drain had finished, over a mailbox that was not empty.
    *
    * It arrives as a PROP and not from `useMailState()`, because this view is mounted with no
    * provider by `ohbox-read-state.test.ts` and that hook throws without one — deliberately.
@@ -586,8 +586,8 @@ export function OhboxView({
       <ListPane
         title={t("title")}
         /* "0 unread of 0 messages" IS A CLAIM ABOUT THE MAILBOX, not a description of the
-           list — and it was on screen, beside "Nothing in your Ohbox.", over an account
-           holding 501 messages, for as long as the first drain took. While the mirror has not
+           list — and it was on screen, beside "Nothing in your Ohbox.", over an account that
+           was not empty, for as long as the first drain took. While the mirror has not
            been read there is no count to state, so none is stated: no dash, no zero, no
            substitute. A count that returns the moment there is one to give is not a gap; a
            wrong count is a lie. Any NON-zero total is a real observation whatever the drain is
@@ -956,8 +956,8 @@ function BulkBar({
  * A live count was put here — "Syncing your mailbox · 3 messages so far" — gated on
  * `SyncStatus.bootstrapping`. That gate is the defect. `bootstrapping` means "this TAB's first
  * drain has not completed", and a fresh account's first drain completes in seconds against an
- * empty server-side mirror. The WORKER's first import is a different clock entirely: measured
- * at 358 s and 373 s for a 1 712-message mailbox. So the counter switched itself off within
+ * empty server-side mirror. The WORKER's first import is a different clock entirely: minutes
+ * on a mailbox of any size, and tens of minutes on a full one. So the counter switched itself off within
  * seconds and the pane then said nothing at all for the entire import — which is exactly the
  * half hour a first import spends saying "Waiting for first sync" somewhere else.
  *
@@ -989,9 +989,9 @@ function BulkBar({
  *
  * ── AND THE THIRD STATE THIS PANE USED TO COLLAPSE ──────────────────────────────────────
  *
- * "Empty" and "not looked yet" were one rendering, so a slow connection showed "no messages". The mirror persists in IndexedDB and the client's own first drain had not
- * finished, so `Nothing in your Ohbox.` was a statement about 501 messages the app had not yet
- * read. Before the mirror has been read there is no emptiness to report, so this pane reports
+ * "Empty" and "not looked yet" were one rendering, so a slow connection showed "no messages".
+ * The mirror persists in IndexedDB and the client's own first drain had not finished, so
+ * `Nothing in your Ohbox.` was a statement about mail the app had simply not read yet. Before the mirror has been read there is no emptiness to report, so this pane reports
  * what is actually happening instead — after {@link LOADING_GRACE_MS}, so a fast connection
  * still gets the silent frame it always had rather than a sub-second flash.
  *
