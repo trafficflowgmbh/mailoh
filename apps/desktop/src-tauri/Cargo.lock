@@ -1633,14 +1633,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
-name = "ohmail"
-version = "0.2.0"
-dependencies = [
- "tauri",
- "tauri-build",
-]
-
-[[package]]
 name = "markup5ever"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1974,6 +1966,15 @@ dependencies = [
  "objc2-app-kit",
  "objc2-core-foundation",
  "objc2-foundation",
+]
+
+[[package]]
+name = "ohmail"
+version = "0.2.0"
+dependencies = [
+ "serde_json",
+ "tauri",
+ "tauri-build",
 ]
 
 [[package]]

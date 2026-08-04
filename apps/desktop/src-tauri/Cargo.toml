@@ -15,6 +15,23 @@ rust-version = "1.82"
 name = "ohmail"
 path = "src/main.rs"
 
+[features]
+# TWO ARTIFACTS, NOT ONE BINARY WITH A SWITCH.
+#
+# `local-engine` compiles the shell's ownership of the local engine's lifetime:
+# start it with the app, watch it, and make certain it is gone when the app is.
+# It is OFF by default and off in every build published so far, because the
+# published shell contains no engine — and a spawn path inside a binary that has
+# nothing to spawn is a capability carried without being used. With the feature
+# off, `src/engine.rs` is not in the binary at all, so everything the README's
+# "Verify it yourself" section says about this executable is a property of the
+# build rather than of a branch that happened not to be taken.
+#
+# It is not dead code: `cargo test --features local-engine` is what proves the
+# lifecycle, and those tests start real processes.
+default = []
+local-engine = ["dep:serde_json"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -35,9 +52,12 @@ tauri-build = { version = "2", features = [] }
 # all of them, and CI fails the build if one of them ever names ohmail or
 # TrafficFlow infrastructure. See the README's "Verify it yourself".
 #
-# Nothing here opens a socket, reads the filesystem or spawns a process:
-# src/main.rs is eleven lines and capabilities/main.json grants the webview
-# nothing at all.
+# Nothing here opens a socket or reads the filesystem, and capabilities/main.json
+# grants the webview nothing at all. In the DEFAULT build nothing spawns a process
+# either — the shell's ownership of the local engine's lifetime is behind the
+# `local-engine` feature above, which is off, so `src/engine.rs` is not compiled
+# into the published binary. When that feature is on, the app starts exactly one
+# child, the engine that came with it, over a pipe it alone holds.
 tauri = { version = "2", default-features = false, features = [
     "wry",
     "common-controls-v6",
@@ -45,6 +65,16 @@ tauri = { version = "2", default-features = false, features = [
     "x11",
     "dbus",
 ] }
+
+# The frame headers the engine sends are JSON, and hand-rolling a parser for
+# bytes that arrive over a pipe is how a shell acquires its first memory bug.
+# Optional, so the default build's dependency graph is unchanged — and even when
+# it is on, nothing new is compiled: `tauri` already depends on this exact crate,
+# which is why enabling the feature adds no third-party code to audit.
+# MIT OR Apache-2.0. Nothing here is under a copyleft licence, and nothing may
+# be: this binary is conveyed to users under GPL-3.0, and an AGPL dependency
+# anywhere in the shared half would force publishing the hosted service too.
+serde_json = { version = "1", optional = true }
 
 [profile.release]
 codegen-units = 1

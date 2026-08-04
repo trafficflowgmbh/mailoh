@@ -12,8 +12,11 @@ import { fileURLToPath } from "node:url";
  * green while the app quietly grew a capability, so they are checked here in
  * the suite that runs on every push.
  *
- * These are content assertions on config, not behaviour tests: the behaviour is
- * `apps/desktop/scripts/smoke.mjs`, which runs the built bundle.
+ * These are content assertions on config, not behaviour tests. The behaviour
+ * lives in two places, and neither of them is here: `scripts/smoke.mjs` runs the
+ * built bundle, and `cargo test --features local-engine` starts real processes
+ * to prove the engine's lifecycle. What this file adds is the thing neither of
+ * those can see — that the shipped build is compiled without any of it.
  */
 
 const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -164,6 +167,14 @@ describe("tauri.conf.json", () => {
 });
 
 describe("capabilities", () => {
+  /**
+   * STILL EMPTY, INCLUDING AFTER THE ENGINE'S LIFECYCLE LANDED.
+   *
+   * Owning a child process is a Rust-side concern; capabilities gate what the WEBVIEW may call,
+   * and the webview still calls nothing. The permission that would let a surface hear about the
+   * engine — `core:event:allow-listen` — belongs to the slice that builds the surface, because a
+   * permission granted in advance is one the app carries for as long as it is published.
+   */
   it("grant the webview nothing", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/capabilities"));
     expect(files).toEqual(["main.json"]);
@@ -178,6 +189,7 @@ describe("capabilities", () => {
 
 describe("the Rust side", () => {
   const main = read("src-tauri/src/main.rs");
+  const cargo = read("src-tauri/Cargo.toml");
 
   it("registers no commands and opens nothing", () => {
     expect(main).not.toMatch(/invoke_handler/);
@@ -186,13 +198,66 @@ describe("the Rust side", () => {
   });
 
   it("depends on tauri alone, with the defaults minus compression", () => {
-    const cargo = read("src-tauri/Cargo.toml");
     expect(cargo).toMatch(/^tauri = \{ version = "2", default-features = false, features = \[$/m);
     // Uncompressed embedding is what makes `strings <installer> | grep http`
     // a real audit rather than a look at a brotli blob.
     expect(cargo).not.toMatch(/"compression"/);
     expect(cargo).not.toMatch(/tauri-plugin-/);
     expect(cargo).not.toMatch(/reqwest|hyper|ureq|curl/);
+  });
+
+  /**
+   * EVERY .rs FILE IS NAMED HERE, AND THAT IS THE POINT.
+   *
+   * The rules below are per-file, so a rule is only worth what the file list is worth: a
+   * `src/spawn.rs` added tomorrow would be governed by nothing, and every assertion in this
+   * describe would stay green while the shell grew a capability. Adding a file therefore fails
+   * this test until somebody decides which rules it lives under.
+   */
+  it("is these three files and no others", () => {
+    const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
+    expect(files).toEqual(["engine.rs", "engine_tests.rs", "main.rs"]);
+  });
+
+  /**
+   * The published shell has no engine to spawn, so it carries no way to spawn one.
+   *
+   * `local-engine` is what compiles `engine.rs` into the binary, and it is off. That is the
+   * difference between an artifact that cannot start a process and one that merely does not —
+   * and it is what keeps the README's "Verify it yourself" section true of the executable a
+   * stranger downloads rather than of a branch that happened not to be taken.
+   */
+  it("compiles the engine's lifecycle out of the default build", () => {
+    expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod engine;/);
+    // `default` exists and is empty. A missing `[features]` block would also match "not
+    // enabled", and would be a different fact.
+    expect(cargo).toMatch(/^default = \[\]$/m);
+    expect(cargo).toMatch(/^local-engine = \["dep:serde_json"\]$/m);
+    // The one dependency the feature adds is optional, so the default build's graph is
+    // unchanged. Not optional would mean the preview compiles it in for nothing.
+    expect(cargo).toMatch(/^serde_json = \{ version = "1", optional = true \}$/m);
+  });
+
+  /**
+   * The engine's lifecycle owns exactly one thing: a child process on a private pipe.
+   *
+   * It opens no socket and reads no file — including no probe for whether the engine exists,
+   * which is why a missing engine is discovered by trying to start it and reading `NotFound`
+   * back. Those two absences are the whole of what the shell claims about itself, and they have
+   * to hold in the file that does the most.
+   */
+  it("spawns a child and nothing else — no sockets, no filesystem", () => {
+    const engine = read("src-tauri/src/engine.rs");
+    expect(engine).not.toMatch(/std::(fs|net)/);
+    expect(engine).not.toMatch(/reqwest|hyper|ureq|curl|TcpStream|TcpListener|UnixStream/);
+    expect(engine).not.toMatch(/invoke_handler/);
+    // All three streams are pipes. stdin above all: the write end must belong to this process
+    // alone, because closing it is how the engine is asked to leave — and because the kernel
+    // closing it when this process dies is what stops an orphaned engine holding an IMAP
+    // connection open. An inherited or null stdin silently removes both.
+    expect(engine).toMatch(/\.stdin\(Stdio::piped\(\)\)/);
+    expect(engine).toMatch(/\.stdout\(Stdio::piped\(\)\)/);
+    expect(engine).toMatch(/\.stderr\(Stdio::piped\(\)\)/);
   });
 });
 
