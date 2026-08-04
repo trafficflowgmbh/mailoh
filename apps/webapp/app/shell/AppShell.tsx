@@ -1912,9 +1912,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                with the desktop shell) exposes no slot there, and growing the design system to
                serve one host is what its own header argues against for the collapse state.
                `onNavigateTag` intercepts the id; `TagCreate` owns the input. It sits LAST so
-               it does not move when tags are added, and it carries no count — an empty
-               `count` renders as nothing, which is what distinguishes it from a real tag. */
-            { id: TAG_CREATE_ROW_ID, label: t("rail.tagNew"), hue: "moss" as const },
+               it does not move when tags are added. `action: true` is what makes it read as a
+               VERB rather than as a tag called "New tag": `RailNav` then draws a `+` where the
+               tag dot would be and withholds the count, because a count is a property of a tag
+               and this is not one. Without that flag it renders identically to a real tag —
+               which is how it shipped once. */
+            { id: TAG_CREATE_ROW_ID, label: t("rail.tagNew"), hue: "moss" as const, action: true },
           ],
         },
       },
