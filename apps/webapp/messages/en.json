@@ -152,6 +152,8 @@
     "resurface": "Resurface",
     "tags": "Tags",
     "tagNew": "New tag",
+    "numberHint": "Press 1–{last} to switch piles.",
+    "numberHintGot": "Got it",
     "search": "Search",
     "settings": "Settings",
     "mailboxes": "Mailboxes",
@@ -349,6 +351,8 @@
   "triage": {
     "title": "Triage",
     "meta": "{count, plural, one {1 item} other {# items}}",
+    "pilesAria": "Triage piles",
+    "segLabel": "{name} {count}",
     "replyLater": "Answer Later",
     "setAside": "Parked",
     "resurface": "Resurface",
@@ -1102,6 +1106,7 @@
     "aiOnTrial": "Starts with your subscription. The trial never spends AI actions."
   },
   "shortcuts": {
+    "goPile": "Go to {pile}",
     "title": "Keyboard shortcuts",
     "close": "Close",
     "foot": "Keys apply where they are listed. Any key closes this.",

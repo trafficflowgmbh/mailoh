@@ -100,7 +100,10 @@ import {
   type ScreeningDest,
   type ScreeningScope,
 } from "./sender-screening";
-import { go, goScreener, goTag, useHashRoute, type ScreenerSegmentId } from "./routing";
+import {
+  go, goScreener, goTag, goTriage, useHashRoute,
+  type ScreenerSegmentId, type TriagePileId,
+} from "./routing";
 import { OhboxView } from "../views/OhboxView";
 import { ReadsView, type ReadsChipState } from "../views/ReadsView";
 import { ReceiptsView } from "../views/ReceiptsView";
@@ -110,7 +113,7 @@ import { SettingsView, type MailboxEntity, type NotificationsMeta } from "../vie
 import { TagView } from "../views/TagView";
 import { TriageView } from "../views/TriageView";
 import { ComposeView } from "../views/ComposeView";
-import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
+import { usePersistedCount, usePersistedFlag, DISMISSED_FOREVER, UI_KEYS } from "./persisted-ui.js";
 
 interface ReadsAiChipEntity {
   afterId: string;
@@ -133,6 +136,42 @@ interface ReadsAiChipEntity {
  * replies, the done set and the pile row cannot drift apart over what counts as "this item".
  */
 const frKeyOf = (item: TriagePileEntry): string => item.messageId ?? item.title;
+
+/**
+ * THE RAIL ROW ↔ THE TRIAGE PILE, stated once.
+ *
+ * The rail's ids are historical (`triage`, `triage-aside`, `triage-resurface`) and the route's
+ * are the piles' own names (`reply`, `aside`, `resurface`), so exactly one place converts. It
+ * used to be `if (id.startsWith("triage")) go("triage")` — a conversion that threw the answer
+ * away, which is the whole of the reported defect.
+ */
+const TRIAGE_PILE_OF_RAIL: Record<string, TriagePileId> = {
+  triage: "reply",
+  "triage-aside": "aside",
+  "triage-resurface": "resurface",
+};
+const RAIL_OF_TRIAGE_PILE: Record<TriagePileId, string> = {
+  reply: "triage",
+  aside: "triage-aside",
+  resurface: "triage-resurface",
+};
+
+/**
+ * The rail ids the number keys reach, and the ONLY hand-written part of that feature: which
+ * rows are piles. The ORDER is not written here — it is read off `railGroups` — so this list
+ * cannot put `3` on the wrong row, only include or exclude a row from being numbered.
+ */
+const PILE_IDS: string[] = ["ohbox", "reads", "receipts", "screener", ...Object.keys(TRIAGE_PILE_OF_RAIL)];
+
+/**
+ * How many rail CLICKS before the number keys are mentioned once.
+ *
+ * Six, and the number is the argument: fewer reads as nagging somebody who has barely arrived,
+ * and more means the hint lands after the habit has set. It counts clicks and not sessions
+ * because clicking is the evidence — somebody who navigates by keyboard never reaches it, and
+ * somebody who has clicked six times has told us what they are doing.
+ */
+const NAV_HINT_AFTER = 6;
 
 /**
  * WHERE A MESSAGE OPENS — the decision, with nothing else in it.
@@ -436,6 +475,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   }, []);
   // Survives a reload; see `persisted-ui.ts` for why it is local and read after mount.
   const [tagsOpen, setTagsOpen] = usePersistedFlag(UI_KEYS.tagsOpen, true);
+  /**
+   * HOW MANY TIMES THIS PERSON HAS REACHED A PILE BY CLICKING, and whether they have been
+   * told there is a faster way. See `NAV_HINT_AFTER` for the whole argument.
+   */
+  const navClicks = usePersistedCount(UI_KEYS.navClicks);
   const [picker, setPicker] = useState<TagPickerState | null>(null);
   /**
    * WHO THE OPEN TAG PICKER IS ACTUALLY FOR.
@@ -1783,11 +1827,97 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     [t, ohbox.newForYou.length, allOhbox.length, readsUnread, receiptsUnread, screener.waitingCount, piles, tagGroups],
   );
 
+  /**
+   * ═══ THE NUMBER KEYS ══════════════════════════════════════════════════════════════════
+   *
+   * `1`…`N` reach the piles in the order the rail lists them. Requested as navigation that
+   * does not need the mouse and does not need a two-key sequence — `g o` / `g r` / `g e` /
+   * `g s` already exist but only cover four destinations and none of the triage horizons.
+   *
+   * ── DERIVED FROM THE RAIL, NOT WRITTEN OUT BESIDE IT ──────────────────────────────────
+   *
+   * The numbers ARE the menu order, so they are read off `railGroups` rather than declared in
+   * a parallel list. A hand-written table would be a second enumeration of the nav — the shape
+   * the (i) panel's hand-typed key list had, and the one the `?` sheet is generated to avoid —
+   * and it would go wrong the first time a group gained an item.
+   *
+   * Only the PILES are numbered: the three streams, the Screener and the three triage
+   * horizons. Tags is a collapsible group whose contents are the user's own and change; Search
+   * has `/` and Settings is not somewhere you flick to. `slice(0, 9)` because there is no key
+   * `10` — a tenth pile would simply not be numbered rather than silently shifting the rest.
+   */
+  const numberNav = useMemo(
+    () =>
+      railGroups
+        .flatMap((g) => g.items)
+        .filter((item) => PILE_IDS.includes(item.id))
+        .slice(0, 9),
+    [railGroups],
+  );
+
+  /**
+   * ── DISCOVERABILITY, IN THREE LAYERS, AND NONE OF THEM IS ALWAYS-ON ───────────────────
+   *
+   * A shortcut nobody knows about is not a feature, and a badge on every row forever is
+   * clutter charged to every user so that a few learn something once. So:
+   *
+   *   1. the `?` sheet lists them, free, because the bindings above declare their own labels
+   *      and the sheet is generated from the registry;
+   *   2. the rail rows show their keycap WHILE THE SHEET IS OPEN — the moment somebody is
+   *      asking "what are the keys", the answer is on the thing itself as well as in the list;
+   *   3. once, after {@link NAV_HINT_AFTER} clicks, a dismissible line. Somebody who has
+   *      clicked the rail six times is demonstrably navigating and demonstrably not using the
+   *      keys, which is the only evidence available that the hint is worth their attention.
+   *
+   * Dismiss is forever (`stop()` pins the counter), and the hint stops on its own once the
+   * keys are used — pressing one navigates without going through `onNavigate`, so the counter
+   * never reaches the threshold for somebody who already knows.
+   */
+  const railGroupsWithHints = useMemo(
+    () =>
+      shortcutsOpen
+        ? railGroups.map((g) => ({
+            ...g,
+            items: g.items.map((item) => {
+              const n = numberNav.findIndex((x) => x.id === item.id);
+              // `kbdHint` REPLACES the count in `RailNav`, which is right here: while the
+              // sheet is open the question on screen is "what is the key", not "how many".
+              return n < 0 ? item : { ...item, kbdHint: String(n + 1) };
+            }),
+          }))
+        : railGroups,
+    [railGroups, numberNav, shortcutsOpen],
+  );
+
+  const showNavHint =
+    numberNav.length > 0 &&
+    navClicks.count >= NAV_HINT_AFTER &&
+    navClicks.count < DISMISSED_FOREVER;
+
+  useKeyBindings(
+    numberNav.map((item, i) => ({
+      chord: String(i + 1),
+      group: "navigate" as const,
+      // The rail's own label, so the sheet and the rail cannot disagree about what `3` is.
+      label: t("shortcuts.goPile", { pile: item.label }),
+      run: () => {
+        // The SAME conversion the rail handler uses, from the same table. A `startsWith`
+        // test here would be a second opinion about which rows are triage rows.
+        const pile = TRIAGE_PILE_OF_RAIL[item.id];
+        if (pile) goTriage(pile);
+        else go(item.id as "ohbox");
+      },
+    })),
+    "global",
+  );
+
   const activeRailId =
     route.view === "tag"
       ? undefined
       : route.view === "triage"
-        ? "triage"
+        // The row for the pile that is actually open. Hard-coded to `"triage"` before, which
+        // is why the rail lit Answer Later however you arrived.
+        ? RAIL_OF_TRIAGE_PILE[route.triagePile]
         : route.view === "compose"
           ? undefined
           : route.view;
@@ -1932,6 +2062,16 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             is not. */}
         <SyncBar />
 
+        {/* The one-time hint. Layer 3 — see `railGroupsWithHints`. It names the real range,
+            counted from the rail rather than typed, so it cannot claim a key that is not
+            bound. Dismiss is permanent. */}
+        {showNavHint ? (
+          <div className="nav-hint">
+            <span>{t("rail.numberHint", { last: numberNav.length })}</span>
+            <button type="button" onClick={navClicks.stop}>{t("rail.numberHintGot")}</button>
+          </div>
+        ) : null}
+
         <div className="topbar">
           <button
             type="button"
@@ -1956,11 +2096,16 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
               go("compose");
             }}
             composeActive={route.view === "compose"}
-            groups={railGroups}
+            groups={railGroupsWithHints}
             activeId={activeRailId}
             onNavigate={(id) => {
               setRailOpen(false);
-              if (id.startsWith("triage")) go("triage");
+              navClicks.bump();
+              // THE FIX. This was `if (id.startsWith("triage")) go("triage")`, which threw
+              // away which of the three rows had been pressed — so Park and Resurface both
+              // opened Answer Later, and the rail lit Answer Later either way.
+              const pile = TRIAGE_PILE_OF_RAIL[id];
+              if (pile) goTriage(pile);
               else go(id as "ohbox");
             }}
             activeTagId={route.tagId ?? undefined}
@@ -2071,6 +2216,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             {effectiveView === "triage" ? (
               <TriageView
                 piles={piles}
+                pile={route.triagePile}
+                onPile={goTriage}
                 frDone={frDone}
                 onStartFR={startFR}
               />

@@ -857,6 +857,39 @@ body.reading .shell {
 }
 
 /* ================= tag picker ================= */
+/* ── The number-key hint ───────────────────────────────────────────────────────────────
+   Shown once, after a handful of rail clicks, then dismissed forever. A strip above the
+   deck rather than a floating card: it is an aside, not something to be got out of the way
+   of, and it must not overlap the rail it is talking about. */
+.nav-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 7px 16px;
+  font-size: 11.5px;
+  color: var(--ink2);
+  background: var(--tint);
+  border-bottom: 1px solid var(--hair-soft);
+}
+.nav-hint button {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+}
+.nav-hint button:hover {
+  color: var(--accent-ink);
+}
+
+/* Triage: the three horizons as one control, above the open pile. */
+.triage-seg {
+  margin: 0 0 18px;
+}
+
 /* ── New tag, from the sidebar ─────────────────────────────────────────────────────────
    A centred card rather than a popover anchored on the rail row: the same control opens
    from the docked rail at 1440 and from the drawer at 390, where the row is inside an
