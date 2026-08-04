@@ -992,11 +992,10 @@
     "err_unknown": "Sync failed, and we could not tell why.",
     "errSince": "Failing since {when}",
     "errAttempts": "{count} attempts",
-    "standDown_organized_elsewhere:local": "Another ohmail install is organizing this mailbox.",
-    "standDown_organized_elsewhere:cloud": "Another ohmail Cloud install is organizing this mailbox.",
-    "standDown_organized_elsewhere:unknown": "Another ohmail organizer holds this mailbox.",
-    "standDownUnknown": "This mailbox is organized somewhere else.",
-    "standDownHow": "ohmail Cloud stopped rather than move your mail alongside it, and cannot take it over from here. Stop organizing it there, then connect this address again.",
+    "standDown_organized_elsewhere_local": "ohmail on your own machine has claimed this mailbox.",
+    "standDown_organized_elsewhere_cloud": "Another ohmail Cloud install has claimed this mailbox.",
+    "standDown_organized_elsewhere_unknown": "Another ohmail organizer has claimed this mailbox.",
+    "standDownHow": "ohmail Cloud never takes a mailbox over on its own. Stop ohmail where it holds this mailbox — or delete the claim from the mailbox's ohmail/_meta folder — then connect this address again.",
     "superseded": "An earlier entry for this address is no longer in use."
   },
   "resume": {

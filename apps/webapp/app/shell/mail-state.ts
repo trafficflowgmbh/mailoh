@@ -83,6 +83,53 @@ export function isSyncBlockReason(v: unknown): v is SyncBlockReason {
 }
 
 /**
+ * THE ORGANIZER LEASE'S VERDICT, AS COPY TOKENS — UX3 (mail 0027).
+ *
+ * `mailboxes.disabled_reason` is the other closed set on this row: `MAILBOX_DISABLED_REASONS`
+ * (`packages/db/src/mailbox-errors.ts`), three members, its own CHECK constraint. It says why a
+ * mailbox is `disabled` when the LEASE decided it rather than a person — and until UX3 it was on
+ * no wire at all, which is how a mailbox could read "disconnected", "No mail yet — added 3
+ * minutes ago" and "No mailbox connected, so nothing can arrive" at the same moment.
+ *
+ * ── THE VALUES HERE ARE NOT THE WIRE'S VALUES, AND THAT IS DELIBERATE ───────────────────
+ *
+ * The wire tokens carry a colon (`organized_elsewhere:local`). {@link MailState.reason} is
+ * documented as COPY — `SyncBar` interpolates it straight into `t(\`blocked_${reason}\`)` — so
+ * whatever lands in that field becomes an i18n key. Mapping here keeps a SERVER-OWNED string out
+ * of the message namespace entirely, which is a stronger guarantee than "a colon happens to
+ * resolve" (it does; that was measured before this map replaced it). {@link standDownToken} is
+ * the only place the two vocabularies meet, and `mailbox-stand-down.test.tsx` reconciles this
+ * table against `MAILBOX_DISABLED_REASONS` read out of the owning module — the same guard
+ * `SYNC_BLOCK_REASONS` already carries, for the same drift.
+ */
+export const STAND_DOWN_REASONS = [
+  "organized_elsewhere_cloud",
+  "organized_elsewhere_local",
+  "organized_elsewhere_unknown",
+] as const;
+export type StandDownReason = (typeof STAND_DOWN_REASONS)[number];
+
+/**
+ * A `disabled_reason` off the wire, as the copy token for it.
+ *
+ * `null` in, `null` out — that is the ORDINARY DISCONNECT and it must stay distinguishable, or
+ * a mailbox the user removed on purpose gets told another install has claimed it.
+ *
+ * Anything else in, `organized_elsewhere_unknown` out. The server already narrows an
+ * unrecognised member to `:unknown` on the way out (`mailbox-service.ts`), so this is the second
+ * line rather than the first — but it is the line that matters during a deploy, and answering a
+ * member this build has never heard of with `null` would file a newer worker's stand-down as
+ * "the user disconnected this". That is A0e transposed onto a column with no timestamp beside
+ * it, and it is why this function never returns `null` for a non-null input.
+ */
+export function standDownToken(wire: string | null): StandDownReason | null {
+  if (wire === null) return null;
+  if (wire === "organized_elsewhere:cloud") return "organized_elsewhere_cloud";
+  if (wire === "organized_elsewhere:local") return "organized_elsewhere_local";
+  return "organized_elsewhere_unknown";
+}
+
+/**
  * ONE mailbox, as the shared shell is allowed to know it.
  *
  * Structural and shell-owned, NOT `MailboxDTO`. `apps/webapp/app/api-client.ts` is DENYd from
@@ -97,6 +144,14 @@ export interface MailboxFacts {
   status: string;
   /** Null unless `status === 'error'`. A stable key; the wording lives in `messages/*.json`. */
   errorCode: string | null;
+  /**
+   * WHY a `disabled` mailbox is disabled, when the ORGANIZER LEASE decided it (mail 0027).
+   *
+   * The raw wire token, colon and all — {@link standDownToken} is what turns it into copy. Null
+   * is the ordinary disconnect, and under `status === 'disabled'` that distinction is the whole
+   * of what separates "you removed this" from "somebody else has claimed it".
+   */
+  disabledReason: string | null;
   /** WHY a `connected` mailbox is not being synced (mail 0029). Null is the healthy case. */
   syncBlockedReason: string | null;
   /** When the CURRENT block began. `coalesce`d server-side, so it does not restart per pass. */
@@ -381,11 +436,22 @@ export interface MailState {
   /** Messages in the MIRROR. `importing` renders it; the others carry it for context. */
   count: number;
   /**
-   * `blocked` only. A member of {@link SYNC_BLOCK_REASONS}, or `null` when the server sent a
-   * reason this build does not know — the state still fires, with generic copy. Silence would
-   * re-create mail 0029's "unobservable by design" one layer up.
+   * `blocked` only, and it is a COPY TOKEN rather than a wire value — `SyncBar` interpolates it
+   * into `t(\`blocked_${reason}\`)`.
+   *
+   * A member of {@link SYNC_BLOCK_REASONS} (mail 0029, our infrastructure declining to serve a
+   * `connected` mailbox) or of {@link STAND_DOWN_REASONS} (mail 0027, the organizer lease
+   * declining to serve a `disabled` one), or `null` when the server sent a sync-block reason
+   * this build does not know — the state still fires, with generic copy. Silence would re-create
+   * mail 0029's "unobservable by design" one layer up.
+   *
+   * The two sets share one field and one state because they are one sentence to a reader: this
+   * mailbox is not syncing, and here is why. They are kept apart at the SOURCE — different
+   * columns, different closed sets, different writers — and joined only here, where the only
+   * remaining question is which sentence to render. A stand-down never yields `null`: see
+   * {@link standDownToken}.
    */
-  reason: SyncBlockReason | null;
+  reason: SyncBlockReason | StandDownReason | null;
   /** `mailboxError` only — the `errorCode` key whose sentence lives in `mailboxes.err_*`. */
   errorCode: string | null;
   /** The mailbox the state is ABOUT, when it is about exactly one. */
@@ -539,6 +605,61 @@ export function deriveMailState(input: MailStateInputs): MailState {
   if (mailboxes === null) return QUIET;
 
   const live = mailboxes.filter((m) => m.status !== "disabled");
+
+  /* ── 4a. STOOD DOWN — the ORGANIZER LEASE is declining to serve it (mail 0027) — UX3 ────
+   *
+   * ── THE FALSE SENTENCE THIS ARM EXISTS TO DELETE ─────────────────────────────────────
+   *
+   * Measured on a real Cloud account against production, 2026-08-04. A mailbox connect was
+   * accepted end to end and then lost the organizer claim to a LOCAL install whose heartbeat was
+   * three hours stale, so the worker wrote `status='disabled'` +
+   * `disabled_reason='organized_elsewhere:local'`. The `live` filter one line above drops every
+   * `disabled` row — which is correct for the six states below it and catastrophic here — and
+   * with the account's only mailbox dropped, `live.length === 0` fired and the strip said
+   * **"No mailbox connected, so nothing can arrive"** to somebody who had connected one three
+   * minutes earlier. Three statements on one screen, no two of them agreeing.
+   *
+   * ── IT SCANS `mailboxes`, NOT `live`, AND THAT IS THE ENTIRE FIX ─────────────────────
+   *
+   * A stood-down mailbox IS disabled — the status is honest, `markMailboxStoodDown` wrote it on
+   * purpose, and the six states below have no business speaking about a row nothing is syncing.
+   * What was missing is that "disabled" has two causes and the product only ever knew one of
+   * them. `disabledReason` is the discriminator, and it is why this arm cannot simply relax the
+   * filter: an ordinary disconnect must still reach `noMailbox`, because a user who removed
+   * their only mailbox HAS no mailbox and telling them so is correct.
+   *
+   * ── AND IT OUTRANKS `blocked`, NOT THE OTHER WAY ROUND ───────────────────────────────
+   *
+   * Both say "this mailbox is not syncing". A sync block is our own infrastructure declining and
+   * RETRYING — `reconcileSyncBlocks` rewrites it every roster pass and it clears itself when the
+   * fault does. A stand-down is terminal from the product's side: `loadEnabledMailboxes` filters
+   * `status <> 'disabled'`, so the row is off the roster entirely and no amount of waiting moves
+   * it. Between two true sentences, the one that is not going to stop being true wins.
+   *
+   * Above the growth states for the reason `blocked` already is, verbatim: a mailbox nobody is
+   * syncing is not syncing, whatever a second mailbox is doing to the mirror.
+   *
+   * `minutes` stays null. There is no `disabled_since` column — nothing timestamps a stand-down
+   * — and inventing an elapsed time from `createdAt` would be measuring the wrong thing. `Since`
+   * renders nothing for a null, which is the path `blockedUnknown` already takes.
+   */
+  /* `typeof === "string"` AND NOT `!== null`, and the difference is a caught defect. The field
+   * is typed `string | null`, but a probe compiled before UX3 — a cached Cloud bundle, a fixture
+   * that predates the field — simply omits it, and `undefined !== null` is TRUE. That reading
+   * turns EVERY ordinary disconnect into an organizer conflict, which is a brand-new false
+   * sentence in the place a false sentence was being removed. It went red on exactly that. */
+  const stoodDown = mailboxes.find(
+    (m) => m.status === "disabled" && typeof m.disabledReason === "string",
+  );
+  if (stoodDown) {
+    return {
+      ...QUIET,
+      key: "blocked",
+      count: mirrored,
+      reason: standDownToken(stoodDown.disabledReason),
+      address: stoodDown.address,
+    };
+  }
 
   // ── 4. BLOCKED — our own infrastructure is declining to serve it (mail 0029) ────────────
   //
