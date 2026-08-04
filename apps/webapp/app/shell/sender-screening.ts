@@ -1,11 +1,11 @@
 "use client";
 
 /**
- * CHANGING A SENDER'S SCREENING FROM ANYWHERE (slice U3).
+ * CHANGING A SENDER'S SCREENING FROM ANYWHERE.
  *
- * Owner, twice: *"I cant select a sender and change it's screening type"* and *"needing to
- * be able to directly click a mail adress and change its screener mode even on ohbox etc"*.
- * Before this, screening could only be decided from the Screener, and only for mail still
+ * The requirement, made twice: select a sender and change their screening type; click a mail
+ * address anywhere it appears — the Ohbox included — and change that sender's screening from
+ * there. Before this, screening could only be decided from the Screener, and only for mail still
  * waiting there. Everywhere else the sender's routing was a thing that had happened to you.
  *
  * ── WHAT THE WIRE WILL ACTUALLY DO, AND WHERE THAT ENDS ─────────────────────────────────
@@ -17,26 +17,26 @@
  *   · a sender still WAITING can be re-decided through the endpoint, which also promotes a
  *     rule server-side, and the remaining three destinations are composed on top with
  *     `move` — the same shape `screener-state.ts` already uses for Reads and Receipts;
- *   · a sender whose mail has left the Screener (the Ohbox case the owner is asking about)
+ *   · a sender whose mail has left the Screener, which is the Ohbox case,
  *     would 404. There is no un-screen endpoint and this slice does not invent one. Their
  *     mail is moved with `move`, which is real and immediate, and **no rule is created** —
  *     so the toast says so rather than promising that future mail will follow.
  *
- * That second half is a genuine limitation, filed as C5 ("`POST /screener/:id` must carry
- * `dest`"). Stating it in the toast is the difference between a product that is narrower
+ * That second half is a genuine limitation, and the fix for it is server-side: `POST
+ * /screener/:id` would have to carry a `dest`. Stating it in the toast is the difference between a product that is narrower
  * than you hoped and one that lies to you.
  *
- * ── O19: THE SCOPE ──────────────────────────────────────────────────────────────────────
+ * ── THE SCOPE ───────────────────────────────────────────────────────────────────────────
  *
  * `scope: "domain"` widens both halves of a decision together — the mail that moves, and the
  * `kind` of the rule. It was on the wire and in the mutation vocabulary from the start
  * (`EngineMutation.screener_decide.scope`, `http-adapter.ts`'s body) and NO surface had ever
  * set it, so the whole feature was one argument away and unreachable.
  *
- * ── O19c: A RULE FROM PAST THE GATE, AND IT IS NOW THE DEFAULT ───────────────────────────
+ * ── A RULE FROM PAST THE GATE, AND IT IS NOW THE DEFAULT ─────────────────────────────────
  *
- * Owner: *"but also allow it to actually create the rule and apply it to ALL messages future
- * and previous, this should be the default behaviour to efficiently manage the mailbox."*
+ * The requirement: creating a rule must also apply it to the mail ALREADY in the mailbox, not
+ * only to what arrives next, and that has to be the default.
  *
  * This used to be unbuildable and the comment here said so. It was true of the vocabulary, not
  * of the server: `POST /rules` had been mounted the whole time with no caller, and the only
@@ -49,9 +49,9 @@
  *
  * So the sheet now has THREE outcomes rather than two, and `ScreeningPlan.ruleState` names
  * which one happened. Making the rule is the DEFAULT (`makeRule`), and the move-only path
- * survives as the explicit opt-out, which is what O19(d) asks for.
+ * survives as the explicit opt-out.
  *
- * ── WHAT "APPLY TO ALL PREVIOUS" DOES, AND WHERE IT NOW HAPPENS (O19-retro) ─────────────
+ * ── WHAT "APPLY TO ALL PREVIOUS" DOES, AND WHERE IT NOW HAPPENS ─────────────────────────
  *
  * This comment used to say the retroactive half was covered "for the mail this client has
  * synced" and not for the rest, and that a bounded server-side pass was owed. **The first half
@@ -61,7 +61,7 @@
  *
  * What was wrong was the SHAPE. One `move` mutation per matching message is one
  * `POST /messages/:id/move` per message — thousands of requests from a browser tab, each taking
- * the account's `account_sync_state` row lock, fired unawaited, and abandoned half-done if the
+ * the account's own write lock, fired unawaited, and abandoned half-done if the
  * tab is closed. So the retroactive half now belongs to the server: `rule_create` carries
  * `applyRetro`, `RulesService` stamps `rules.retro_requested_at`, and the worker's
  * `ruleRetroPass` walks the backlog in bounded, resumable pages, writing desired-state the
@@ -104,7 +104,7 @@ export const SCREENING_DESTS: ScreeningDest[] = ["ohbox", "reads", "receipts", "
 /**
  * THE MAPPING THAT MUST NOT SLIP: which destinations ride the endpoint's `no`.
  *
- * The endpoint's yes is `INBOX`, full stop. C1 was caught shipping "yes unless screened",
+ * The endpoint's yes is `INBOX`, full stop. This was once caught shipping "yes unless screened",
  * which meant "Mark spam" asked the server to file that sender into the Ohbox and promoted
  * a rule sending their future mail there. Spam and Screen-out are the same branch — `no` —
  * and everything else is `yes` with a follow-up move.
@@ -124,10 +124,10 @@ export const WIRE_DECIDE_FOLDER: Record<"yes" | "no", Folder> = {
 };
 
 /**
- * WHOSE MAIL A CHOICE IS ABOUT (O19).
+ * WHOSE MAIL A CHOICE IS ABOUT.
  *
- * The owner's case is `no-reply-kbdtwjmegmd_he…@x.com` — a per-send address from a sender they
- * experience as one list, which no one would ever rule on individually. `domain` widens both
+ * The case that forces it is `no-reply-kbdtwjmegmd_he…@x.com` — a per-send address from a
+ * sender the reader experiences as one list, which nobody would ever rule on individually. `domain` widens both
  * halves of a decision at once: the mail that moves AND, when the sender is still waiting, the
  * `kind` of the rule the server promotes.
  */
@@ -136,18 +136,17 @@ export type ScreeningScope = "sender" | "domain";
 /**
  * WHETHER "ALSO APPLY IT TO MY EXISTING MAIL" IS ON WHEN THE SHEET OPENS — **it is**.
  *
- * Owner: *"apply it to ALL messages future and previous, this should be the default behaviour to
- * efficiently manage the mailbox."* The request is about the DEFAULT; an opt-in would have
- * changed nothing about managing a mailbox. The server agrees — `RulesService.create` treats an
+ * The requirement is about the DEFAULT: applying a rule to the messages already in the mailbox
+ * as well as to the ones still to come. An opt-in would have changed nothing about managing a
+ * mailbox. The server agrees — `RulesService.create` treats an
  * absent `applyRetro` as `true` — and the surface sends the value explicitly anyway, so what
  * ships is decided here, in one line, rather than by a field's absence.
  *
  * ── THE PREREQUISITE, CHECKED RATHER THAN ASSUMED ────────────────────────────────────────
  *
- * `WORKLIST.md` O19-RISK makes O16 a blocker for this default, and it is right about why:
- * *"shipping default rule-creation without that surface builds a mailbox the user cannot
- * un-organize."* That row is now STALE. O16 shipped in `09fc5ab` — `app/views/RulesView.tsx`
- * (245 lines) is imported and rendered by `SettingsView.tsx:328` with `onRevoke` and
+ * A default that creates rules is only safe behind a surface that can take them back:
+ * otherwise it builds a mailbox the user cannot un-organize. That surface exists —
+ * `app/views/RulesView.tsx` is imported and rendered by `SettingsView.tsx` with `onRevoke` and
  * `onRetarget`, wired in `AppShell`, and `test/rules-surface.test.ts` holds 20 tests over it.
  * So every rule this default writes is visible, retargetable and revocable at Settings → Rules
  * before it is written, which is the condition the row actually asks for.
@@ -210,7 +209,7 @@ export interface SenderScreening {
   /** The same four facts for each scope — `sender` mirrors the four fields above. */
   scopes: Record<ScreeningScope, ScreeningSubject>;
   /**
-   * THE ENABLED RULES THE MIRROR ALREADY HOLDS FOR THIS SUBJECT (O19c).
+   * THE ENABLED RULES THE MIRROR ALREADY HOLDS FOR THIS SUBJECT.
    *
    * Read here rather than in the planner so the planner stays a pure function of its argument
    * and the sheet's preview cannot compute a different answer from the dispatch. Only rules
@@ -306,7 +305,7 @@ function subjectOf(messages: EngineMessage[]): ScreeningSubject {
 }
 
 /**
- * WHAT THIS DID TO THE RULE FOR THIS SUBJECT (O19c). Five states, because the sheet says a
+ * WHAT THIS DID TO THE RULE FOR THIS SUBJECT. Five states, because the sheet says a
  * different true sentence for each and a single boolean could only ever say two of them.
  *
  *  · `promoted`   — `POST /screener/:id` wrote it, server-side, as part of the decision.
@@ -392,10 +391,9 @@ export interface ScreeningPlan {
  * engine's overlay is last-write-wins per entity), which is the same ordering
  * `screener-state.ts` documents for the Screener's own path.
  *
- * `makeRule` DEFAULTS TO TRUE — that is O19c's "this should be the default behaviour", and the
- * default is where the owner's request actually lives; an opt-in rule would have changed
- * nothing about managing a mailbox. `false` is the explicit non-default the sheet keeps
- * reachable (O19d) and is also what the BULK path passes, because its confirm copy promises no
+ * `makeRule` DEFAULTS TO TRUE, because the DEFAULT is where the requirement lives; an opt-in
+ * rule would have changed nothing about managing a mailbox. `false` is the explicit
+ * non-default the sheet keeps reachable, and is also what the BULK path passes, because its confirm copy promises no
  * rule and forty senders is not a place to start making promises silently.
  */
 export function planScreeningChange(
@@ -452,7 +450,7 @@ export function planScreeningChange(
       ruleMutations.push({
         kind: "rule_create",
         // THE RULE'S SUBJECT AND THE MAIL THAT MOVES COME FROM THE SAME `scope`, and that is
-        // the whole guard. `4a3ff4f` found `decide` computing the mail to move BY ADDRESS
+        // the whole guard. `decide` was once caught computing the mail to move BY ADDRESS
         // regardless of scope, so a domain rule moved one sender's mail and stranded the rest
         // behind a gate whose own rule already let them through. Here `match` is derived from
         // `scope` and the moves below are taken from `subject` — which IS `s.scopes[scope]` —
@@ -460,7 +458,7 @@ export function planScreeningChange(
         ruleKind: scope,
         match: ruleMatchOf(s, scope),
         destination: wanted,
-        // The retroactive half, and it is the DEFAULT (O19c). The server stamps the request and
+        // The retroactive half, and it is the DEFAULT. The server stamps the request and
         // the worker walks the backlog; nothing about it happens in this process.
         applyRetro,
       });
@@ -503,10 +501,10 @@ export function planScreeningChange(
   }
 
   /**
-   * ── THE FAN-OUT IS CAPPED, AND IT USED TO BE UNBOUNDED (O19-retro) ────────────────────────
+   * ── THE FAN-OUT IS CAPPED, AND IT USED TO BE UNBOUNDED ────────────────────────────────────
    *
    * Every one of these becomes its own `POST /messages/:id/move`, and every one of those takes
-   * the account's `account_sync_state` row lock for its transaction (R1). Uncapped, a domain
+   * the account's own write lock for its transaction. Uncapped, a domain
    * scope on a shared provider fired one request per message — thousands, from a browser tab,
    * fire-and-forget, serializing the account's whole write path and leaving the remainder
    * unmoved for ever if the tab was closed halfway.
@@ -538,11 +536,11 @@ export function planScreeningChange(
 }
 
 /**
- * WHICH SENTENCE THE SHELL IS ALLOWED TO SAY, GIVEN WHAT THE SERVER ACTUALLY ANSWERED (O19c).
+ * WHICH SENTENCE THE SHELL IS ALLOWED TO SAY, GIVEN WHAT THE SERVER ACTUALLY ANSWERED.
  *
  * It lives here and not in `AppShell` for the reason `RulesView` already gives: a shell that
- * has to remember to branch on three statuses is a shell that can ship two of them. O16's first
- * cut fired its toast on click and printed *"Rule revoked. Your mail hasn't moved."* over a 403
+ * has to remember to branch on three statuses is a shell that can ship two of them. The rules
+ * surface's first cut fired its toast on click and printed *"Rule revoked. Your mail hasn't moved."* over a 403
  * on a live account — the fixtures adapter never refuses, so every test was green. This slice
  * makes a CLAIM ABOUT FUTURE MAIL, which is exactly the kind of claim a refusal falsifies.
  *
@@ -570,8 +568,8 @@ export function screeningToast(
     /**
      * THE DECIDE PATH IS NOT AWAITED AND KEEPS THE SENTENCE IT SHIPPED WITH. Its rule is
      * written by the server inside the decision's own transaction — there is no separate
-     * request whose outcome could differ from the decision's — and `4a3ff4f` verified that
-     * path. Widening the await to it would change a shipped behaviour this slice was not
+     * request whose outcome could differ from the decision's — and that path was verified when
+     * it shipped. Widening the await to it would change a shipped behaviour this slice was not
      * asked to touch.
      */
     case "promoted":
@@ -596,12 +594,12 @@ export function worstStatus(results: readonly { status: MutationStatus }[]): Mut
 }
 
 /**
- * DISPATCH THE PLAN AND ANSWER WITH THE SENTENCE THAT IS TRUE (O19c).
+ * DISPATCH THE PLAN AND ANSWER WITH THE SENTENCE THAT IS TRUE.
  *
  * This lives here rather than inline in `AppShell` for one reason: a shell is not testable and
  * this repository's recurring defect is precisely a correct module under an untested wiring.
- * `tag_assign` had a finished picker over an adapter that threw; O16 had a three-outcome
- * vocabulary under a toast that fired on click. Both were green. So the awaiting, the
+ * `tag_assign` had a finished picker over an adapter that threw; the rules surface had a
+ * three-outcome vocabulary under a toast that fired on click. Both were green. So the awaiting, the
  * fire-and-forget and the choice of sentence are ONE function with a `mutate` seam, and
  * `sender-screening.test.ts` drives it with an adapter that refuses.
  *

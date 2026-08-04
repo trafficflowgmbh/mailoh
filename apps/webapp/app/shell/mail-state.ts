@@ -1,13 +1,13 @@
 /**
- * A1 — WHAT IS HAPPENING TO MY MAIL, SAID IN SIX WAYS INSTEAD OF ONE WRONG WAY.
+ * WHAT IS HAPPENING TO MY MAIL, SAID IN SIX WAYS INSTEAD OF ONE WRONG WAY.
  *
  * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
  *
  * The product had exactly ONE sentence for every state a first sync can be in:
  * `mailboxes.syncPending`, "Waiting for first sync", rendered by a spinner in Settings →
- * Mailboxes whenever `lastSyncAt` was null. Measured on the agent's own account on
- * 2026-08-03: it was on screen for THIRTY MINUTES while 495 messages arrived, still climbing
- * at 27 messages per 20 seconds when checked. It is not merely unhelpful — it is the only
+ * Mailboxes whenever `lastSyncAt` was null. Observed on a real first import: it stayed on
+ * screen for half an hour while hundreds of messages arrived, and was still climbing when it
+ * was checked. It is not merely unhelpful — it is the only
  * thing the product says during the period in which it is working hardest, and it kept
  * saying it after mail WAS flowing.
  *
@@ -38,7 +38,7 @@
  *
  * ── WHY THE DERIVATION IS HERE AND NOT IN A VIEW ────────────────────────────────────────
  *
- * `SyncBar.tsx` records that P17's failure sentence was found three times, because each fix
+ * `SyncBar.tsx` records that the failure sentence was found three times, because each fix
  * was written as another branch inside a view and a view can only speak about itself. This
  * module is the same lesson applied to the progress sentence: ONE pure function, no React, no
  * DOM, no network, run ONCE per shell. Three surfaces render its answer — the shell's strip,
@@ -62,8 +62,7 @@
  * `api-client.ts` re-declares `errorCode`: this module ships in the Desktop app, which is built
  * without the server packages, so an import would break a build that has no server in it at all.
  *
- * Re-declaring a closed set is how the two drift, and A0b's brief names the exact failure it
- * produced once already: a fourth `status` value would have rendered the literal key path
+ * Re-declaring a closed set is how the two drift, and it has produced a failure once already: a fourth `status` value would have rendered the literal key path
  * `status_xxx` in the product. Two things stop that here. `mail-state.test.ts` asserts, FROM
  * `@trafficflow/db`, that this array and that one are the same array and that `en.json`
  * carries a sentence for every member — so drift is a red test. And at RUNTIME an unrecognised
@@ -82,11 +81,11 @@ export function isSyncBlockReason(v: unknown): v is SyncBlockReason {
 }
 
 /**
- * THE ORGANIZER LEASE'S VERDICT, AS COPY TOKENS — UX3 (mail 0027).
+ * THE ORGANIZER LEASE'S VERDICT, AS COPY TOKENS.
  *
  * `mailboxes.disabled_reason` is the other closed set on this row: `MAILBOX_DISABLED_REASONS`,
  * three members, its own CHECK constraint, owned server-side. It says why a
- * mailbox is `disabled` when the LEASE decided it rather than a person — and until UX3 it was on
+ * mailbox is `disabled` when the LEASE decided it rather than a person — and it used to be on
  * no wire at all, which is how a mailbox could read "disconnected", "No mail yet — added 3
  * minutes ago" and "No mailbox connected, so nothing can arrive" at the same moment.
  *
@@ -118,8 +117,8 @@ export type StandDownReason = (typeof STAND_DOWN_REASONS)[number];
  * unrecognised member to `:unknown` on the way out (`mailbox-service.ts`), so this is the second
  * line rather than the first — but it is the line that matters during a deploy, and answering a
  * member this build has never heard of with `null` would file a newer worker's stand-down as
- * "the user disconnected this". That is A0e transposed onto a column with no timestamp beside
- * it, and it is why this function never returns `null` for a non-null input.
+ * "the user disconnected this" — a mistake this codebase has made once already, transposed onto
+ * a column with no timestamp beside it. That is why this function never returns `null` for a non-null input.
  */
 export function standDownToken(wire: string | null): StandDownReason | null {
   if (wire === null) return null;
@@ -139,7 +138,7 @@ export function standDownToken(wire: string | null): StandDownReason | null {
  */
 export interface MailboxFacts {
   /**
-   * WHICH mailbox this is — added for the From seam (O20), NOT for the ladder.
+   * WHICH mailbox this is — added for the From seam, NOT for the ladder.
    *
    * `deriveMailState` must never read it, and does not: every state below is about the account
    * or about one mailbox already in hand, and an id is not a fact any sentence can assert. It
@@ -184,10 +183,10 @@ export interface MailboxFacts {
  * worse than either sentence alone. It also has to be orders of magnitude below "this mailbox
  * finished importing three hours ago", which it is.
  *
- * A DURATION and not a count of polls, for the reason A0b's `syncBlockGraceMs` is one: a count
+ * A DURATION and not a count of polls, for the reason `syncBlockGraceMs` is one: a count
  * is a proxy for time that silently retunes the moment `POLL_MS` changes.
  *
- * ── IT BOUNDS THE RUN, NOT THE EPISODE — O7 ─────────────────────────────────────────────
+ * ── IT BOUNDS THE RUN, NOT THE EPISODE ──────────────────────────────────────────────────
  *
  * The paragraph above predicted a flap if this window were one or two poll periods. It was the
  * right argument aimed at the wrong clock, and the flap happened anyway at thirty seconds: the
@@ -205,7 +204,7 @@ export const GROWTH_WINDOW_MS = 30_000;
  *
  * ── THE DEFECT THIS NUMBER EXISTS FOR ───────────────────────────────────────────────────
  *
- * Measured on the owner's account: three worker drains with 45 s of idle between them showed
+ * Observed in a real import: three worker drains with 45 s of idle between them showed
  * the strip FIVE times, with 31-second quiet gaps inside a single import. Every one of those
  * gaps is longer than {@link GROWTH_WINDOW_MS}, so each one ended the run — and with the run
  * gone the strip had to re-earn two rises AND the delta before it could speak again.
@@ -238,7 +237,7 @@ export const IMPORT_END_IDLE_MS = 90_000;
  * import rate (27 messages / 20 s) and is not crossed by a thread burst.
  *
  * It is measured against {@link MirrorGrowth.added} — what the run ADDED — and no longer against
- * `count - runStartCount`, which was a NET delta a single delete could walk back. That is O7's
+ * `count - runStartCount`, which was a NET delta a single delete could walk back. That was the
  * first defect; the field's own doc has the mechanism.
  *
  * The first import of a mailbox does not have to reach it, because a run that starts from an
@@ -260,7 +259,7 @@ export interface MirrorGrowth {
   /** The count this run started from. Zero means "this mirror was empty", i.e. a first import. */
   runStartCount: number;
   /**
-   * Messages the current run has ADDED. Cumulative, and never reduced — O7's first defect.
+   * Messages the current run has ADDED. Cumulative, and never reduced — the first defect.
    *
    * The qualifier used to be `count - runStartCount`, a NET delta, and a fall moves `count` while
    * deliberately leaving `runStartCount` alone ({@link growthStep} says why). So every delete, and
@@ -273,7 +272,7 @@ export interface MirrorGrowth {
    */
   added: number;
   /**
-   * THE EPISODE LATCH — O7's second and third defects, which are the same defect.
+   * THE EPISODE LATCH — the second and third defects, which are the same defect.
    *
    * True from the moment a run first qualifies as an import until the mirror has been still for
    * {@link IMPORT_END_IDLE_MS}. It is deliberately NOT cleared when a RUN ends, and that is the
@@ -321,7 +320,7 @@ export function seedGrowth(count: number): MirrorGrowth {
  *
  * A FALL — a delete, a move out of the mirror — moves the baseline and touches nothing else.
  * It is not a rise, and it is not evidence that the previous rise did not happen. That was
- * already true and already deliberate; what O7 changed is that it now MATTERS, because `added`
+ * already true and already deliberate; what changed is that it now MATTERS, because `added`
  * is the qualifier and a fall may not reduce it.
  */
 export function growthStep(prev: MirrorGrowth, count: number, now: number): MirrorGrowth {
@@ -359,17 +358,17 @@ export function isGrowing(g: MirrorGrowth, now: number): boolean {
  * ── 1. THE EPISODE IS LATCHED ───────────────────────────────────────────────────────────
  *
  * {@link growthStep} set {@link MirrorGrowth.importing} when a run first qualified — it started
- * from an EMPTY mirror (a first import, the A1 defect itself), or it added
+ * from an EMPTY mirror (a first import, the original defect itself), or it added
  * {@link IMPORT_MIN_DELTA} or more (a mid-import stall that resumed at count 300 is still an
  * import). The only question left here is whether the mirror has gone still for
- * {@link IMPORT_END_IDLE_MS}, which is the whole of O7's fix: the qualifiers are evaluated once,
+ * {@link IMPORT_END_IDLE_MS}, which is the whole of the fix: the qualifiers are evaluated once,
  * at the rise that earns them, and never re-litigated between two worker cycles.
  *
  * ── 2. THIS TAB'S FIRST DRAIN HAS NOT COMPLETED ─────────────────────────────────────────
  *
- * P16: a new device repopulating its own mirror. It is the one arm that CANNOT latch, because
+ * A new device repopulating its own mirror. It is the one arm that CANNOT latch, because
  * `growthStep` is not told about `bootstrapping` — and it is not told because that would mean
- * changing `MailStateProvider.tsx`'s call, which this slice may not touch. It does not need to
+ * changing `MailStateProvider.tsx`'s call, which is out of this module's reach. It does not need to
  * latch: it is true for seconds, it covers exactly the cold-start window `seedGrowth` describes,
  * and a run that matters outlives it by qualifying on its own.
  *
@@ -394,7 +393,7 @@ export function isImporting(g: MirrorGrowth, bootstrapping: boolean, now: number
  *  2. `importing`     **THE MIRROR IS GROWING.** Keyed on the client's own count rising across
  *                     syncs, never on a stamp. Counts, never a percentage. An EPISODE rather
  *                     than a run of rises, because the worker writes an import in cycles a
- *                     minute apart and a state that re-qualified between them flapped (O7).
+ *                     minute apart and a state that re-qualified between them flapped.
  *  3. `screenerOnly`  emitted as {@link MailState.screenerCandidate}, not as a key: mail has
  *                     landed, the mirror is settled and nothing is wrong. The OHBOX pane
  *                     combines it with its own emptiness — a fresh account is mostly Screener
@@ -404,9 +403,9 @@ export function isImporting(g: MirrorGrowth, bootstrapping: boolean, now: number
  *  5. `mailboxError`  the mailbox itself refused us (`status === 'error'`, `errorCode`).
  *  6. `noMailbox`     the probe answered, and there are none. Distinct from "we cannot see".
  *
- * ── AND THE TWO THAT ARE NOT A1'S ───────────────────────────────────────────────────────
+ * ── AND THE TWO THAT ARE NOT THIS LADDER'S ──────────────────────────────────────────────
  *
- * `stopped` and `failing` are P17's and they OUTRANK all six. The reason is the rule
+ * `stopped` and `failing` belong to the failure strip and they OUTRANK all six. The reason is the rule
  * `OhboxView`'s counter already followed and this one inherits: once the drains are failing the
  * mirror count is FROZEN, so every claim below about growth is a claim about a number that
  * cannot move. A frozen counter is the same lie in a new font.
@@ -499,8 +498,8 @@ export interface MailState {
    *
    * ── THE DEFECT ──────────────────────────────────────────────────────────────────────────
    *
-   * Owner, 2026-08-04: *"when opening ohmail.app logged in with a not so fast internet
-   * connection, I see 'no messages'"*. Reproduced against the shipped shell with `/sync` held
+   * Reported from real use: opening ohmail.app signed in, over a slow connection, shows "no
+   * messages". Reproduced against the shipped shell with `/sync` held
    * open — the first paint and the paint five seconds later are the same three sentences:
    *
    *     Ohbox · 0 unread of 0 messages · All clear · ✉ Nothing in your Ohbox.
@@ -530,7 +529,7 @@ export interface MailState {
    *
    * ── WHY `bootstrapping` IS THE RIGHT CLOCK HERE, HAVING BEEN THE WRONG ONE THERE ────────
    *
-   * `OhboxView`'s header records that a live COUNT gated on `bootstrapping` was the A1 defect:
+   * `OhboxView`'s header records that a live COUNT gated on `bootstrapping` was the original defect:
    * it means "this TAB's first drain has not completed", which is seconds, while the WORKER's
    * first import is minutes — so the counter switched itself off and the pane went silent for
    * the whole import. That argument is about DURATION and it is untouched: progress still keys
@@ -614,7 +613,7 @@ export interface MailStateInputs {
    * Structural, and re-declared rather than imported as `SyncStatus`, for the reason
    * {@link MailboxFacts} is: this module ships in the Desktop mirror. The four fields are the
    * whole of what the ladder is entitled to consult. `refused` is a coded 401/403 the server has
-   * not yet re-made (O10) — weaker than `terminal` and deliberately so.
+   * not yet re-made — weaker than `terminal` and deliberately so.
    */
   sync: { bootstrapping: boolean; failures: number; terminal: boolean; refused: boolean };
   /** `SYNC_FAILURE_STREAK`, passed in so the surfaces cannot drift from the scheduler. */
@@ -697,11 +696,11 @@ function climb(input: MailStateInputs): MailState {
 
   const live = mailboxes.filter((m) => m.status !== "disabled");
 
-  /* ── 4a. STOOD DOWN — the ORGANIZER LEASE is declining to serve it (mail 0027) — UX3 ────
+  /* ── 4a. STOOD DOWN — the ORGANIZER LEASE is declining to serve it ──────────────────────
    *
    * ── THE FALSE SENTENCE THIS ARM EXISTS TO DELETE ─────────────────────────────────────
    *
-   * Measured on a real Cloud account against production, 2026-08-04. A mailbox connect was
+   * Observed on a real Cloud account. A mailbox connect was
    * accepted end to end and then lost the organizer claim to a LOCAL install whose heartbeat was
    * three hours stale, so the worker wrote `status='disabled'` +
    * `disabled_reason='organized_elsewhere:local'`. The `live` filter one line above drops every
@@ -735,8 +734,8 @@ function climb(input: MailStateInputs): MailState {
    * renders nothing for a null, which is the path `blockedUnknown` already takes.
    */
   /* `typeof === "string"` AND NOT `!== null`, and the difference is a caught defect. The field
-   * is typed `string | null`, but a probe compiled before UX3 — a cached Cloud bundle, a fixture
-   * that predates the field — simply omits it, and `undefined !== null` is TRUE. That reading
+   * is typed `string | null`, but a probe compiled before the field existed — a cached Cloud
+   * bundle, a fixture that predates it — simply omits it, and `undefined !== null` is TRUE. That reading
    * turns EVERY ordinary disconnect into an organizer conflict, which is a brand-new false
    * sentence in the place a false sentence was being removed. It went red on exactly that. */
   const stoodDown = mailboxes.find(
