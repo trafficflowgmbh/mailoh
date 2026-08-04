@@ -334,6 +334,28 @@ final class EngineProjectionTests: XCTestCase {
         }
     }
 
+    /// Wait for something the engine does on its own schedule, bounded by a DEADLINE rather than by
+    /// a count of attempts.
+    ///
+    /// The count version of this timed out once in eight runs, on a machine that was also building
+    /// something else — sixty attempts a second apart is not two minutes of patience when each
+    /// attempt itself takes time, and the failure it produced looked exactly like the mailbox never
+    /// getting the write. A test that is occasionally red for a reason that is not the product is
+    /// worse than no test: it teaches whoever sees it next to re-run rather than to read.
+    ///
+    /// Still bounded, and still fails with the caller's own sentence, because a wait with no end is
+    /// a suite that hangs with no clue why.
+    private func until(_ what: String,
+                       within seconds: TimeInterval = 150,
+                       _ ready: () async throws -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if try await ready() { return }
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+        XCTFail("waited \(Int(seconds))s for \(what), and it never happened")
+    }
+
     // MARK: - The live journey
 
     /// FIRST CONTACT, END TO END, WITH THE SERVER AS THE PROOF.
@@ -372,12 +394,11 @@ final class EngineProjectionTests: XCTestCase {
         }
 
         var waiting: WaitingSender?
-        for _ in 0..<60 {
+        try await until("the Screener to show the message the engine filed") {
             await source.settle()
             waiting = shell.world.waiting.first { $0.addr == "stranger@nowhere.test" }
-            if waiting != nil { break }
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-            await source.refresh()
+            if waiting == nil { await source.refresh() }
+            return waiting != nil
         }
         let sender = try XCTUnwrap(waiting, "the Screener never showed the message the engine filed")
         XCTAssertEqual(sender.held.count, 1)
@@ -403,10 +424,9 @@ final class EngineProjectionTests: XCTestCase {
         // ── `\Seen` ON THE SERVER. The API writes desired state; the engine's own cycle puts the
         //    flag on the real mailbox, so this waits for a cycle rather than for the projection.
         var flags: [String] = []
-        for _ in 0..<60 {
+        try await until("the flag to reach the server") {
             flags = try probe.flags(in: "ohmail.Screener", uid: screenerUIDs[0])
-            if flags.contains("\\Seen") { break }
-            try await Task.sleep(nanoseconds: 1_000_000_000)
+            return flags.contains("\\Seen")
         }
         XCTAssertTrue(flags.contains("\\Seen"),
                       "the second IMAP client does not see \\Seen on the server: \(flags)")
