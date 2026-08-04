@@ -43,17 +43,11 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // `sync` arrived with P17 — the shell's failing-sync strip. The desktop compiles it and
   // can never render it (a fixtures engine is permanently settled), but the guard compares
   // this list against what the sources READ, not against what they display.
-  // `mailboxes` arrived with A1-ui (`5816036`), which added `useTranslations("mailboxes")` to
-  // `SyncBar.tsx:82` for the `err_${errorCode}` lookup at `:138` — and did NOT add it here. So
-  // `desktop-messages.test.ts` went RED the moment A1-ui landed and stayed red through two more
-  // deploys, because nobody ran `apps/desktop`. **The guard worked; the discipline did not.** Third
-  // instance of the same mistake in one night — A0b left `packages/api` red, U-AUTHLATCH left
-  // `apps/webapp` red, A1-ui left this one red. Running the file you changed is not running the suite.
-  //
-  // Listed for the reason `body` and `sync` are: the guard compares this array against what the
-  // sources READ, not what they can display. Without it the desktop binary ships a `SyncBar` whose
-  // error line resolves to a raw `mailboxes.err_…` key — which is precisely the failure the abort
-  // below exists to prevent.
+  // `mailboxes` is read by the shell's sync strip for its `err_<code>` lookup, so the desktop
+  // build needs it compiled in. Listed for the reason `body` and `sync` are: this array is
+  // compared against what the sources READ, not against what they can display. Without it the
+  // binary ships a sync strip whose error line resolves to a raw `mailboxes.err_…` key, which is
+  // exactly the failure the abort below exists to prevent.
   "mailboxes",
   "shortcuts", "sync", "tag", "triage",
 ] as const;
