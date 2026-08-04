@@ -37,6 +37,7 @@ export function TagPicker({
   tags,
   assigned,
   onToggle,
+  onCreate,
   onClose,
 }: {
   state: TagPickerState;
@@ -44,6 +45,15 @@ export function TagPicker({
   /** Tag ids currently on the target message. */
   assigned: string[];
   onToggle: (tagId: string, assigned: boolean) => void;
+  /**
+   * Mint a tag that does not exist yet and put it on this message (W6).
+   *
+   * The picker had no create affordance at all until the backend landed, which was survivable
+   * only while the tag set came from fixtures: on a real account the list starts EMPTY, so a
+   * picker that can only filter an existing list is a feature nobody can reach. Separate from
+   * `onToggle` because the shell mints the id — see `AppShell.toggleTag`.
+   */
+  onCreate: (name: string) => void;
   onClose: () => void;
 }) {
   const t = useTranslations("tag");
@@ -72,6 +82,15 @@ export function TagPicker({
     onToggle(tag.id, !assigned.includes(tag.id));
   };
 
+  /**
+   * Is what the user typed a NEW name? Compared case-insensitively against the whole tag set
+   * and not against the filtered `list`, because the unique index is on `lower(name)` — offering
+   * to create "Invoices" while "invoices" exists would promise a tag the server answers 409 for.
+   */
+  const typed = query.trim();
+  const canCreate =
+    typed.length > 0 && !tags.some((tag) => tag.name.toLowerCase() === typed.toLowerCase());
+
   return (
     <div
       ref={rootRef}
@@ -89,7 +108,10 @@ export function TagPicker({
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
+          // ↵ toggles the highlighted tag, or creates when nothing matches — the same key for
+          // "the tag you meant", which is what the footer promises.
           if (e.key === "Enter" && list[0]) toggle(list[0]);
+          else if (e.key === "Enter" && canCreate) onCreate(typed);
           if (e.key === "Escape") {
             e.stopPropagation();
             onClose();
@@ -111,11 +133,21 @@ export function TagPicker({
               {assigned.includes(tag.id) ? <span className="ck">✓</span> : null}
             </li>
           ))
-        ) : (
+        ) : canCreate ? null : (
           <li className="none">{t("pickerNone")}</li>
         )}
+        {canCreate ? (
+          <li role="option" aria-selected={list.length === 0} className="mk" onClick={() => onCreate(typed)}>
+            {t("pickerCreate", { name: typed })}
+          </li>
+        ) : null}
       </ul>
+      {/* The honest sentence, at the point of creation. A tag is OURS — it is not written to
+          the mailbox — so it cannot be found in another mail client and it does not come back
+          from IMAP if this account is erased. Said here rather than buried in Settings because
+          this is the moment the user is deciding to rely on it. */}
       <div className="tagp-foot">{t("pickerFoot")}</div>
+      <div className="tagp-note">{t("notOnServer")}</div>
     </div>
   );
 }

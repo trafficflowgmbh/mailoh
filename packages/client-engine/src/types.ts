@@ -52,21 +52,34 @@ export type Folder =
 
 export type ChangeOp = "create" | "update" | "move" | "delete";
 
-/** The EntityType values the server's `/sync` feed carries today (contract §3.1 P1). */
+/**
+ * The EntityType values the server's `/sync` feed carries today (contract §3.1 P1).
+ *
+ * `"tag"` JOINED THIS LIST IN W6 and the move is the whole point of that slice. It used to sit
+ * only in {@link MirrorEntityType}, among the demo-world types, and the consequence was not a
+ * missing feature but an invisible one: `TagView`, `TagPicker` and the `t` shortcut were all
+ * built and all worked against fixtures, while a real Cloud account drained a `/sync` feed with
+ * no vocabulary for a tag and therefore rendered an empty picker forever. Mirrors
+ * `EntityType` in `packages/db/src/change-log.ts`, which grew the same member in the same slice.
+ *
+ * Tag ASSIGNMENTS are deliberately not a type here. They ride the `message` entity —
+ * `MessageDTO.labels` — so a client can never hold an assignment that names a tag it has not
+ * received yet.
+ */
 export type SyncEntityType =
   | "message" | "thread" | "routing_decision" | "approval"
-  | "draft" | "rule" | "message_state" | "folder";
+  | "draft" | "rule" | "message_state" | "folder" | "tag";
 
 /**
  * Everything the LOCAL mirror stores. Beyond the synced types, the engine keeps
- * client-local entities for the demo/fixture world (`tag`, `screener_sender`,
+ * client-local entities for the demo/fixture world (`screener_sender`,
  * `triage_item`, `mailbox`), view metadata (`view_meta`, e.g. the Reads
  * waterline) and hydrated message bodies (`message_body`, slice U5-BODY).
  * Unknown strings are tolerated by design.
  */
 export type MirrorEntityType =
   | SyncEntityType
-  | "tag" | "screener_sender" | "triage_item" | "mailbox" | "view_meta" | "message_body"
+  | "screener_sender" | "triage_item" | "mailbox" | "view_meta" | "message_body"
   | (string & {});
 
 // ── /sync wire shapes (contract §3.1) ──────────────────────────────────────
@@ -263,11 +276,27 @@ export interface EngineDraft {
 
 // ── client-local entities (fixtures / demo world) ──────────────────────────
 
+/**
+ * A tag. NO LONGER FIXTURE-ONLY as of W6 — it is a real `/sync` entity backed by the `tags`
+ * table, and this interface is now the client mirror of the server's `TagDTO`.
+ *
+ * A tag is OURS: a row in our database keyed by message, and never an IMAP folder. That is why
+ * it can be created and destroyed by the product at all, and it is also why the UI tells the
+ * truth about its lifetime — a disconnect keeps tags (a mailbox `delete` is a reversible soft
+ * delete), but erasing the account takes them, and a tag never outlives its message. The user's
+ * FOLDERS survive leaving because they are real IMAP folders; their tags do not.
+ *
+ * `className` is OPTIONAL because the server does not send it: a CSS class is presentation, not
+ * account data. The fixture adapter still supplies one, and `hueOf` derives the rendering from
+ * `hue` for both worlds.
+ */
 export interface TagDTO {
   id: string;
   name: string;
   hue: string;
-  className: string;
+  className?: string;
+  createdAt?: ISODateTime;
+  updatedAt?: ISODateTime;
 }
 
 export type ScreenerSegment = "waiting" | "screened_out" | "spam";
@@ -404,8 +433,30 @@ export type EngineMutation =
       messageId: string;
       tagId: string;
       assigned: boolean;
-      /** Filled by the engine at mutate() time: the full next labels array (wire PATCH body). */
+      /**
+       * Filled by the engine at mutate() time: the full next labels array.
+       *
+       * FOR THE OPTIMISTIC EFFECT ONLY — it is deliberately NOT the wire body, though it was
+       * described as one before the backend existed. Sending an array would be a
+       * read-modify-write, and two concurrent toggles of different tags on one message would
+       * lose one of them. The adapter sends `{ tagId, assigned }`; see `http-adapter.ts`.
+       */
       labels?: string[];
+      /**
+       * TAG-OR-CREATE (W6). Present when the user typed a name that does not exist yet, which
+       * is the only way to mint a tag from this shell: the shared shell may not import
+       * `app/api-client` (`scripts/publish-desktop.mjs` DENYs it), so the engine is its only
+       * wire, and a separate `tag_create` mutation would have to be handled in
+       * `mutations.ts`'s exhaustive switch.
+       *
+       * `tagId` is then a CLIENT-MINTED uuid and the server uses it as the new row's id — so
+       * the optimistic paint names the same tag the database ends up holding. If the name
+       * turns out to already exist (a race, or a case-insensitive collision), the EXISTING
+       * tag wins and the client's id is simply never seen; `tagsOfMessage` filters ids the
+       * mirror does not know, so the chip appears one drain later under the correct id rather
+       * than rendering something false in the meantime.
+       */
+      createName?: string;
     }
   | {
       kind: "feed_mark_seen";

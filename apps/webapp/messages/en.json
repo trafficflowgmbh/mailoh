@@ -336,7 +336,9 @@
     "pickerPlaceholder": "Tag this message…",
     "pickerNone": "No tag by that name.",
     "pickerFoot": "↵ toggles",
-    "pickerAria": "Add tag"
+    "pickerAria": "Add tag",
+    "pickerCreate": "Create “{name}”",
+    "notOnServer": "Tags are stored by ohmail, not in your mailbox. Your folders are real IMAP folders and survive if you leave; tags don’t — erasing your account erases them."
   },
   "search": {
     "title": "Search",
@@ -548,7 +550,7 @@
   "ai": {
     "title": "AI proposes. You decide.",
     "body": "Rules run first and do the bulk of the work with no AI at all — the design goal is that most of your mail is filed deterministically, by rules you can read and change. Where judgment actually helps, ohmail offers something: a door for a new sender, a draft in your voice, a nudge for a thread that went quiet. Every one of them waits for your yes, and nothing ever sends itself.",
-    "status": "The AI features are built and tested against the model port, but no live model is connected in production yet — the managed AI actions switch on with the beta, and the metering and spend limits that govern them are already in place.",
+    "status": "The AI features are built and tested against the model port. A live model has run in production once — on 3 August 2026 it classified 183 messages from the founder's own mailbox, and every result is still waiting to be reviewed rather than applied. No other account's mail has been sent to it. The managed AI actions switch on with the beta, and the metering and spend limits that govern them are already in place.",
     "toggleLead": "Try it both ways.",
     "toggleBody": "This is the same mail, twice. Flip the switch — nothing breaks, nothing goes missing. That is the point: ohmail is a complete mail client with the AI switched off, and a faster one with it on.",
     "toggleLabel": "AI assist",
@@ -746,7 +748,7 @@
     "q2": "Can I leave?",
     "a2": "Anytime. Your mail never needs exporting — the originals live on your own server, in ordinary folders ohmail created in place, and nothing we do touches them. Be clear about what Cloud holds, though: a full copy of that mail — bodies, headers, subjects and senders — alongside your rules, tags and notes, because that is what makes search and push work. All of it is deleted with your account.",
     "q3": "Where does the AI run?",
-    "a3": "On Cloud: on our servers, within your included actions — that is the part being wired for the beta, and no live model is connected in production yet. On Desktop the plan is that you point it wherever you like — your own API key, or a local model so nothing leaves your machine — and that arrives with the local engine rather than today. Either way, rules with no AI at all run first and are meant to handle most mail — and you can switch the AI off entirely without losing a single feature that files your mail.",
+    "a3": "On Cloud: on our servers, within your included actions — that is the part being wired for the beta, and so far a live model has run in production exactly once, on the founder's own mailbox. On Desktop the plan is that you point it wherever you like — your own API key, or a local model so nothing leaves your machine — and that arrives with the local engine rather than today. Either way, rules with no AI at all run first and are meant to handle most mail — and you can switch the AI off entirely without losing a single feature that files your mail.",
     "q4": "What exactly is an AI action?",
     "a4": "One unit of AI work: a Screener suggestion for a new sender, a summary, a drafted reply. When your monthly actions run out, mail keeps flowing rules-only until the next cycle. There are no overage charges — ever.",
     "q5": "Do you read my mail?",

@@ -607,6 +607,30 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
     [engine, tags, toast, t],
   );
 
+  /**
+   * Mint a tag and put it on this message (W6).
+   *
+   * ONE mutation, not two. The shell cannot call the API directly — `scripts/publish-desktop.mjs`
+   * DENYs `app/api-client` from this shared shell — so the engine is the only wire, and
+   * `tag_assign` carries the new name rather than a second `tag_create` verb: a create that
+   * succeeded followed by an assign that failed would leave an empty tag the user never asked
+   * for, and the two-request version has no transaction to undo it.
+   *
+   * The id is minted HERE so the optimistic effect paints the same tag the database stores. If
+   * the name already exists the server's row wins and this id is simply never seen — the chip
+   * then appears on the next drain under the real id, which is why nothing here asserts the
+   * tag is visible yet.
+   */
+  const createTag = useCallback(
+    (messageId: string, name: string) => {
+      void engine.mutate({
+        kind: "tag_assign", messageId, tagId: crypto.randomUUID(), assigned: true, createName: name,
+      });
+      toast(t("tag.toastTagged", { name }));
+    },
+    [engine, toast, t],
+  );
+
   const onMessageAction = useCallback(
     (action: MessageAction, m: EngineMessage) => {
       switch (action) {
@@ -1487,6 +1511,7 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
             reader.get<EngineMessage>("message", picker.forId)?.labels ?? []
           }
           onToggle={(tagId, assigned) => toggleTag(picker.forId, tagId, assigned)}
+          onCreate={(name) => { createTag(picker.forId, name); setPicker(null); }}
           onClose={() => setPicker(null)}
         />
       ) : null}
