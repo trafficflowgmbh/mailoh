@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, Icon, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
-import { BodyText } from "./BodyText";
+import { MessageBody } from "../components/MessageBody";
 import { ConversationEntries, ConversationHead } from "./Conversation";
 import { PLACE_LABEL, avatarHue, displayTime, hueOf, initialsOf, rowAddress, senderName, tagsOfMessage } from "./format";
 import { InlineReply } from "./InlineReply";
@@ -454,7 +454,7 @@ export function MessagePane({
        that holds the mail and nothing else, which is what `conversation.test.ts` and
        `inline-reply.test.ts` select on and what a reader is entitled to assume. */
     <div className="msg-body">
-      <BodyText text={body.text} />
+      <MessageBody text={body.text} html={body.html} remoteLoaded={body.loadedRemoteContent} />
     </div>
   );
 

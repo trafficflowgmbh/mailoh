@@ -253,10 +253,21 @@ export interface MessageBodyRecord {
    * The endpoint's html part (O11b), or `null` — for a message with none, for sensitive
    * mail, and for every record that is not `ready`. Held here rather than on the message
    * row for exactly the reason the text is: a `/sync` delta must not be able to erase it.
+   *
+   * ── OPTIONAL, AND THAT IS ABOUT INDEXEDDB RATHER THAN ABOUT MAIL ────────────────────
+   *
+   * `message_body` records are PERSISTED (`IndexedDbMirrorStore`), so every browser that
+   * ran a build from before O11b already holds records of the older shape — `{messageId,
+   * state, text}` and nothing else. Those rows are not migrated and must not be: the body
+   * is re-fetchable from the endpoint at any time, and a migration that invented `html:
+   * null` for them would be indistinguishable from a message that genuinely has none.
+   * Declaring these required would be the type system asserting something about the
+   * store that is false on every existing install. `bodyOf` reads them with `?? null`.
    */
-  html: string | null;
-  /** The reader's remote-content decision for this message, as the server last stated it. */
-  loadedRemoteContent: boolean;
+  html?: string | null;
+  /** The reader's remote-content decision, as the server last stated it. Optional for the
+   *  same reason `html` is: a record written before O11b carries neither. */
+  loadedRemoteContent?: boolean;
   /** Why the fetch failed, for the console — never rendered to the user. */
   error?: string;
 }

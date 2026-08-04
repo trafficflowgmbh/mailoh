@@ -103,8 +103,8 @@ const MessageChromeContext = createContext<MessageChrome>({
    */
   bodyOf: (message) =>
     message.body !== undefined
-      ? { text: message.body, state: "full" }
-      : { text: message.snippet, state: "snippet" },
+      ? { text: message.body, state: "full", html: null, loadedRemoteContent: false }
+      : { text: message.snippet, state: "snippet", html: null, loadedRemoteContent: false },
   hydrateBody: noop,
 });
 
