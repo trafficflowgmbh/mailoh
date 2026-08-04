@@ -201,7 +201,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     // in memory and already renderable.
     await this.bindOwner(db);
     /**
-     * YIELD TO A DELETE. Measured, not theorised (S19).
+     * YIELD TO A DELETE. Measured, not theorised.
      *
      * `deleteDatabase` fires `versionchange` on every OPEN connection and is BLOCKED until
      * they all close. `deleteDatabase` here resolves on `onblocked` deliberately — hygiene

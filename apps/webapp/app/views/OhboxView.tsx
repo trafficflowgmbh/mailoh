@@ -378,7 +378,7 @@ export function OhboxView({
     },
     {
       /**
-       * Escape clears the selection — when nothing is open on top of it (slice S24).
+       * Escape clears the selection — when nothing is open on top of it.
        *
        * This used to read `picked.size === 0 || chrome.replyTo != null`, and the second
        * clause is the whole story. `U4-REPLY` went red the moment a selection survived

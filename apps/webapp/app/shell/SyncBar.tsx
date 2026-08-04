@@ -51,7 +51,7 @@
  *
  * ── RETRYING IS NOT STOPPED ─────────────────────────────────────────────────────────────
  *
- * `terminal` (X6) means the server refused this session in a way no waiting fixes — a 401 or
+ * `terminal` means the server refused this session in a way no waiting fixes — a 401 or
  * 403, a revoked session, a deleted account — and the loop has stopped. Rendering "Retrying."
  * for that would be a false statement about what the app is doing, so it gets its own line
  * and the one remedy that exists. Everything else is genuinely still being retried, forever,
@@ -89,7 +89,7 @@ export function SyncBar() {
       return (
         // `role="alert"` and not `status`: the loop has stopped and will not restart itself,
         // so this is the one sync state that is worth interrupting a screen reader for. It is
-        // U-AUTHLATCH: `terminal` is NO LONGER set-once. A wake now issues one bounded probe, and a
+        // `terminal` is NO LONGER set-once. A wake now issues one bounded probe, and a
         // drain that succeeds withdraws the claim, so this bar can appear, disappear and reappear.
         // `role="alert"` re-announcing on a re-latch is correct: the server re-made the claim.
         <div className="sync-bar stopped" role="alert">
@@ -206,7 +206,7 @@ function Glyph({ warn = false }: { warn?: boolean }) {
  * Minutes below an hour and hours above it, as two keys rather than one — "Since 187 minutes
  * ago" is a true sentence nobody can read, and an organizer lease that cannot be read stays
  * unreadable for as long as the server stays broken. Rendered only once there is a whole minute
- * to report: `syncBlockedSince` is written after A0b's 120 s grace, so a zero here means the
+ * to report: `syncBlockedSince` is written after the 120 s grace, so a zero here means the
  * clock and the row disagree by a beat, and "Since 0 minutes ago" is worse than silence.
  */
 function Since({

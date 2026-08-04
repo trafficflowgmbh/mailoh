@@ -308,7 +308,7 @@ export interface SyncSchedulerOptions {
  * Anything that is not a typed refusal — a network error, a parse failure, an unknown throw —
  * stays retryable. Terminal is a positive claim, made only when the server made it.
  *
- * ── U-AUTHLATCH, 2026-08-04: THAT LAST SENTENCE WAS FALSE AS WRITTEN ────────────────────
+ * ── CORRECTED 2026-08-04: THAT LAST SENTENCE WAS FALSE AS WRITTEN ───────────────────────
  *
  * `retryable === false` alone caught far more than a revoked session. `HttpAdapter.rejectionOf`
  * defaults `retryable` to `status >= 500 || status === 429`, so **anything** else non-5xx latched:
@@ -400,7 +400,7 @@ export function startSyncScheduler(
   /**
    * Set by a refusal the server made about this identity. NO TIMER runs while it is true.
    *
-   * It is no longer "set once and never cleared" — that was U-AUTHLATCH. A single transient 401
+   * It is no longer "set once and never cleared". A single transient 401
    * bought permanent sync death for the tab's lifetime, and a reload was the only recovery, while
    * the banner told a signed-in user to sign in. It is now cleared by a successful probe; see
    * `revalidating`.
@@ -409,7 +409,7 @@ export function startSyncScheduler(
   /**
    * A single probe drain, permitted while `terminal`, to test whether the refusal still holds.
    *
-   * Latching stays IMMEDIATE (X6: say so rather than go quiet — a genuinely revoked user sees the
+   * Latching stays IMMEDIATE — say so rather than go quiet, since a genuinely revoked user sees the
    * banner on the first drain either way). What changes is that a wake may ask once more.
    */
   let revalidating = false;
@@ -548,7 +548,7 @@ export function startSyncScheduler(
   const wake = (): void => {
     if (stopped || running) return;
     if (terminal) {
-      // U-AUTHLATCH: one bounded probe per wake. A transient refusal must not outlive the
+      // One bounded probe per wake. A transient refusal must not outlive the
       // transient, and a genuine one must not buy invocations (#10) — hence the floor.
       const at = Date.now();
       if (at - lastProbeAt < BACKOFF_CAP_MS) return;

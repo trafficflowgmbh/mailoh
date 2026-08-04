@@ -8,7 +8,7 @@ import {
 import { createSyncGate, registerSyncGate } from "./sync-scheduler";
 
 /**
- * Stage-2 S12 — THE ENGINE DECISION, extracted so it can be TESTED rather than described.
+ * THE ENGINE DECISION, extracted so it can be TESTED rather than described.
  *
  * This function used to live inside `engine.tsx`, which is a `"use client"` module that
  * pulls in React and the whole provider. `demo-gate.test.ts` could therefore only assert
