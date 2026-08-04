@@ -1881,18 +1881,39 @@ body.reading .shell {
   color: var(--ink3);
   margin: 0 0 8px;
 }
-/* Sign out — text left, action right, separated from the erasure ceremony below by a rule
-   rather than a heading, because the two must not read as steps of one flow. */
+/* Sign out — text left, action right. It used to carry a bottom rule to separate it from the
+   erasure ceremony it shared a card with; it has its own card now, so the rule is gone. A rule
+   inside one panel still reads as two parts of one ceremony, which is the thing being fixed. */
 .acct-signout {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  padding: 2px 0 16px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 18px;
+  padding: 2px 0 0;
 }
 .acct-signout > div { min-width: 0; }
+/* ── A SETTINGS ROW'S CONTROL IS FLUSH RIGHT, ALWAYS ───────────────────────────────────
+   `.set-row` is a flex row and `.lab` carries no `flex:1`, so a control placed after it sits
+   wherever the label's text happens to end — which means two rows in one card line their
+   buttons up differently depending on how long their descriptions are. Security shipped
+   exactly that: "Replace recovery codes" flush to the card edge (long description) and
+   "Replace authenticator" stranded mid-card (short one). `margin-left:auto` is the same fix
+   `.set-tag-acts` already uses; it is done per-wrapper rather than by giving `.lab` a
+   `flex:1` in `packages/ui`, because that would move every settings row in the product to
+   fix two. */
+.acct-row-act {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+
+/* Sign out is its own CARD, not a rule inside the delete one — see `AccountSection`. The gap
+   is what makes them two subjects rather than two parts of one ceremony. */
+.acct-session {
+  margin-bottom: 14px;
+}
+
 /* The button is the one thing on this row that must not be squeezed. It sat at the flex
    default (`shrink:1`) next to a paragraph that wants the full width, so the label broke
    across two lines — reported as a sign-out button that breaks a line. */

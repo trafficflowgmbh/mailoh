@@ -89,6 +89,7 @@ export function RecipientField({
   placeholder,
   invalid,
   describedBy,
+  onFocusChange,
 }: {
   id: string;
   value: string;
@@ -99,6 +100,11 @@ export function RecipientField({
   placeholder?: string;
   invalid?: boolean;
   describedBy?: string;
+  /**
+   * Focus, reported up, so the form can hold back the "not an address" line for the entry
+   * being TYPED. See `ComposeView` — a half-typed name is not a wrong one.
+   */
+  onFocusChange?: (focused: boolean) => void;
 }) {
   const t = useTranslations("compose");
   const listId = useId();
@@ -210,8 +216,12 @@ export function RecipientField({
         onKeyUp={(e) => sync(e.currentTarget)}
         onClick={(e) => sync(e.currentTarget)}
         onKeyDown={onKeyDown}
+        onFocus={() => onFocusChange?.(true)}
         // A click elsewhere dismisses. Deferred, so a click ON a suggestion lands first.
-        onBlur={() => setTimeout(() => setOpen(false), 120)}
+        // The focus report is deferred with it: accepting a suggestion by mouse blurs the
+        // input for an instant, and reporting that immediately would flash the validation
+        // error for the entry that is in the middle of being completed.
+        onBlur={() => setTimeout(() => { setOpen(false); onFocusChange?.(false); }, 120)}
       />
       {live ? (
         <ul className="rcp-list" role="listbox" id={listId} aria-label={t("toSuggestions")}>

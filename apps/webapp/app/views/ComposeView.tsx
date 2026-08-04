@@ -96,6 +96,34 @@ export function ComposeView({
    * recipient is noise — the selector cannot know whose mailbox it is reading, so the caller
    * says.
    */
+  /**
+   * ── THE "NOT AN ADDRESS" LINE WAITS FOR THE ENTRY TO BE FINISHED ────────────────────────
+   *
+   * `composePlan` re-parses the whole To field on every keystroke, so typing the `n` of a name
+   * put a red error under the field immediately — while the suggestion list for that same
+   * prefix was open above it. The field was telling the user they were wrong and offering them
+   * four ways to be right, at the same time, about the same two letters.
+   *
+   * An entry that is still being typed is UNFINISHED, not invalid. So the line withholds
+   * exactly one entry — the last one — and only while the field has focus and the value does
+   * not already end in a comma. Everything the user has committed by typing a comma is still
+   * reported the moment it is committed, and blurring reports the last one too.
+   *
+   * THIS IS A DISPLAY GATE AND NOTHING ELSE. `canSend` reads `plan.mutation.to`, which
+   * `composePlan` empties whenever ANY entry is unparseable, so a genuinely bad address still
+   * refuses to send whether or not this line is on screen. Suppressing the sentence cannot
+   * loosen the guard, because the guard never read the sentence.
+   */
+  const [toFocused, setToFocused] = useState(false);
+  const stillTyping =
+    toFocused && !/,\s*$/.test(fields.to)
+      ? (fields.to.split(",").pop() ?? "").trim()
+      : null;
+  const shownInvalid =
+    stillTyping === null || stillTyping === ""
+      ? plan.invalid
+      : plan.invalid.filter((entry) => entry !== stillTyping);
+
   const book = useMemo(
     () => addressBook(engine.read(), { exclude: from.address ? [from.address] : [] }),
     [engine, from.address],
@@ -213,13 +241,14 @@ export function ComposeView({
               placeholder={t("toPlaceholder")}
               /* The error line below is the accessible name's partner: a field that is wrong
                  must SAY which entry is wrong, not merely refuse to enable Send. */
-              invalid={plan.invalid.length > 0}
-              describedBy={plan.invalid.length > 0 ? "compose-to-error" : undefined}
+              invalid={shownInvalid.length > 0}
+              describedBy={shownInvalid.length > 0 ? "compose-to-error" : undefined}
+              onFocusChange={setToFocused}
             />
           </div>
-          {plan.invalid.length > 0 ? (
+          {shownInvalid.length > 0 ? (
             <p className="c-error" id="compose-to-error">
-              {t("toInvalid", { entries: plan.invalid.join(", ") })}
+              {t("toInvalid", { entries: shownInvalid.join(", ") })}
             </p>
           ) : null}
 

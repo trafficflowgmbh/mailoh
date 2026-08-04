@@ -21,6 +21,15 @@ export interface RailTagItem {
   label: string;
   hue: TagHueName;
   count?: number;
+  /**
+   * This row DOES something instead of going somewhere — "New tag" at the end of the group.
+   *
+   * Without it such a row is indistinguishable from a tag: same coloured dot, same shape, so
+   * the group reads as containing a tag literally named "New tag". An action gets a `+` where
+   * the dot would be and no count, because a count is a property of a tag and this is not one.
+   * The host still owns what it does; this only says which of the two kinds of row it is.
+   */
+  action?: boolean;
 }
 
 export interface RailGroup {
@@ -248,12 +257,16 @@ function TagsGroup({
           <button
             key={t.id}
             type="button"
-            className={t.id === activeTagId ? "ritem on" : "ritem"}
+            className={
+              t.action ? "ritem ritem-action" : t.id === activeTagId ? "ritem on" : "ritem"
+            }
             onClick={() => onNavigateTag?.(t.id)}
           >
-            <TagDot hue={t.hue} />
+            {/* A `+` where the dot would be. An action row is never `on`, and carries no
+                count — see `RailTagItem.action`. */}
+            {t.action ? <Icon name="plus" className="ritem-plus" /> : <TagDot hue={t.hue} />}
             {t.label}
-            <span className="cnt num">{t.count ?? ""}</span>
+            {t.action ? null : <span className="cnt num">{t.count ?? ""}</span>}
           </button>
         ))}
       </div>

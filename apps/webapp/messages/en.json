@@ -903,7 +903,8 @@
   },
   "account": {
     "title": "Delete your account",
-    "lead": "Signed in as {email}. This cannot be undone.",
+    "lead": "This cannot be undone.",
+    "signedInAs": "Signed in as {email}.",
     "signOutTitle": "Sign out",
     "signOutBody": "Ends this session and removes the mail cached in this browser. Your mailbox and your account are untouched.",
     "signOut": "Sign out",

@@ -36,6 +36,14 @@
 .rgroup .rgroup.rsub{margin:3px 0 0}
 .rsub .rlabel-toggle{padding:3px 8px}
 .rsub .ritem{font-size:12.5px;padding:5px 8px}
+/* An ACTION row in a tag group — "New tag". Quieter than a tag until hovered, so the
+   group still reads as a list of tags with one affordance at the end rather than as a
+   list with an odd member. The `+` sits exactly where the tag dot does, so the rows stay
+   aligned. See `RailTagItem.action`. */
+.ritem-action{color:var(--ink3)}
+.ritem-action:hover{color:var(--ink)}
+.ritem-plus{width:10px;height:10px;flex:0 0 auto;color:var(--ink3)}
+.ritem-action:hover .ritem-plus{color:var(--accent-ink)}
 .rsub .ritem .cnt{font-size:11px}
 .ritem{
   display:flex;align-items:center;gap:9px;width:100%;padding:6px 8px;border-radius:10px;border:0;cursor:pointer;
