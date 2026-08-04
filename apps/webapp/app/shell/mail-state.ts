@@ -496,6 +496,62 @@ export interface MailState {
    * The pane may not re-derive it.
    */
   screenerCandidate: boolean;
+  /**
+   * **MAY AN EMPTY LIST BE STATED AS A SETTLED FACT?**
+   *
+   * ── THE DEFECT ──────────────────────────────────────────────────────────────────────────
+   *
+   * Owner, 2026-08-04: *"when opening ohmail.app logged in with a not so fast internet
+   * connection, I see 'no messages'"*. Reproduced against the shipped shell with `/sync` held
+   * open — the first paint and the paint five seconds later are the same three sentences:
+   *
+   *     Ohbox · 0 unread of 0 messages · All clear · ✉ Nothing in your Ohbox.
+   *
+   * Every one of them is a claim about the user's own mail, made in the product's voice, before
+   * the product has finished looking. "Empty", "not loaded yet" and "the read failed" are three
+   * different facts and the panes had one rendering for all three.
+   *
+   * ── WHAT IT IS, AND WHY IT IS NOT A KEY ─────────────────────────────────────────────────
+   *
+   * `screenerCandidate`'s shape exactly, for `screenerCandidate`'s reason: it is a
+   * QUALIFICATION of a fact each PANE owns ("my list is empty"), not an account-wide sentence.
+   * The strip already has `awaiting` and `importing` for account-level progress; a seventh key
+   * here would put a sentence on screen for the ~200 ms a fast connection takes, and
+   * `engine.tsx` has already ruled that a sentence that flashes is worse than a quiet frame.
+   * The panes, by contrast, are ALREADY rendering something in that slot — replacing a false
+   * sentence with a true one adds no chrome.
+   *
+   * ── THE DERIVATION READS THE LADDER'S VERDICT, NOT THE LADDER'S CONDITIONS ──────────────
+   *
+   * `!bootstrapping || key === "stopped" || key === "failing"`, and the second half is
+   * deliberately expressed as KEYS rather than as `terminal || failures >= streak || refused`.
+   * Those are the same thing today ({@link deriveMailState}'s first two arms), and writing the
+   * conditions out again would be a second copy of a precedence rule that lives twenty lines
+   * away — the exact drift this module's header was written to end. A future change to what
+   * counts as failing flows through for free.
+   *
+   * ── WHY `bootstrapping` IS THE RIGHT CLOCK HERE, HAVING BEEN THE WRONG ONE THERE ────────
+   *
+   * `OhboxView`'s header records that a live COUNT gated on `bootstrapping` was the A1 defect:
+   * it means "this TAB's first drain has not completed", which is seconds, while the WORKER's
+   * first import is minutes — so the counter switched itself off and the pane went silent for
+   * the whole import. That argument is about DURATION and it is untouched: progress still keys
+   * on the mirror growing, and still lives in the strip.
+   *
+   * This is a different question with a different answer. "Has anything authoritative populated
+   * this mirror yet" is exactly what `bootstrapping` means, and seconds is exactly the right
+   * length for it — the scheduler hydrates from the device BEFORE it drains, so `!bootstrapping`
+   * implies the local copy has already been read too.
+   *
+   * ── AND IT CANNOT SPIN FOR EVER ─────────────────────────────────────────────────────────
+   *
+   * A loop that is failing never clears `bootstrapping`, so without the two key arms a mailbox
+   * whose network is down would say "still loading" until the tab was closed — one lie traded
+   * for another. `stopped` and `failing` are precisely the states in which the strip is already
+   * explaining that the mirror is frozen, so from there an empty list is as settled as it is
+   * ever going to get and the panes may say so plainly.
+   */
+  settled: boolean;
 }
 
 const QUIET: MailState = {
@@ -508,6 +564,10 @@ const QUIET: MailState = {
   minutes: null,
   slow: false,
   screenerCandidate: false,
+  // Overwritten for every state by `deriveMailState`'s wrapper — see {@link MailState.settled}.
+  // `true` here so that a `QUIET` used directly as a resting value never withholds a pane's
+  // ordinary empty state.
+  settled: true,
 };
 
 /**
@@ -582,12 +642,35 @@ export interface MailStateInputs {
 }
 
 /**
- * WHAT TO SAY, from what the client can see. Pure. First match wins.
+ * WHAT TO SAY, from what the client can see — plus whether the panes may call an empty list
+ * empty. Pure.
+ *
+ * ── THE STAMP IS APPLIED HERE AND NOT INSIDE THE LADDER ─────────────────────────────────
+ *
+ * {@link MailState.settled} is a property of EVERY state, and `climb` below has ten `return`
+ * statements. Stamping it in one place rather than ten is not tidiness: it is what makes the
+ * flag impossible to omit, including from the eleventh state somebody adds next year. The same
+ * argument `stripSpeaks` makes about keys — the surfaces decide nothing — applied to a field.
+ *
+ * It is also why the derivation can read `climb`'s KEY: the verdict exists before the stamp
+ * does. See {@link MailState.settled} for why that indirection is the point.
+ */
+export function deriveMailState(input: MailStateInputs): MailState {
+  const state = climb(input);
+  return {
+    ...state,
+    settled:
+      !input.sync.bootstrapping || state.key === "stopped" || state.key === "failing",
+  };
+}
+
+/**
+ * The ladder itself. First match wins.
  *
  * The order below is PRECEDENCE and is deliberately not the order the states are numbered in.
  * Each step says why it outranks the next.
  */
-export function deriveMailState(input: MailStateInputs): MailState {
+function climb(input: MailStateInputs): MailState {
   const { sync, failureStreak, mailboxes, mirrored, growth, now, demo } = input;
 
   // A fixtures engine drains once from local data and is permanently settled. There is no

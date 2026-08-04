@@ -26,6 +26,7 @@ import {
   type DecisionScope,
 } from "@ohmail/ui";
 import { avatarHue } from "../shell/format";
+import { useLoadingGrace } from "../shell/loading-grace";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { goScreener, type ScreenerSegmentId } from "../shell/routing";
 import type { ScreenerState, SpamRow } from "../shell/screener-state";
@@ -40,8 +41,38 @@ import type { ScreenerState, SpamRow } from "../shell/screener-state";
  * out of it has no way to stay honest as those strings change. It is app copy, so it lives with
  * the app's copy. `demo-zero-network.test.ts` now forbids the import class outright.
  */
-function Empty({ segment }: { segment: ScreenerSegmentId }) {
+function Empty({ segment, settled }: { segment: ScreenerSegmentId; settled: boolean }) {
   const t = useTranslations("screener");
+  const speak = useLoadingGrace(!settled);
+  /**
+   * ── "No one's waiting." IS A FACT ABOUT SENDERS, NOT ABOUT THIS LIST ──────────────────
+   *
+   * The live truth suite caught this pane on a real account: *"the Screener is empty — 0 rows,
+   * meta 'all clear' — on a mailbox seeded with dozens of unique first-contact senders"*, while
+   * the database held 323 messages in that pile. The rows come from the mirror
+   * (`shell/screener-state.ts` reads `engine.read()`), and before the mirror has been read there
+   * are no senders to have an opinion about. Every sentence below asserts one.
+   *
+   * So the three settled states are held back until {@link MailState.settled}, and what is shown
+   * instead names the situation and nothing else — no invented sender, no placeholder row. See
+   * `OhboxView`'s `SyncState`, which this mirrors deliberately: one defect, one shape of answer.
+   */
+  if (!settled) {
+    return (
+      <div className="empty" role="status" aria-busy="true">
+        {/* `.mbx-wait` and not a bare span: `.mbx-spin` sizes itself with `width`/`height` and
+            is a `<span>`, so it needs a flex parent or the border collapses to a dot. That
+            pairing — spinner beside one muted line — is exactly what `.mbx-wait` already is
+            (`app.css`, beside the Settings rows), and reusing it adds no CSS and inherits the
+            `prefers-reduced-motion` answer the ring already has. Same reuse `SyncBar` makes,
+            for the same reason and with the same note about the `mbx-` prefix. */}
+        <span className="mbx-wait">
+          <span className="mbx-spin" aria-hidden="true" />
+          {speak ? <b>{t("loading")}</b> : null}
+        </span>
+      </div>
+    );
+  }
   const key = segment === "screened" ? "screened" : segment;
   return (
     <div className="empty">
@@ -56,6 +87,7 @@ export function ScreenerView({
   state,
   segment,
   selection,
+  settled,
   onSelect,
   hydrateBody,
   full,
@@ -64,6 +96,11 @@ export function ScreenerView({
   state: ScreenerState;
   segment: ScreenerSegmentId;
   selection: Record<ScreenerSegmentId, string | null>;
+  /**
+   * May this view state its emptiness as a fact yet? Derived once in `shell/mail-state.ts`; a
+   * prop for the reason it is one on `OhboxView`. See {@link Empty}.
+   */
+  settled: boolean;
   onSelect: (segment: ScreenerSegmentId, id: string | null) => void;
   /** Ask for one held message's body. `retry` marks a human asking again (slice U5-BODY). */
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
@@ -340,7 +377,15 @@ export function ScreenerView({
     <section className={full ? "view split view-screener scn-full" : "view split view-screener"}>
       <ListPane
         title={t("title")}
-        meta={t("metaWaiting", { count: state.waitingCount })}
+        /* "all clear" is the `=0` arm of this meta, and it is the same claim `Empty` makes:
+           nobody is waiting at the gate. Before the mirror has been read nobody is KNOWN to be
+           waiting. Any non-zero count is a real observation whatever the drain is doing, so
+           only the zero is withheld — and it returns the moment there is one to state. */
+        meta={
+          !settled && state.waitingCount === 0
+            ? undefined
+            : t("metaWaiting", { count: state.waitingCount })
+        }
         header={
           <div className="scn-head">
             <SegmentedControl<ScreenerSegmentId>
@@ -425,13 +470,13 @@ export function ScreenerView({
         }
       >
         <ListRows>
-          {items.length ? items.map(row) : <Empty segment={segment} />}
+          {items.length ? items.map(row) : <Empty segment={segment} settled={settled} />}
         </ListRows>
       </ListPane>
 
       <div className="read-col scn-read">
         {!current ? (
-          <Empty segment={segment} />
+          <Empty segment={segment} settled={settled} />
         ) : segment === "waiting" ? (
           <WaitingPreview
             sender={current as ScreenerSenderDTO}

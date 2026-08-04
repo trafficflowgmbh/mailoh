@@ -22,6 +22,7 @@ import { useTranslations } from "next-intl";
 import { OhmailEngine, type EntityReader } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
 import { createEngine, EngineUnarmedError } from "./engine-config";
+import { useLoadingGrace } from "./loading-grace";
 import {
   startSyncScheduler,
   SYNC_BOOTSTRAPPING,
@@ -281,13 +282,42 @@ export function EngineProvider({
  *
  * Same markup as `mailbox/page.tsx`'s honest gate — `.gate` / `.gate-card` in `app.css` —
  * so a visitor who lands here sees the product's own furniture rather than a stray spinner
- * in an unstyled page. `resolving` carries no text at all: it is normally two or three
- * hundred milliseconds, and a sentence that flashes is worse than a quiet frame.
+ * in an unstyled page.
+ *
+ * ── `resolving` USED TO CARRY NO TEXT AT ALL, AND MOSTLY STILL DOES ─────────────────────
+ *
+ * The argument for silence was "it is normally two or three hundred milliseconds, and a
+ * sentence that flashes is worse than a quiet frame", and that is still true — of a normal
+ * connection. The owner's is not: `GET /auth/session` is the FIRST of two serial round trips
+ * before a single row can paint, and on a slow link the whole of it was a blank page followed
+ * by "Nothing in your Ohbox.".
+ *
+ * `useLoadingGrace` keeps both promises rather than picking one. Below the grace this renders
+ * exactly what it always did — an empty, busy, live region. Above it, the region gains a
+ * sentence, and because it is the SAME `aria-live="polite"` node the text was never in, its
+ * late arrival is announced rather than silently present.
+ *
+ * It says the app is opening the mailbox and nothing about what is in it. At this point this
+ * component has not been told whose mailbox it is, let alone what is in it, and a gate is not
+ * a place to start guessing.
  */
 function SessionScreen({ status }: { status: "resolving" | "unauthenticated" }) {
   const t = useTranslations("session");
+  const slow = useLoadingGrace(status === "resolving");
   if (status === "resolving") {
-    return <div className="gate" aria-busy="true" aria-live="polite" />;
+    return (
+      <div className="gate" aria-busy="true" aria-live="polite">
+        {/* `.mbx-wait` — the spinner-plus-one-muted-line pairing the Settings rows and the
+            sync strip already use. Nothing new is styled for a frame that is normally never
+            seen, and the ring's `prefers-reduced-motion` rule comes with it. */}
+        {slow ? (
+          <span className="mbx-wait">
+            <span className="mbx-spin" aria-hidden="true" />
+            {t("opening")}
+          </span>
+        ) : null}
+      </div>
+    );
   }
   return (
     <div className="gate">

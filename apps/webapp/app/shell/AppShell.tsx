@@ -302,7 +302,18 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * (Desktop, demo, a Cloud tab before its first poll). Read here — rather than provided here,
    * as it was until O20 — so the From line and the mutation it describes come from one source.
    */
-  const { mailboxes: facts } = useMailState();
+  /**
+   * `settled` travels to the piles as a PROP and not through `useMailState()` at their top
+   * level, and that is a hard constraint rather than a preference: `ohbox-read-state.test.ts`
+   * mounts `OhboxView` under `KeymapProvider` alone, and `useMailState` THROWS without a
+   * provider by design (`MailStateProvider`'s header argues why a resting default would be
+   * worse). A hook at the top of the view would take that harness down on mount, in every
+   * branch, whether or not the list was empty.
+   *
+   * It is still derived exactly once, up here, from the one binding — which is the rule A1
+   * established. A prop is how a derivation reaches a component that must be mountable alone.
+   */
+  const { mailboxes: facts, state: mailState } = useMailState();
   const reader = engine.read();
   const toast = useToast();
   const theme = useTheme();
@@ -1915,6 +1926,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 doorbellInitials={waitingLive.map((w) => w.initial)}
                 doorbellHues={waitingLive.map((w) => avatarHue(w.from.address))}
                 doorbellCount={screener.waitingCount}
+                /* May this view state its emptiness as a fact yet? Derived once in
+                   `mail-state.ts`; see `MailState.settled`. */
+                settled={mailState.settled}
                 onDoorbell={() => go("screener")}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
@@ -1964,6 +1978,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 segment={route.screenerSegment}
                 selection={scnSel}
                 onSelect={(segment, id) => setScnSel((s) => ({ ...s, [segment]: id }))}
+                /* Same flag, same reason — the Screener's "No one's waiting." and its
+                   "all clear" meta are the same claim the Ohbox was making. */
+                settled={mailState.settled}
                 hydrateBody={hydrateBody}
                 full={screenerFull}
                 onFull={setScreenerFull}

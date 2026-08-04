@@ -491,9 +491,12 @@ function isTerminalRefusal(err: unknown): boolean {
  * `/sync` requests. The 410 re-bootstrap stays where it belongs, inside the engine's own
  * `drain()`; this loop never touches the cursor and never calls `resetForBootstrap`.
  *
- * `store.load()` is the one thing here that is not `syncOnce()`. It is the other half of
+ * `engine.hydrate()` is the one thing here that is not `syncOnce()`. It is the other half of
  * `engine.start()`, split out because the retry path must not re-read the whole IndexedDB
- * mirror on every backoff step while the network is down.
+ * mirror on every backoff step while the network is down. It is called through the ENGINE
+ * rather than through `engine.store`, and that is not tidying: only the engine holds the
+ * listeners, so a bare `store.load()` hydrates the mirror without publishing it and the
+ * cached mail stays invisible until a network round trip completes.
  */
 export function startSyncScheduler(
   engine: OhmailEngine,
@@ -617,7 +620,15 @@ export function startSyncScheduler(
     running = true;
     try {
       if (!hydrated) {
-        await engine.store.load();
+        // `engine.hydrate()` and NOT `engine.store.load()`, which is what stood here. The two
+        // read the same bytes; only one of them TELLS the UI. `load()` fires no listener, so the
+        // device's copy of the mailbox landed in memory and the screen went on saying "Nothing in
+        // your Ohbox." until the first `/sync` page arrived — the second of two serial round
+        // trips, and the whole of what a slow connection makes visible. See `OhmailEngine.hydrate`.
+        //
+        // It also stops this loop reaching through the engine into its store, which was the seam
+        // violation that made the omission possible in the first place.
+        await engine.hydrate();
         hydrated = true;
         // ── RE-ASK AFTER THE AWAIT, BEFORE THE FIRST PAID REQUEST ──────────────────────
         //

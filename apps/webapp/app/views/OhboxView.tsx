@@ -21,6 +21,7 @@ import {
 } from "@ohmail/ui";
 import { PLACE_LABEL, avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { useLoadingGrace } from "../shell/loading-grace";
 import { useMailState } from "../shell/MailStateProvider";
 import { MessagePane, MOVE_TARGETS, type BulkAction, type MessageAction, type MoveTarget } from "../shell/MessagePane";
 import type { ScreeningDest } from "../shell/sender-screening";
@@ -72,6 +73,7 @@ export function OhboxView({
   doorbellInitials,
   doorbellHues,
   doorbellCount,
+  settled,
   onDoorbell,
   onAction,
   onAddTag,
@@ -100,6 +102,23 @@ export function OhboxView({
   /** Per-sender tint hues for the doorbell stack, index-aligned with `doorbellInitials`. */
   doorbellHues?: number[];
   doorbellCount: number;
+  /**
+   * MAY THIS VIEW STATE ITS EMPTINESS AS A FACT? Derived once in `shell/mail-state.ts` — see
+   * {@link MailState.settled} there for the defect and the derivation.
+   *
+   * Three sentences on this pane are claims about the user's own mail rather than about the
+   * list: the meta count, the doorbell's "All clear", and the empty pane. All three were
+   * rendered before the first drain had finished, on a mailbox holding 501 messages.
+   *
+   * It arrives as a PROP and not from `useMailState()`, because this view is mounted with no
+   * provider by `ohbox-read-state.test.ts` and that hook throws without one — deliberately.
+   *
+   * REQUIRED, with no default. A default would be `true` (nothing else is renderable), which is
+   * exactly the silent-omission mode `sync-scheduler.ts` rejects for the wake signal: a caller
+   * that forgets it gets the lying surface and no error anywhere. Required, the omission is a
+   * type error at the one shipped call site and a visible difference in any harness.
+   */
+  settled: boolean;
   onDoorbell: () => void;
   onAction: (action: MessageAction, message: EngineMessage) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
@@ -566,12 +585,26 @@ export function OhboxView({
     <section className="view split view-ohbox" onClickCapture={onRangeClickCapture}>
       <ListPane
         title={t("title")}
-        meta={t("meta", {
-          unread: newForYou.length,
-          total: all.length,
-        })}
+        /* "0 unread of 0 messages" IS A CLAIM ABOUT THE MAILBOX, not a description of the
+           list — and it was on screen, beside "Nothing in your Ohbox.", over an account
+           holding 501 messages, for as long as the first drain took. While the mirror has not
+           been read there is no count to state, so none is stated: no dash, no zero, no
+           substitute. A count that returns the moment there is one to give is not a gap; a
+           wrong count is a lie. Any NON-zero total is a real observation whatever the drain is
+           doing, so only the empty case is withheld. */
+        meta={
+          !settled && all.length === 0
+            ? undefined
+            : t("meta", { unread: newForYou.length, total: all.length })
+        }
         header={
           <>
+            {/* "All clear" is the doorbell's `=0` arm, and it is the same claim in smaller
+                type: nobody is waiting at the gate. Before the mirror has been read nobody is
+                KNOWN to be waiting, which is a different sentence. The doorbell is withheld
+                entirely rather than reworded — it is an affordance for senders who are
+                waiting, and there is nothing yet to open it for. It returns with the count. */}
+            {!settled && doorbellCount === 0 ? null : (
             <Doorbell
               initials={doorbellInitials}
               hues={doorbellHues}
@@ -583,6 +616,7 @@ export function OhboxView({
               ariaLabel={t("doorbellAria", { count: doorbellCount })}
               onPress={onDoorbell}
             />
+            )}
             {/* THE SELECTION AFFORDANCE, ABOVE THE SCROLLER (slice U1d).
                 It used to be the scroller's first child, so the count and the bulk action
                 scrolled off the moment you picked something forty rows down — the state was
@@ -660,7 +694,7 @@ export function OhboxView({
         ) : null}
         {/* The view's own fact — this list is empty — combined with a state derived once, up
             in the shell. `doorbellCount` is the Screener's waiting count, already a prop. */}
-        {all.length === 0 ? <SyncState waiting={doorbellCount} /> : null}
+        {all.length === 0 ? <SyncState waiting={doorbellCount} settled={settled} /> : null}
         {/* DEMO ONLY, and it was not. "Older mail stays on your server — find it in Search."
             is true of Mila's fixture world, which holds a hand-made slice of a mailbox. It is
             FALSE of a live account: the worker syncs every folder from cursor zero, so what is
@@ -942,16 +976,57 @@ function BulkBar({
  *
  * The split is: `mail-state.ts` derives `screenerCandidate` (mail landed, mirror settled,
  * nothing wrong), ONCE, for everybody. This pane contributes the only fact it owns — that its
- * own list is empty — and renders. **It does not re-derive.** `bootstrapping`, `failures` and
- * `terminal` are deliberately no longer read here: a frozen counter is the same lie in a new
- * font, and the ladder already stops for both of them, above.
+ * own list is empty — and renders. **It does not re-derive.**
  *
- * The demo and the Desktop never reach it — the derivation returns the resting value for a
- * fixtures engine before it looks at anything else.
+ * That last rule is why this pane reads no `SyncStatus` field itself. It used to say
+ * "`bootstrapping`, `failures` and `terminal` are deliberately no longer read here", which
+ * described the mechanism rather than the rule and is no longer true of the second half of what
+ * this pane says. It reads {@link MailState.settled}, which is derived from `bootstrapping` and
+ * from the ladder's own verdict, ONCE, up in `mail-state.ts`. The A1 argument is untouched: what
+ * was wrong was a COUNTER gated on a tab-local boolean that goes false in seconds while the
+ * worker's import runs for minutes. Progress still keys on the mirror growing and still lives in
+ * the strip. Seconds is exactly the right length for the different question asked here.
+ *
+ * ── AND THE THIRD STATE THIS PANE USED TO COLLAPSE ──────────────────────────────────────
+ *
+ * "Empty" and "not looked yet" were one rendering. Owner, 2026-08-04: *"I see 'no messages'"* on
+ * a slow connection. The mirror persists in IndexedDB and the client's own first drain had not
+ * finished, so `Nothing in your Ohbox.` was a statement about 501 messages the app had not yet
+ * read. Before the mirror has been read there is no emptiness to report, so this pane reports
+ * what is actually happening instead — after {@link LOADING_GRACE_MS}, so a fast connection
+ * still gets the silent frame it always had rather than a sub-second flash.
+ *
+ * **It says the app is loading, never what it will find.** A placeholder row, an invented count
+ * or a skeleton shaped like mail would answer this defect by creating the one this product
+ * treats as unforgivable.
+ *
+ * The demo and the Desktop never reach the `screenerCandidate` arms — the derivation returns the
+ * resting value for a fixtures engine before it looks at anything else — and `settled` is true
+ * for them for the same reason: a fixtures engine is permanently settled.
  */
-function SyncState({ waiting }: { waiting: number }) {
+function SyncState({ waiting, settled }: { waiting: number; settled: boolean }) {
   const t = useTranslations("ohbox");
   const { state } = useMailState();
+  const speak = useLoadingGrace(!settled);
+
+  /* THE MIRROR HAS NOT BEEN READ, so this list is not empty — it is unknown. Above every arm
+     below, because both of them state something about mail that has arrived. */
+  if (!settled) {
+    return (
+      <div className="empty" role="status" aria-busy="true">
+        {/* `.mbx-wait` and not a bare span: `.mbx-spin` sizes itself with `width`/`height` and
+            is a `<span>`, so it needs a flex parent or the border collapses to a dot. That
+            pairing — spinner beside one muted line — is exactly what `.mbx-wait` already is
+            (`app.css`, beside the Settings rows), and reusing it adds no CSS and inherits the
+            `prefers-reduced-motion` answer the ring already has. Same reuse `SyncBar` makes,
+            for the same reason and with the same note about the `mbx-` prefix. */}
+        <span className="mbx-wait">
+          <span className="mbx-spin" aria-hidden="true" />
+          {speak ? <b>{t("loading")}</b> : null}
+        </span>
+      </div>
+    );
+  }
 
   /* ── UX13: AND WHEN THERE IS NO EXPLANATION, SAY THE FACT ANYWAY ──────────────────────
    *

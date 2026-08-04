@@ -16,6 +16,7 @@
     "footer": "ohmail · consent-first email on your own mailboxes"
   },
   "session": {
+    "opening": "Opening your mailbox…",
     "endedTitle": "You are signed out.",
     "endedBody": "We could not confirm this session, so nothing has been loaded. Sign in again and your mail will be here.",
     "signIn": "Sign in",
@@ -190,6 +191,7 @@
     "doorbellAction": "Screener ›",
     "doorbellAria": "{count, plural, =0 {All clear, nobody waiting — open the Screener} one {1 first-time sender waiting — open the Screener} other {# first-time senders waiting — open the Screener}}",
     "threadMeta": "thread ({count})",
+    "loading": "Loading your mail.",
     "emptyPlain": "Nothing in your Ohbox.",
     "emptyScreenerTitle": "Nothing in your Ohbox yet.",
     "emptyScreenerHint": "{count, plural, one {1 first-time sender is} other {# first-time senders are}} waiting in the Screener. Nothing reaches the Ohbox until you say yes.",
@@ -254,6 +256,7 @@
     "segScreened": "Screened out",
     "segSpam": "Spam",
     "segAria": "Screener sections",
+    "loading": "Loading your mail.",
     "empty": {
       "waiting": {
         "glyph": "🕊",
