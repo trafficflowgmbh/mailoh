@@ -106,6 +106,15 @@ interface ReadsAiChipEntity {
  */
 
 /**
+ * The stable name of a Reply Run entry: the message it stands for, or its title when it has
+ * none (fixture-only `triage_item` rows, which nothing can be sent in reply to).
+ *
+ * `TriageView` already keys its done-marks this way. Naming it once means the map of typed
+ * replies, the done set and the pile row cannot drift apart over what counts as "this item".
+ */
+const frKeyOf = (item: TriagePileEntry): string => item.messageId ?? item.title;
+
+/**
  * `demo` here is the SERVER's answer, and it is only a floor — `EngineProvider` re-derives
  * the mode from the real URL on the client and publishes what the engine was actually built
  * in. The chrome below reads THAT (`useDemoMode`), so the ribbon and the frozen demo clock
@@ -289,7 +298,19 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
    * that order, however many times React re-renders on the way.
    */
   const [frPending, setFrPending] = useState(false);
-  const [frValues, setFrValues] = useState<Record<number, string>>({});
+  /**
+   * WHAT THE USER TYPED IN THE RUN, KEYED BY MESSAGE (U9).
+   *
+   * This was `Record<number, string>` — keyed by the STEP INDEX — and nothing in the file read
+   * it: the overlay wrote into it and `onDone` dispatched `triage_set → none` without ever
+   * looking. Both halves are fixed here, and the re-keying is not cosmetic. A step index is
+   * re-issued by the next run over a pile that has since moved, so "step 0's text" is a
+   * different person's answer tomorrow; the message id is the only stable name for what was
+   * written. It is also the key `writeReplyDraft`, `sendKeyOf` and `settle` already use, which
+   * is what lets the run share one scratch buffer with the inline editor rather than inventing
+   * a second one that `settle` would not know to clear.
+   */
+  const [frValues, setFrValues] = useState<Record<string, string>>({});
   const [frDone, setFrDone] = useState<Set<string>>(() => new Set());
   const [ribbonGone, setRibbonGone] = useState(false);
 
@@ -394,7 +415,7 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
       // …and only then honour a pending Reply Run, so the clear above cannot undo it (U7).
       if (route.view === "triage" && frPending) {
         setFrPending(false);
-        setFrValues({});
+        // NOT `setFrValues({})` — see `startFR`. Wiping the map here is the same data loss.
         setFr({ step: 0, items: piles.replyLater });
       }
     }
@@ -446,6 +467,17 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
    * For a compose: empty the form. The scratch buffer in `localStorage` is cleared by the send
    * machine itself (it must happen even if this view is long gone); this is the in-memory half,
    * and without it the fields would still be full of a message that has already been delivered.
+   *
+   * ── AND FOR A REPLY RUN STEP: THIS IS WHERE IT IS DISCHARGED (U9) ───────────────────────
+   *
+   * `onDone` used to dispatch `triage_set → none` at PRESS time and step forward, with no send
+   * anywhere. Adding a send while keeping that would have left TWO independent discharge
+   * rules, and two discharge rules is exactly how a FAILED send still clears the debt — the
+   * same bug wearing the fix as a costume. So the press only sends, and everything that means
+   * "this one is dealt with" happens here: `settle` calls this on a CONFIRMATION and on
+   * nothing else, so a step is left behind only by a reply that exists. The triage state
+   * itself is cleared by `settle` (U4e, `mail-send.ts:247-255`), which is now the only rule
+   * that clears one.
    */
   const onSendSettled = useCallback((key: string) => {
     if (key === COMPOSE_SEND_KEY) {
@@ -453,7 +485,30 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
       return;
     }
     setReplyTo((cur) => (cur === key ? null : cur));
-  }, []);
+
+    /*
+     * Guarded on the item the run is STANDING ON, not on "a run is open". A confirmation can
+     * arrive from a flush minutes after the press — by which time the user may have skipped
+     * past that message, or closed the run and started a second one over a fresh snapshot of
+     * a pile that has moved. Advancing on the key alone would step over a message nobody
+     * answered, which is the same lie in a rarer form. A late confirmation for a message the
+     * run is no longer on still discharges the debt (`settle` does that), and simply does not
+     * move a cursor that has gone elsewhere.
+     *
+     * `fr` is closed over rather than read from a ref because `useMailSend` re-points
+     * `settledRef` on every render, so what runs here is always the latest committed run.
+     */
+    const item = fr ? fr.items[fr.step] : undefined;
+    if (!fr || !item || item.messageId !== key) return;
+    setFrDone((s) => new Set(s).add(key));
+    // The typed text is spent. `settle` has already removed the `localStorage` half.
+    setFrValues((vals) => {
+      if (!(key in vals)) return vals;
+      const { [key]: _delivered, ...rest } = vals;
+      return rest;
+    });
+    setFr({ ...fr, step: fr.step + 1 });
+  }, [fr]);
   const mailSend = useMailSend(engine, toast, onSendSettled);
   /**
    * The body comes from REACT STATE, not from `readReplyDraft`. Private mode refuses the
@@ -644,7 +699,10 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
   }, []);
 
   const startFR = useCallback(() => {
-    setFrValues({});
+    // NO `setFrValues({})`. Keyed by message, what is in that map is a reply somebody wrote
+    // and has not sent — a run that begins by erasing it is the bug this slice exists to end,
+    // one keystroke earlier. A delivered reply is removed by `onSendSettled`, and nothing else
+    // has the standing to.
     setFr({ step: 0, items: piles.replyLater });
   }, [piles.replyLater]);
 
@@ -1021,6 +1079,54 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
 
   const frFinished = fr != null && fr.step >= fr.items.length;
   const frItem = fr && !frFinished ? fr.items[fr.step] : undefined;
+  /** The step's send, off the one machine — the run is a caller of it, not a second one. */
+  const frSend = frItem?.messageId ? mailSend.stateOf(frItem.messageId) : null;
+
+  /**
+   * A REPLY BEGUN BEFORE A RELOAD IS STILL OWED (U9).
+   *
+   * Seeded from the same per-message scratch buffer the inline editor uses, so a run resumed
+   * in a new tab finds the sentence that was already written. Read AFTER mount rather than in
+   * the state initializer, for the hydration reason `persisted-ui.ts` spells out: reading
+   * storage during render makes the server and the client produce different markup and React
+   * keeps the server's, so the saved text would be read and then silently discarded.
+   *
+   * Never overwrites what is already in memory. The map is the live editor; the buffer is only
+   * its backup, and a key present with an empty string means "this one has been opened", not
+   * "this one is unknown".
+   */
+  useEffect(() => {
+    const id = frItem?.messageId;
+    if (!id) return;
+    setFrValues((vals) => (id in vals ? vals : { ...vals, [id]: readReplyDraft(id) }));
+  }, [frItem?.messageId]);
+
+  /**
+   * A SEND THE RUN MADE THAT DID NOT LAND MUST SAY SO.
+   *
+   * `FocusReplyOverlay` renders a card and two buttons and has no status line, so the run's
+   * only other feedback for a failure is the step NOT advancing — which is silence to somebody
+   * who pressed Done and is waiting. The inline editor's four status strings say exactly the
+   * same four things, so they are reused rather than re-worded, and none of them claims a
+   * delivery: `settle`'s toast is the only sentence in the app that does, and it fires only on
+   * a confirmation.
+   *
+   * Keyed on the PHASE moving, not on `t`/`toast` identity — a render-keyed effect here would
+   * re-announce the same failure on every keystroke.
+   */
+  const frPhase = frSend?.phase ?? "idle";
+  const frReason = frSend?.reason;
+  useEffect(() => {
+    if (frPhase === "idle" || frPhase === "sending") return;
+    toast(
+      frPhase === "queued"
+        ? t("reply.statusQueued")
+        : frPhase === "unverified"
+          ? t("reply.statusUnverified")
+          : t("reply.statusFailed", { reason: frReason ?? t("reply.reasonUnknown") }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frPhase, frReason]);
 
   /**
    * THE CONVERSATION, for whichever message a pane is rendering (slice P6b).
@@ -1319,23 +1425,47 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
               }
             : undefined
         }
-        value={fr ? (frValues[fr.step] ?? "") : ""}
-        onChange={(v) => fr && setFrValues((vals) => ({ ...vals, [fr.step]: v }))}
+        value={frItem ? (frValues[frKeyOf(frItem)] ?? "") : ""}
+        onChange={(v) => {
+          if (!frItem) return;
+          setFrValues((vals) => ({ ...vals, [frKeyOf(frItem)]: v }));
+          // Mirrored into the SAME per-message buffer the inline editor writes and `settle`
+          // clears — so the run's text survives a reload exactly as the editor's does, and a
+          // reply begun in one surface can be finished in the other.
+          if (frItem.messageId) writeReplyDraft(frItem.messageId, v);
+        }}
+        /**
+         * DONE SENDS. That is all it does.
+         *
+         * Through `useMailSend` and never `engine.mutate({kind:"mail_send"})`: the lock that
+         * makes a second press within one tick a no-op is a ref inside that hook
+         * (`mail-send.ts:203-215`, which names a Reply Run step as exactly the caller a
+         * button's `disabled` cannot save), and a second key is a second reservation and a
+         * second delivery to a real person. Invariant #2.
+         *
+         * ── AN EMPTY TEXTAREA ───────────────────────────────────────────────────────────
+         *
+         * Nothing happens: no send, no advance, no discharge. `canSend` already refuses a
+         * blank body — the server would accept and post one (`drafts-service.ts:167-171`) —
+         * and Skip is the affordance for moving on without writing. Letting Done fall through
+         * to Skip would put back a second way to leave a step having sent no mail, which is
+         * the shape of the bug this slice removes; the run stays put instead, and the pile
+         * keeps the reminder.
+         *
+         * An entry with no `messageId` is refused for the same reason twice over: there is no
+         * message to reply to, so there is nothing to send and nothing that could be paid.
+         */
         onDone={() => {
-          if (!fr || !frItem) return;
-          if (frItem.messageId) {
-            void engine.mutate({
-              kind: "triage_set",
-              messageId: frItem.messageId,
-              state: "none",
-            });
-          }
-          setFrDone((s) => new Set(s).add(frItem.messageId ?? frItem.title));
-          setFr({ ...fr, step: fr.step + 1 });
+          if (!frItem?.messageId) return;
+          mailSend.send({
+            kind: "mail_send",
+            inReplyTo: frItem.messageId,
+            body: frValues[frKeyOf(frItem)] ?? "",
+          });
         }}
         onSkip={() => fr && setFr({ ...fr, step: fr.step + 1 })}
         onClose={() => setFr(null)}
-        doneLabel={t("triage.frDone")}
+        doneLabel={frPhase === "sending" ? t("reply.sending") : t("triage.frDone")}
         skipLabel={t("triage.frSkip")}
       />
 
