@@ -956,7 +956,7 @@
     "noFactorBody": "This account has no passkey or authenticator app, and connecting a mailbox requires one.",
     "syncedAgo": "Synced {when}",
     "syncRunning": "Syncing now",
-    "syncFirstPending": "No mail yet — connected {when}",
+    "syncFirstPending": "No mail yet — added {when}",
     "syncQueued": "Sync queued",
     "syncError": "Sync failed",
     "syncNow": "Sync now",
@@ -968,7 +968,8 @@
     "err_sync": "Sync failed while reading the mailbox.",
     "err_unknown": "Sync failed, and we could not tell why.",
     "errSince": "Failing since {when}",
-    "errAttempts": "{count} attempts"
+    "errAttempts": "{count} attempts",
+    "status_connecting": "connecting"
   },
   "resume": {
     "failedTitle": "Please sign in again",
