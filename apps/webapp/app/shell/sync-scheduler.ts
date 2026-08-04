@@ -323,6 +323,39 @@ export function createSyncGate(): SyncGate {
          * path only, which is the wiring bug `transport` exists to keep visible.
          */
         ...(adapter.searchServer ? { searchServer: adapter.searchServer.bind(adapter) } : {}),
+
+        /*
+         * ── ATTACHMENTS (gap O18) — FORWARDED, NOT GATED, AND SPREAD ──────────────────────
+         *
+         * Three capabilities, one rule, and it is `searchServer`'s rule for the third time.
+         *
+         * NOT GATED: `listAttachments` is one indexed row read when a message is opened, and
+         * the two byte methods fire on a click on a named file. All three are the user's own
+         * intent in a tab they are looking at. Invariant #10 is about a HIDDEN tab paging
+         * through a bootstrap nobody asked for; a person pressing a PDF is the opposite of
+         * that. Gating them would mean a file that silently refuses to open whenever the
+         * predicate happens to be false.
+         *
+         * SPREAD, NOT ALWAYS-DEFINED: `OhmailEngine.attachmentsAvailable()` is `typeof
+         * adapter.listAttachments === "function" && typeof adapter.fetchAttachment ===
+         * "function"`, and the strip renders NOTHING when that is false. Defining these
+         * unconditionally would make a `FixturesAdapter` behind a gate claim an attachment
+         * service it has no server for — and `fetchAllAttachments` in particular would put a
+         * "Download all" button over an archive nothing can build.
+         *
+         * FORWARDED AT ALL: this object literal is the whole surface the engine sees. It is
+         * not a Proxy, and the demo engine is never wrapped (`engine-config.ts` returns before
+         * `guard`) — so a capability missing from THIS list is missing on the LIVE PATH ONLY.
+         * `attachmentsAvailable()` would answer false for every paying account, the strip
+         * would render nothing at all, and every unit test in the repo would stay green
+         * because they construct engines from bare adapters. That is the exact shape of the
+         * bug `transport` exists to keep visible, and `attachments-wired.test.ts` builds the
+         * real live engine through `createEngine` so that deleting any one of these three
+         * lines goes red.
+         */
+        ...(adapter.listAttachments ? { listAttachments: adapter.listAttachments.bind(adapter) } : {}),
+        ...(adapter.fetchAttachment ? { fetchAttachment: adapter.fetchAttachment.bind(adapter) } : {}),
+        ...(adapter.fetchAllAttachments ? { fetchAllAttachments: adapter.fetchAllAttachments.bind(adapter) } : {}),
       } satisfies EngineAdapter & { transport: EngineAdapter };
     },
   };

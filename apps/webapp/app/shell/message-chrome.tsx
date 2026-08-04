@@ -15,6 +15,7 @@
  */
 import { createContext, useContext, type ReactNode } from "react";
 import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
+import type { AttachmentsChrome } from "./attachments";
 import type { SendState } from "./mail-send";
 
 export interface MessageChrome {
@@ -76,6 +77,30 @@ export interface MessageChrome {
    * engine hook.
    */
   hydrateBody: (messageId: string, opts?: { retry?: boolean }) => void;
+  /**
+   * THE FILES ON THIS MESSAGE (gap O18), or ABSENT when this client cannot open attachments.
+   *
+   * It travels here for the third time for the same reason `conversationOf` and `bodyOf` do,
+   * and this one is the strongest case of the three: the pane is mounted TWICE while the
+   * reader is open, both mounts hold the SAME message, and each fetched byte is a `blob:` URL
+   * that must be minted once and revoked once. Two panes owning their own copies would open
+   * two IMAP connections for one press and leak whichever URL the losing mount held.
+   *
+   * ── OPTIONAL, AND ABSENCE IS A REAL ANSWER ────────────────────────────────────────────
+   *
+   * `undefined` means "this client has no attachment service" — `?demo=1` (fixtures, zero
+   * network, invariants #6/#8), the desktop shell, and any test that mounts a view without an
+   * `EngineProvider`. The pane renders NO STRIP for it rather than an empty one, because an
+   * empty strip is a different claim: it says this message has no files. A "Download all"
+   * button over an archive nothing can build is exactly the shape of control this gap exists
+   * to remove, pointed the other way.
+   *
+   * It is NOT optional in the sense of "the shell may forget it". `attachments-wired.test.ts`
+   * asserts that `AppShell` supplies it and that the live engine can answer — a capability
+   * that silently stays unsupplied on the live path only is this gap's own failure, and it
+   * has already happened twice on this seam (`fetchBody`, `searchServer`).
+   */
+  attachments?: AttachmentsChrome;
 }
 
 const noop = (): void => {};

@@ -75,7 +75,6 @@ export function OhboxView({
   onDoorbell,
   onAction,
   onAddTag,
-  onAttachment,
   bulk,
 }: {
   /** Fixture world or a real mailbox — decides the "older mail" tail. See its use below. */
@@ -104,7 +103,6 @@ export function OhboxView({
   onDoorbell: () => void;
   onAction: (action: MessageAction, message: EngineMessage) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
-  onAttachment: () => void;
   /** The verbs a multi-selection offers (slice U5-BULK). */
   bulk: BulkVerbs;
 }) {
@@ -659,7 +657,6 @@ export function OhboxView({
             onEnterReader={() => onEnterReader(selected.id)}
             onAction={(a) => onAction(a, selected)}
             onAddTag={onAddTag}
-            onAttachment={onAttachment}
           />
         ) : null}
       </ReadColumn>

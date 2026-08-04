@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, Icon, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
+import { AttachmentStrip } from "../components/AttachmentStrip";
 import { MessageBody } from "../components/MessageBody";
 import { ConversationEntries, ConversationHead } from "./Conversation";
 import { PLACE_LABEL, avatarHue, displayTime, hueOf, initialsOf, rowAddress, senderName, tagsOfMessage } from "./format";
@@ -374,7 +375,6 @@ export function MessagePane({
   onEnterReader,
   onAction,
   onAddTag,
-  onAttachment,
 }: {
   message: EngineMessage;
   tags: TagDTO[];
@@ -382,7 +382,6 @@ export function MessagePane({
   onEnterReader?: () => void;
   onAction: (action: MessageAction) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
-  onAttachment: () => void;
 }) {
   const t = useTranslations("ohbox");
   const tr = useTranslations("screening");
@@ -485,6 +484,27 @@ export function MessagePane({
     </div>
   );
 
+  /*
+   * O18 — the strip travels WITH the body, so every place that renders the focused message
+   * gets it and none of them has to remember. `isProtected` gates it for the same reason the
+   * body is gated above: invariant #1 says this pane renders no protected content, and a file
+   * a sender attached is content.
+   */
+  const attachments = isProtected ? undefined : chrome.attachments;
+  const focusedMessage = (
+    <>
+      {focusedBody}
+      {attachments ? (
+        <AttachmentStrip
+          items={attachments.itemsOf(message.id)}
+          onOpen={(attachmentId) => attachments.open(message.id, attachmentId)}
+          onDownloadAll={() => attachments.downloadAll(message.id)}
+          downloadingAll={attachments.downloadingAll(message.id)}
+        />
+      ) : null}
+    </>
+  );
+
   /**
    * Said only for the two states that are not the mail. `snippet` — asked for nothing yet —
    * is a sub-frame state in this pane, because the shell hydrates on selection; and a
@@ -543,15 +563,6 @@ export function MessagePane({
       }
       bodyNote={bodyNote}
       bodyNoteFailed={body.state === "failed"}
-      attachment={
-        message.attachment
-          ? {
-              filename: message.attachment.filename,
-              size: message.attachment.size,
-              onPress: onAttachment,
-            }
-          : undefined
-      }
       actions={
         <ActionBar
           message={message}
@@ -595,7 +606,7 @@ export function MessagePane({
             now={now}
           />
           <div className="conv-focus" data-conv-id={message.id} aria-current="true">
-            {focusedBody}
+            {focusedMessage}
           </div>
           <ConversationEntries
             messages={conversation.filter((m) => m.id !== message.id && !before(m, message))}
@@ -609,7 +620,7 @@ export function MessagePane({
         // answers both cases, and invariant #1 is unmoved — it is decided where it always was,
         // by the `isProtected` branch at the top of this component, which is still first and
         // still never consults `body`.
-        focusedBody
+        focusedMessage
       )}
     </ReadingPane>
   );

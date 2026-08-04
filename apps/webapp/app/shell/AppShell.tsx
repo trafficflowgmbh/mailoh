@@ -64,6 +64,7 @@ import {
 } from "./engine";
 import { PLACE_LABEL, avatarHue, firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
 import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
+import { useMessageAttachments } from "./attachments";
 import { useScreenerState } from "./screener-state";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
@@ -490,6 +491,16 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
     (m: EngineMessage) => bodyOf(engine.read(), m),
     [engine],
   );
+
+  /*
+   * O18 — attachments for the OPEN message only, and released when it changes.
+   *
+   * The release is not tidiness: the engine hands out `blob:` URLs, and a URL nobody revokes
+   * outlives the message that owned it for the life of the tab.
+   */
+  const attachments = useMessageAttachments(engine, selectedOhbox?.id ?? null, {
+    onDownloadAllFailed: () => toast(t("ohbox.toastDownloadAllFailed")),
+  });
 
   /**
    * THE OHBOX'S SPLIT-PANE SELECTION IS THE INTENT.
@@ -1604,9 +1615,10 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
       replySendState: mailSend.stateOf,
       openSenderMenu, conversationOf,
       bodyOf: bodyOfMessage, hydrateBody,
+      attachments,
     }),
     [replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, openSenderMenu,
-      conversationOf, bodyOfMessage, hydrateBody],
+      conversationOf, bodyOfMessage, hydrateBody, attachments],
   );
 
   // Resolved here rather than inside the popover so a sender whose last message has just
@@ -1721,7 +1733,6 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
                 onDoorbell={() => go("screener")}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
-                onAttachment={() => toast(t("ohbox.toastAttachment"))}
                 bulk={bulkVerbs}
               />
             ) : null}
@@ -1867,7 +1878,6 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
             now={now}
             onAction={(a) => onMessageAction(a, readerMessage)}
             onAddTag={openTagPicker}
-            onAttachment={() => toast(t("ohbox.toastAttachment"))}
           />
         ) : (
           <span />
