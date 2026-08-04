@@ -275,6 +275,101 @@ body.reading .shell {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* ================= ohbox doorbell: wrap, never clip (O12) =================
+   Reported live by the owner at 390px: the strip read
+
+     2 unread of 1240
+     1,042 new senders waiting          ← rendered "1,042 new senders wait…"
+     Screener ›
+
+   Two defects, and the editorial one comes first. The counts are DIFFERENT
+   quantities — mail sitting in the Ohbox (`ohbox.meta`) versus senders held at
+   the Screener (`ohbox.doorbell`) — but neither line named its noun, so at the
+   owner's real numbers (1 240 and 1 042) they read as one number said twice.
+   Both strings now say what they count ("messages" / "first-time senders", the
+   Screener's own word, see `ohbox.metaWaiting`), and both go through ICU
+   `number` so 1 240 is grouped the way 1 042 already was.
+
+   The CSS half is this block. `doorbell.css:14` sets
+   `white-space:nowrap; overflow:hidden; text-overflow:ellipsis` on `.db-txt`,
+   so the first thing the strip throws away under pressure is the last word —
+   which is the noun, the only thing that told the two counts apart. Measured
+   here at 390px before the fix: `.db-txt` wanted 186px and was given 128px, so
+   58px of a 32-character sentence was discarded. An ellipsis is therefore the
+   WRONG lever: it hides precisely the word the owner could not read. So is
+   shrinking the type — a 1 042 that needs 10px is not legible either. The
+   sentence gets a row of its own instead, which is the same call `.pick-bar`
+   above already makes for the same reason at the same width. */
+/* WHERE THE SENTENCE GOES — one composition at every width, deliberately.
+
+     [faces] ················ Screener ›
+     1,042 first-time senders waiting
+
+   The sentence takes the whole of the second row (`flex-basis:100%`) and is
+   ordered after the action (`order:1`) so the faces and "Screener ›" share the
+   first. Without the `order` the sentence lands between them and pushes
+   "Screener ›" onto a third row — measured, 104px of doorbell against 74px this
+   way. Reordering inside the button is safe for assistive tech: `Doorbell` puts
+   an `aria-label` on the button, so this subtree is not announced in DOM order
+   at all — `ohbox.doorbellAria` is what gets read, and it spells out the same
+   sentence in full.
+
+   NO BREAKPOINT, and that is the point. The doorbell is WIDER on a phone than on
+   a desktop: at ≤900px it spans the viewport (342px of box at 390px), while
+   above it the Ohbox is a split grid whose column is `--split` =
+   `minmax(320px,400px)`, so the doorbell is 268–348px. Keeping the sentence
+   beside the faces is therefore only viable inside a narrow band of widths, and
+   it fails hard on both sides of it. With the avatar band at the owner's real
+   numbers (four faces + a "+1038" counter = 124px) and "Screener ›" at 62px, the
+   column left for the sentence is `paneWidth − 210`, and measured:
+
+     320px viewport →  36px → 7 lines
+     390px viewport → 106px → 2 lines   ← the only width where it looks deliberate
+     1440px (320px pane) → 32px → 8 lines, four characters wide
+
+   Giving it the full row instead costs 20px of height at 390px (74 vs 54) and
+   holds the sentence on ONE line from 1920px down to a ~266px viewport, with no
+   media query to get wrong and nothing that a longer translation can tip over.
+
+   Scoped `.view-ohbox .doorbell` (0,2,0 / 0,3,0 against `doorbell.css`'s 0,1,0
+   and 0,2,0) so these win on specificity rather than on CSS import order — the
+   Ohbox is the only view that mounts a `Doorbell`. */
+.view-ohbox .doorbell {
+  flex-wrap: wrap;
+}
+.view-ohbox .doorbell .db-txt {
+  order: 1;
+  flex-basis: 100%;
+}
+/* `.doorbell`'s own `overflow:hidden` is load-bearing for the `.gone` collapse —
+   `height:0` has to clip what is inside it — so it is kept THERE and dropped
+   everywhere else, rather than removed outright. An expanded doorbell now has no
+   clipping ancestor at all, which is the property the guard asserts. */
+.view-ohbox .doorbell:not(.gone) {
+  overflow: visible;
+}
+.view-ohbox .doorbell .db-txt {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: break-word;
+  /* Two short lines rather than one long line and one orphan. Progressive: where
+     `balance` is unsupported the text simply wraps normally, which is already the
+     fix. */
+  text-wrap: balance;
+}
+/* The overflow counter, sized to its own digits. `.av.more` inherits `.av.s`'s
+   fixed 26px box, which was built for "+82"; the owner's mailbox holds 1 045
+   waiting senders, so it renders "+1038" — 34px of text measured inside a 26px
+   box, spilling 8px onto the avatar beside it. Same defect as the ellipsis in
+   miniature: the box was sized for a number smaller than the real one. */
+.view-ohbox .doorbell .avs .av.more {
+  width: auto;
+  min-width: 26px;
+  padding: 0 7px;
+  border-radius: 99px;
+}
+
 /* ================= screener extras ================= */
 .scn-head {
   padding: 0 30px 12px;
