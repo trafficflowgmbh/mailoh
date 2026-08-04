@@ -58,6 +58,63 @@ export function displayTime(m: EngineMessage, now: Date): string {
   return messageDisplayTime(m, now);
 }
 
+/**
+ * A META LINE, JOINED — and the separator is never printed without a value on both sides.
+ *
+ * ── UX9: "Ohbox ·" ──────────────────────────────────────────────────────────────────────
+ *
+ * Walked on a real account against production, 2026-08-04. A message with **no `Date:`
+ * header** — which spam and scripts routinely omit, and which nothing in the pipeline
+ * substitutes for — carries `date: null` all the way to the client, so
+ * {@link displayTime} answers `""` (`packages/client-engine/src/selectors.ts:66-77`, and
+ * correctly: there is no instant to format). Every surface then interpolated that empty
+ * string into a template that had already committed to the separator:
+ *
+ *   · `SearchView`  — `` `${placeLabel(m.folder)} · ${displayTime(m, now)}` `` ⇒ **"Ohbox · "**
+ *   · `MessagePane` — `messages.threadMeta` was the literal `"thread ({count}) · "` ⇒
+ *                     **"thread (3) · "**, a separator introducing nothing
+ *   · `Conversation` — an unconditional `<span className="t num">{displayTime(…)}</span>`,
+ *                      i.e. an empty stamp element in a row that has a slot for one
+ *
+ * A dangling "·" is not a cosmetic defect. It is the interface asserting that a second fact
+ * follows, and there is no second fact — the same class of untrue statement as the copy this
+ * slice's five siblings fix, said in punctuation instead of words.
+ *
+ * ── WHY THE JOINER IS HERE AND NOT A GUARD AT EACH CALL SITE ────────────────────────────
+ *
+ * `placeLabel` two functions up is here for the reason its own docstring records: the two
+ * copies of that fallback drifted, and one of them shipped `undefined` on screen. Three
+ * hand-written `x ? \` · ${x}\` : ""` ternaries would be that shape again, and the fourth
+ * surface — the one nobody has written yet — would get the ternary wrong once and reproduce
+ * this exact report.
+ *
+ * ── AND WHY THE FALLBACK IS NOT ON THE WIRE, WHICH WAS THE FIRST THING TRIED ────────────
+ *
+ * The audit asks for IMAP INTERNALDATE, and that is the right value — but it is not reachable
+ * from anywhere a display fix can stand:
+ *
+ *  1. **Nothing persists it.** `packages/core/src/mime.ts:459` writes `parsed.date ?? null`
+ *     and INTERNALDATE is read only for ORDERING, into an in-memory cache
+ *     (`arrivalKey`, `packages/core/src/adapters/imap.ts:70`). `messages` has no column for
+ *     it, so `dto/materialize.ts` has nothing to coalesce to but `createdAt` — when OUR
+ *     worker wrote the row. `imap.ts:44-48` already records why that is the wrong answer:
+ *     an imported mailbox "leaves every message stamped with the import time".
+ *  2. **A non-null `MessageDTO.date` would desynchronise two orderings.** The server sorts by
+ *     `messages.date`, still NULL (`dto/materialize.ts:150`); the client sorts by the DTO's
+ *     `date`, and `byDateDesc` reads a missing one as 0 — oldest. Synthesizing a value client-
+ *     side of the sort would place an undated message NEWEST here and OLDEST there, and
+ *     contract §5.2 makes the server's order the order.
+ *
+ * So the true repair belongs at ingest, where INTERNALDATE is in hand and one write fixes
+ * every surface at once — and `packages/core` and `apps/worker` are both held by other
+ * slices. It is filed as owed. This function is what stops the product lying in the meantime,
+ * and it stays correct after that fix lands: a date that is always present simply means no
+ * part is ever dropped.
+ */
+export function metaLine(...parts: Array<string | null | undefined>): string {
+  return parts.filter((p): p is string => typeof p === "string" && p !== "").join(" · ");
+}
+
 /** "Fri 09:00" from an ISO instant (or the raw string when not ISO). */
 export function resurfaceLabel(when: string): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(when)) return when;

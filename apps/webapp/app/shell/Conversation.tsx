@@ -132,7 +132,10 @@ export function ConversationEntries({
           <div className="hm-line">
             <b>{senderName(m)}</b>
             {rowAddress(m) ? <span className="addr">{rowAddress(m)}</span> : null}
-            <span className="t num">{displayTime(m, now)}</span>
+            {/* UX9 — a message with no `Date:` header has no stamp, and this rendered the
+                slot anyway: an empty `.t` element with the row's stamp styling and nothing
+                in it. `MessageRow` already guards the same slot the same way. */}
+            {displayTime(m, now) ? <span className="t num">{displayTime(m, now)}</span> : null}
           </div>
           {alreadySaid === subjectKey(m.subject) ? null : <h3>{m.subject}</h3>}
           {/* O11 — THE SAME `BodyText` THE FOCUSED MESSAGE USES, and that is the point of

@@ -41,7 +41,7 @@ import {
   type SearchHit as EngineSearchHit,
 } from "@ohmail/client-engine";
 import { Facets, SearchBox, SearchHit, type FacetGroup } from "@ohmail/ui";
-import { displayTime, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
+import { displayTime, metaLine, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import "./search-keys.css";
 
@@ -363,18 +363,43 @@ export function SearchView({
    * THE HONEST SENTENCE. One of five, and one of them is always on screen while a query is.
    *
    * `scopeDevice` is the load-bearing one: it is what the view says while only local results
-   * are in hand, and it names the three fields the local index actually reads plus the count
-   * of messages whose full text this device holds. That count is `LocalSearchResult.coverage`,
-   * measured at index time — not a constant, because it grows every time somebody opens a
-   * message and U5-BODY hydrates it.
+   * are in hand, and it names the three fields the local index actually reads.
+   *
+   * ── UX6.1: IT USED TO BREAK AT ZERO, AND THE BREAK WAS A CONTRADICTION ─────────────────
+   *
+   * Walked on a real account against production, 2026-08-04. On an empty index the pane
+   * rendered **"Nothing on this device."** and, directly beneath it, "…plus the full text of
+   * **none**." — the plural's `=0` arm. Two sentences one line apart, the first saying the
+   * device holds nothing and the second describing in detail what it holds. Nobody would write
+   * that; it was assembled.
+   *
+   * So the DEVICE half is suppressed when the mirror is empty, and only the ARCHIVE clause
+   * renders. `coverage.messages`, not `coverage.full`: `full` is a subset, and a device holding
+   * 400 messages of which none is hydrated still holds subjects, senders and previews — the
+   * sentence is true and worth saying. It is `messages === 0` that makes the whole claim vacuous.
+   *
+   * ── UX6.2: AND THE COUNT IT NAMED WAS NOT THE COUNT THE READER WOULD COUNT ─────────────
+   *
+   * It said "the 6 you have opened" after three deliberate opens, because the Screener's held
+   * previews hydrate a body too and `coverage.full` counts every hydration. Both numbers are
+   * correct and they measure different things, which is the one situation where printing the
+   * number is worse than not printing it — the reader can check it, and it will not match. The
+   * sentence keeps the FACT (this device holds the full text only of what has been opened) and
+   * drops the arithmetic.
+   *
+   * The five arms and their order are untouched. The mid-flight → settled transition was walked
+   * and found true at every moment; it is the part of this that works.
    */
+  const device = !result || result.coverage.messages === 0 ? null : <>{t("scopeDevice")} </>;
   const scope = !result ? null : current === null || current.state === "searching" ? (
     <>
-      {t("scopeDevice", { full: result.coverage.full })} {t("scopeSearching")}
+      {device}
+      {t("scopeSearching")}
     </>
   ) : current.state === "unavailable" ? (
     <>
-      {t("scopeDevice", { full: result.coverage.full })} {t("scopeNoArchive")}
+      {device}
+      {t("scopeNoArchive")}
     </>
   ) : current.state === "failed" ? (
     <>
@@ -499,9 +524,14 @@ function Hit({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hit]);
 
-  const where = `${placeLabel(m.folder)} · ${displayTime(m, now)}${
-    archiveOnly ? ` · ${t("hitArchiveOnly")}` : ""
-  }`;
+  // UX9 — joined, never concatenated: a message with no `Date:` header has no stamp, and the
+  // template that spelled the separator itself rendered "Ohbox · " with nothing after it. See
+  // `shell/format.ts`.
+  const where = metaLine(
+    placeLabel(m.folder),
+    displayTime(m, now),
+    archiveOnly ? t("hitArchiveOnly") : null,
+  );
 
   return (
     <SearchHit

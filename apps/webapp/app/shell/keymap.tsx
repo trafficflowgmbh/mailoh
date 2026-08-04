@@ -42,6 +42,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
+/* UX10 — the rules that stop key hints being shown on devices with no keys. It rides with the
+   registry rather than with any one component because the chrome it hides is spread across the
+   shell, the dock and the reading overlay, and this module is the one thing that is in the
+   bundle whenever any of them are. `AppShell` imports it; it never renders conditionally. */
+import "./touch-keys.css";
 
 /**
  * Overlay sections, in the order they render. A binding names one; an unknown group would

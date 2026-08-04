@@ -99,7 +99,54 @@ export interface ScreenerState {
 }
 
 const OUT_MS = 330;
-const COMMIT_MS = 6200;
+/**
+ * ═══ UX8 — HOW LONG "UNDO" IS TRUE, AND THE TWO NUMBERS THAT HAVE TO AGREE ═════════════
+ *
+ * Walked on a real account against production, 2026-08-04: *"Ohbox — filed … Undo"* was still
+ * on screen 20+ minutes later, across every view, until another toast replaced it.
+ *
+ * ── WHAT IS ACTUALLY REPRODUCIBLE, MEASURED RATHER THAN ASSUMED ────────────────────────
+ *
+ * `ToastHost` (`packages/ui/src/primitives/Toast.tsx`) DOES run a timer, and it does drop the
+ * `on` class on schedule — so `.toast{opacity:0;pointer-events:none}` takes the capsule off
+ * screen. What it never does is clear `toast` state, so the message and its **`<button>` stay
+ * mounted for ever**: still in the accessibility tree of a `role="status"` region, still
+ * `tabIndex 0`, still firing `onAction` when activated. `pointer-events:none` stops a mouse; it
+ * does not stop Tab + Enter, and it does not stop a screen reader. Proven in jsdom: 20 minutes
+ * after the toast, the node still read `"Ohbox — filed.Undo"` and activating the button still
+ * called `onAction`.
+ *
+ * ── AND THAT IS THE SMALLER HALF. THE UNDO WAS ALREADY DEAD BY THEN ────────────────────
+ *
+ * `commit` fires on its own timer and `undo` only restores rows still in `pending`. So a press
+ * after the commit window restored NOTHING and then said `toastUndone` with `count: 0` —
+ * **"Undone — 0 waiting again."** — which is the product claiming an act it did not perform, on
+ * the one screen a user goes to in order to check. That is the defect worth fixing; the stale
+ * button is what makes it reachable.
+ *
+ * ── SO THE WINDOW IS ONE NUMBER, DECLARED ONCE ────────────────────────────────────────
+ *
+ * The acceptance asks for an 8–10 s dismissal *and* asks what Undo does after that long. The two
+ * questions are the same question: the toast may not outlive the act it offers to reverse, or it
+ * is a live control for something that has already happened. `UNDO_MS` is the offer, and the
+ * commit is deliberately derived from it rather than written beside it — the shipped pair was
+ * 6000 (toast) against 6200 (commit), which had already left a 200 ms slice of exactly this bug
+ * and would have grown to 2–4 s had the toast simply been lengthened to 8 s.
+ *
+ * `COMMIT_GRACE_MS` covers `toast.css`'s own .25 s opacity transition, so the capsule is
+ * visually gone before the decision is sent, never after.
+ *
+ * `undo()` is still guarded independently and always will be. A number cannot fix a control that
+ * outlives its own toast; only refusing to claim an undo that did not happen can.
+ */
+export const UNDO_MS = 8000;
+const COMMIT_GRACE_MS = 400;
+/**
+ * Exported so the suite reads the REAL number. `screener-cloud.test.ts` carried
+ * `const COMMIT_MS = 6200` — a hand-copied duplicate of a value it does not own, which would
+ * have gone green against a shipped 8400 for exactly as long as nobody re-ran it.
+ */
+export const COMMIT_MS = UNDO_MS + COMMIT_GRACE_MS;
 const BULK_STEP_MS = 240;
 /** `PATCH /messages` takes at most 200 ids (413 above it) — `routes/messages.ts:52`. */
 const MARK_SEEN_MAX = 200;
@@ -203,6 +250,15 @@ export function useScreenerState(
       s.out.delete(id);
       restored++;
     }
+    // UX8 — NOTHING RESTORED IS NOT AN UNDO, so it does not get the undo sentence. Every id
+    // had already committed (or was never pending), the mutation is dispatched, and
+    // `toastUndone` at `count: 0` said "Undone — 0 waiting again." to a person who had just
+    // pressed the button precisely to find out. Reachable long after the capsule fades,
+    // because the button outlives it — see UNDO_MS.
+    if (restored === 0) {
+      toast(t("toastUndoExpired"));
+      return;
+    }
     bump();
     toast(t("toastUndone", { count: restored }));
   };
@@ -242,7 +298,7 @@ export function useScreenerState(
             });
     toast(message, {
       action: t("toastUndo"),
-      duration: 6000,
+      duration: UNDO_MS,
       onAction: () => undo([id]),
     });
   };
@@ -280,9 +336,16 @@ export function useScreenerState(
     });
     setTimeout(() => {
       s.bulkBusy = false;
+      // The bulk summary appears only after the last row's `decide`, and every row runs its own
+      // `COMMIT_MS` clock from its own start — so over a long bulk the earliest rows can commit
+      // while this capsule is still up, and this Undo is genuinely PARTIAL. That is stated
+      // rather than papered over: `undo()` counts what it actually restored and `toastUndone`
+      // reports that number, so a partial press says how many came back and a fully expired one
+      // takes the `toastUndoExpired` arm. Shortening the capsule to cover the FIRST row instead
+      // would leave a forty-row bulk with no undo on screen at all, which is worse.
       toast(summary(snaps), {
         action: t("toastUndo"),
-        duration: 6500,
+        duration: UNDO_MS,
         onAction: () => undo(snaps.map((x) => x.id)),
       });
     }, items.length * BULK_STEP_MS + 160);

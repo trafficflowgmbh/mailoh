@@ -631,11 +631,26 @@ export function OhboxView({
       >
         {/* TWO listboxes, not one: "New" and "Earlier" are separated by a group label, and
             an option's listbox has to be its actual container. Each is labelled, because an
-            unnamed pair of listboxes is worse than none. */}
-        <ListGroupLabel>{t("newForYou")}</ListGroupLabel>
-        <ListRows multiSelectable ariaLabel={t("newForYou")}>{newForYou.map(row)}</ListRows>
-        <ListGroupLabel>{t("previouslySeen")}</ListGroupLabel>
-        <ListRows multiSelectable ariaLabel={t("previouslySeen")}>{previouslySeen.map(row)}</ListRows>
+            unnamed pair of listboxes is worse than none.
+
+            UX13 — AND A HEADING OVER NOTHING IS A HEADING THAT LIES. Both pairs rendered
+            unconditionally, so an empty Ohbox — which is what a real account looks like for
+            the whole of its first sync — was two bare words, "New" and "Earlier", with no rows
+            under either and (see `SyncState`) nothing else on the pane at all. A section label
+            asserts that a section follows. It also left two empty `role="listbox"` regions for
+            a screen reader to land in and find nothing. */}
+        {newForYou.length > 0 ? (
+          <>
+            <ListGroupLabel>{t("newForYou")}</ListGroupLabel>
+            <ListRows multiSelectable ariaLabel={t("newForYou")}>{newForYou.map(row)}</ListRows>
+          </>
+        ) : null}
+        {previouslySeen.length > 0 ? (
+          <>
+            <ListGroupLabel>{t("previouslySeen")}</ListGroupLabel>
+            <ListRows multiSelectable ariaLabel={t("previouslySeen")}>{previouslySeen.map(row)}</ListRows>
+          </>
+        ) : null}
         {/* The view's own fact — this list is empty — combined with a state derived once, up
             in the shell. `doorbellCount` is the Screener's waiting count, already a prop. */}
         {all.length === 0 ? <SyncState waiting={doorbellCount} /> : null}
@@ -926,7 +941,29 @@ function SyncState({ waiting }: { waiting: number }) {
   const t = useTranslations("ohbox");
   const { state } = useMailState();
 
-  if (!state.screenerCandidate) return null;
+  /* ── UX13: AND WHEN THERE IS NO EXPLANATION, SAY THE FACT ANYWAY ──────────────────────
+   *
+   * `screenerCandidate` is false for the whole of a first sync — it requires mail to have
+   * landed and the mirror to have settled — so on a real account this returned `null` for the
+   * ~25 minutes that matter most, and the pane rendered NOTHING. Combined with the group labels
+   * above, an empty Ohbox was literally the two words "New" and "Earlier" on an otherwise blank
+   * column, which reads as a broken screen rather than an empty one.
+   *
+   * The sentence is bare on purpose. `SyncBar` is directly above this pane and it is the one
+   * place allowed to say WHY the list is empty — it is the only surface that has derived it,
+   * and it is already saying "Connected. The first sync has not finished yet." or "Not
+   * syncing — …" or nothing at all. Repeating any of that here would be P17's defect
+   * reintroduced: a view speaking about something that is not a fact about this view. What this
+   * pane owns is "this list is empty", which is true in every one of those states.
+   */
+  if (!state.screenerCandidate) {
+    return (
+      <div className="empty" role="status">
+        <span className="glyph" aria-hidden="true">✉</span>
+        <b>{t("emptyPlain")}</b>
+      </div>
+    );
+  }
   return (
     <div className="empty" role="status">
       <span className="glyph" aria-hidden="true">{waiting > 0 ? "🕊" : "✉"}</span>

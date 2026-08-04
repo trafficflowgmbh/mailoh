@@ -84,6 +84,7 @@ import { SenderMenu, type SenderMenuState } from "./SenderMenu";
 import { SenderAuditPanel, type SenderAuditState } from "./SenderAuditPanel";
 import { attributeMessages } from "./sender-audit";
 import {
+  dispatchScreeningChange,
   planScreeningChange,
   senderScreening,
   type ScreeningDest,
@@ -688,16 +689,24 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
    * SCREENING FROM ANYWHERE (slice U3) — one call site for every surface.
    *
    * The plan comes from `sender-screening.ts`, which decides whether the endpoint can be
-   * used at all; this only dispatches it and tells the truth about what happened. Two
-   * different toasts because there are two different outcomes, and the difference (a rule
-   * for future mail, or no rule at all) is the thing a user needs to know.
+   * used at all; this only dispatches it and tells the truth about what happened.
+   *
+   * ── O19c: THE RULE'S OUTCOME IS AWAITED, AND ONLY THE RULE'S ────────────────────────────
+   *
+   * This used to toast on click for every outcome, which was survivable while the only claim
+   * was "your mail moved" — a `move` that fails rolls its own row back on screen. It stopped
+   * being survivable the moment the sentence started claiming something about FUTURE mail:
+   * O16's first cut printed "Rule revoked" over a 403 on a live account, and the fixtures
+   * adapter never refuses, so every test was green. So `plan.ruleMutations` — and nothing else
+   * — is awaited, and `screeningToast` picks the sentence from what the server actually said.
+   * The branch lives beside the sentences in `sender-screening.ts`, never here.
    */
   const changeScreening = useCallback(
-    (messageId: string, dest: ScreeningDest, scope: ScreeningScope = "sender") => {
+    (messageId: string, dest: ScreeningDest, scope: ScreeningScope = "sender", makeRule = true) => {
       setSenderMenu(null);
       const sender = senderScreening(reader, messageId);
       if (!sender) return;
-      const plan = planScreeningChange(sender, dest, scope);
+      const plan = planScreeningChange(sender, dest, scope, makeRule);
       const place = PLACE_LABEL[dest] ?? dest;
       // The SUBJECT of the sentence follows the scope, or a domain decision would report
       // itself as being about the one address the user happened to click.
@@ -706,12 +715,9 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
         toast(t("screening.toastAlready", { sender: who, place }));
         return;
       }
-      for (const m of plan.mutations) void engine.mutate(m);
-      toast(
-        plan.rule
-          ? t("screening.toastRuled", { sender: who, place, count: plan.moved })
-          : t("screening.toastMoved", { sender: who, place, count: plan.moved }),
-      );
+      void dispatchScreeningChange(plan, (m) => engine.mutate(m)).then((key) => {
+        toast(t(`screening.${key}`, { sender: who, place, count: plan.moved }));
+      });
     },
     [engine, reader, toast, t],
   );
@@ -1013,7 +1019,16 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
         const s = senderScreening(reader, id);
         if (!s || seen.has(s.key)) continue;
         seen.add(s.key);
-        const plan = planScreeningChange(s, dest);
+        /**
+         * `makeRule: false`, EXPLICITLY (O19c). The single-sender sheet makes a rule by
+         * default; bulk does not, and the reason is its own confirm copy — `bulkConfirm`
+         * promises *"No rule is made, so future mail is unchanged"* and `bulkConfirmRules`
+         * counts only the senders the SCREENER will rule on. Letting the default through here
+         * would have made both sentences false for up to forty senders at once, silently, and
+         * would have claimed rules whose outcome this path does not await. Owed, not dropped:
+         * bulk rule-creation needs its own confirm copy and its own three-outcome reporting.
+         */
+        const plan = planScreeningChange(s, dest, "sender", false);
         if (plan.mutations.length === 0) continue;
         senders++;
         messages += plan.moved;
@@ -2009,7 +2024,7 @@ function ShellInner({ mailboxFacts, accountSection, mailboxSection, billingSecti
         <SenderMenu
           state={senderMenu!}
           sender={senderMenuFor}
-          onChoose={(dest, scope) => changeScreening(senderMenu!.messageId, dest, scope)}
+          onChoose={(dest, scope, makeRule) => changeScreening(senderMenu!.messageId, dest, scope, makeRule)}
           onOpenDetail={(scope) => openSenderAudit(senderMenu!.messageId, scope)}
           onClose={() => setSenderMenu(null)}
         />

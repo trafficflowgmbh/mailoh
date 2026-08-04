@@ -12,7 +12,7 @@ import { Button, Chip, Icon, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui
 import { AttachmentStrip } from "../components/AttachmentStrip";
 import { MessageBody } from "../components/MessageBody";
 import { ConversationEntries, ConversationHead } from "./Conversation";
-import { PLACE_LABEL, avatarHue, displayTime, hueOf, initialsOf, rowAddress, senderName, tagsOfMessage } from "./format";
+import { PLACE_LABEL, avatarHue, displayTime, hueOf, initialsOf, metaLine, rowAddress, senderName, tagsOfMessage } from "./format";
 import { InlineReply } from "./InlineReply";
 import { chordKeys, useBinding, useKeyPress } from "./keymap";
 import { useMessageChrome } from "./message-chrome";
@@ -538,7 +538,12 @@ export function MessagePane({
       avatarHue={avatarHue(message.from.address)}
       onSender={(anchor) => chrome.openSenderMenu(message.id, anchor)}
       senderTitle={tr("openFor", { sender: message.from.address })}
-      time={`${threadCount ? t("threadMeta", { count: threadCount }) : ""}${displayTime(message, now)}`}
+      /* UX9 — `threadMeta` used to be the literal "thread ({count}) · " and this was a
+         concatenation, so a message with no `Date:` header rendered "thread (3) · " with
+         nothing after the separator, and a threadless one rendered an empty stamp. The key no
+         longer carries the punctuation and `metaLine` prints a separator only between two
+         values that exist. */
+      time={metaLine(threadCount ? t("threadMeta", { count: threadCount }) : null, displayTime(message, now))}
       subject={message.subject}
       onEnterReader={onEnterReader}
       chips={

@@ -1,0 +1,70 @@
+/* ═══ UX10 — KEY HINTS ONLY WHERE THERE ARE KEYS ═════════════════════════════════════════
+ *
+ * Walked at 390px on a real account against production, 2026-08-04. Three pieces of keyboard
+ * chrome were on screen on a device with no keyboard:
+ *
+ *   1. a **⌘K pill in the mobile top bar**, whose entire label is a chord;
+ *   2. **"esc to return"** over the reading overlay;
+ *   3. the dock's **"Command ⌘K"**, a real button wearing a keycap nobody can press.
+ *
+ * Each one is the same defect this slice's five siblings are: a statement the product cannot
+ * keep. "⌘K" on a phone is not merely unhelpful, it names an action the reader has no way to
+ * perform and then leaves them to work out that the pill is tappable anyway.
+ *
+ * ── THE MECHANISM IS THE ONE ESTABLISHED TODAY, NOT A NEW ONE ───────────────────────────
+ *
+ * `action-bar.css:242` already answers the same class of problem: the reader's action bar rests
+ * at `opacity:.35` and lifts on hover, which on a touch device means it is PERMANENTLY at 35%,
+ * because the hover that would reveal it never happens. That was fixed with
+ * `@media (hover: none)`. This is that idea pointed at the other half — an affordance that
+ * describes an INPUT the device does not have rather than one it cannot trigger — so it keys on
+ * `(pointer: coarse)`.
+ *
+ * **Coarse is a claim about the PRIMARY pointer, not about the absence of a keyboard.** An iPad
+ * with a Magic Keyboard reports `pointer: coarse` and ⌘K works on it, so this hides a hint that
+ * would have been true there. That trade is deliberate and it is the right way round: the cost
+ * is one discoverable shortcut going unadvertised to a minority of touch users, against a
+ * majority being shown a key they do not have. There is no media feature for "a keyboard is
+ * attached"; `any-pointer: fine` is the nearest and it answers true for a mouse, which is not
+ * the question either.
+ *
+ * ── WHY CSS AND NOT A CONDITIONAL RENDER ────────────────────────────────────────────────
+ *
+ * A `useMediaQuery` would decide this at mount, on the server-rendered pass, where there is no
+ * matchMedia — so the first paint would be wrong and would then flip. A media query is
+ * evaluated by the engine, needs no hydration, and re-evaluates when a hybrid device changes
+ * pointer. It also keeps the fix out of `AppShell.tsx`, which belongs to another slice.
+ *
+ * Selectors are deliberately more specific than the rules they override: these declarations and
+ * the ones in `packages/ui` land in different chunks and their relative ORDER is the bundler's
+ * to choose, so specificity is the only thing that makes the outcome deterministic.
+ */
+
+@media (pointer: coarse) {
+  /* THE TOP-BAR ⌘K PILL. Hidden outright rather than relabelled: its label is the chord, so
+     there is nothing left of it once the chord goes. Nothing is lost — the dock's "Command"
+     button below opens the same palette and is on screen in every view at this width
+     (`dock.css` only moves it up to `bottom:32px` under 900px; the sole rule that hides it is
+     `body.reading`, where a modal is open over everything). */
+  .topbar > .tb-btn:last-child {
+    display: none;
+  }
+
+  /* "esc to return". The whole span is the hint — hiding just the keycap would leave the words
+     "to return" floating over the reader — so the span goes, and only when it is CARRYING a
+     keycap: `Reader` accepts a custom `hint`, and a future caller passing prose must not have
+     it silently deleted on half the devices in the world. The overlay is still dismissed by
+     tapping outside the card (`Reader`'s own backdrop handler), which is what a touch user
+     reaches for first anyway. */
+  .reader-hint:has(kbd) {
+    display: none;
+  }
+
+  /* THE DOCK PILL BECOMES A LABELLED BUTTON — which it very nearly already is. `DockKey`
+     renders `{label}{kbdHint && <Kbd>}`, so dropping the keycap leaves "Command", and the
+     flex `gap` collapses with it because gaps only apply between rendered items. The button,
+     its accessible name and its action are untouched. */
+  .dock .dock-k kbd {
+    display: none;
+  }
+}
