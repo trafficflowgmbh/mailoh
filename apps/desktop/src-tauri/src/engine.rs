@@ -441,8 +441,8 @@ struct Shared {
     ///
     /// A per-request DEADLINE was considered and refused. The one 12 s bound this product does
     /// have is confined to the attachment LIST on purpose, because aborting a mutation and
-    /// retrying it is how one send becomes two. The failure a timer would catch here — an engine alive but wedged — is a
-    /// residual this file accepts and the sync surface reports.
+    /// retrying it is how one send becomes two. The failure a timer would catch here — an
+    /// engine alive but wedged — is a residual this file accepts and the sync surface reports.
     waiting: HashMap<u64, Sender<Result<EngineResponse, String>>>,
 }
 
