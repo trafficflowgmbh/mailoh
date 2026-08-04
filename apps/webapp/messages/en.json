@@ -557,7 +557,7 @@
     "calloutWhyTitle": "Every mail says why",
     "calloutWhy": "The rule that filed it, in plain words.",
     "calloutTrackerTitle": "Spy pixels, blocked",
-    "calloutTracker": "Remote images never load when you read a message, so a tracking pixel cannot fire. Loading images on demand — through a proxy, without showing your address — is not wired yet.",
+    "calloutTracker": "Remote images never load when you read a message, so a tracking pixel cannot fire. When you ask for them, they come through our proxy — the sender learns nothing about you, not even your address.",
     "calloutsLabel": "Things to notice in the demo",
     "hintsLabel": "Inside the demo",
     "hintCmdk": "everything, by name",
