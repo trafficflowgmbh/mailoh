@@ -6,12 +6,11 @@
 
 **Consent-first email, on the mailboxes you already have.**
 
-A native SwiftUI client for macOS, a Tauri shell for Windows and Linux, and the
-local mail engine they run on. Free, GPL-3.0, no account, no subscription —
-this repository is the whole thing.
+A native SwiftUI client for macOS and a Tauri shell for Windows and Linux.
+Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/badge/download-v0.3.0--beta-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.3.0-beta)
+[![latest release](https://img.shields.io/badge/download-v0.2.0--preview-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.2.0-preview)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -31,14 +30,12 @@ and receipts file themselves. It runs on the mailbox you already have — any IM
 provider — and organises it **in place**, in real folders on your real server, so
 leaving costs you nothing.
 
-**This repository is the free ohmail desktop apps and the engine that runs them**
-— macOS, Windows and Linux, plus the local mail engine itself: the IMAP client,
-the sync loop, the Screener and the rules that decide where a message goes, the
-mail schema and its migrations, and the HTTP surface the apps talk to over a
-pipe. All of it under GPL-3.0. The macOS download carries that engine and its own
-Node runtime, so it is a complete mail client with nothing else to install. There
-is no paid edition of the desktop app, no feature held back for one, and no
-telemetry reporting back on you.
+**This repository is the free ohmail desktop apps** — macOS, Windows and Linux.
+All of them, all of their source, under GPL-3.0. The local mail engine is not
+here yet: it is being built, and it is
+[issue #1](https://github.com/trafficflowhq/ohmail/issues/1). There is no paid
+edition of the desktop app, no feature held back for one, and no telemetry
+reporting back on you.
 
 **ohmail Cloud is the optional hosted half, and it is what pays for this one.**
 Your phone cannot hold a connection to your mailbox open all day; something has
@@ -429,12 +426,14 @@ Eleven lines of Rust, and a 330 KB bundle.
 | `src-tauri/src/main.rs` | the whole Rust side: create the window, run. No commands, no plugins, no `std::fs`, no `std::net`. |
 | `src-tauri/tauri.conf.json` | window geometry (clean to 390 px), the CSP, the bundle targets, the `oh.` icon family |
 | `src-tauri/capabilities/main.json` | one file, `"permissions": []` |
-| `src/` | the desktop-specific layer: providers, the pre-paint theme stamp, the offline guard, and the stub that stands in for the Cloud sync client |
-| `packages/{tokens,ui,fixtures,client-engine}` + `apps/webapp/app/{shell,views}` | the interface itself — the same sources the web client renders, compiled by Vite into the bundle Tauri embeds |
+| `src/` | the desktop-specific layer: providers, the pre-paint theme stamp, the offline guard, and the two stubs that stand in for the Cloud sync client and the Cloud API client |
+| `packages/{tokens,ui,fixtures,client-engine}` + `apps/webapp/app/{shell,views,components}` | the interface itself — the same sources the web client renders, compiled by Vite into the bundle Tauri embeds |
 
-`apps/webapp/app/` here is **only** the client shell and its views. The Cloud web
-app's sign-in, its API topology and its server-side plumbing are not in this
-repository, and neither is the `/sync` protocol client.
+`apps/webapp/app/` here is **only** the client shell, its views and the components
+they compose. The Cloud web app's sign-in, its API topology and its server-side
+plumbing are not in this repository, and neither is the `/sync` protocol client
+nor the Cloud API client — each of those two resolves to a stub that throws, so
+the tree compiles and the bundle cannot call either one.
 
 Worth knowing if you plan to read the code:
 
