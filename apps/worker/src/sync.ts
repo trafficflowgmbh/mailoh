@@ -1,5 +1,5 @@
 import {
-  planChange, commitChange,
+  planChange, commitChange, MAX_RAW_MESSAGE_BYTES,
   type Change, type ClassifierPort, type CreditGate, type Logger,
 } from "@trafficflow/core/mail";
 import {
@@ -9,7 +9,15 @@ import {
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
 import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ClassifierFaultError } from "./classifier-fault.js";
-import { DeadLetterLedger, classifyIngestFault } from "./dead-letter.js";
+import {
+  DeadLetterLedger, classifyIngestFault, nextAttemptAfter,
+  MAX_MESSAGE_RETRIES_PER_CYCLE,
+} from "./dead-letter.js";
+// `./build-version.js` and NOT `./config.js`, which re-exports the same symbol: `config.ts` imports
+// the bare `@trafficflow/core` barrel, and `apps/sidecar` imports THIS file as
+// `@trafficflow/worker/sync`. Naming config here would put the classifier and the drafter into the
+// shipped desktop engine's import closure from three modules away.
+import { buildVersionOf } from "./build-version.js";
 
 export interface SyncDeps {
   repo: WorkerRepo;
@@ -38,6 +46,17 @@ export interface SyncDeps {
    * not re-fetched every pass. See {@link DeadLetterLedger}.
    */
   deadLetters?: DeadLetterLedger;
+  /**
+   * WHICH BUILD is running — the second arm of the durable ledger's due predicate.
+   *
+   * Absent ⇒ resolved from the environment by {@link buildVersionOf}, the same three sources
+   * `/health` publishes. NOT a required field and NOT plumbed from the composition root,
+   * deliberately: a version that only arrived when a caller remembered to pass it would leave the
+   * retry silently disarmed for `reconcile-cron.ts`, for `apps/sidecar`, and for every test — and
+   * "the absent config selects the dangerous branch" is the trap this repository keeps paying for.
+   * Present only as a test seam, so a suite can simulate a deploy without touching `process.env`.
+   */
+  buildVersion?: string;
   /** Structured log sink. Absent ⇒ a skip is still recorded in `audit_log`, just not logged. */
   log?: Logger;
 }
@@ -153,7 +172,17 @@ function siteOf(ch: Change): { folder: string; uidValidity: string; uid: number 
 export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolean }> {
   const { repo, adapter, accountId, mailboxId, classifier, credits, log } = deps;
   const deadLetters = deps.deadLetters ?? new DeadLetterLedger();
+  const version = deps.buildVersion ?? buildVersionOf(process.env);
   deadLetters.beginCycle();
+  // ── THE DURABLE LEDGER IS READ BEFORE THE CURSOR IS BUILT, AND IT MAY THROW ────────────────
+  //
+  // `buildCursor` merges the ledger into every folder's known-set, so hydrating after it would
+  // publish a cursor computed as though nothing were owed. And the throw is not caught: a cycle that
+  // cannot read `message_failures` does not know which UIDs are outstanding, and the failure mode of
+  // guessing "none" is advancing a Sent watermark over mail it has no record of — which is the loss
+  // this table exists to stop. An unreadable table is an infrastructure fault and is handled like
+  // one: no cursor written, the mailbox's ordinary failure counting takes over.
+  deadLetters.hydrate(await repo.listMessageFailures(mailboxId));
   const cursor = await buildCursor(repo, mailboxId, deadLetters);
   const batch = await adapter.changesSince(cursor);
 
@@ -211,14 +240,45 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
         });
         return;
       }
+      // ── THE DURABLE RECORD, AND IT IS *NOT* BEST-EFFORT ──────────────────────────────────
+      //
+      // This write is the only reason the cursor is allowed to cross this UID. On the Sent folder
+      // the cursor IS a UID watermark, so a skip whose row is missing is a message nothing will ever
+      // enumerate again — the mail-loss defect, reachable through a database hiccup instead of
+      // through a restart. So a failure here REVOKES the terminal decision and takes the `retry`
+      // arm: the folder's cursor is held, the cycle fails, and the mailbox's ordinary quarantine
+      // cadence makes the problem loud. Content-free, exactly as the audit row below is: folder,
+      // epoch, UID, closed-set code, and nothing a sender chose.
+      let attempts: number;
+      try {
+        attempts = await repo.recordMessageFailure(mailboxId, {
+          accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
+          code: fault.code, version,
+          nextAttemptAt: nextAttemptAfter(fault.code, 1, new Date()),
+        });
+      } catch (writeErr) {
+        deadLetters.revoke(ch.locator);
+        deferred.add(site.folder);
+        if (firstDeferredError === null) firstDeferredError = writeErr;
+        log?.error("sync_message_skip_unrecordable", {
+          mailboxId, accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
+          code: fault.code, err: writeErr,
+          reason: "this message could not be processed AND the durable record of that could not be " +
+            "written — the folder's cursor is held rather than advanced past mail nothing would " +
+            "ever enumerate again",
+        });
+        return;
+      }
       log?.error("sync_message_skipped", {
         mailboxId, accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
-        code: fault.code, skipped: deadLetters.skipped, err,
+        code: fault.code, skipped: deadLetters.skipped, attempts, err,
         reason: "this message cannot be processed and has been declared consumed — the rest of the " +
-          "batch and all later mail continue, which is what one poison message used to prevent",
+          "batch and all later mail continue, which is what one poison message used to prevent. It " +
+          "is recorded durably and re-read by UID on a schedule; the cursor may cross it",
       });
-      // DURABLE EVIDENCE, best-effort, and content-free: folder, epoch, UID, code. Best-effort
-      // because a bookkeeping failure must not resurrect the wedge this decision exists to end.
+      // The USER-FACING evidence, best-effort and content-free: their own tooling reads `audit_log`,
+      // and unlike the row above this one carries no recovery, so a bookkeeping failure here must not
+      // resurrect the wedge the skip decision exists to end.
       try {
         await repo.recordAudit(
           accountId, "sync.message_skipped",
@@ -324,9 +384,198 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
     await repo.upsertMailboxFolder(mailboxId, folder, epochAware(fc, observedEpochs.get(folder)));
   }
 
+  // AFTER the cursor writes, and skipped entirely when anything is deferred — see
+  // `retryFailedMessages` for both reasons.
+  if (deferred.size === 0) await retryFailedMessages(deps, deadLetters, version);
+
   await reconcileMailbox(deps);
   if (firstDeferredError !== null) throw firstDeferredError;
   return { hasBacklog: batch.hasBacklog ?? false };
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE TARGETED RETRY — re-read written-off UIDs BY UID, and never by rescanning a folder
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * This is the half of mail 0041 that turns a durable record into recovered mail. A written-off UID
+ * is, by the time it is written off, behind the Sent folder's watermark and inside every other
+ * folder's known-set, so nothing in the ordinary batch will ever offer it again. This asks for it by
+ * name.
+ *
+ * ── WHERE IT RUNS, AND WHY EVERY PART OF THAT IS LOAD-BEARING ─────────────────────────────────
+ *
+ *  · **Inside the cycle, not on a cron.** A cron would need its own IMAP connection, which collides
+ *    with the exactly-one-organizer lease; and `reconcile-cron.ts` runs only when no worker holds the
+ *    leader lock, so a retry cron beside it would never execute in production at all. Riding the
+ *    cycle means it runs under the lease `cycle()` re-verified moments earlier.
+ *  · **After the cursor writes.** A retry must never be able to hold a watermark: the mailbox has to
+ *    keep draining whether or not history can be recovered. Running before the writes would let a
+ *    throw here strand the cursor of a folder that drained perfectly.
+ *  · **Skipped when anything is deferred.** A deferred folder means live mail failed and was not
+ *    consumed; the cycle is about to fail. Spending IMAP round trips on history in that state
+ *    competes with the mailbox's own recovery.
+ *  · **It never throws.** Every failure is recorded and swallowed. This work is about mail the
+ *    product has ALREADY declared consumed, so failing the cycle over it would re-wedge the mailbox —
+ *    which is the exact defect the dead-letter ledger was written to end.
+ *
+ * ── AND WHY THE CLAIM IS A CONDITIONAL UPDATE ─────────────────────────────────────────────────
+ *
+ * Two workers mid-leader-handover both reach this. `claimMessageFailures` stamps the rows it selects
+ * in one statement, so the loser blocks on the row lock, re-reads a committed `attempted_version`
+ * equal to its own, and claims nothing. Even if both did claim, the retry is idempotent — the second
+ * ingest's `planChange` finds the row the first committed and answers `duplicate` — but a lost race
+ * here would double the IMAP traffic of every handover, and the claim is one statement either way.
+ */
+async function retryFailedMessages(
+  deps: SyncDeps, deadLetters: DeadLetterLedger, version: string,
+): Promise<void> {
+  const { repo, adapter, accountId, mailboxId, classifier, credits, log } = deps;
+  // A backend that cannot re-read one message degrades to the pre-0041 behaviour rather than
+  // erroring: the rows stay owed and a later deploy (or a real adapter) picks them up.
+  if (!adapter.fetchByUid) return;
+
+  const now = new Date();
+  let claimed: Awaited<ReturnType<WorkerRepo["claimMessageFailures"]>>;
+  try {
+    claimed = await repo.claimMessageFailures(mailboxId, {
+      version, now, limit: MAX_MESSAGE_RETRIES_PER_CYCLE,
+      // The NEXT clock instant is written by the claim, so a process that dies mid-fetch does not
+      // leave the row due on every subsequent cycle. `null` for the deterministic codes: their next
+      // look is a new build, not a later hour.
+      nextAttemptAt: nextAttemptAfter("unclassified", 1, now),
+    });
+  } catch (err) {
+    log?.warn("message_retry_claim_failed", { mailboxId, accountId, err });
+    return;
+  }
+  if (claimed.length === 0) return;
+  // Fold the claim's POST-INCREMENT attempt counts back into the ledger. Without this the
+  // in-memory view lags the table by exactly one claim, so `escalated` — which is what `/health`
+  // publishes — would report a message as fine on the very cycle that exhausted its third attempt.
+  // `hydrate` takes the max, so this can only ever move the count forward.
+  deadLetters.hydrate(claimed);
+
+  const byFolder = new Map<string, typeof claimed>();
+  for (const row of claimed) {
+    const arr = byFolder.get(row.folder) ?? [];
+    arr.push(row);
+    byFolder.set(row.folder, arr);
+  }
+
+  for (const [folder, rows] of byFolder) {
+    let found: Awaited<ReturnType<NonNullable<MailboxAdapter["fetchByUid"]>>>;
+    try {
+      found = await adapter.fetchByUid(folder, rows.map((r) => r.uid), {
+        maxBytes: MAX_RAW_MESSAGE_BYTES,
+      });
+    } catch (err) {
+      // The folder is unselectable, or the connection died. The rows keep their claim's schedule.
+      log?.warn("message_retry_fetch_failed", { mailboxId, accountId, folder, err });
+      continue;
+    }
+
+    const close = async (row: { uidValidity: string; uid: number }, why: string): Promise<void> => {
+      await repo.resolveMessageFailure(mailboxId, { folder, uidValidity: row.uidValidity, uid: row.uid });
+      deadLetters.forget(folder, row.uidValidity, row.uid);
+      log?.info("message_retry_closed", {
+        mailboxId, accountId, folder, uidValidity: row.uidValidity, uid: row.uid, reason: why,
+      });
+    };
+
+    for (const row of rows) {
+      // ── THE EPOCH GUARD. A UID NUMBER MEANS NOTHING OUTSIDE THE EPOCH THAT ISSUED IT ──────
+      //
+      // The record was written under epoch V; the server is reporting V′. Re-ingesting `uid` now
+      // would ingest whatever message the server has RENUMBERED onto that number — a different
+      // message entirely — and would then resolve the record as though the original had arrived. So
+      // the record is void, and closing it loses nothing: a UIDVALIDITY change makes the adapter
+      // emit every prior UID as a delete and re-enumerate the whole folder, so the original message
+      // is offered again as an ordinary unknown UID.
+      if (found.uidValidity !== "0" && found.uidValidity !== row.uidValidity) {
+        try { await close(row, "uidvalidity_changed"); }
+        catch (err) { log?.warn("message_retry_close_failed", { mailboxId, folder, uid: row.uid, err }); }
+        continue;
+      }
+
+      if (found.absent.includes(row.uid)) {
+        // Expunged, or moved by the user out of this folder. There is no message here to lose, and
+        // a move surfaces through the ordinary enumeration of wherever it went.
+        try { await close(row, "gone_from_server"); }
+        catch (err) { log?.warn("message_retry_close_failed", { mailboxId, folder, uid: row.uid, err }); }
+        continue;
+      }
+
+      if (found.oversize.includes(row.uid)) {
+        // Refused from `RFC822.SIZE` alone — the body was never pulled. Still failing, and still
+        // deterministic, so the record simply keeps its place and waits for a build with a bigger
+        // ceiling.
+        log?.warn("message_retry_still_oversize", {
+          mailboxId, accountId, folder, uid: row.uid, attempts: row.attempts,
+          escalated: deadLetters.escalated,
+        });
+        continue;
+      }
+
+      const change = found.creates.find((c) => parseRef(c.locator.ref).uid === row.uid);
+      if (!change) {
+        log?.warn("message_retry_no_answer", { mailboxId, accountId, folder, uid: row.uid });
+        continue;
+      }
+
+      // THE SAME TWO-PHASE INGEST the ordinary path runs, byte for byte, which is what makes a
+      // retry idempotent rather than a second ingest with its own dedup story: `planChange`'s
+      // dual-key lookup answers `duplicate` for a message a previous attempt already committed, and
+      // `own_copy` for a Sent twin of mail we hold.
+      try {
+        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo });
+        await repo.transaction((txRepo) =>
+          commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId }),
+        );
+      } catch (err) {
+        if (err instanceof ClassifierFaultError || err instanceof LeaseUnavailableError) {
+          // Not evidence about the message. Leave the row exactly as the claim left it and stop —
+          // continuing would spend the rest of this cycle's retries against the same outage.
+          log?.warn("message_retry_deferred", { mailboxId, accountId, folder, uid: row.uid, err });
+          return;
+        }
+        const fault = classifyIngestFault(err);
+        if (fault.domain === "infrastructure") {
+          log?.warn("message_retry_infrastructure", { mailboxId, accountId, folder, uid: row.uid, err });
+          return;
+        }
+        // Still failing, and possibly for a NEW reason (a bigger ceiling turned `mime_too_large`
+        // into `mime_unparseable`), so the code is re-recorded. `recordMessageFailure` does not
+        // touch `attempts` — the claim already counted this one.
+        try {
+          await repo.recordMessageFailure(mailboxId, {
+            accountId, folder, uidValidity: row.uidValidity, uid: row.uid,
+            code: fault.code, version,
+            nextAttemptAt: nextAttemptAfter(fault.code, row.attempts, new Date()),
+          });
+        } catch (writeErr) {
+          log?.warn("message_retry_rerecord_failed", { mailboxId, folder, uid: row.uid, err: writeErr });
+        }
+        log?.error("message_retry_failed", {
+          mailboxId, accountId, folder, uidValidity: row.uidValidity, uid: row.uid,
+          code: fault.code, attempts: row.attempts, escalated: deadLetters.escalated, err,
+          reason: row.attempts >= 3
+            ? "this message has now failed on three separate attempts — it is reported on /health " +
+              "as an escalated failure and is still probed once per deployed build"
+            : "this message failed again; it stays recorded and will be re-read by UID",
+        });
+        continue;
+      }
+
+      try { await close(row, "ingested"); }
+      catch (err) {
+        // The message IS committed. A failed resolve leaves the row owed, the next cycle re-reads
+        // the same UID, and `planChange` answers `duplicate` — so the replay converges rather than
+        // writing a second message.
+        log?.warn("message_retry_close_failed", { mailboxId, folder, uid: row.uid, err });
+      }
+    }
+  }
 }
 
 /**

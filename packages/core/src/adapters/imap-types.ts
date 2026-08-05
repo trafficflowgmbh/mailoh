@@ -464,6 +464,39 @@ export interface SendResult { providerMessageId: string; sentLocator: NativeLoca
 /** One attachment BLOB fetched on-demand from IMAP — bytes are NEVER persisted (§13.2/§14). */
 export interface FetchedPart { contentType: string; filename: string | null; body: Uint8Array; }
 
+/**
+ * What a TARGETED re-read of named UIDs found — see {@link MailboxAdapter.fetchByUid}.
+ *
+ * The three outcomes are disjoint and every named UID lands in exactly one of them, because the
+ * caller has to close a durable record for each and "nothing came back" is not an answer it can
+ * act on.
+ */
+export interface TargetedFetch {
+  /** The epoch the server is reporting for this folder RIGHT NOW, as a decimal string. */
+  uidValidity: string;
+  /** Ingestable creates, in the same shape `changesSince` emits, `ownAuthored` stamped alike. */
+  creates: Change[];
+  /** Named, and the server has no message there any more. Expunged, or moved by the user. */
+  absent: number[];
+  /**
+   * Named, present, and REFUSED WITHOUT DOWNLOADING — `RFC822.SIZE` is over `opts.maxBytes`.
+   *
+   * The point of the pre-check is that the two reachable failures are deterministic in the bytes,
+   * so re-pulling a body only to have `normalizeMime` refuse it again costs the whole transfer for
+   * an answer the size already gave.
+   */
+  oversize: number[];
+}
+
+/** Per-call controls for {@link MailboxAdapter.fetchByUid}. */
+export interface FetchByUidOptions {
+  /**
+   * Report a UID as `oversize` rather than fetching it, from `RFC822.SIZE` alone. Omitted ⇒ every
+   * named UID is fetched.
+   */
+  maxBytes?: number;
+}
+
 /** Per-call controls for {@link MailboxAdapter.fetchRaw}. */
 export interface FetchRawOptions {
   /**
@@ -537,6 +570,38 @@ export interface MailboxAdapter {
    * every existing fake adapter and every alternative backend keeps compiling and keeps working.
    */
   scanSentRecipients?(limit?: number): Promise<string[]>;
+  /**
+   * Re-read NAMED UIDs of one folder — the targeted retry of the durable failure ledger.
+   *
+   * ── WHY THIS IS NOT A FOLDER RESCAN, AND WHY IT CANNOT BE ──────────────────────────────
+   *
+   * A UID the ingest loop wrote off is, by then, behind the Sent folder's watermark
+   * ({@link DEFAULT_SENT_HISTORY_MESSAGES}), and the watermark is the only enumeration floor that
+   * folder has. Reaching the UID by rescanning means holding the watermark below it — for ever,
+   * because the message keeps failing — so the enumeration range grows without bound and the poison
+   * body is pulled again on every single cycle. Naming the UID is what makes the retry cost one
+   * fetch instead of a permanent regression, and it is why the watermark can keep advancing, which
+   * is the property that stops one bad message wedging a mailbox.
+   *
+   * ── WHY NOT {@link fetchRaw} ───────────────────────────────────────────────────────────
+   *
+   * `fetchRaw` returns bytes. The ingest path needs the bytes AND the server's `\Seen`, and
+   * inventing the flag is not a small liberty: guess `false` on the user's own sent mail and it
+   * comes back unread. This returns the same {@link Change} the ordinary create path carries,
+   * `ownAuthored` stamped by the same Sent-folder resolution, so a retried message runs through
+   * `planChange`/`commitChange` byte-identically to one that arrived normally — which is what makes
+   * the retry idempotent rather than a second ingest path with its own dedup story.
+   *
+   * READ-ONLY. Nothing is moved, flagged or appended, and imapflow emits `BODY.PEEK[]` for a source
+   * fetch, so re-reading somebody's mail cannot mark it read.
+   *
+   * OPTIONAL on the interface, on {@link scanSentRecipients}' rule: every existing fake adapter
+   * keeps compiling, and a caller treats its absence as "this backend cannot retry by UID" — which
+   * degrades to the pre-0041 behaviour rather than to an error.
+   */
+  fetchByUid?(
+    folder: string, uids: readonly number[], opts?: FetchByUidOptions,
+  ): Promise<TargetedFetch>;
   watch(onSignal: () => void): Promise<() => Promise<void>>;
   send(msg: OutboundMessage): Promise<SendResult>;
   /**

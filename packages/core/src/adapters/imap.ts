@@ -22,7 +22,7 @@ import {
   type ImapConfig, type ImapAdapterOpts, type ImapCapabilities, type MailboxAdapter,
   type ImapCursor, type ChangeBatch, type PersistedFolderCursor,
   type OutboundMessage, type SendResult, type FetchedPart, type FetchPartOptions,
-  type FetchRawOptions, type NetTimeouts,
+  type FetchRawOptions, type NetTimeouts, type FetchByUidOptions, type TargetedFetch,
 } from "./imap-types.js";
 import {
   makeLeaseIo, makeLeasePeekIo,
@@ -1139,6 +1139,91 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       newCursor: { folders: newFolders },
       hasBacklog,
     };
+  }
+
+  /**
+   * Re-read NAMED UIDs of one folder. See {@link MailboxAdapter.fetchByUid} for WHY; the notes
+   * here are about the mechanics.
+   *
+   * ── EVERY NAMED UID GETS AN ANSWER ─────────────────────────────────────────────────────────
+   *
+   * The caller is closing a durable record per UID, so `creates ∪ absent ∪ oversize` is exactly the
+   * set it asked about. `absent` is derived by subtraction rather than by trusting the server to say
+   * anything about a UID it no longer holds — RFC 3501 lets a `UID FETCH` simply return fewer
+   * messages, with no error and no per-UID signal.
+   *
+   * ── IT DOES NOT GO THROUGH `fetchCapped`, DELIBERATELY ─────────────────────────────────────
+   *
+   * `fetchCapped` is the memory bound of the whole worker and it earns that with two things this
+   * call must not touch: the shared per-cycle budget, and `arrivalDatesFor`'s cache, which PRUNES
+   * itself to the candidate set it is handed. Passing a handful of retry UIDs through it would evict
+   * the drain's date cache and make the next `changesSince` re-fetch metadata for the entire unknown
+   * set — quadratic behaviour bought for nothing, since a bounded, caller-capped list of UIDs needs
+   * neither a budget nor an ordering.
+   *
+   * ── THE SIZE PRE-CHECK IS NOT AN OPTIMISATION EITHER ───────────────────────────────────────
+   *
+   * `RFC822.SIZE` first, and a UID over `opts.maxBytes` is reported without its body being pulled.
+   * The reachable failures are `mime_too_large` and `mime_unparseable`, both deterministic in the
+   * raw bytes; a standing oversize message would otherwise transfer its whole self on every deploy
+   * to be refused by `normalizeMime` for the same reason as last time.
+   */
+  async fetchByUid(
+    folder: string, uids: readonly number[], opts: FetchByUidOptions = {},
+  ): Promise<TargetedFetch> {
+    const wanted = [...new Set(uids)].filter((u) => Number.isInteger(u) && u > 0);
+    // The Sent path BEFORE the lock: `findSentForScan` may issue LIST, and imapflow's mailbox lock
+    // is not re-entrant.
+    const { sent } = await this.foldersToScan();
+    if (wanted.length === 0) return { uidValidity: "0", creates: [], absent: [], oversize: [] };
+
+    const lock = await this.client.getMailboxLock(this.toServerPath(folder));
+    try {
+      const mb = this.client.mailbox as MailboxObject;
+      const curUidValidity = mb.uidValidity;
+      const oversize: number[] = [];
+      const take: number[] = [];
+      const seen = new Set<number>();
+      for await (const m of this.client.fetch(
+        [...wanted], { uid: true, size: true }, { uid: true },
+      )) {
+        seen.add(m.uid);
+        const size = typeof m.size === "number" ? m.size : 0;
+        if (opts.maxBytes !== undefined && size > opts.maxBytes) oversize.push(m.uid);
+        else take.push(m.uid);
+      }
+
+      const creates: Change[] = [];
+      if (take.length > 0) {
+        for await (const m of this.client.fetch(
+          take,
+          { uid: true, flags: true, envelope: true, source: true, internalDate: true },
+          { uid: true },
+        )) {
+          creates.push({
+            type: "create",
+            locator: { folder, ref: makeRef(curUidValidity, m.uid) },
+            raw: (m.source ?? Buffer.alloc(0)) as Buffer,
+            seen: m.flags?.has("\\Seen") ?? false,
+            // The SAME stamp `changesSince` applies, from the same resolution. Omitting it would
+            // route a retried Sent message through `new` instead of `own_copy` and file the user's
+            // own reply as an inbound message.
+            ...(sent !== null && folder === sent ? { ownAuthored: true } : {}),
+          });
+        }
+      }
+      // A UID in `take` that the body fetch did not answer for was expunged between the two
+      // commands. It belongs in `absent` with the rest, which the subtraction below handles.
+      const returned = new Set(creates.map((c) => parseRef(c.locator.ref).uid));
+      return {
+        uidValidity: String(curUidValidity),
+        creates,
+        absent: wanted.filter((u) => !seen.has(u) || (!returned.has(u) && !oversize.includes(u))),
+        oversize,
+      };
+    } finally {
+      lock.release();
+    }
   }
 
   /**

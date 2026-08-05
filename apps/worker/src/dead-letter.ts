@@ -16,21 +16,39 @@ import { parseRef } from "@trafficflow/core/adapters/imap";
  * precisely what turns a one-message defect into an indefinite outage. What was missing is a way
  * to record that something could not be done and MOVE PAST IT.
  *
- * ── WHY THE LEDGER IS IN MEMORY, AND WHAT THAT COSTS ──────────────────────────────────────
+ * ── THE RECORD IS DURABLE NOW (mail 0041), AND THAT CLOSED A MAIL-LOSS DEFECT ──────────────
  *
- * A durable record keyed `(mailbox_id, folder, uid_validity, uid)` needs a table, and a migration
- * is a separate decision, deliberately not taken here: a failure record that needs a column is a
- * schema change, and this module was written to avoid forcing one.
- * So the DECISION is process-local and the EVIDENCE is durable: every terminal skip writes an
- * `audit_log` row and an error-level log line carrying the folder, the epoch, the UID, and a
- * closed-set code — never a subject, a sender, or a byte of the message.
+ * This header used to say the record was process-local, that a durable table was owed, and that a
+ * restart re-attempting every skipped UID once was "a FEATURE" for five folders and "the one place
+ * this design loses a message rather than delaying it" for the sixth. All three sentences were
+ * true, and the last one was the bug:
  *
- * The residual, stated plainly: a restart re-attempts every skipped UID once. For the five
- * enumerated folders that is a FEATURE — the known-set diff would re-offer them anyway, so a
- * deploy carrying a parser fix ingests them without an operator doing anything. For the Sent
- * folder, whose cursor IS a UID watermark, a skipped message that the watermark has passed is not
- * re-offered after a restart. That is the one place this design loses a message rather than
- * delaying it, and it is what the owed durable table fixes.
+ *   The Sent folder's cursor is a UID WATERMARK — steady state is `UID FETCH <uidNext>:*`. A
+ *   terminal skip puts the UID in the known-set, so the pass leaves nothing unknown, so the adapter
+ *   publishes `mb.uidNext` PAST it. A restart empties this ledger; the UID is now below the
+ *   watermark and is never enumerated again; and `own_copy` mail legitimately produces no
+ *   `messages` row, so nothing else in the system can notice. A message the user actually sent left
+ *   their mail client's view permanently, while the mailbox reported healthy throughout. Reproduced
+ *   against a real IMAP server and real Postgres in `apps/worker/test/sent-loss.pg.test.ts`.
+ *
+ * So this class is now the IN-CYCLE half of a two-part mechanism, and `message_failures` is the
+ * durable half. What lives here is what must not be re-read per message: the attempt budget, the
+ * per-cycle safety valve, and the known-set. What lives in the table is everything that has to
+ * survive the process: the coordinate, the reason, the attempt count and when the UID is next owed
+ * a look. {@link hydrate} is the join, run once at the top of every cycle.
+ *
+ * Two properties are worth stating because they are what make the durable half safe rather than
+ * merely present:
+ *
+ *  · **The watermark still advances.** The retry is targeted BY UID
+ *    (`MailboxAdapter.fetchByUid`), never by rescanning a folder, so the cursor is free to move and
+ *    one bad message still cannot wedge a mailbox. Holding the watermark below the UID instead
+ *    would re-fetch the poison body on every cycle for ever, which is the alternative that was
+ *    rejected.
+ *  · **The durable write is not best-effort.** `sync.ts` may only let a folder cursor cross a UID
+ *    once the row is committed; a failed write turns the verdict back into `retry` (see
+ *    {@link DeadLetterLedger.revoke}), which holds the cursor and fails the cycle. The `audit_log`
+ *    row beside it stays best-effort, because losing evidence is not the same as losing mail.
  *
  * ── THE SKIPPED UID JOINS THE KNOWN-SET, AND THAT IS NOT AN OPTIMISATION ──────────────────
  *
@@ -38,7 +56,9 @@ import { parseRef } from "@trafficflow/core/adapters/imap";
  * the skipped UID stays "unknown" for ever, so the adapter re-FETCHES its body every cycle and
  * spends the batch budget on it; at the batch cap that sets `hasBacklog` on every pass and the
  * worker re-kicks itself in a tight loop. Joining the known-set is what makes "moved past" true
- * of the fetch as well as of the commit.
+ * of the fetch as well as of the commit — and it is why hydrated rows join it too, including the
+ * ones this cycle is about to retry: the targeted fetch asks for those bodies explicitly, and the
+ * main batch must not ask for them again.
  */
 
 /**
@@ -232,6 +252,58 @@ export const DEFAULT_MAX_MESSAGE_ATTEMPTS = 2;
  */
 export const MAX_DEAD_LETTERS_PER_CYCLE = 5;
 
+/**
+ * How many written-off UIDs ONE cycle may re-read by UID.
+ *
+ * Small on purpose, and for a different reason from {@link MAX_DEAD_LETTERS_PER_CYCLE}. That cap
+ * bounds how much a broken build may WRITE OFF; this one bounds how much a cycle spends looking
+ * BACKWARDS. A mailbox with a thousand owed UIDs must not spend its cycle re-reading history while
+ * new mail waits behind it — the retry rides at the end of the cycle, after the cursors are
+ * written, so the mailbox drains regardless and the backlog of owed UIDs clears at five a cycle.
+ */
+export const MAX_MESSAGE_RETRIES_PER_CYCLE = 5;
+
+/**
+ * Attempts after which a still-failing message is ESCALATED — reported rather than merely retried.
+ *
+ * Three, and the number is chosen against the retry schedule rather than picked: a deterministic
+ * failure gets exactly one attempt per deployed build (see {@link nextAttemptAfter}), so three
+ * attempts is three separate builds that could not read the message. That is the point at which
+ * "the next deploy might fix it" has stopped being a plausible explanation and somebody should be
+ * told. A non-deterministic one reaches it inside a day on the backoff below.
+ *
+ * Escalation does NOT stop the retrying, and that distinction is deliberate: a message the product
+ * cannot read must become VISIBLE, not abandoned, because the deploy that fixes it may still be
+ * weeks away and the cost of one targeted probe per build is a size fetch.
+ */
+export const ESCALATE_AFTER_ATTEMPTS = 3;
+
+/**
+ * WHEN a failed UID is next owed a CLOCK-scheduled look, or `null` for "not on a clock".
+ *
+ * Deterministic failures are `null`, and that is the whole schedule decision. `MimeTooLargeError`
+ * and `MimeParseError` carry the contract that "the same source fails the same way every time", so
+ * no instant in the future is a better time to try than now was — an hourly backoff over them would
+ * re-download a body it is about to refuse, on a schedule, for the life of the account. The only
+ * event that can change the answer is NEW CODE, and that is the version arm of the due predicate in
+ * `claimMessageFailures`, which needs no timestamp.
+ *
+ * The non-deterministic pair (`constraint_violation`, `unclassified`) does get a clock, doubling
+ * from an hour and capped at a day: `23505` can be a concurrent second ingest rather than a defect,
+ * and `unclassified` may be our own transient bug, so both are worth re-trying without waiting for
+ * a deploy. Capped at a day so a permanent one is still probed occasionally rather than
+ * exponentiating into never.
+ */
+export function nextAttemptAfter(
+  code: MessageFailureCode, attempts: number, now: Date,
+): Date | null {
+  if (code === "mime_too_large" || code === "mime_unparseable" || code === "data_exception") {
+    return null;
+  }
+  const hours = Math.min(24, 2 ** Math.max(0, attempts - 1));
+  return new Date(now.getTime() + hours * 60 * 60 * 1000);
+}
+
 const keyOf = (folder: string, uidValidity: string, uid: number): string =>
   `${folder}${uidValidity}${uid}`;
 
@@ -253,6 +325,74 @@ export class DeadLetterLedger {
 
   /** Called once at the top of every sync cycle, so the per-cycle cap is per cycle. */
   beginCycle(): void { this.thisCycle = 0; }
+
+  /**
+   * Load the DURABLE rows for this mailbox into the ledger — the join between the two halves,
+   * called once at the top of every cycle from `runSyncCycle`.
+   *
+   * Every hydrated row is `terminal: true`, because a row exists only for a UID a cursor has
+   * already been allowed to cross. That is what puts it in {@link knownFor} and keeps its body out
+   * of the main batch.
+   *
+   * ── IT NEVER LOWERS AN ATTEMPT COUNT, AND THE `max` IS THE REASON ──────────────────────────
+   *
+   * A row already held in memory keeps the higher of the two counts. The in-memory count can be
+   * ahead legitimately — a non-deterministic failure that has failed twice this process and not yet
+   * been written off has no row at all — and taking the database's number would reset a budget the
+   * process has already spent, which is how a poison message earns unlimited attempts one restart
+   * at a time.
+   *
+   * ── AND IT IS CALLED FOR ITS SIDE EFFECT ON THE KNOWN-SET, NOT FOR A RETURN VALUE ──────────
+   *
+   * The caller does not read what this loaded. `buildCursor` reads the ledger afterwards, so a
+   * hydration that silently loaded nothing looks exactly like a mailbox with no failures — which is
+   * why `runSyncCycle` lets a hydration THROW rather than catching it. A cycle that cannot read this
+   * table must not proceed to publish a watermark on the assumption that nothing is owed.
+   */
+  hydrate(rows: ReadonlyArray<{
+    folder: string; uidValidity: string; uid: number; code: string; attempts: number;
+  }>): void {
+    for (const r of rows) {
+      const key = keyOf(r.folder, r.uidValidity, r.uid);
+      const prev = this.items.get(key);
+      const now = new Date();
+      this.items.set(key, {
+        folder: r.folder,
+        uidValidity: r.uidValidity,
+        uid: r.uid,
+        code: isMessageFailureCode(r.code) ? r.code : "unclassified",
+        attempts: Math.max(r.attempts, prev?.attempts ?? 0),
+        firstFailedAt: prev?.firstFailedAt ?? now,
+        lastFailedAt: prev?.lastFailedAt ?? now,
+        terminal: true,
+      });
+    }
+  }
+
+  /**
+   * TAKE BACK a terminal decision, because the durable record of it could not be written.
+   *
+   * The one caller is `sync.ts`, on a failed `recordMessageFailure`. Without this the ledger would
+   * hold `terminal: true` for a UID no table knows about, the folder cursor would be allowed to
+   * cross it, and the loss this durable record exists to close would be back — reachable through a
+   * database hiccup instead of through a restart.
+   *
+   * The per-cycle cap slot is returned with it: a decision that did not stick did not spend one, and
+   * charging for it would make a run of write failures silently lower the number of genuine
+   * write-offs a cycle can make.
+   */
+  revoke(locator: NativeLocator): void {
+    const { uidValidity, uid } = parseRef(locator.ref);
+    const item = this.items.get(keyOf(locator.folder, uidValidity, uid));
+    if (!item?.terminal) return;
+    item.terminal = false;
+    if (this.thisCycle > 0) this.thisCycle--;
+  }
+
+  /** Close an item out: it was ingested, or the server no longer has it, or its epoch is void. */
+  forget(folder: string, uidValidity: string, uid: number): void {
+    this.items.delete(keyOf(folder, uidValidity, uid));
+  }
 
   /**
    * Record one failed change. Returns `"skip"` when the item is now CONSUMED — the batch may
@@ -313,5 +453,28 @@ export class DeadLetterLedger {
     return n;
   }
 
+  /**
+   * How many of them have now failed {@link ESCALATE_AFTER_ATTEMPTS} times — the number an operator
+   * needs, and the one `/health` publishes as `escalatedMessages`.
+   *
+   * Derived from `attempts` rather than stored as a flag, so it cannot disagree with the counter it
+   * is about. It is a count of the CURRENT mailbox's attachment: the health endpoint sums it across
+   * `runtimes`, which is also why this reads memory and issues no query — `startHealthServer`
+   * touches no database by design, so a probe can never add load or block on Postgres.
+   */
+  get escalated(): number {
+    let n = 0;
+    for (const it of this.items.values()) {
+      if (it.terminal && it.attempts >= ESCALATE_AFTER_ATTEMPTS) n++;
+    }
+    return n;
+  }
+
   entries(): MessageFailure[] { return [...this.items.values()]; }
+}
+
+/** Is `code` a member of the closed set? A stored value outside it reads as `unclassified`. */
+function isMessageFailureCode(code: string): code is MessageFailureCode {
+  return code === "mime_too_large" || code === "mime_unparseable"
+    || code === "data_exception" || code === "constraint_violation" || code === "unclassified";
 }

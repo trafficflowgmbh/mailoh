@@ -288,6 +288,13 @@
       "when": 1787691286206,
       "tag": "0040_auto_suggest",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1787777686206,
+      "tag": "0041_message_failures",
+      "breakpoints": true
     }
   ]
 }

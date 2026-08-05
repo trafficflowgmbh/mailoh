@@ -1,5 +1,5 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
-import { messages, messageInstances, folderState, flagState, mailboxes, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { messages, messageInstances, messageFailures, folderState, flagState, mailboxes, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   Rule, NativeLocator, EmailAddress,
@@ -67,6 +67,41 @@ export interface ExternalFlagOutcome {
   changed: boolean;
 }
 
+/**
+ * ONE UID the sync loop could not ingest — the durable half of the dead-letter decision.
+ *
+ * Content-free by construction: a coordinate, a closed-set reason and three counters. See
+ * `message_failures` in `packages/db/src/schema-mail.ts` for why nothing else may ever be added,
+ * and for why the table is never granted to the console's role.
+ */
+export interface MessageFailureRow {
+  folder: string;
+  uidValidity: string;
+  uid: number;
+  code: string;
+  attempts: number;
+}
+
+/** What {@link WorkerRepo.recordMessageFailure} is told about one failure. */
+export interface MessageFailureInput {
+  accountId: string;
+  folder: string;
+  uidValidity: string;
+  uid: number;
+  code: string;
+  /** The build recording it. `IS DISTINCT FROM` the running one is what makes a row due again. */
+  version: string;
+  /**
+   * When a CLOCK-scheduled retry is due, or `null` for "no clock-retry — the version arm only".
+   *
+   * Deterministic failures are born `null`: `mime_too_large` and `mime_unparseable` are
+   * deterministic in the raw bytes by the contract on `mime.ts`'s two typed errors, so a clock can
+   * never change their answer and every timed attempt would re-download the body it is about to
+   * refuse. See `apps/worker/src/dead-letter.ts#nextAttemptAfter`.
+   */
+  nextAttemptAt: Date | null;
+}
+
 /** Worker-facing repo: everything the pipeline needs (RepoPort + RoutingPort) plus enumeration for sync/reconcile. */
 export interface WorkerRepo extends RepoPort, RoutingPort {
   getMailbox(mailboxId: string): Promise<
@@ -116,6 +151,44 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * {@link MoveEvidence} for why it is the only thing that authorises an adoption.
    */
   forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<void>;
+  /**
+   * Every UID of this mailbox that is still owed — failed, and neither ingested nor written off as
+   * void. Read at the top of every cycle and merged into the adapter's known-set, which is what
+   * stops the poison body being re-fetched on every pass.
+   */
+  listMessageFailures(mailboxId: string): Promise<MessageFailureRow[]>;
+  /**
+   * Record (or re-record) one failure, and return the row's attempt count after the write.
+   *
+   * NOT best-effort at the call site, unlike the `audit_log` row beside it, and that is the whole
+   * reason this method exists: the folder cursor may only cross a UID once this row is committed.
+   * A caller that swallows a throw here is the mail-loss defect, restored.
+   */
+  recordMessageFailure(mailboxId: string, input: MessageFailureInput): Promise<number>;
+  /**
+   * CLAIM the failures this cycle may retry, atomically, and say what was claimed.
+   *
+   * One conditional UPDATE, because two workers mid-leader-handover both run this: the claim IS the
+   * decision, exactly as `runAlertPass` claims a notification. The winner gets rows back; the loser
+   * blocks on the row lock, re-reads the committed `attempted_version` and matches nothing.
+   *
+   * Due is `resolved_at IS NULL AND (next_attempt_at <= now() OR attempted_version IS DISTINCT FROM
+   * version)`. The version arm is self-disarming — this statement stamps `attempted_version` — so a
+   * deploy carrying a parser fix wakes every owed UID exactly once.
+   */
+  claimMessageFailures(
+    mailboxId: string, opts: { version: string; now: Date; limit: number; nextAttemptAt: Date | null },
+  ): Promise<MessageFailureRow[]>;
+  /**
+   * Close a failure: it was ingested, or it is gone from the server, or its epoch was renumbered.
+   *
+   * Idempotent and outside any ingest transaction, deliberately. A crash between the commit and
+   * this write leaves the row owed, the next cycle re-reads the same UID, and `planChange`'s
+   * dual-key lookup answers `duplicate` — so the replay converges instead of writing a second row.
+   */
+  resolveMessageFailure(
+    mailboxId: string, site: { folder: string; uidValidity: string; uid: number },
+  ): Promise<void>;
   listPendingFolderStates(mailboxId: string): Promise<PendingFolderState[]>;
   /** Read-state rows still owed an IMAP `\Seen` write (mail 0024). */
   listPendingFlagStates(mailboxId: string): Promise<PendingFlagState[]>;
@@ -319,6 +392,156 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       // locator on the strength of a delivery, which is a write chosen by whoever sent the mail.
       setWhere: eq(messageInstances.messageId, messageId),
     });
+  }
+
+  // ── THE DURABLE PER-MESSAGE FAILURE LEDGER (mail 0041) ──────────────────────────────────────
+  //
+  // Four statements, and every one of them is mailbox-scoped in the WHERE clause rather than by the
+  // caller having remembered to be: a `(folder, uid)` pair repeats across every mailbox on the
+  // planet, so an unscoped read here would let one account's IMAP server decide what another
+  // account's sync loop treats as already-known.
+
+  async listMessageFailures(mailboxId: string): Promise<MessageFailureRow[]> {
+    const rows = await this.db.select({
+      folder: messageFailures.folder,
+      uid: messageFailures.uid,
+      uidvalidity: messageFailures.uidvalidity,
+      code: messageFailures.code,
+      attempts: messageFailures.attempts,
+    }).from(messageFailures)
+      .where(and(eq(messageFailures.mailboxId, mailboxId), isNull(messageFailures.resolvedAt)));
+    return rows.map((r) => ({
+      folder: r.folder,
+      uid: r.uid,
+      uidValidity: r.uidvalidity != null ? String(r.uidvalidity) : "0",
+      code: r.code,
+      attempts: r.attempts,
+    }));
+  }
+
+  /**
+   * See {@link WorkerRepo.recordMessageFailure}.
+   *
+   * `attempts` starts at 1 and the conflict path does NOT touch it, which is the one thing worth
+   * saying here: a repeated failure of the same UID inside one build is the same attempt observed
+   * twice (the ingest loop offers it once per cycle and the in-memory ledger's attempt budget
+   * already governs that), while `claimMessageFailures` is what counts a genuine RETRY. Letting
+   * this statement increment would make an ordinary cycle look like exhausted patience and escalate
+   * a message nobody has retried yet.
+   *
+   * `resolved_at` is cleared on conflict: a UID that failed again after being closed is owed again,
+   * and the alternative is a resolved row silently shadowing a live failure.
+   */
+  async recordMessageFailure(mailboxId: string, input: MessageFailureInput): Promise<number> {
+    const now = new Date();
+    const [row] = await this.db.insert(messageFailures).values({
+      accountId: input.accountId,
+      mailboxId,
+      folder: input.folder,
+      uidvalidity: BigInt(/^[0-9]+$/.test(input.uidValidity) ? input.uidValidity : "0"),
+      uid: input.uid,
+      code: input.code,
+      attempts: 1,
+      attemptedVersion: input.version,
+      firstFailedAt: now,
+      lastFailedAt: now,
+      nextAttemptAt: input.nextAttemptAt,
+    }).onConflictDoUpdate({
+      target: [
+        messageFailures.mailboxId, messageFailures.folder,
+        messageFailures.uidvalidity, messageFailures.uid,
+      ],
+      set: {
+        code: input.code,
+        lastFailedAt: now,
+        attemptedVersion: input.version,
+        nextAttemptAt: input.nextAttemptAt,
+        resolvedAt: null,
+      },
+    }).returning({ attempts: messageFailures.attempts });
+    return row?.attempts ?? 1;
+  }
+
+  async claimMessageFailures(
+    mailboxId: string, opts: { version: string; now: Date; limit: number; nextAttemptAt: Date | null },
+  ): Promise<MessageFailureRow[]> {
+    if (opts.limit <= 0) return [];
+    /**
+     * DUE = not closed, and either the clock has come round or the code has changed under it.
+     *
+     * `lte(column, date)` and never a `sql` fragment holding a `Date`, which is the rule
+     * `runAlertPass` states at length and which this statement learned the same way: postgres.js
+     * describes a bare parameter as TEXT, and `Bind` then throws
+     * *"The 'string' argument must be of type string … Received an instance of Date"*. The column on
+     * the left is what makes drizzle bind it as `timestamptz`.
+     *
+     * `IS DISTINCT FROM` rather than `<>`, because `attempted_version` is nullable and `NULL <> 'x'`
+     * is NULL — a row nobody has stamped would never be due.
+     */
+    const isDue = or(
+      lte(messageFailures.nextAttemptAt, opts.now),
+      sql`${messageFailures.attemptedVersion} is distinct from ${opts.version}`,
+    );
+    const due = this.db.select({ id: messageFailures.id }).from(messageFailures)
+      .where(and(eq(messageFailures.mailboxId, mailboxId), isNull(messageFailures.resolvedAt), isDue))
+      // NULLS FIRST: a deterministic failure carries no instant, and it is the one waiting for the
+      // build that just arrived. Sorting it last would let a backlog of clock-scheduled rows starve
+      // exactly the rows a deploy was supposed to rescue.
+      .orderBy(sql`${messageFailures.nextAttemptAt} nulls first`)
+      .limit(opts.limit);
+
+    // ONE statement, and THE DUE PREDICATE IS REPEATED IN THE UPDATE'S OWN `WHERE` — which is the
+    // part that makes the handover safe rather than merely likely to be safe.
+    //
+    // Two workers mid-leader-handover run this at the same time. Both sub-selects can return the
+    // same id; the second UPDATE then blocks on the winner's row lock, and under READ COMMITTED
+    // Postgres re-evaluates the UPDATE's qual against the COMMITTED new row. With the predicate
+    // present, the loser reads its own `version` in `attempted_version` and a `next_attempt_at` the
+    // winner has already pushed forward (or nulled), matches nothing, and claims nothing. Relying on
+    // the sub-select alone would make the outcome depend on whether the planner re-executes that
+    // subplan — which is precisely the kind of question an in-memory Postgres answers differently.
+    //
+    // `attempts + 1` is written by the CLAIM and not by the retry's outcome, deliberately: a process
+    // that dies mid-fetch must still have spent an attempt, or a poison message that reliably kills
+    // the worker is retried for ever and never escalates.
+    const rows = await this.db.update(messageFailures)
+      .set({
+        attempts: sql`${messageFailures.attempts} + 1`,
+        attemptedVersion: opts.version,
+        nextAttemptAt: opts.nextAttemptAt,
+      })
+      .where(and(
+        inArray(messageFailures.id, due),
+        isNull(messageFailures.resolvedAt),
+        isDue,
+      ))
+      .returning({
+        folder: messageFailures.folder,
+        uid: messageFailures.uid,
+        uidvalidity: messageFailures.uidvalidity,
+        code: messageFailures.code,
+        attempts: messageFailures.attempts,
+      });
+    return rows.map((r) => ({
+      folder: r.folder,
+      uid: r.uid,
+      uidValidity: r.uidvalidity != null ? String(r.uidvalidity) : "0",
+      code: r.code,
+      attempts: r.attempts,
+    }));
+  }
+
+  async resolveMessageFailure(
+    mailboxId: string, site: { folder: string; uidValidity: string; uid: number },
+  ): Promise<void> {
+    await this.db.update(messageFailures)
+      .set({ resolvedAt: new Date(), nextAttemptAt: null })
+      .where(and(
+        eq(messageFailures.mailboxId, mailboxId),
+        eq(messageFailures.folder, site.folder),
+        eq(messageFailures.uidvalidity, BigInt(/^[0-9]+$/.test(site.uidValidity) ? site.uidValidity : "0")),
+        eq(messageFailures.uid, site.uid),
+      ));
   }
 
   /**
