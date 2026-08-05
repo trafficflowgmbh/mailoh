@@ -333,7 +333,7 @@ final class PlanTests: XCTestCase {
     }
 
     func testWithTheVendoredRuntimeStrippedItFallsBackToTheMachine() {
-        // The mutation the owner asked to watch: the vendored binary is gone (or points at a
+        // The case worth watching fail: the vendored binary is gone (or points at a
         // non-executable), so resolution falls through to a node on the machine rather than failing.
         let fs = FakeFS(runnable: ["/opt/homebrew/bin/node"])   // vendored path is NOT runnable
         let resolved = EngineProcess.resolveNode(

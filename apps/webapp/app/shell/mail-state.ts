@@ -36,7 +36,7 @@
  * POSITIVE reading — "this mailbox synced 207 seconds ago" — is the worthless one, and it is
  * never taken.
  *
- * ── THE ONE STAMP THAT IS SOUND TO READ, AND WHY (O2) ───────────────────────────────────
+ * ── THE ONE STAMP THAT IS SOUND TO READ, AND WHY ────────────────────────────────────────
  *
  * The mirror-growth signal is BLIND at the edges of an import: a first import is drained
  * newest-first in bounded batches, so the server holds a PARTIAL mailbox for minutes, and a tab

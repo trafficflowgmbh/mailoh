@@ -16,10 +16,10 @@ import {
  *
  * Bold, italic, strike, link, bullet list, numbered list, block quote, inline code. No fonts,
  * no colours, no sizes, no alignment, no tables, no images. That is not a first cut waiting to
- * be extended — it is the same list `packages/services/src/outbound-html.ts` will accept, and
- * the two are one decision written in two places because they are enforced at two different
- * trust boundaries. A control offered here that the server strips would be a button that
- * silently does nothing, which is worse than no button.
+ * be extended — it is the same list the server's outbound-HTML sanitiser will accept, and the
+ * two are one decision written in two places because they are enforced at two different trust
+ * boundaries. A control offered here that the server strips would be a button that silently
+ * does nothing, which is worse than no button.
  *
  * The refusals are stated as configuration rather than left to the defaults. `StarterKit`
  * ships headings, horizontal rules and code BLOCKS, and every one of them would round-trip
@@ -77,8 +77,8 @@ const EXTENSIONS = [
   Link.configure({
     openOnClick: false,
     // The editor writes markup that a MAIL client renders, so a link may only be a thing a
-    // mail client can open. This mirrors `ALLOWED_SCHEMES` in `outbound-html.ts`; the server
-    // is the enforcement and this is the courtesy of not offering what it will refuse.
+    // mail client can open. This mirrors the scheme allow-list the server's sanitiser applies;
+    // the server is the enforcement and this is the courtesy of not offering what it will refuse.
     protocols: ["http", "https", "mailto"],
     autolink: true,
     HTMLAttributes: {},
@@ -107,7 +107,7 @@ export interface RichEditorProps {
   /** Wired by the reply surface for ⌘↵ — the editor swallows keys the shell would not see. */
   onKeyDown?: (e: React.KeyboardEvent) => void;
   /**
-   * The editor instance, handed to the owner when it is ready and `null` when it goes away.
+   * The editor instance, handed to the parent when it is ready and `null` when it goes away.
    *
    * This exists for the one thing `value`/`onChange` cannot express: putting content INTO an
    * open editor at a caret the user chose. A generated draft is appended at the cursor or
