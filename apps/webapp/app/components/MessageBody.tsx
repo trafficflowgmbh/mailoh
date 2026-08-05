@@ -86,7 +86,7 @@
  * BEFORE the sanitizer; after the sanitizer only attributes change.**
  *
  * This is the promise the product is named for, and until now it was unkept in the one place
- * it is made: `privacy-service.ts` and `packages/core/src/privacy/tracker-blocker.ts` were
+ * it is made: the server's privacy service and its tracker-blocker were
  * built, hardened and tested, and had **zero production callers** — the reading path never
  * blocked anything, which is why `en.json` still says "Spy pixels, not yet".
  *
@@ -95,7 +95,7 @@
  * It does not fetch a blocked image after consent, and the consent button is therefore
  * absent rather than dead. Loading one means routing it through `GET /img` — the
  * server-side proxy, whose whole purpose is that the SENDER never sees the reader's IP —
- * and that route is deliberately unmounted (`packages/api/src/routes/privacy.ts`) with a
+ * and that route is deliberately unmounted (the image-proxy route is not mounted) with a
  * mutation-watched test keeping it off. Mounting it is a security decision with its own
  * review, not a side effect of a rendering slice. `imageProxy` below is the seam it lands
  * on, and it is exercised by the tests so it is not an untested branch waiting to be wrong.
@@ -249,7 +249,7 @@ export interface BlockedAsset {
   /**
    * A beacon rather than a picture. Decided from TWO signals that are in the message itself
    * — declared 1×1/0×0 dimensions, and a beacon-shaped path — and deliberately NOT from a
-   * host list. `packages/core/src/privacy/tracker-blocker.ts` keeps such a list, it is not
+   * host list. the server's tracker-blocker keeps such a list, it is not
    * importable here (`@trafficflow/core` is a node package: mailparser, `node:crypto`), and
    * a second copy of it would drift. Nothing is blocked BECAUSE of this flag — everything
    * remote is blocked either way — so the only thing it can be wrong about is a sentence.
