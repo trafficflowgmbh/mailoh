@@ -55,12 +55,12 @@ describe("tauri.conf.json", () => {
     };
   };
 
-  it("is ohmail, at the preview version, under its own identifier", () => {
+  it("is ohmail, at the release version, under its own identifier", () => {
     expect(conf.productName).toBe("ohmail");
     // Bare, with no `-preview` suffix: the MSI bundler rejects a semver
     // pre-release identifier, and this number reaches the installer filenames
-    // (`ohmail_0.2.0_amd64.deb`).
-    expect(conf.version).toBe("0.2.0");
+    // (`ohmail_0.3.0_amd64.deb`).
+    expect(conf.version).toBe("0.3.0");
     expect(conf.identifier).toBe("io.ohmail.desktop.tauri");
   });
 
