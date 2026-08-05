@@ -56,6 +56,10 @@ public let ENGINE_FILE_STEM = "ohmail-engine"
 /// An explicit path to the engine, which overrides looking beside the executable.
 public let ENGINE_PATH_VAR = "OHMAIL_ENGINE"
 
+/// An explicit path to the Node runtime the engine is spawned with, overriding the search in
+/// ``EngineProcess/resolveNode(environment:fileManager:)``.
+public let NODE_PATH_VAR = "OHMAIL_NODE"
+
 /// Where the local mirror lives. Supplied by the shell when the environment does not name one.
 public let DATA_DIR_VAR = "OHMAIL_DATA_DIR"
 
@@ -280,6 +284,37 @@ public final class EngineProcess: @unchecked Sendable {
     /// plan need it and a second spelling is a second place for them to disagree.
     public static var bundledEngineDirectory: URL? {
         Bundle.main.executableURL?.deletingLastPathComponent()
+    }
+
+    /// The Node runtime the engine is spawned with, or `nil` when this build can find none.
+    ///
+    /// **THE ENGINE IS A NODE SCRIPT AND THIS BETA VENDORS NO RUNTIME**, so one has to be found on
+    /// the machine. The trap this closes is that a Finder or launchd launch runs with
+    /// `PATH=/usr/bin:/bin:/usr/sbin:/sbin` — no Homebrew, no nvm — so the engine's own
+    /// `#!/usr/bin/env node` shebang finds nothing even when the user HAS Node installed. So the
+    /// runtime is resolved explicitly here, and its directory is prepended to the child's `PATH` in
+    /// ``supervise(_:)`` so the shebang runs THIS node.
+    ///
+    /// Order, most specific first: ``NODE_PATH_VAR`` (an operator's exact choice), then the two
+    /// default package locations (Homebrew on Apple silicon, then on Intel / the older prefix), then
+    /// whatever the inherited `PATH` already carries — the developer case, whose terminal `PATH` has
+    /// node on it. **Runnable, not merely present**, the same bar ``install(environment:executableDirectory:fileManager:)``
+    /// holds the engine to: a directory or a non-executable at that path is not a runtime.
+    static func resolveNode(environment env: [String: String], fileManager fm: FileManager = .default) -> URL? {
+        func runnable(_ path: String) -> URL? {
+            var isDir: ObjCBool = false
+            let ok = fm.fileExists(atPath: path, isDirectory: &isDir) && !isDir.boolValue
+                && fm.isExecutableFile(atPath: path)
+            return ok ? URL(fileURLWithPath: path) : nil
+        }
+        if let explicit = present(env[NODE_PATH_VAR]), let url = runnable(explicit) { return url }
+        for candidate in ["/opt/homebrew/bin/node", "/usr/local/bin/node"] {
+            if let url = runnable(candidate) { return url }
+        }
+        for dir in (env["PATH"] ?? "").split(separator: ":", omittingEmptySubsequences: true) {
+            if let url = runnable("\(dir)/node") { return url }
+        }
+        return nil
     }
 
     /// Decide whether there is an engine to start, and how — **without touching the filesystem.**
@@ -523,11 +558,28 @@ public final class EngineProcess: @unchecked Sendable {
             }
             setStatus(.starting(attempt: attempt))
 
+            var environment = ProcessInfo.processInfo.environment
+            for (name, value) in launch.environment { environment[name] = value }
+
+            // FIND A NODE, OR SAY SO PLAINLY. The engine is a Node script and this beta ships no
+            // runtime, so one has to be on the machine — and a Finder/launchd `PATH` finds none even
+            // when the user has Node, which is the whole reason ``resolveNode`` exists. Its directory
+            // is prepended to the child's `PATH` so the engine's shebang runs THIS node. A build that
+            // can find none fails HERE, with the runtime named, rather than at `process.run()` with a
+            // `NotFound` that reads as "the engine is missing" — the engine is right there.
+            guard let node = Self.resolveNode(environment: environment) else {
+                setStatus(.failed(
+                    reason: "ohmail's engine runs on Node 20 or newer, and this beta does not yet "
+                        + "bundle one. Install Node from nodejs.org and reopen ohmail, or set "
+                        + "\(NODE_PATH_VAR) to a node binary. A later build will ship its own runtime.",
+                    last: nil))
+                break
+            }
+            environment["PATH"] = node.deletingLastPathComponent().path + ":" + (environment["PATH"] ?? "")
+
             let process = Process()
             process.executableURL = launch.program
             process.arguments = launch.arguments
-            var environment = ProcessInfo.processInfo.environment
-            for (name, value) in launch.environment { environment[name] = value }
             process.environment = environment
 
             // Piped, all three, and each for its own reason. stdin because the write end must belong

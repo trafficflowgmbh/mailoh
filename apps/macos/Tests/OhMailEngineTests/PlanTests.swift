@@ -307,4 +307,59 @@ final class PlanTests: XCTestCase {
         XCTAssertEqual(t.backoff(attempt: 9), 8)
         XCTAssertEqual(t.backoff(attempt: 40), 8, "the shift must not overflow into a negative delay")
     }
+
+    // MARK: - Finding a Node runtime (this beta vendors none)
+    //
+    // Every case injects ``FakeFS`` and names exactly which paths are runnable, so the real machine's
+    // Homebrew node can neither satisfy an assertion by accident nor break one — the search order and
+    // the "nothing found" case are both proven against a filesystem the test owns.
+
+    func testAnExplicitNodePathWinsOverEverythingElse() {
+        let fs = FakeFS(runnable: ["/opt/homebrew/bin/node", "/custom/node", "/on/path/node"])
+        let resolved = EngineProcess.resolveNode(
+            environment: [NODE_PATH_VAR: "/custom/node", "PATH": "/on/path"], fileManager: fs)
+        XCTAssertEqual(resolved?.path, "/custom/node")
+    }
+
+    func testHomebrewIsPreferredBeforeThePathSearch() {
+        let fs = FakeFS(runnable: ["/opt/homebrew/bin/node", "/on/path/node"])
+        let resolved = EngineProcess.resolveNode(environment: ["PATH": "/on/path"], fileManager: fs)
+        XCTAssertEqual(resolved?.path, "/opt/homebrew/bin/node")
+    }
+
+    func testTheInheritedPathIsSearchedWhenNoDefaultLocationHasNode() {
+        // No node at either default location, so the search must walk PATH — past an empty entry and a
+        // miss — to the one that is really there.
+        let fs = FakeFS(runnable: ["/on/path/node"])
+        let resolved = EngineProcess.resolveNode(environment: ["PATH": ":/nowhere:/on/path"], fileManager: fs)
+        XCTAssertEqual(resolved?.path, "/on/path/node")
+    }
+
+    func testANonExecutableNodeIsNotARuntime() {
+        // The path exists on PATH but is not runnable (a directory, or a file without the bit); the
+        // explicit var points at another unrunnable one. Nothing here is a node.
+        let fs = FakeFS(runnable: [])
+        XCTAssertNil(EngineProcess.resolveNode(
+            environment: [NODE_PATH_VAR: "/custom/node", "PATH": "/on/path"], fileManager: fs))
+    }
+
+    /// The one this whole slice exists for: a machine with NO node anywhere the search looks.
+    func testAMachineWithNoNodeResolvesNothing() {
+        XCTAssertNil(EngineProcess.resolveNode(
+            environment: [NODE_PATH_VAR: "/opt/homebrew/bin/node", "PATH": "/usr/bin:/bin"],
+            fileManager: FakeFS(runnable: [])))
+    }
+}
+
+/// A FileManager that reports as runnable exactly the paths it was given, and nothing else — so a test
+/// about which node the search picks is answered by the test's own filesystem, never the real machine's.
+private final class FakeFS: FileManager {
+    private let runnable: Set<String>
+    init(runnable: Set<String>) { self.runnable = runnable; super.init() }
+    required init?(coder: NSCoder) { nil }
+    override func fileExists(atPath path: String, isDirectory: UnsafeMutablePointer<ObjCBool>?) -> Bool {
+        isDirectory?.pointee = false
+        return runnable.contains(path)
+    }
+    override func isExecutableFile(atPath path: String) -> Bool { runnable.contains(path) }
 }
