@@ -34,6 +34,15 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // guard compares this array against what the sources READ, not against what they display.
   // Omitting it would put `body.loading` in the binary where a sentence belongs.
   "about", "body", "compose", "dock", "ohbox", "palette", "rail", "reads", "receipts",
+  // `draftReply`, `history` and `seed` are the three the shell started reading without this
+  // array following, which is precisely the omission `desktop-messages.test.ts` exists to
+  // catch — and it was catching it: the guard has been red since those surfaces landed.
+  // `draftReply` is the AI drafter's offer, and the desktop is the one place its
+  // `unavailable` sentence is the ONLY reachable branch — `apiConfigured()` is false there,
+  // so a stranger who presses "Draft reply" in the binary gets the explanation rather than a
+  // raw key. `history` and `seed` are listed for the reason `body` and `sync` are: the guard
+  // compares this array against what the sources READ, not against what they can display.
+  "draftReply", "history", "seed",
   // `reply`, `screening` and `shortcuts` arrived with the 2026-08-02 frontend slice
   // (inline reply, sender screening, the `?` overlay). They are listed here because the
   // desktop shell renders all three; without them the binary shows `reply.send` where a

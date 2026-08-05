@@ -18,6 +18,21 @@ export interface FocusReplyOverlayProps {
   message?: FocusReplyMessage;
   value?: string;
   onChange?: (value: string) => void;
+  /**
+   * THE EDITOR, SUPPLIED BY THE APP — and when it is, `value`/`onChange` are not used at all.
+   *
+   * The run steps through the same messages the inline reply answers and writes into the SAME
+   * per-message scratch buffer, so whatever the two surfaces offer has to be one grammar. Once
+   * that buffer can hold formatting, a plain `<textarea>` here is not a smaller editor, it is a
+   * lossy one: it would render markup as its flattened text and then overwrite the markup with
+   * that flattening the first time somebody pressed a key.
+   *
+   * A slot rather than moving the rich editor into this package: it belongs to the webapp — it
+   * knows the app's copy, its sanitizer allowlist and its scratch-buffer shape — and `@ohmail/ui`
+   * is also the desktop's, which has no business acquiring ProseMirror to render a card. The
+   * textarea stays as the default for every caller that has no editor to hand in.
+   */
+  editor?: ReactNode;
   onDone: () => void;
   onSkip: () => void;
   onClose: () => void;
@@ -41,6 +56,7 @@ export function FocusReplyOverlay({
   message,
   value,
   onChange,
+  editor,
   onDone,
   onSkip,
   onClose,
@@ -59,6 +75,9 @@ export function FocusReplyOverlay({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // Only the textarea is this component's to focus. A supplied editor focuses itself — it owns
+  // a document and a selection, and reaching into one from outside is how a caret ends up
+  // somewhere the user did not put it.
   useEffect(() => {
     if (open && message) textareaRef.current?.focus();
   }, [open, message, step]);
@@ -99,13 +118,15 @@ export function FocusReplyOverlay({
             <h3>{message.subject}</h3>
             <div className="from">{message.from}</div>
             <p className="prev">{message.preview}</p>
-            <textarea
-              ref={textareaRef}
-              placeholder="Your reply"
-              aria-label="Reply"
-              value={value}
-              onChange={onChange ? (e) => onChange(e.target.value) : undefined}
-            />
+            {editor ?? (
+              <textarea
+                ref={textareaRef}
+                placeholder="Your reply"
+                aria-label="Reply"
+                value={value}
+                onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+              />
+            )}
             <div className="fr-foot">
               <Button variant="primary" onClick={onDone}>
                 {doneLabel}
