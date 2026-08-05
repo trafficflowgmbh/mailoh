@@ -187,7 +187,18 @@ check("message rows rendered", rows >= 3, `${rows} rows`);
 for (const who of ["Giulia", "Ben", "Petra"]) {
   check(`fixture sender "${who}" is on screen`, text.includes(who));
 }
-check("the demo ribbon is honest about fixtures", /fixtures only/i.test(text));
+/* THE RIBBON HAS TO MAKE BOTH CLAIMS, not merely exist. This build shows invented mail and opens
+   no connection, and the ribbon is the only place a reader is told either — so the check is the two
+   claims, and it is deliberately not a search for the ribbon's element or for one loose phrase.
+   It used to look for "fixtures only", which the copy has not said for some time: the ribbon was
+   rendering, and honestly, while the check reported it missing. A stale assertion and a real defect
+   look identical from the exit code, so the assertion follows the sentence.
+
+   One check rather than two, so the count three published documents quote stays 31. */
+check(
+  "the demo ribbon is honest about fixtures",
+  /invented mail/i.test(text) && /nothing leaves this tab/i.test(text),
+);
 
 /* ── 3 · nothing collapsed (invariant #6) ──────────────────────────────── */
 const collapsed = text.match(/\b\d+\s+(more|others?|collapsed|hidden)\b/i);
