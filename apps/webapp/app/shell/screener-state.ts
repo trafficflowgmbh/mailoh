@@ -38,6 +38,7 @@ import {
   screenerSegments,
   senderKey,
   type EngineMessage,
+  type EntityReader,
   type Folder,
   type OhmailEngine,
   type ScreenDest,
@@ -181,6 +182,28 @@ export function useScreenerState(
    * persist and evict it.
    */
   suggestions?: SuggestionOverlay,
+  /**
+   * THE MIRROR AS IT IS PRESENTED — `presentationReader(engine.read(), consentPartition(…))`.
+   *
+   * The queue is built from THIS and the mutations are built from the raw mirror, and the split
+   * is the whole point rather than an implementation detail.
+   *
+   * `screenerSegments` groups by `m.folder`, so handed the raw mirror it answers "whose mail is
+   * filed in `ohmail/Screener`". That is not the question the Screener asks. On any mailbox that
+   * has been through a backfill the two answers diverge by an order of magnitude — the folder
+   * holds a sender row for every stranger who ever wrote, the queue only those still worth
+   * asking about — because a backfill files every stranger's mail into the Screener folder and
+   * the cutline is what decides which of those senders a decision is still wanted for.
+   * Three ways it went wrong before this argument existed: a sender who went quiet
+   * years ago was a queue row AND a History row at once; a sender the user had already consented
+   * to was asked about again while their mail presented in the Ohbox; and an active stranger
+   * whose mail sat in the INBOX appeared in no pile whatsoever, because the projection moved it
+   * out of the Ohbox while the raw folder kept it out of the Screener.
+   *
+   * OPTIONAL, and absent means the raw mirror — which is what the demo and any caller without a
+   * partition want, and is exactly the behaviour every caller had before this parameter existed.
+   */
+  presented?: EntityReader,
 ): ScreenerState {
   const t = useTranslations("screener");
   const [, bump] = useReducer((c: number) => c + 1, 0);
@@ -193,8 +216,18 @@ export function useScreenerState(
     bulkBusy: false,
   });
 
+  /**
+   * The RAW mirror. Where each message physically sits on the server.
+   *
+   * Everything that MUTATES reads from here, and `consent-cutline.ts` states why in the
+   * `presentationReader` docblock: a projected reader answers with a presentation rather than a
+   * location, and a move needs to know what it is moving from. `notSpamToOhbox` below is the
+   * live case — it looks up a sender's quarantined mail by folder to release it.
+   */
   const reader = engine.read();
-  const segments = useMemo(() => screenerSegments(reader), [reader, version]);
+  // The QUEUE, from the projected mirror. See the `presented` parameter.
+  const queueReader = presented ?? reader;
+  const segments = useMemo(() => screenerSegments(queueReader), [queueReader, version]);
   const s = store.current;
 
   const senderLabel = (x: ScreenerSenderDTO) => x.from.name || x.from.address;

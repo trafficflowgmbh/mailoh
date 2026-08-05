@@ -543,7 +543,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     autoSuggest: consent.autoSuggest,
     toast,
   });
-  const screener = useScreenerState(engine, version, toast, suggestions.suggestions);
+  /**
+   * `presented`, NOT `engine.read()` — the Screener is the cutline's own surface.
+   *
+   * Every other pile above is built from the projected reader; this was the one that grouped by
+   * the folder the mail server happens to hold a message in. The queue's whole question is "who
+   * is still owed a decision", and that is what the partition answers. The hook keeps the raw
+   * mirror for its mutations — see the `presented` parameter on `useScreenerState`.
+   *
+   * Consequence worth naming here, at the call site: `screener.unsuggestedSenders` feeds the
+   * metered auto-suggest batch below, so this also stops the spender from being offered senders
+   * the cutline had already ruled out as not-work.
+   */
+  const screener = useScreenerState(engine, version, toast, suggestions.suggestions, presented);
   /**
    * The opt-in's quote, bound to the SAME list the automatic batch will slice.
    *
