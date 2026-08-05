@@ -29,7 +29,7 @@ import { parseRef } from "@trafficflow/core/adapters/imap";
  *   watermark and is never enumerated again; and `own_copy` mail legitimately produces no
  *   `messages` row, so nothing else in the system can notice. A message the user actually sent left
  *   their mail client's view permanently, while the mailbox reported healthy throughout. Reproduced
- *   against a real IMAP server and real Postgres in `apps/worker/test/sent-loss.pg.test.ts`.
+ *   against a real IMAP server and a real database, not argued from the code.
  *
  * So this class is now the IN-CYCLE half of a two-part mechanism, and `message_failures` is the
  * durable half. What lives here is what must not be re-read per message: the attempt budget, the
