@@ -210,6 +210,7 @@ export function SettingsView({
   billingSection,
   securitySection,
   aboutSection,
+  autoSuggestSection,
 }: {
   /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
   notifications: NotificationsMeta | null;
@@ -312,6 +313,22 @@ export function SettingsView({
    * three facts nobody can find anywhere else; facts belong in settings.
    */
   aboutSection?: ReactNode;
+  /**
+   * THE AUTO-WORK OPT-IN, injected — the general pane's one row that can spend money.
+   *
+   * The same seam as {@link accountSection} and for the same two reasons at once. It needs
+   * `app/api-client` (a `dryRun` quote and a consent write), which `scripts/publish-desktop.mjs`
+   * DENYs from this shared file; and there is nothing for it to buy on a standalone Desktop
+   * install, which has no account, no credits and a local model. Absent ⇒ the row does not
+   * exist, so the setting is structurally unreachable wherever it could not work — rather than
+   * present and refusing, which is a control that cost something to discover.
+   *
+   * It is a node and not a `{ label, node }` like {@link seedSection} because it belongs INSIDE
+   * the general pane's existing section rather than adding a pane of its own: it is a setting
+   * about the Screener, and a nav entry for one row is a worse place to find it than under the
+   * heading everything else about defaults already lives.
+   */
+  autoSuggestSection?: ReactNode;
 }) {
   const t = useTranslations("settings");
   /** The `tag` namespace owns what a tag IS; `settings` owns this pane's chrome. */
@@ -394,6 +411,10 @@ export function SettingsView({
                   />
                 }
               />
+              {/* LAST in the pane, because it is the only row here that spends money: language
+                  and theme are free and reversible, and a control with a cost belongs below the
+                  ones without. Absent on Desktop and on the demo — see the prop. */}
+              {autoSuggestSection}
             </SettingsSection>
           ) : null}
 

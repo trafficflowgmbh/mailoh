@@ -581,6 +581,25 @@ body.reading .shell {
   color: var(--ink3);
   flex-basis: 100%;
 }
+/* The auto-work opt-in's confirm, in the General pane. Indented under the row it belongs to and
+   sharing that row's price and note type with the manual purchase above — one presentation for
+   "here is what the server says this costs", wherever it is being asked. */
+.set-auto-confirm {
+  padding: 2px 2px 6px 2px;
+  border-top: 1px solid var(--hair-soft);
+}
+.set-auto-confirm .set-note-inline {
+  padding: 8px 0 0;
+  max-width: 62ch;
+  line-height: 1.55;
+}
+/* The price sits between the sentences and the confirm, so it cannot be missed on the way. */
+.set-auto-quote {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 12px 0;
+}
 /* held-mail preview — the sender's actual mail, stream-style cards */
 .scn-mails {
   max-width: 640px;

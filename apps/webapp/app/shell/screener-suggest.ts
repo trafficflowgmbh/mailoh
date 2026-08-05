@@ -75,6 +75,45 @@ export interface SuggestBatchControl {
   cancel: () => void;
 }
 
+/**
+ * THE OPT-IN'S QUOTE — what turning the automatic batch ON would cost, before it is on.
+ *
+ * The automatic path has no dry run of its own (see the effect that fires it), and the reason
+ * it is allowed not to have one is THIS: the cost was named when the setting was turned on.
+ * That sentence was a promise about a control that did not exist — the flag was reachable only
+ * by a raw API call — so this is the control that makes it true.
+ *
+ * It prices and stops. There is no `confirm` here on purpose: the thing being consented to is a
+ * SETTING, written through `useConsentState` so the flag the spender reads and the flag the
+ * switch shows are one value. A `confirm` on this object would be a second writer and the
+ * beginning of the stale-OFF bug — switch off in Settings, Screener still buys.
+ */
+export interface AutoOptInControl {
+  /**
+   * Is there a server to ask? False on the desktop build and on any host with no API base.
+   *
+   * The row must not render at all where this is false. The flag cannot become true there —
+   * `useConsentState` skips its fetch, and the automatic effect checks `apiConfigured()` — so a
+   * switch would be a control with nothing behind it, which is the defect this slice is fixing
+   * rather than one it may create.
+   */
+  supported: boolean;
+  /** The ceiling on one automatic batch — {@link AUTO_BATCH_SIZE}, never a literal in a view. */
+  batchSize: number;
+  /** Unsuggested senders waiting right now. The batch is the first {@link batchSize} of them. */
+  available: number;
+  /** `running` never occurs: this control buys nothing. */
+  phase: SuggestPhase;
+  /** The SERVER's quote for the next batch. Null until the dry run answers — and no price, no consent. */
+  quote: { senders: number; credits: number } | null;
+  /** One translated sentence about the current state, or null. */
+  notice: string | null;
+  /** Price the next batch. Opens the confirm. */
+  open: () => void;
+  /** Abandon the confirm and discard any dry run still in flight. */
+  cancel: () => void;
+}
+
 export interface ScreenerSuggestions {
   suggestions: SuggestionOverlay;
   /**
@@ -85,6 +124,16 @@ export interface ScreenerSuggestions {
    * cycle. Called during render, it closes over the list for the one press that follows.
    */
   forSenders: (addresses: string[]) => SuggestBatchControl;
+  /**
+   * Bind the OPT-IN's quote to the same sender list.
+   *
+   * Takes the list explicitly rather than reading {@link forSenders}' captured queue, and that
+   * is load-bearing: `forSenders` is called only inside the Screener branch of the shell's
+   * render (`AppShell.tsx`), so on a tab that went straight to Settings the captured queue is
+   * still empty. A quote read from it would say "0 senders · 0 credits" about a batch that is
+   * about to buy ten — a lie in the direction of spending.
+   */
+  autoOptIn: (addresses: string[]) => AutoOptInControl;
 }
 
 /**
@@ -118,7 +167,7 @@ const HYDRATE_LIMIT = 200;
  * It is also why the flag needs no per-period ceiling stored on the account: the only thing that
  * can spend automatically is a person opening the Screener, and each open buys at most this many.
  */
-const AUTO_BATCH_SIZE = 10;
+export const AUTO_BATCH_SIZE = 10;
 
 export function useScreenerSuggestions(opts: {
   /** Is the Screener on screen? Hydration is deferred until it is. */
@@ -143,6 +192,18 @@ export function useScreenerSuggestions(opts: {
   const [quote, setQuote] = useState<{ senders: number; credits: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [maxPerRequest, setMaxPerRequest] = useState(ASSUMED_MAX_PER_REQUEST);
+  /**
+   * The opt-in confirm's state, held apart from the manual control's three fields above.
+   *
+   * One object rather than three `useState`s so the phase and the price it belongs to can never
+   * be painted from different renders — `ready` with a stale `quote` is the frame that shows a
+   * pressable button under the wrong number.
+   */
+  const [optIn, setOptIn] = useState<{
+    phase: SuggestPhase;
+    quote: { senders: number; credits: number } | null;
+    notice: string | null;
+  }>({ phase: "closed", quote: null, notice: null });
 
   /**
    * Everything a stale answer must not be allowed to overwrite.
@@ -182,6 +243,15 @@ export function useScreenerSuggestions(opts: {
     autoFired: false,
     autoDisarmed: false,
     queue: [] as string[],
+    /**
+     * The opt-in quote's OWN press counter, deliberately not `run`.
+     *
+     * The two flows are reachable from different views and must not cancel each other: sharing
+     * `run` would mean opening the Settings confirm silently discards a purchase the Screener
+     * has in flight, and a purchase discarded after the request left is money spent with the
+     * answer thrown away.
+     */
+    optInRun: 0,
   });
 
   /**
@@ -464,7 +534,69 @@ export function useScreenerSuggestions(opts: {
     };
   };
 
-  return { suggestions, forSenders };
+  /**
+   * Deliberately NOT memoised, for the reason {@link forSenders} gives: it closes over `optIn`,
+   * so a `useCallback` would need it in the dependency array and the one it would get wrong is
+   * the phase — a stale closure keeps reporting `pricing` after the price landed and the confirm
+   * never becomes pressable.
+   */
+  const autoOptIn = (addresses: string[]): AutoOptInControl => {
+    const open = () => {
+      const set = addresses.slice(0, AUTO_BATCH_SIZE);
+      // NOTHING TO BUY IS ANSWERED LOCALLY, not by the server. `parseSenderSet` 400s on an empty
+      // list, so asking would turn "your Screener is empty" into "that setting did not save".
+      // The setting is still turnable on from here — an empty queue today says nothing about the
+      // senders it will hold next week, which is the whole point of an automatic batch.
+      if (set.length === 0) {
+        io.current.optInRun++;
+        setOptIn({ phase: "ready", quote: { senders: 0, credits: 0 }, notice: t("suggest.nothing") });
+        return;
+      }
+      const run = ++io.current.optInRun;
+      setOptIn({ phase: "pricing", quote: null, notice: null });
+      void (async () => {
+        try {
+          const res = await screenerApi.suggest(set, { dryRun: true });
+          if (io.current.optInRun !== run) return;
+          // NO PRICE, NO CONSENT — the same rule the manual control states, and it has to be
+          // restated here rather than shared because this is the flow that authorises EVERY
+          // later batch rather than one. A server too old to carry `quotedCredits` leaves the
+          // cost unknown, and the confirm stays disabled because `quote` is null. Multiplying
+          // the count by an assumed `AI_ACTION_COST` is the guess the field exists to remove.
+          if (typeof res.quotedCredits !== "number") {
+            setOptIn({ phase: "ready", quote: null, notice: t("suggest.failed") });
+            return;
+          }
+          setOptIn({
+            phase: "ready",
+            quote: { senders: res.quoted, credits: res.quotedCredits },
+            notice: res.quoted === 0 ? t("suggest.nothing") : null,
+          });
+        } catch (err) {
+          if (io.current.optInRun !== run) return;
+          // The server's own sentence — no classifier connected, AI switched off, no credits.
+          // A second taxonomy here is how a user with an empty balance is told the model is down.
+          setOptIn({ phase: "ready", quote: null, notice: messageFor(err, t("suggest.failed")) });
+        }
+      })();
+    };
+
+    return {
+      supported: apiConfigured(),
+      batchSize: AUTO_BATCH_SIZE,
+      available: addresses.length,
+      phase: optIn.phase,
+      quote: optIn.quote,
+      notice: optIn.notice,
+      open,
+      cancel: () => {
+        io.current.optInRun++;
+        setOptIn({ phase: "closed", quote: null, notice: null });
+      },
+    };
+  };
+
+  return { suggestions, forSenders, autoOptIn };
 }
 
 /**

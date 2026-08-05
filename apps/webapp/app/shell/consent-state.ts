@@ -46,6 +46,15 @@ export interface ConsentState {
    * know" to "buy something".
    */
   autoSuggest: boolean;
+  /**
+   * WHEN it was turned on, for the settings row that says so. Null whenever it is off.
+   *
+   * Kept beside {@link autoSuggest} rather than replacing it, because the two answer different
+   * questions and only one of them authorises spending. Nothing may branch on this field: it is
+   * display only, and `autoSuggest` stays the single boolean the spender reads — a second
+   * derivation of "is it on" is how the two get to disagree.
+   */
+  autoSuggestAt: string | null;
   /** False until the first answer lands — an onboarding step must not flash before then. */
   known: boolean;
 }
@@ -55,6 +64,7 @@ const RESTING: ConsentState = {
   dormancyDays: DEFAULT_DORMANCY_DAYS,
   activeUndecidedSenders: 0,
   autoSuggest: false,
+  autoSuggestAt: null,
   known: false,
 };
 
@@ -101,6 +111,8 @@ export function useConsentState(active: boolean): ConsentState & {
           // asked of this field, and splitting them would invite a branch where one of them
           // becomes true.
           autoSuggest: wire.autoSuggestAt != null,
+          // Normalised to null so `undefined` (an API from before mail 0040) cannot reach a view.
+          autoSuggestAt: wire.autoSuggestAt ?? null,
           known: true,
         });
       } catch {
@@ -113,7 +125,10 @@ export function useConsentState(active: boolean): ConsentState & {
   const setAutoSuggest = useCallback(async (enabled: boolean): Promise<boolean> => {
     const res = await consentApi.setAutoSuggest(enabled);
     const on = res.autoSuggestAt != null;
-    setState((prev) => ({ ...prev, autoSuggest: on }));
+    // BOTH FIELDS FROM THE SAME ECHO. Setting the boolean from the server and the instant from
+    // the argument (or leaving it stale) is how a row reads "On since <yesterday>" about a write
+    // that was refused — the two must move together or not at all.
+    setState((prev) => ({ ...prev, autoSuggest: on, autoSuggestAt: res.autoSuggestAt ?? null }));
     return on;
   }, []);
 

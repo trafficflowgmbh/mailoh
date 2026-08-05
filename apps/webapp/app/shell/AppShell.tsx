@@ -75,6 +75,7 @@ import { useRemoteImages } from "./remote-images";
 import { useConsentState } from "./consent-state";
 import { useScreenerState } from "./screener-state";
 import { useScreenerSuggestions } from "./screener-suggest";
+import { AutoSuggestRow } from "./AutoSuggestRow";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
   composePlan,
@@ -543,6 +544,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     toast,
   });
   const screener = useScreenerState(engine, version, toast, suggestions.suggestions);
+  /**
+   * The opt-in's quote, bound to the SAME list the automatic batch will slice.
+   *
+   * Called unconditionally, unlike `forSenders` — which is bound inside the Screener branch of
+   * the render below. That asymmetry is the whole reason `autoOptIn` takes the list as an
+   * argument instead of reading the queue `forSenders` captures: a tab that opened Settings
+   * without ever visiting the Screener has captured nothing, and a quote read from that empty
+   * queue would price a ten-sender batch at zero. It writes no refs and schedules nothing, so
+   * calling it every render is free.
+   */
+  const autoOptIn = suggestions.autoOptIn(screener.unsuggestedSenders);
 
   /* ── view state ── */
   const [ohboxSel, setOhboxSel] = useState<string | null>(null);
@@ -2725,6 +2737,27 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                     </SettingsSection>
                   ),
                 }}
+                /* THE AUTO-WORK OPT-IN. Built here rather than injected from `CloudShell` for
+                   the reason `seedSection` gives — it needs shell state — but a different piece
+                   of it: the flag has to be written through the SAME `useConsentState` the
+                   Screener's spender reads (`suggestions` above), or turning it off in Settings
+                   leaves this tab still authorised and the next Screener open buys a batch the
+                   user just revoked. `autoOptIn` is bound to `screener.unsuggestedSenders` here,
+                   at the render, so the set that is priced is the set that will be bought.
+
+                   `supported` is `apiConfigured()`, which is what withholds the row from the
+                   Desktop mirror this file is copied into: no server, no account, nothing to
+                   buy. `demo` is withheld for the same reason as every other injected pane. */
+                autoSuggestSection={
+                  demo || !autoOptIn.supported ? undefined : (
+                    <AutoSuggestRow
+                      on={consent.autoSuggest}
+                      since={consent.autoSuggestAt}
+                      control={autoOptIn}
+                      setAutoSuggest={consent.setAutoSuggest}
+                    />
+                  )
+                }
                 billingSection={demo ? undefined : billingSection}
                 /* ABOUT — the one injected pane the demo also gets, because the demo has
                    something true to say here and no API to say it with. The live body comes
