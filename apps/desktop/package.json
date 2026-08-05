@@ -12,7 +12,12 @@
     "smoke": "node scripts/smoke.mjs",
     "tauri": "tauri"
   },
+  "//deps": "The four below are not used by anything under apps/desktop/src — they are imported by the shared client sources this project compiles (the rich text editor in the compose and reply surfaces, and the mail renderer's HTML sanitizer). They are declared here because this manifest is the only one published with those sources: without them the mirror's `tsc --noEmit` and `vite build` both fail on modules npm was never asked to install. Licences, checked before adding: the TipTap packages and their transitive @tiptap/core and @tiptap/pm are MIT; dompurify is (MPL-2.0 OR Apache-2.0), taken here under Apache-2.0. All are compatible with this repository's GPL-3.0.",
   "dependencies": {
+    "@tiptap/extension-link": "^3.29.2",
+    "@tiptap/react": "^3.29.2",
+    "@tiptap/starter-kit": "^3.29.2",
+    "dompurify": "^3.4.13",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "use-intl": "^3.26.5"

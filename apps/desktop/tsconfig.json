@@ -30,6 +30,16 @@
       "react-dom": ["./node_modules/@types/react-dom"],
       "react-dom/client": ["./node_modules/@types/react-dom/client"],
       "next-intl": ["./node_modules/use-intl"],
+      /* The editor and sanitizer packages, for the same reason as the entries above and
+         not for a different one: they are imported from apps/webapp/app/**, and in the
+         published mirror there is no node_modules beside those files to walk up into.
+         Mapping them here is safe in the monorepo too — TypeScript falls back to ordinary
+         module resolution when a `paths` target does not exist, which is what happens in a
+         workspace install where the copy lives next to the web client instead. */
+      "dompurify": ["./node_modules/dompurify"],
+      "@tiptap/react": ["./node_modules/@tiptap/react"],
+      "@tiptap/starter-kit": ["./node_modules/@tiptap/starter-kit"],
+      "@tiptap/extension-link": ["./node_modules/@tiptap/extension-link"],
       "@ohmail/tokens": ["../../packages/tokens/src/index.ts"],
       "@ohmail/fixtures": ["../../packages/fixtures/src/index.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
