@@ -29,12 +29,30 @@
  * mailbox legitimately waits behind the first with a null stamp the whole time.
  *
  * **Therefore the growing state keys on THE MIRROR GROWING — the client's own message count
- * rising across syncs — and on nothing the server timestamps.** `lastSyncAt` is consulted in
- * exactly one place ({@link deriveMailState}'s `awaiting` arm) and only as `=== null`, which
- * is the one reading the two defects above leave intact: only ids in `synced` are ever
+ * rising across syncs.** It does NOT read `lastSyncAt` as a progress signal, in either direction:
+ * that column is consulted in exactly one place ({@link deriveMailState}'s `awaiting` arm) and only
+ * as `=== null`, the one reading the two defects above leave intact — only ids in `synced` are ever
  * stamped, so a null really does mean "not one cycle has completed for this mailbox yet". The
  * POSITIVE reading — "this mailbox synced 207 seconds ago" — is the worthless one, and it is
  * never taken.
+ *
+ * ── THE ONE STAMP THAT IS SOUND TO READ, AND WHY (O2) ───────────────────────────────────
+ *
+ * The mirror-growth signal is BLIND at the edges of an import: a first import is drained
+ * newest-first in bounded batches, so the server holds a PARTIAL mailbox for minutes, and a tab
+ * that catches up to that partial state — or opens onto it after the growth run has lapsed — sees
+ * a settled mirror and cannot tell "finished" from "not finished, but this client has stopped
+ * observing progress". No client fact distinguishes them; only the server knows.
+ *
+ * So there is a SECOND stamp, `initial_import_completed_at`, and it is read as a FLOOR: while a
+ * connected mailbox has not been stamped, `importing` speaks regardless of the mirror. It is the
+ * stamp `lastSyncAt` could not be — PER-MAILBOX rather than shared, and LATE (written only once a
+ * cycle drains with `hasBacklog === false`) rather than early — so the two defects that make
+ * `lastSyncAt` worthless do not touch it. It is still read only as `=== null` ("not known to be
+ * finished"), never positively, and a MISSING field (a server that predates the column) reads as
+ * `undefined`, not `=== null`, so a deploy skew degrades to growth-only rather than a false import.
+ * The line "reads no server timestamp" that used to stand here was true of the growth signal and
+ * is why the floor is a SEPARATE arm from {@link isImporting} rather than a third case inside it.
  *
  * ── WHY THE DERIVATION IS HERE AND NOT IN A VIEW ────────────────────────────────────────
  *
@@ -166,6 +184,19 @@ export interface MailboxFacts {
   syncBlockedSince: string | null;
   /** End of a completed worker cycle. Read ONLY as `=== null`. See the header. */
   lastSyncAt: string | null;
+  /**
+   * When this mailbox's FIRST import finished, or null while it has not (mail 0038).
+   *
+   * The ONE server stamp this module reads, and it is sound where `lastSyncAt` is not: it is
+   * per-mailbox (not shared across the pass) and late (stamped only once a cycle drains with no
+   * backlog), so its two failure modes do not apply. {@link deriveMailState} reads it as a FLOOR,
+   * and ONLY as `=== null`: a null means the import is not known to be finished, which keeps
+   * `importing` speaking whatever the mirror is doing. A missing field — an older server that has
+   * not deployed the column — reads as `undefined`, which is not `=== null`, so a deploy skew
+   * degrades to the prior growth-only behaviour rather than a false "still importing". See the
+   * header.
+   */
+  initialImportCompletedAt: string | null;
   /** When this mailbox was connected. The one per-mailbox clock that is not shared. */
   createdAt: string;
 }
@@ -372,7 +403,9 @@ export function isGrowing(g: MirrorGrowth, now: number): boolean {
  * latch: it is true for seconds, it covers exactly the cold-start window `seedGrowth` describes,
  * and a run that matters outlives it by qualifying on its own.
  *
- * Not one of them reads a timestamp the server wrote. That is WORKLIST.md:510 verbatim.
+ * Not one of them reads a timestamp the server wrote. That is WORKLIST.md:510 verbatim — and it
+ * is why the import FLOOR (`initial_import_completed_at`, the case a partial server state needs)
+ * is a separate arm in {@link deriveMailState}, not a third way into this function. See the header.
  */
 export function isImporting(g: MirrorGrowth, bootstrapping: boolean, now: number): boolean {
   if (g.importing) return now - g.lastRiseAt < IMPORT_END_IDLE_MS;
@@ -862,6 +895,46 @@ function climb(input: MailStateInputs): MailState {
       minutes: minutesSince(since, now),
       slow: since !== null && now - new Date(since).getTime() >= AWAITING_SLOW_MS,
     };
+  }
+
+  // ── 2b. THE IMPORT FLOOR — the SERVER has not stamped this mailbox's first import done ──
+  //
+  // ── THE CASE ARM 2 CANNOT SEE ────────────────────────────────────────────────────────
+  //
+  // A first import drains newest-first in bounded batches over minutes, so the server holds a
+  // PARTIAL mailbox — a recent block, a gap, then older mail — for the whole of it. Arm 2 keys on
+  // THIS CLIENT's mirror growing, which is the right progress signal but a blind one at the edges:
+  // a tab that opens onto the partial state after the growth run has lapsed, or that catches up to
+  // it, sees a settled mirror and falls through to the Screener pointer below — declaring a
+  // mailbox with a hole in it complete. The Screener then shows a recent block, jumps to old mail,
+  // and presents that as the whole of it.
+  //
+  // `initial_import_completed_at` is the server's own answer, and it is the ONE stamp this module
+  // reads. It is stamped once, per mailbox, only when a worker cycle drains with no backlog — so
+  // unlike `lastSyncAt` it is neither shared nor early, and a NULL genuinely means "the first
+  // import is not finished". Read as a FLOOR: while any connected mailbox has not been stamped, the
+  // strip says "importing" regardless of what the mirror is doing.
+  //
+  // `=== null` AND NOT `== null`: an older server that has not deployed the column omits the field,
+  // which arrives as `undefined`. `undefined === null` is false, so a deploy skew degrades to the
+  // prior growth-only behaviour rather than announcing a false import over every settled mailbox —
+  // the same `typeof`-shaped care the stand-down arm above takes for `disabledReason`.
+  //
+  // `some` AND NOT `every`, which is the opposite of `noCycleYet` one arm up, because the sentence
+  // is: "importing" over a partially-full mirror is TRUE when even one mailbox is still importing,
+  // whereas "nothing has arrived" over a mirror the other mailbox already filled would be false.
+  //
+  // `mirrored > 0` is the gate, and it is what confines this to the case it exists for. The defect
+  // is a PARTIAL mailbox — mail on screen with a hole in it — reading as complete, so there has to
+  // be mail on screen for the floor to matter. With an empty mirror there is nothing being
+  // presented as complete: the `awaiting` arm above already owns "connected, nothing arrived", and
+  // its deliberate `every` (a mixed pair stays QUIET, the young mailbox's status belongs on its
+  // ROW) must not be overridden here by a `some` that would announce an account-wide import over a
+  // mirror with zero rows in it. Below `awaiting` and gated on the same `mirrored > 0` the Screener
+  // pointer uses, so when the mirror has content the answer is exactly one of: still importing
+  // (here) or done and pointing at the Screener (below).
+  if (mirrored > 0 && connected.some((m) => m.initialImportCompletedAt === null)) {
+    return { ...QUIET, key: "importing", clock: true, count: mirrored };
   }
 
   // ── 3. THE SCREENER POINTER — a candidate, for the OHBOX to finish ─────────────────────
