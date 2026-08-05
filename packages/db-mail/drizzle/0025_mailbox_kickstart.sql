@@ -1,0 +1,55 @@
+-- THE ONCE-PER-MAILBOX KICKSTART MARKER — one column, and it is the whole of the kickstart's
+-- idempotency.
+--
+-- ══ WHAT THIS FIXES, MEASURED ════════════════════════════════════════════════════════════
+--
+-- A virgin mailbox was not HEY-shaped, it was Screener-shaped. Measured on a seeded world before
+-- this slice: the Ohbox held nothing but OTP codes, `ohmail/Receipts` was empty despite the
+-- receipts in the corpus, and the great majority of the mailbox sat in `ohmail/Screener`
+-- — every thread reply, every existing correspondent, every receipt. `rules` = 0 and
+-- `routing_decisions` = 0, so the deterministic layer had nothing to run on and the AI layer
+-- had never been asked — so a new mailbox filled its Ohbox and its Reads pile with whatever
+-- arrived, and none of the routing the product promises actually ran.
+--
+-- The cause is one line of `packages/core/src/rules.ts`: an address not in `contacts` is
+-- screened, and `contacts` starts empty. The mailbox already contains the answer — the Sent
+-- folder is a list of people the user chose to write to — and nothing was reading it. So at
+-- CONNECT the worker now scans Sent, imports its recipients into `contacts` (which IS
+-- `knownSenders`, `drizzle-repo.ts`), and re-routes the Screener backlog once.
+--
+-- ══ WHY A COLUMN AND NOT A JOB TABLE ═════════════════════════════════════════════════════
+--
+-- Because the fact is one bit per mailbox and it belongs to the mailbox. A queue table would
+-- add a lifecycle (claimed / failed / retried) to a pass whose entire failure policy is "do it
+-- again next attach", and it would need its own fencing against the leader handover that
+-- `mailboxes` writes already have.
+--
+--   kickstart_at   when the kickstart COMPLETED. NULL = never run. Written by the worker
+--                  (the worker's kickstart pass) and by nothing else.
+--
+-- WRITTEN AFTER THE WORK, NOT BEFORE IT, and the direction is deliberate. Claiming the marker
+-- first would make a crash mid-scan permanent: the mailbox would be marked shaped while its
+-- contacts were half-imported and its backlog still in the Screener, with nothing to retry it
+-- ever again. Marking afterwards means a crash re-runs the pass, and re-running is safe because
+-- every write in it is idempotent — the contact upsert is ON CONFLICT DO NOTHING, and the
+-- re-route pass selects only messages still desired into `ohmail/Screener`, so a message it
+-- already moved is no longer a candidate.
+--
+-- ══ COMPATIBILITY ════════════════════════════════════════════════════════════════════════
+--
+-- Additive and nullable, so existing rows stay valid with no backfill — and NULL is exactly
+-- right for them: every mailbox connected before this deploy has genuinely never been
+-- kickstarted, and will be on its next attach. That is the intended migration path for the
+-- accounts that already exist; there is no separate data migration.
+--
+-- The reverse — a NEW binary against an un-migrated database — is why the deploy order is
+-- migration → API → worker. `MailboxService` selects WHOLE ROWS through the drizzle schema, so
+-- an API deployed first answers Postgres 42703 on the mailbox list and on the connect flow.
+-- `["mailboxes","kickstart_at"]` therefore joins `MAIL_SCHEMA_MARKERS` in
+-- `packages/api/src/routes/health.ts`, so that mistake reports `503 schema_incomplete` naming
+-- this migration instead of a 500 nobody can attribute. Same reasoning, same shape, as 0023.
+--
+-- ROLLBACK is `DROP COLUMN kickstart_at`. The cost is that every mailbox is kickstarted once
+-- more, which is idempotent by the paragraph above — not a data loss.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "kickstart_at" timestamp with time zone;

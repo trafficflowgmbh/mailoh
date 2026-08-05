@@ -1,0 +1,439 @@
+import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import {
+  messages, folderState, flagState, messageBodies, claimIdempotencyKey, recordChange, type Tx,
+} from "@trafficflow/db";
+import type { Destination, NativeLocator } from "@trafficflow/core/mail";
+import type { Db, ServiceContext } from "./context.js";
+import { ServiceError, IdempotencyRaceLost } from "./errors.js";
+import { materializeMessage } from "./dto/materialize.js";
+import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
+import type { Folder, MessageBodyDTO, MessageDTO, Page } from "./dto/types.js";
+
+const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+/** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
+const asDb = (tx: Tx): Db => tx as unknown as Db;
+
+/** The six canonical folders a message may live in / be moved to (core `Destination`). */
+const FOLDERS: Destination[] = [
+  "INBOX", "ohmail/Screener", "ohmail/Reads",
+  "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine",
+];
+const FOLDER_SET = new Set<string>(FOLDERS);
+
+/**
+ * The seven client "views". Five map directly to a `folder_state.desiredFolder`;
+ * `new_for_you`/`previously_seen` are the unread/read split of the Imbox (INBOX).
+ */
+export type MessageView =
+  | "imbox" | "feed" | "paper_trail" | "screened" | "quarantine"
+  | "new_for_you" | "previously_seen";
+
+const VIEW_FOLDER: Record<MessageView, Destination> = {
+  imbox: "INBOX",
+  feed: "ohmail/Reads",
+  paper_trail: "ohmail/Receipts",
+  screened: "ohmail/Screened",
+  quarantine: "ohmail/Quarantine",
+  new_for_you: "INBOX",
+  previously_seen: "INBOX",
+};
+/** null ⇒ no unread constraint; the two Imbox splits pin unread true/false. */
+const VIEW_UNREAD: Partial<Record<MessageView, boolean>> = {
+  new_for_you: true,
+  previously_seen: false,
+};
+
+export interface ListMessagesOptions {
+  view: string;          // validated against MessageView (400 on unknown)
+  cursor?: string;
+  limit?: number;
+}
+
+export interface MessagePatchBody {
+  unread?: boolean;
+  folder?: string;
+}
+
+/** `PATCH /messages` — one read-state decision applied to up to {@link MARK_SEEN_MAX_IDS} messages. */
+export interface MarkSeenBody {
+  ids?: unknown;
+  unread?: unknown;
+}
+
+/**
+ * The batch cap, and why there is one at all.
+ *
+ * The route runs ONE transaction that allocates one `change_log` seq per message from a row
+ * lock on `account_sync_state`, so the transaction's duration is the window during which
+ * every other mutation on this account blocks. An uncapped "select all, mark read" on a
+ * very large mailbox would hold that lock for tens of thousands of allocations and as many
+ * updates, on a platform with a 60 s `maxDuration` — the request dies mid-flight and the client
+ * retries the same impossible thing.
+ *
+ * 200 is the same number as `DEFAULT_SYNC_BATCH_MAX_MESSAGES`, deliberately: it is already the
+ * batch size the system is tuned for end to end, and a second, different "how many is too many"
+ * would be a number nobody could justify. A client with more than 200 sends more than one
+ * request, which is also what makes progress visible.
+ */
+export const MARK_SEEN_MAX_IDS = 200;
+
+/** A batch read-state result: the updated DTOs plus the LAST emitted seq for `X-Sync-Seq`. */
+export interface MarkSeenResult {
+  items: MessageDTO[];
+  seq: number | null;
+}
+
+/** Postgres would raise 22P02 on a malformed uuid, which is a 500 for what is plainly a 400. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export interface MoveBody {
+  folder: string;
+}
+
+/** Idempotency handle the route threads in when an `Idempotency-Key` is present. */
+export interface MoveIdempotency {
+  key: string;
+  requestHash: string;
+}
+
+/** A move's result: the DTO plus the `move` change seq to echo as `X-Sync-Seq`. */
+export interface MoveResult {
+  dto: MessageDTO;
+  seq: number;
+}
+
+/**
+ * A patch's result. `seq` is the LAST emitted change seq (null when the patch was
+ * a no-op — neither `unread` nor `folder` supplied).
+ */
+export interface PatchResult {
+  dto: MessageDTO;
+  seq: number | null;
+}
+
+// ── (date, id) keyset cursor. The list is ordered by `date desc, id desc`; the
+// cursor carries both components so the next page resumes exactly after the last
+// row under that composite order (the plain id-cursor helper only base64s the
+// opaque payload string). ──
+function encodeMsgCursor(date: Date | null, id: string): string {
+  return encodeListCursor(`${date ? date.getTime() : 0}:${id}`);
+}
+function decodeMsgCursor(cursor: string): { date: Date; id: string } {
+  const raw = decodeListCursor(cursor);
+  const i = raw.indexOf(":");
+  return { date: new Date(Number(raw.slice(0, i))), id: raw.slice(i + 1) };
+}
+
+/**
+ * MessageService — the read/patch/move surface over `messages`.
+ * Reads are account-scoped (a cross-account id is a 404). Every client-visible
+ * mutation runs ONE short `db.transaction` that writes the entity + a `change_log`
+ * row — and, for a move, DEFERS the physical IMAP move to the worker:
+ * the handler only writes `folder_state` desired=<target>, lastSetBy='us',
+ * reconcileStatus='pending'; the always-on worker's `reconcileMailbox` performs the
+ * IMAP move on its next cycle. The API NEVER opens an IMAP connection.
+ */
+export class MessageService {
+  async list(ctx: ServiceContext, opts: ListMessagesOptions): Promise<Page<MessageDTO>> {
+    const view = this.validView(opts.view);
+    const limit = clampLimit(opts.limit);
+    const desiredFolder = VIEW_FOLDER[view];
+    const unread = VIEW_UNREAD[view];
+
+    const filters = [
+      eq(messages.accountId, ctx.accountId),
+      eq(folderState.desiredFolder, desiredFolder),
+    ];
+    if (unread !== undefined) filters.push(eq(messages.unread, unread));
+    if (opts.cursor) {
+      const c = decodeMsgCursor(opts.cursor);
+      // Keyset for `date desc, id desc`: strictly "older" rows than the cursor tuple.
+      filters.push(or(lt(messages.date, c.date), and(eq(messages.date, c.date), lt(messages.id, c.id)))!);
+    }
+
+    const rows = await ctx.db.select({ id: messages.id, date: messages.date }).from(messages)
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(and(...filters))
+      .orderBy(desc(messages.date), desc(messages.id))
+      .limit(limit + 1);
+
+    const pageRows = rows.slice(0, limit);
+    const items: MessageDTO[] = [];
+    for (const r of pageRows) {
+      const dto = await materializeMessage(ctx.db, ctx.accountId, r.id);
+      if (dto) items.push(dto);
+    }
+    const last = pageRows[pageRows.length - 1];
+    const nextCursor = rows.length > limit && last ? encodeMsgCursor(last.date, last.id) : null;
+    return { items, nextCursor };
+  }
+
+  async get(ctx: ServiceContext, id: string): Promise<MessageDTO> {
+    // materializeMessage already scopes by accountId → null covers both missing
+    // and cross-account (IDOR): indistinguishable, both 404.
+    const dto = await materializeMessage(ctx.db, ctx.accountId, id);
+    if (!dto) throw new ServiceError("not_found", 404, "message not found");
+    return dto;
+  }
+
+  async getBody(ctx: ServiceContext, id: string): Promise<MessageBodyDTO> {
+    // message_bodies has NO account_id column → we MUST prove ownership through
+    // `messages` FIRST, otherwise the body is an IDOR read.
+    const [msg] = await ctx.db.select({ id: messages.id }).from(messages)
+      .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
+    if (!msg) throw new ServiceError("not_found", 404, "message not found");
+
+    const [body] = await ctx.db.select().from(messageBodies)
+      .where(eq(messageBodies.messageId, id)).limit(1);
+    // The stored `text` is already sensitivity-redacted — returned as-is,
+    // never re-derived. A message with no ingested body yields an empty body.
+    return {
+      messageId: id,
+      text: body?.text ?? "",
+      html: body?.html ?? null,
+      headers: (body?.headers as Record<string, unknown>) ?? {},
+      loadedRemoteContent: body?.loadedRemoteContent ?? false,
+    };
+  }
+
+  async patch(ctx: ServiceContext, id: string, body: MessagePatchBody): Promise<PatchResult> {
+    const folder = body.folder !== undefined ? this.validFolder(body.folder) : undefined;
+    if (body.unread !== undefined && typeof body.unread !== "boolean") {
+      throw new ServiceError("validation_failed", 400, "unread must be a boolean");
+    }
+
+    const seq = await asTx(ctx).transaction(async (tx) => {
+      const [msg] = await tx.select({
+        id: messages.id, unread: messages.unread, nativeLocator: messages.nativeLocator,
+      }).from(messages)
+        .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
+      if (!msg) throw new ServiceError("not_found", 404, "message not found");
+
+      let last: bigint | null = null;
+
+      if (body.unread !== undefined) {
+        await tx.update(messages).set({ unread: body.unread, updatedAt: ctx.now() })
+          .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
+        // The read model AND the intent, in the same transaction. Writing only `messages.unread`
+        // was the original bug: the flag never reached the mailbox, so it survived nothing.
+        await this.upsertDesiredSeen(tx, id, !msg.unread, !body.unread, ctx.now());
+        last = await recordChange(tx, {
+          accountId: ctx.accountId, entityType: "message", entityId: id, op: "update", meta: null,
+        });
+      }
+
+      if (folder !== undefined) {
+        const observed = await this.observedFolder(tx, id, msg.nativeLocator);
+        await this.upsertDesired(tx, id, observed, folder, ctx.now());
+        last = await recordChange(tx, {
+          accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
+          meta: { from: observed, to: folder },
+        });
+      }
+
+      return last;
+    });
+
+    const dto = await materializeMessage(ctx.db, ctx.accountId, id);
+    if (!dto) throw new ServiceError("internal", 500, "message vanished after write");
+    return { dto, seq: seq === null ? null : Number(seq) };
+  }
+
+  /**
+   * `PATCH /messages { ids, unread }` — ONE read-state decision over up to
+   * {@link MARK_SEEN_MAX_IDS} messages.
+   *
+   * It exists because the single-message PATCH could not express what the UI does. Marking a
+   * selection read was N requests, N transactions and N seqs, so a client that lost the network
+   * halfway left half a selection flipped and no way to tell which half; and the engine's
+   * optimistic overlay had to guess an ordering the server never promised.
+   *
+   * FOUR properties, each one load-bearing:
+   *
+   *  · **ONE transaction.** All N updates, all N `change_log` rows and all N `flag_state`
+   *    upserts commit together or not at all. A partial batch is unrepresentable, which is what
+   *    lets the client apply its optimistic overlay to the whole selection.
+   *  · **Account scoping is a REJECTION, not a filter.** One id belonging to another account fails
+   *    the whole request with 404 and rolls back every other message in it. Silently skipping
+   *    foreign ids would answer 200 to a probe and let it learn, from the response length,
+   *    which ids exist in someone else's account — no cross-account disclosure is absolute and it
+   *    binds here. Unknown and cross-account are the same 404, indistinguishable, for the same reason.
+   *  · **One `recordChange` PER MESSAGE.** The delta feed is per-entity; a single change for a
+   *    batch would be an entity id the client cannot resolve. The per-account seq stays gap-free
+   *    because `allocateSeq` holds the counter row's lock for the whole transaction.
+   *  · **`flag_state` desired-state only. NO IMAP.** The API never opens a connection
+   *    to apply organization. This writes what the user wants; `reconcileFlags` in the worker
+   *    puts `\Seen` on the real server on its next cycle.
+   */
+  async markSeen(ctx: ServiceContext, body: MarkSeenBody): Promise<MarkSeenResult> {
+    if (typeof body.unread !== "boolean") {
+      throw new ServiceError("validation_failed", 400, "unread must be a boolean");
+    }
+    if (!Array.isArray(body.ids) || body.ids.length === 0) {
+      throw new ServiceError("validation_failed", 400, "ids must be a non-empty array of message ids");
+    }
+    if (body.ids.length > MARK_SEEN_MAX_IDS) {
+      throw new ServiceError(
+        "payload_too_large", 413,
+        `ids must contain at most ${MARK_SEEN_MAX_IDS} message ids`,
+      );
+    }
+    for (const id of body.ids) {
+      if (typeof id !== "string" || !UUID_RE.test(id)) {
+        throw new ServiceError("validation_failed", 400, "ids must be message ids");
+      }
+    }
+    const unread = body.unread;
+    // De-duplicated but ORDER-PRESERVING: the same id twice is one update and one change, and
+    // the caller's order is the order the deltas land in.
+    const ids = [...new Set(body.ids as string[])];
+
+    const seq = await asTx(ctx).transaction(async (tx) => {
+      const owned = await tx.select({ id: messages.id, unread: messages.unread })
+        .from(messages)
+        .where(and(inArray(messages.id, ids), eq(messages.accountId, ctx.accountId)));
+      // The scoping predicate above is the whole of account scoping here. If the count does not match, at
+      // least one id is missing or belongs to someone else — throw, and the transaction takes
+      // every other write with it.
+      if (owned.length !== ids.length) {
+        throw new ServiceError("not_found", 404, "message not found");
+      }
+      const observedById = new Map(owned.map((m) => [m.id, !m.unread]));
+
+      let last: bigint | null = null;
+      for (const id of ids) {
+        await tx.update(messages).set({ unread, updatedAt: ctx.now() })
+          .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
+        await this.upsertDesiredSeen(tx, id, observedById.get(id) ?? false, !unread, ctx.now());
+        last = await recordChange(tx, {
+          accountId: ctx.accountId, entityType: "message", entityId: id, op: "update", meta: null,
+        });
+      }
+      return last;
+    });
+
+    const items: MessageDTO[] = [];
+    for (const id of ids) {
+      const dto = await materializeMessage(ctx.db, ctx.accountId, id);
+      if (dto) items.push(dto);
+    }
+    return { items, seq: seq === null ? null : Number(seq) };
+  }
+
+  async move(
+    ctx: ServiceContext, id: string, body: MoveBody,
+    opts: { idempotency?: MoveIdempotency | null } = {},
+  ): Promise<MoveResult> {
+    const folder = this.validFolder(body.folder);
+
+    return asTx(ctx).transaction(async (tx) => {
+      const [msg] = await tx.select({ id: messages.id, nativeLocator: messages.nativeLocator }).from(messages)
+        .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
+      if (!msg) throw new ServiceError("not_found", 404, "message not found");
+
+      // Write DESIRED state only. observedFolder is the worker's truth — read
+      // and PRESERVE it (never overwrite on conflict); the worker flips it when the
+      // physical IMAP move lands. NO adapter, NO IMAP here.
+      const observed = await this.observedFolder(tx, id, msg.nativeLocator);
+      await this.upsertDesired(tx, id, observed, folder, ctx.now());
+      const seqBig = await recordChange(tx, {
+        accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
+        meta: { from: observed, to: folder },
+      });
+      const seq = Number(seqBig);
+
+      const dto = await materializeMessage(asDb(tx), ctx.accountId, id);
+      if (!dto) throw new ServiceError("internal", 500, "message vanished after write");
+
+      // Store the verbatim response IN this tx so a commit-then-crash retry
+      // replays the same 200 + seq (never re-executing the move). Copied from
+      // PushService — services can't import packages/api, so we insert directly.
+      if (opts.idempotency) {
+        const claimed = await claimIdempotencyKey(tx, {
+          accountId: ctx.accountId,
+          key: opts.idempotency.key,
+          requestHash: opts.idempotency.requestHash,
+          responseStatus: 200,
+          responseJson: dto,
+          seq: seq,
+          now: ctx.now(),
+        });
+        // A LOST claim = a concurrent same-key request committed first. Throwing rolls THIS
+        // transaction back (effect included) and the caller replays the winner's response.
+        if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
+      }
+
+      return { dto, seq };
+    });
+  }
+
+  // ── helpers ──
+
+  /** The observed folder: the folder_state truth, else the message's native locator, else INBOX. */
+  private async observedFolder(tx: Tx, id: string, nativeLocator: unknown): Promise<string> {
+    const [fs] = await tx.select({ observedFolder: folderState.observedFolder }).from(folderState)
+      .where(eq(folderState.messageId, id)).limit(1);
+    if (fs) return fs.observedFolder;
+    const loc = (nativeLocator as NativeLocator | null) ?? null;
+    return loc?.folder ?? "INBOX";
+  }
+
+  /**
+   * Upsert `flag_state` desired=<seen>, us — preserving `observed_seen` on conflict.
+   *
+   * `observedSeen` is only ever supplied for the INSERT, and the fallback is the message's
+   * current `messages.unread`: before anyone has expressed an intent, the read model IS what the
+   * server last told us. On conflict the column is deliberately omitted from the `set`, exactly
+   * as `upsertDesired` omits `observedFolder` — the worker owns it, and an API request that
+   * overwrote it would erase the record of what IMAP actually says and make the reconciler
+   * believe it had already converged.
+   *
+   * `reconcileStatus` is therefore recomputed IN SQL against the STORED `observed_seen`, not
+   * against the value guessed at call time: on the update path the caller's guess is stale by
+   * definition. Both writers use the same rule — `pending` only when desired ≠ observed — so a
+   * no-op click never queues an IMAP round trip.
+   */
+  private async upsertDesiredSeen(
+    tx: Tx, id: string, observedSeen: boolean, desiredSeen: boolean, now: Date,
+  ): Promise<void> {
+    await tx.insert(flagState).values({
+      messageId: id, desiredSeen, observedSeen,
+      lastSetBy: "us", reconcileStatus: desiredSeen === observedSeen ? "reconciled" : "pending",
+      conflict: false,
+    }).onConflictDoUpdate({
+      target: flagState.messageId,
+      set: {
+        desiredSeen, lastSetBy: "us", conflict: false, updatedAt: now,
+        reconcileStatus: sql`case when ${flagState.observedSeen} = ${desiredSeen} then 'reconciled' else 'pending' end`,
+      },
+    });
+  }
+
+  /** Upsert folder_state desired=<folder>, pending, us — preserving observedFolder on conflict. */
+  private async upsertDesired(tx: Tx, id: string, observed: string, folder: string, now: Date): Promise<void> {
+    await tx.insert(folderState).values({
+      messageId: id, desiredFolder: folder, observedFolder: observed,
+      lastSetBy: "us", reconcileStatus: "pending", conflict: false,
+    }).onConflictDoUpdate({
+      target: folderState.messageId,
+      // observedFolder deliberately omitted → preserved (worker owns it).
+      set: { desiredFolder: folder, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: now },
+    });
+  }
+
+  private validView(v: string): MessageView {
+    if (!(v in VIEW_FOLDER)) {
+      throw new ServiceError("validation_failed", 400, "view must be one of imbox, feed, paper_trail, screened, quarantine, new_for_you, previously_seen");
+    }
+    return v as MessageView;
+  }
+
+  private validFolder(v: unknown): Folder {
+    if (typeof v !== "string" || !FOLDER_SET.has(v)) {
+      throw new ServiceError("validation_failed", 400, "folder is not a canonical folder");
+    }
+    return v as Folder;
+  }
+}
+
+export const messageService = new MessageService();

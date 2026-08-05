@@ -1,0 +1,35 @@
+-- SPLIT FROM `0021_login_identity_and_invite_revocation` (single-journal era) — the MAIL half.
+--
+-- ══ THE LOGIN EMAIL IS GLOBALLY UNIQUE ═══════════════════════════════════════════════════
+--
+-- `users` carried `UNIQUE (account_id, email)` and a NON-unique index on `email` alone. That
+-- composite can never fire on registration, because registration inserts a BRAND NEW
+-- `accounts` row before the `users` row — so every registration has an `account_id` nobody
+-- else has, and the pair is unique by construction whatever the address is.
+--
+-- What actually stood between two accounts sharing one login address was an unlocked
+-- SELECT-then-INSERT inside the registering transaction:
+--
+--     select id from users where email = $1 limit 1     -- sees nothing
+--     ...                                                -- the other transaction is here too
+--     insert into users (account_id, email) values (...) -- both succeed
+--
+-- Under READ COMMITTED neither transaction sees the other's uncommitted row, so the check is
+-- correct and the outcome is still wrong. The contended thing is the ABSENCE of a row, and
+-- there is nothing to lock; only a unique index can serialize that. Login then does
+-- `where email = $1 limit 1` with no ORDER BY, so which of the two accounts a password opens
+-- is whatever Postgres returns first.
+--
+-- The index is on `email` as stored. Every write path lowercases and trims before it gets
+-- here, so a functional index on `lower(email)` would encode the same set with more moving
+-- parts and would silently disagree with login's exact-match lookup.
+--
+-- If this fails to apply, the database ALREADY holds two accounts for one address and that
+-- is the finding — resolve the duplicates, do not weaken the index. The query:
+--   select email, count(*) from users group by email having count(*) > 1;
+--
+-- The original migration's second half — an invite can be REVOKED — is a Cloud concern and
+-- lives in the Cloud journal's `0005_invite_revocation`.
+
+CREATE UNIQUE INDEX IF NOT EXISTS "users_email_unique_idx" ON "users" ("email");
+--> statement-breakpointDROP INDEX IF EXISTS "users_email_idx";

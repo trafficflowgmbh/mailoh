@@ -1,0 +1,1156 @@
+import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
+import {
+  mailboxes, mailboxCredentials, mailboxFolders, isMailboxDisabledReason, isMailboxSyncBlockReason,
+  type LedgerTx, type MailboxErrorCode, type Tx,
+} from "@trafficflow/db";
+import type { ServiceContext } from "./context.js";
+import { ServiceError } from "./errors.js";
+/* The DEFAULT policy is registered rather than imported. `mailbox-allowance.ts` reads the
+ * subscription and the credit balance, so a static import of it from here puts billing and the
+ * ledger into the desktop engine bundle — this module is mounted by the local API. The full
+ * `@trafficflow/services` barrel, which only a hosted process imports, registers the paid gate
+ * on load; `@trafficflow/services/mail` does not, and a local host passes its own policy. */
+import { defaultMailboxAllowance } from "./mailbox-allowance-registry.js";
+import type { KeyProvider } from "./auth/crypto.js";
+import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
+
+const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+
+/**
+ * What {@link MailboxService.takeover} found, and therefore what it did.
+ *
+ * A CLOSED SET RATHER THAN A BOOLEAN, because the three refusals want three different sentences
+ * and a caller that only knows "it did not work" has to invent one. `already_organizing` is a
+ * no-op and not an error — a second click, or a mailbox the worker picked back up in between.
+ */
+export type MailboxTakeoverResult =
+  /** The stand-down was ended and one takeover is authorized. The worker decides on its next pass. */
+  | { outcome: "authorized"; previousReason: string }
+  /** Not stood down — this side already organizes it, or is already trying to. Nothing written. */
+  | { outcome: "already_organizing" }
+  /** Disconnected by the user, which is not a stand-down. Reconnect it instead. Nothing written. */
+  | { outcome: "disconnected" };
+
+/**
+ * The stored form of a mailbox address — TRIMMED, and nothing else.
+ *
+ * THE BYPASS THIS CLOSES. Mail 0021's partial unique index canonicalizes with `lower()`, and
+ * the service wrote `body.address` verbatim. So `"victim@example.com"` and
+ * `" victim@example.com "` are different keys to the index and identical to every IMAP server
+ * on earth: submit the second after the first and you get two rows, two allowance slots, and
+ * two worker runtimes against one physical mailbox — the exact production failure 0021 was
+ * written to stop, still reachable through the public API. An independent review caught it.
+ *
+ * TRIM ONLY, deliberately. Case is NOT folded here even though the index folds it: the local
+ * part of an address is case-sensitive per RFC 5321, providers disagree about whether they
+ * honour that, and this column is what the connect forms offer as the default IMAP username.
+ * Rewriting somebody's stored identity to satisfy an index is how a login breaks against a
+ * case-sensitive server. Trimming is the part the product can define without guessing —
+ * leading and trailing whitespace is never meaningful in an address and is almost always a
+ * copy-paste artefact.
+ *
+ * The residual gap is named rather than papered over: two genuinely distinct case variants on
+ * one account still collide at the index and answer 409. That is a narrower wrong than
+ * silently running two organizers, and the real fix for physical-mailbox exclusivity is the
+ * IMAP-resident lease, not a uniqueness constraint on a text column.
+ *
+ * ── WHAT `lower(address)` IS NOT, STATED SO NOBODY MISTAKES IT FOR MORE ──
+ *
+ * The index key is `lower(address)`. That is a *deduplication heuristic for one account's own
+ * connect form*, and it is neither an address canonicalizer nor a stable function:
+ *
+ *  · **It is collation-dependent.** `lower()` folds according to the collation of its argument
+ *    — the column's, which defaults to the database's `LC_CTYPE`. Two deployments with
+ *    different locales can fold the same non-ASCII address differently (the Turkish dotted/
+ *    dotless I is the standard example), so the set of addresses the index treats as equal is
+ *    a property of the SERVER, not of the schema. It also means the usual functional-index
+ *    caveat applies: restoring this database under a different collation, or a glibc/ICU
+ *    upgrade that changes case folding, requires `REINDEX` — an index built under one folding
+ *    can silently stop enforcing uniqueness under another. Every address ohmail has seen is
+ *    ASCII, where the folding is fixed, which is why this is a note and not a defect.
+ *  · **It is not RFC canonicalization, in either direction.** RFC 5321 makes the LOCAL part
+ *    case-SENSITIVE and only the domain case-insensitive, so folding the whole string is
+ *    over-eager on the left of the `@` — two genuinely distinct mailboxes on a case-sensitive
+ *    server collide. And it is under-eager everywhere else: no IDNA/punycode folding of the
+ *    domain, no Unicode NFC normalization, no provider-specific equivalence (`a.b+tag@gmail`
+ *    and `ab@gmail` are one physical mailbox and two keys here).
+ *
+ * Both directions are acceptable for what 0021 claims and only for that: it is narrow
+ * duplicate-request defence for repeated submissions of the same connect form. Treating it as
+ * "one organizer per physical mailbox" is the mistake — that invariant is the IMAP-resident
+ * lease's, and **as of mail 0027 it is enforced**: the hosted sync worker runs `runLeaseGate`
+ * at attach and again at the top of every sync cycle, and `apps/sidecar/src/engine.ts` does the
+ * same before its first move, so a mailbox two organizers both believe they hold is stood down by
+ * whichever loses the claim in `ohmail/_meta` (`status='disabled'`, `disabled_reason` =
+ * `organized_elsewhere:*`).
+ *
+ * The distinction this note started as still holds and is the reason it stays: the index and the
+ * lease guard DIFFERENT things, and neither substitutes for the other. `lower(address)` is one
+ * account's own connect form, in one database. The lease is the physical mailbox, across two
+ * databases that can never see each other — which is the only place the invariant can live,
+ * because the mailbox is the master.
+ */
+export const canonicalAddress = (raw: string): string => raw.trim();
+
+type MailboxRow = typeof mailboxes.$inferSelect;
+
+/** A per-transport secret + its non-secret connection params (host/port/user/secure). */
+export interface TransportInput {
+  host?: string;
+  port?: number;
+  secure?: boolean;
+  user?: string;
+  pass?: string;
+}
+
+export interface CreateMailboxBody {
+  provider: string;
+  address: string;
+  displayName?: string;
+  authKind?: "password" | "oauth";
+  imap: { host: string; port: number; secure: boolean; user: string; pass: string };
+  smtp?: { host: string; port: number; secure: boolean; user?: string; pass?: string };
+}
+
+export interface UpdateMailboxBody {
+  displayName?: string | null;
+  /**
+   * NO `'error'`. That state belongs to the worker's failure state machine, which writes it
+   * together with its reason; see {@link MailboxService.update}. The runtime refusal is still
+   * required — this body is `readBody<UpdateMailboxBody>` over untyped JSON — but the type is
+   * where a NEW caller finds out.
+   */
+  status?: "connected" | "disabled";
+  imap?: TransportInput & { pass: string };
+  smtp?: TransportInput & { pass: string };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   TRYING THE CREDENTIALS BEFORE STORING THEM
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * What the probe is asked to try. It carries the PLAINTEXT password by necessity — trying it is
+ * the point — so the implementation may not log this object, any part of it, or a thrown error's
+ * text. `packages/api/src/imap-probe.ts` is the one implementation and states how it holds that.
+ */
+export interface MailboxProbeInput {
+  accountId: string;
+  /** The CANONICAL address (post-{@link canonicalAddress}) — the probe's admission key, not a login. */
+  address: string;
+  /** Exactly the connection this create is about to store. Not a normalised variant of it. */
+  imap: { host: string; port: number; secure: boolean; user: string; pass: string };
+}
+
+/**
+ * THE THREE ANSWERS, AND WHY "STORE UNVERIFIED" IS ONE OF THEM.
+ *
+ * A two-value answer would force the decision this seam exists to avoid. "We reached the server
+ * and it refused you" and "we could not reach the server" are both failures and must not be
+ * stored — but a server that answers `NO [UNAVAILABLE]` or `NO [LIMIT]`, or sends `BYE` and hangs
+ * up, has been REACHED: it parsed our LOGIN and declined to serve it right now. That is positive
+ * evidence the host, the port and the TLS mode are right, and no evidence at all about the
+ * password.
+ *
+ * Refusing that case would be its own defect, and a specific one for this product: iCloud caps
+ * concurrent connections across ALL of an account's clients, so a user whose phone and Mac are
+ * holding connections could not add their mailbox at all, from a form that offers no way to
+ * clear the condition. Storing it costs the pre-probe behaviour for that one case only, and
+ * `MailboxSection.statusKey` already renders a row that has never completed a cycle as
+ * "connecting" rather than "connected".
+ *
+ * `code` is a {@link MailboxErrorCode} — the SAME closed taxonomy the worker's
+ * `classifyMailboxError` emits and the same one `en.json`'s `err_*` copy is keyed on.
+ * A parallel vocabulary here would mean two sets of sentences for one set of failures.
+ */
+export type MailboxProbeVerdict =
+  | { verdict: "ok" }
+  | { verdict: "store_unverified"; code: MailboxErrorCode }
+  | { verdict: "refuse"; code: MailboxErrorCode };
+
+/**
+ * Try an IMAP login. Implemented in `packages/api` — the layer that owns IMAP knowledge and the
+ * connection budget — and injected per call, the same seam shape `AttachmentsService` takes its
+ * `openAdapter` through.
+ *
+ * It MAY throw a {@link ServiceError} for OUR OWN faults (no connection slot, a broken counter).
+ * Those are not verdicts about the mailbox and must not be rendered as one.
+ */
+export type MailboxProbe = (input: MailboxProbeInput) => Promise<MailboxProbeVerdict>;
+
+/**
+ * REQUIRED, not optional, and that is the whole enforcement.
+ *
+ * An optional probe is a probe that any caller can forget, and "credentials were stored without
+ * being tried" is the defect. Making it part of the call signature means a new call site has to
+ * decide out loud.
+ */
+export interface CreateMailboxOptions {
+  probe: MailboxProbe;
+}
+
+/**
+ * The same, for the OTHER door into `mailbox_credentials`.
+ *
+ * `create` was made to require a probe and `update` was not, which left `PATCH /mailboxes/:id`
+ * re-encrypting whatever it was sent with zero connection attempts — the identical defect, one
+ * screen later, against a mailbox that was already working. It is not a backwater path: the
+ * sidecar mounts `createApp(apiRoutes)`, and `apps/sidecar/src/engine.ts` names this PATCH as the
+ * desktop's credential-recovery route for a sealed login the install's key can no longer open.
+ *
+ * ── REQUIRED IN THE SIGNATURE, ENFORCED AT RUN TIME, AND THE SECOND HALF IS THE REAL GUARD ──
+ *
+ * `create`'s docblock says a required parameter means "a new call site has to decide out loud".
+ * That is true only where the signature is COMPILED, and here it largely is not: `packages/services`
+ * compiles `src` only, so its ~17 `update` call sites are never typechecked — the same shape that
+ * put `tsconfig.contract.json` in `packages/api`. A parameter that is required in a type nobody
+ * compiles is a guard that does not guard.
+ *
+ * So the type says required AND {@link probeMissing} throws when a credential write arrives
+ * without one. The throw is the half that executes, and it is the half a mutation test can watch
+ * go red. Non-credential patches — a rename, a status flip — never reach it, which is why the
+ * fourteen existing call sites that carry no secret keep working unchanged.
+ */
+export interface UpdateMailboxOptions {
+  probe: MailboxProbe;
+}
+
+/**
+ * The refusal, per taxonomy member. FOUR DISTINCT SENTENCES, because a mistyped host and a wrong
+ * password producing the same words is the failure the probe exists to end — it is the same
+ * conflation the worker had to unpick, one screen earlier.
+ *
+ * Each names an OUTCOME the user can act on rather than a mechanism we would have to be right
+ * about: "we could not reach that server" holds for a name that does not resolve, a port with
+ * nothing behind it and a host that is simply down, and none of those is "the password is wrong".
+ *
+ * `status` splits on WHOSE input is at fault. The four the user typed are 400; a throw we cannot
+ * name is 502, because "we could not tell" is a statement about us.
+ */
+const PROBE_REFUSAL: Record<MailboxErrorCode, { status: number; message: string; retryable?: boolean }> = {
+  auth: {
+    status: 400,
+    message: "The mail server refused this password. If your provider requires an " +
+      "app-specific password, generate one there and use it here instead of your account password.",
+    retryable: false,
+  },
+  connect: {
+    status: 400,
+    message: "We could not reach that mail server. Check the IMAP host and port and try again.",
+    retryable: true,
+  },
+  tls: {
+    status: 400,
+    message: "That mail server's certificate was refused, so we stopped before sending the password. " +
+      "Check the IMAP host, and whether the port expects TLS.",
+    retryable: false,
+  },
+  timeout: {
+    // 502, unlike the three above: a server that accepted the connection and then went quiet is
+    // an upstream that failed, not a field the user can obviously correct. Retryable, and it is
+    // stated rather than inherited — the client's default heuristic would get this one right by
+    // accident and the next status change would silently flip it.
+    status: 502,
+    message: "That mail server did not answer in time. Check the IMAP host and port, and try again.",
+    retryable: true,
+  },
+  // Neither can arise from a dial — no SQLSTATE reaches an IMAP client, and there is no sync
+  // phase here — but the taxonomy is closed and a `Record` that omits a member stops compiling
+  // when one is added, which is the point of writing them out.
+  storage: { status: 502, message: "We could not finish checking that mailbox. Please try again." },
+  sync: { status: 502, message: "We could not finish checking that mailbox. Please try again." },
+  unknown: {
+    status: 502,
+    message: "We could not finish checking that mailbox, and we could not tell why. Please try again.",
+  },
+};
+
+/**
+ * The refusal a failed probe becomes. `details.reason` carries the taxonomy member so a client
+ * can render its own copy; the message is the server's own sentence and is what `JoinScreen`
+ * (which reads `messageOf(err)` verbatim) shows.
+ */
+const probeRefused = (code: MailboxErrorCode): ServiceError => {
+  const r = PROBE_REFUSAL[code];
+  return new ServiceError("mailbox_probe_failed", r.status, r.message, { reason: code }, r.retryable);
+};
+
+/**
+ * A credential write reached a write path with no probe to try it with.
+ *
+ * 500, not 400: nothing the caller typed is wrong: the SERVER is misconfigured, because some
+ * call site is about to store a password it cannot verify. Refusing is the only safe answer —
+ * storing anyway is precisely the defect, and storing "just this once" is how it comes back.
+ *
+ * It carries no `reason` from the taxonomy, deliberately. The taxonomy describes what a mail
+ * server said, and no mail server was ever contacted here.
+ */
+const probeMissing = (): ServiceError => new ServiceError(
+  "internal", 500,
+  "this mailbox credential could not be verified before storing, so it was not stored",
+);
+
+/**
+ * THE ALLOWANCE GATE, AS A POLICY — because "how many mailboxes may this account have" is a
+ * question about a PRICE, and one of the two tiers has no prices in it.
+ *
+ * The default reads the subscription table under a `FOR UPDATE` lock. That is exactly right for
+ * the hosted service and it is unrunnable on a desktop install, which migrates the mail journal
+ * alone and has no billing tables at all — nor should it: they belong to a service its owner has
+ * no account with. Before this seam the local engine 500ed on every mailbox write with a
+ * `relation … does not exist` error naming that missing table, and the only reason it had ever
+ * worked was that the engine used to migrate the Cloud journal too. The green was produced by
+ * the defect.
+ *
+ * ── WHY A POLICY AND NOT A FLAG ───────────────────────────────────────────────────────────
+ *
+ * `if (local) skip` puts the decision inside the money path, where every future reader has to
+ * re-derive which branch a given deployment takes. A policy makes the tier a thing the HOST
+ * states once, at construction, and makes the paid gate the value you get by saying nothing.
+ */
+export type MailboxAllowancePolicy = (
+  tx: LedgerTx,
+  accountId: string,
+  now: Date,
+  opts?: { excludeMailboxId?: string },
+) => Promise<unknown>;
+
+export interface MailboxServiceDeps {
+  /** Envelope-encryption provider. REQUIRED for the write methods; the read
+   *  methods (list/get/requestResync) never touch it — inject, don't reach global. */
+  keyProvider?: KeyProvider;
+  /**
+   * Who may add a mailbox. **Absent means the PAID GATE, and that direction is the whole point.**
+   *
+   * A deployment that forgets to inject gets charged-plan behaviour — it refuses past the plan's
+   * count and refuses without a subscription. The failure mode of the opposite default is an
+   * account on the free tier of a paid product, silently, with no error anywhere and revenue
+   * quietly not collected; the failure mode of this one is a desktop build that refuses to add a
+   * mailbox, which is loud, immediate, and caught by the engine's own end-to-end tests.
+   *
+   * There is deliberately **no permissive policy exported from this package.** The only one that
+   * exists is `UNMETERED_MAILBOX_ALLOWANCE` in `apps/sidecar`, which the hosted API does not and
+   * cannot import — a bypass the Cloud host has no way to name is a bypass it cannot take by
+   * accident. A test in this package holds that as an assertion.
+   */
+  allowance?: MailboxAllowancePolicy;
+}
+
+/**
+ * The partial unique index from mail migration 0021, as a refusal the UI can show.
+ *
+ * `POST /mailboxes` accepted the same address twice in a live deployment and left two rows — two
+ * allowance slots, and two worker runtimes attached to one physical mailbox. The index makes
+ * that impossible; this turns the driver's 23505 into the sentence the second attempt deserves
+ * instead of a 500.
+ *
+ * CAUGHT AROUND THE TRANSACTION, NEVER INSIDE IT. By the time Postgres raises 23505 the
+ * transaction is already aborted, so a `catch` within the callback could not commit anything
+ * and would only mask the error. Same shape as `auth-service.ts`'s `isUniqueViolation`.
+ */
+const ACTIVE_ADDRESS_UQ = "mailboxes_active_address_uq";
+
+function isActiveAddressConflict(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  const err = e as { code?: unknown; constraint?: unknown; constraint_name?: unknown };
+  if (err.code !== "23505") return false;
+  // Postgres reports the INDEX name for a unique-index violation.
+  const name = typeof err.constraint === "string" ? err.constraint
+    : typeof err.constraint_name === "string" ? err.constraint_name : "";
+  return name === ACTIVE_ADDRESS_UQ;
+}
+
+const addressTaken = (): ServiceError => new ServiceError(
+  "mailbox_exists", 409,
+  "This mailbox is already connected to your account.",
+);
+
+/**
+ * A DISABLED MAILBOX NEVER HOLDS A CREDENTIAL — and this is the refusal that makes that true
+ * rather than merely intended.
+ *
+ * `delete` establishes the invariant (disable the row, delete its credentials, so the worker
+ * stops), mail 0021's prelude relies on it in as many words, and until an independent review
+ * looked nothing enforced it: `update` would happily upsert a credential onto a tombstone.
+ * The concrete sequence is a race with a dedup pass or a delete —
+ *
+ *   Thread 1  PATCH /mailboxes/:id { imap: { pass } }   reads the row: 'connected'
+ *   Thread 2  the row is disabled and its credentials deleted (a `delete`, or the operator's
+ *             dedup resolver, or 0021's prelude mid-migration)
+ *   Thread 1  commits its credential upsert
+ *
+ * — and it ends with a disabled mailbox that owns a live IMAP secret. The lock in `update`
+ * removes the window (Thread 1 now blocks on the row and re-reads 'disabled'); this is what it
+ * does when it gets there. Re-enabling AND rotating in one PATCH stays legal, because the status
+ * is applied before this is evaluated.
+ */
+const mailboxDisabled = (): ServiceError => new ServiceError(
+  "mailbox_disabled", 409,
+  "This mailbox is disconnected. Reconnect it before setting new credentials.",
+);
+
+/** Drop `undefined` values so an upsert never overwrites stored meta with them. */
+function metaOf(o: TransportInput): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (o.host !== undefined) out.host = o.host;
+  if (o.port !== undefined) out.port = o.port;
+  if (o.secure !== undefined) out.secure = o.secure;
+  if (o.user !== undefined) out.user = o.user;
+  return out;
+}
+
+/**
+ * Decrypt a stored `mailbox_credentials` secret back to its plaintext (the worker's
+ * later use). Deliberately NOT wired to any DTO/route: credentials NEVER
+ * leave the server. Exported so the worker can inject the same KeyProvider.
+ */
+export async function decryptCredential(
+  keyProvider: KeyProvider,
+  row: { secretEnc: string; keyVersion: number },
+): Promise<string> {
+  return keyProvider.decrypt(row.secretEnc, row.keyVersion);
+}
+
+/**
+ * MailboxService. Reads (list/get) + resync stay credential-free;
+ * the write methods (create/update/delete) envelope-encrypt per-transport
+ * secrets into `mailbox_credentials` and NEVER surface them in any DTO. The
+ * write path needs a `KeyProvider` (construct via `makeMailboxService`). Every
+ * query is account-scoped: a cross-account id is a 404.
+ */
+export class MailboxService {
+  constructor(private readonly deps: MailboxServiceDeps = {}) {}
+
+  /**
+   * The gate this instance runs. `??` and not a constructor default, so the paid gate is what an
+   * explicit `undefined` resolves to as well — `makeMailboxService({ allowance: cfg.allowance })`
+   * on a host whose config forgot the field must not become the free tier.
+   */
+  private get allowance(): MailboxAllowancePolicy {
+    return this.deps.allowance ?? defaultMailboxAllowance();
+  }
+
+  async list(ctx: ServiceContext): Promise<MailboxDTO[]> {
+    const rows = await ctx.db.select().from(mailboxes)
+      .where(eq(mailboxes.accountId, ctx.accountId)).orderBy(asc(mailboxes.id));
+    const out: MailboxDTO[] = [];
+    for (const m of rows) out.push(await this.toDTO(ctx, m));
+    return out;
+  }
+
+  async get(ctx: ServiceContext, id: string): Promise<MailboxDTO> {
+    return this.toDTO(ctx, await this.ownedRow(ctx, id));
+  }
+
+  /**
+   * Connect a mailbox: insert the `mailboxes` row, then envelope-encrypt the
+   * IMAP (and, if given, SMTP) password into a `mailbox_credentials` row per
+   * transport — `meta` carries only the NON-secret conn params. Returns a
+   * credential-free DTO (201).
+   *
+   * **The plan gate and the insert are ONE transaction, in this order.**
+   * `assertMayAddMailbox` takes `SELECT … FOR UPDATE` on the account's subscription row
+   * before it counts, so two concurrent creates at limit−1 admit exactly one — the loser
+   * blocks on that lock and then counts a world containing the winner's row. A check made
+   * outside the transaction, or after the INSERT, would let both through; see
+   * `mailbox-allowance.ts` for why the count alone cannot be the gate.
+   *
+   * The transaction also fixes something that was wrong before it: the mailbox row and its
+   * credentials were separate autocommits, so a crash between them left a connected mailbox
+   * with no way to log in. They now commit together or not at all.
+   *
+   * ── THE CREDENTIALS ARE TRIED FIRST, AND THE ORDER IS DELIBERATE ─────────────────────────
+   *
+   * This method used to encrypt whatever it was handed and answer 201. Before the fix: host
+   * `nope.invalid`, password `wrong` → **201, `status: "connected"`, one `mailbox_credentials`
+   * row, zero connection attempts.** `mailboxes.status` DEFAULTS to `'connected'`, so the row
+   * asserted a working mailbox from the moment it existed, and the first word anybody got about
+   * the typo was a worker sync error minutes later on another screen — the same class of failure
+   * the worker had just finished making legible.
+   *
+   * BEFORE THE TRANSACTION, NEVER INSIDE IT. The probe is a network round trip to somebody
+   * else's mail server; the API's runtime handle is `makePooledDb` at `max: 1`, so holding a
+   * transaction across it would pin the instance's only connection for the length of a foreign
+   * dial. That is the deadlock this repository already fixed once ("the console deadlocked
+   * itself — parallel reads on a max:1 pool").
+   *
+   * THE COST, STATED: an account at its plan limit, or one submitting an address it already has,
+   * pays one dial before the gate refuses it. Moving the probe after the gate is not free — the
+   * gate is `assertMayAddMailbox`, which requires a transaction (`NotInTransactionError`), so a
+   * pre-flight check would mean opening a transaction, taking `SELECT … FOR UPDATE` on the
+   * subscription row, closing it, dialling, and then taking the same lock again. Two lock
+   * acquisitions to save a dial the connection budget already bounds is the worse trade.
+   *
+   * ONLY WHEN A SECRET IS ABOUT TO BE STORED. An `oauth` create carries no password and has
+   * nothing to try; the probe is skipped rather than fed an empty string it would then report
+   * as a rejected password.
+   *
+   * WHAT IS PROBED IS WHAT IS STORED — `body.imap` verbatim, not a repaired copy of it. A probe
+   * that silently substituted the address for a missing `user` would prove a login the worker
+   * will never make.
+   *
+   * NOT PROBED: the SMTP block. It is a different transport with its own credential row, sending
+   * is not the connect flow, and dialling two servers doubles both the latency of this request
+   * and the connections we open. Named here rather than left to be discovered.
+   */
+  async create(
+    ctx: ServiceContext, body: CreateMailboxBody, opts: CreateMailboxOptions,
+  ): Promise<MailboxDTO> {
+    const kp = this.requireKeyProvider();
+    // Canonicalized BEFORE the emptiness check, so `"   "` is refused rather than stored as a
+    // blank address that the index would then treat as a legitimate distinct key.
+    const address = canonicalAddress(body.address ?? "");
+    if (!body.provider || !address) {
+      throw new ServiceError("validation_failed", 400, "provider and address are required");
+    }
+    const authKind = body.authKind ?? "password";
+    if (authKind !== "oauth" && !body.imap?.pass) {
+      throw new ServiceError("validation_failed", 400, "imap credentials are required");
+    }
+
+    if (body.imap?.pass) {
+      // A configuration the adapter could never use is refused BEFORE the dial rather than
+      // reported as a mail-server failure. `metaOf` drops undefined values, so a create with no
+      // host used to store a credential the worker cannot log in with and could not say why —
+      // and a probe fed the same body would answer "we could not reach that mail server", which
+      // is a true sentence about the wrong thing. `imapFlowOptions`' note is explicit that this
+      // refusal is owed here rather than re-derived from what the adapter happens to reject.
+      if (!body.imap.host || !body.imap.port) {
+        throw new ServiceError("validation_failed", 400, "imap host and port are required");
+      }
+
+      // NO DUPLICATE PRE-CHECK, AND THE REASON IS A GUARD IT WOULD HAVE BLINDED. An architecture
+      // pass asked for one here, to avoid spending a provider connection on a submit mail 0021's
+      // index is going to refuse anyway. It would answer BEFORE the index does — and the only
+      // test that watches `isActiveAddressConflict` map 23505 to a 409 on this path drives it
+      // by inserting a colliding row first, so a pre-check would keep that test green while the
+      // mapping it exists for went unexercised.
+      // It is also a second implementation of a partial unique index, which is the thing an
+      // earlier change deliberately declined to write for this same refusal, and it has a race the
+      // index does not: a row deleted between the read and the insert would let a create through
+      // that had skipped its probe. The dial it saves is already bounded — one address gets at
+      // most `MAX_PROBES_PER_ADDRESS` concurrent probes, which is the control the cap provides.
+      const verdict = await opts.probe({
+        accountId: ctx.accountId,
+        address,
+        imap: {
+          host: body.imap.host ?? "",
+          port: body.imap.port ?? 993,
+          secure: body.imap.secure ?? true,
+          user: body.imap.user ?? "",
+          pass: body.imap.pass,
+        },
+      });
+      if (verdict.verdict === "refuse") throw probeRefused(verdict.code);
+    }
+
+    const mb = await asTx(ctx).transaction(async (tx) => {
+      // The gate FIRST: it takes the lock every later statement is serialized behind.
+      await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now());
+
+      const [row] = await tx.insert(mailboxes).values({
+        accountId: ctx.accountId,
+        provider: body.provider,
+        address,
+        displayName: body.displayName ?? null,
+        authKind,
+      }).returning();
+
+      if (body.imap?.pass) {
+        await this.upsertCredOn(tx, ctx, kp, row!.id, "imap", body.imap.pass, metaOf(body.imap));
+      }
+      if (body.smtp) {
+        // A generic IMAP mailbox often shares creds with SMTP; fall back to the IMAP
+        // secret/user when the SMTP block omits them (still its own transport row).
+        const pass = body.smtp.pass ?? body.imap?.pass;
+        if (pass) {
+          await this.upsertCredOn(tx, ctx, kp, row!.id, "smtp", pass, metaOf({
+            host: body.smtp.host, port: body.smtp.port, secure: body.smtp.secure,
+            user: body.smtp.user ?? body.imap?.user,
+          }));
+        }
+      }
+      return row!;
+    }).catch((err: unknown) => {
+      if (isActiveAddressConflict(err)) throw addressTaken();
+      throw err;
+    });
+
+    return this.toDTO(ctx, mb);
+  }
+
+  /**
+   * Patch mailbox fields (displayName/status) and, when new secrets are supplied,
+   * re-encrypt + upsert the credential row(s) on `(mailboxId, transport)`. 404 if
+   * not owned.
+   *
+   * **RE-ENABLING is a create.** `delete` is a soft delete to `status='disabled'`, so
+   * without this gate the limit is trivially bypassed: at the limit, disconnect one (count
+   * drops), connect a new one (count back at the limit), then `PATCH {status:'connected'}` the
+   * old one (count = limit + 1). Only the disabled → not-disabled TRANSITION is gated; patching
+   * an already-connected mailbox consumes no allowance, and moving to `'disabled'` never does.
+   *
+   * ── AND IT MAY NOT STEP AROUND THE WORKER'S FAILURE STATE MACHINE (mail 0023) ────────────
+   *
+   * Two ways it did. Both leave a row that says something nobody verified:
+   *
+   *  1. **`status: 'error'` was accepted from a client.** `error` is the worker's assertion
+   *     that it tried to reach this mailbox and could not, and it is written by exactly two
+   *     functions that carry the reason with it (`markMailboxFailed` / `markMailboxConnected`,
+   *     both in the worker). A PATCH set the column alone, so an outage the product
+   *     never observed appeared in Settings → Mailboxes AND — with `error_code` NULL, rendered
+   *     as `"unknown"` — in the admin console's operator queue. Refused now: a client can
+   *     connect a mailbox and disconnect it; it cannot declare it broken.
+   *  2. **Leaving `error` did not clear the outage.** `error_code`, `error_detail`, `failed_at`
+   *     and `retry_count` survived a `PATCH {status:'connected'}`, invisibly — `toDTO` projects
+   *     them only while `status === 'error'`, so the wire looked clean while the row was not.
+   *     `markMailboxFailed` then COALESCEs `failed_at`, so the NEXT failure inherited the old
+   *     episode's start time and continued its `retry_count`: a mailbox reconnected today and
+   *     failing tomorrow reports a three-day outage on attempt 9. The four columns are cleared
+   *     in the same UPDATE that moves the status, exactly as the worker's recovery write does,
+   *     which makes "not in error ⇒ no outage metadata" true of every writer instead of one.
+   *
+   * What this does NOT claim is that the mailbox works. A reconnect is a request to try again,
+   * and only the worker's verified recovery (connect + folders + two cycles + IDLE) says
+   * otherwise; the difference is now that the row starts a CLEAN episode rather than inheriting
+   * a stale one.
+   *
+   * ── A ROTATED CREDENTIAL IS PROBED, AND `opts` IS OPTIONAL WHERE `create`'s IS NOT ──────────
+   *
+   * The asymmetry with {@link create} is DELIBERATE and must not be "harmonized" away:
+   *
+   *  · `create` ALWAYS carries a secret, so a required parameter costs its callers nothing and
+   *    every one of them is in a compiled package.
+   *  · `update` mostly does not. Fourteen of its seventeen call sites patch a display name or a
+   *    status and have no password to try, and all but one live in the test suite,
+   *    which is never typechecked (`include: src` only). Making the parameter
+   *    required there would not make a single one of them "decide out loud" — it would emit a
+   *    type error nothing compiles, while the calls kept running.
+   *
+   * So the enforcement here is the RUNTIME throw in {@link probedImapMeta}, not the signature:
+   * a patch carrying `imap.pass` with no probe is refused before any dial and before any write.
+   * That guard is the entire protection on this path, and it has its own mutation-checked test at
+   * the API layer. Deleting it to "match `create`" would silently restore the defect.
+   */
+  async update(
+    ctx: ServiceContext, id: string, patch: UpdateMailboxBody, opts?: UpdateMailboxOptions,
+  ): Promise<MailboxDTO> {
+    const kp = this.requireKeyProvider();
+
+    // Widened deliberately: the type forbids it, the wire does not.
+    if ((patch.status as string | undefined) === "error") {
+      throw new ServiceError(
+        "validation_failed", 400,
+        "status 'error' is recorded by the sync worker, not by a client; " +
+          "PATCH accepts 'connected' or 'disabled'",
+      );
+    }
+
+    /**
+     * ── THE ROTATED CREDENTIAL IS TRIED BEFORE IT REPLACES A WORKING ONE ────────────────────
+     *
+     * BEFORE THE TRANSACTION, for the reason `create` gives and one more. `create`'s: the API's
+     * runtime handle is `makePooledDb` at `max: 1`, so a foreign dial inside a transaction pins
+     * the instance's only connection — the deadlock this repository has already fixed once. The
+     * one `create` does not have: this transaction holds `SELECT … FOR UPDATE` on the mailbox
+     * row, so a probe inside it would hold a ROW LOCK across somebody else's mail server going
+     * quiet, and `delete` and the dedup resolver both queue behind that lock.
+     *
+     * The pre-read is UNLOCKED and deliberately not trusted for anything but two decisions the
+     * transaction makes again anyway:
+     *
+     *   · **404 before the dial.** Without it `PATCH /mailboxes/<guessed-uuid>` is a connect
+     *     oracle for an arbitrary `host:port` against somebody else's mailbox id — strictly more
+     *     than `POST /mailboxes` offers, since that one only ever dials on your own behalf.
+     *   · **The stored transport config**, which is what makes the merge below possible.
+     *
+     * Neither is a security decision made outside the lock: the transaction re-reads the row
+     * `FOR UPDATE` and re-checks ownership and the disabled rule before anything is written. A
+     * row that changes in between costs at most one wasted dial, never a wrong write.
+     */
+    const merged = patch.imap?.pass
+      ? await this.probedImapMeta(ctx, id, patch, opts)
+      : undefined;
+
+    return asTx(ctx).transaction(async (tx) => {
+      // `FOR UPDATE`, and it is the fix for a race an independent review found.
+      // Without it a credentials-only PATCH took NO lock at all — it writes `mailbox_credentials`
+      // and never touches the `mailboxes` row — so it could read a row as 'connected', have the
+      // row disabled and stripped underneath it (by `delete`, by the dedup resolver, or by 0021's
+      // prelude mid-migration), and then commit a live IMAP secret onto the tombstone. With the
+      // lock the two serialize in either order: this transaction either wins and the other side's
+      // credential delete runs after it, or it waits and then re-reads the LATEST COMMITTED row,
+      // sees 'disabled', and refuses below. Both interleavings end at (disabled ⇒ no credential).
+      const current = await this.ownedRowOn(tx, ctx, id, { forUpdate: true }); // 404 if not owned
+
+      const set: Partial<MailboxRow> = {};
+      if ("displayName" in patch) set.displayName = patch.displayName ?? null;
+      if (patch.status) set.status = patch.status;
+      // Leaving `error` ENDS the episode — atomically, in the same statement as the status.
+      // See the note on this method: `failed_at` is COALESCEd by the worker's failure write, so
+      // a value left behind here is inherited by the next, unrelated outage.
+      if (patch.status && current.status === "error") {
+        set.errorCode = null;
+        set.errorDetail = null;
+        set.failedAt = null;
+        set.retryCount = 0;
+      }
+      // ── AND THE SYNC BLOCK GOES WITH ANY STATUS MOVE (mail 0029) ──────────────────────────
+      //
+      // Not gated on `current.status === "error"`, and that difference from the four above is not
+      // an inconsistency: a sync block happens while the status is `connected`, so an `error` gate
+      // would never fire for it. The block is THIS PROCESS's report about the worker's relationship
+      // to the mailbox, and both directions of a status move invalidate it — disconnecting the
+      // mailbox ends it (a tombstone carries no explanation of why it was not syncing), and
+      // reconnecting is a request to try again, which means the old reason is unverified.
+      //
+      // Clearing it is SAFE PRECISELY BECAUSE THE WORKER RE-WRITES IT: `reconcileSyncBlocks` writes
+      // on every roster pass while the block lasts, so if the mailbox is still unserved the reason
+      // is back within one interval. A clear here that were permanent would be worse than no clear.
+      if (patch.status) {
+        set.syncBlockedReason = null;
+        set.syncBlockedSince = null;
+      }
+
+      // The gate BEFORE the write, and before the count it implies — same order as `create`.
+      // The row itself is excluded: it does not yet hold the slot it is asking for.
+      if (patch.status && patch.status !== "disabled" && current.status === "disabled") {
+        await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now(), { excludeMailboxId: id });
+      }
+
+      if (Object.keys(set).length > 0) {
+        await tx.update(mailboxes).set(set)
+          .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)));
+      }
+
+      // The EFFECTIVE status, after this patch — so `{status:'connected', imap:{pass}}` is still
+      // the one-call reconnect it has always been, and only a credential written onto a mailbox
+      // that STAYS disabled is refused. Refused loudly rather than skipped: a silent skip would
+      // answer 200 to a client that then believes a password is stored.
+      const effectiveStatus = patch.status ?? current.status;
+      if (effectiveStatus === "disabled" && (patch.imap?.pass || patch.smtp?.pass)) {
+        throw mailboxDisabled();
+      }
+
+      // `merged`, NOT `metaOf(patch.imap)` — what is stored must be exactly what was dialled.
+      // Passing the patch alone would store a config the probe never tried (and, before the
+      // `upsertCredOn` fix below, would also erase the stored port/user/secure while doing it).
+      if (patch.imap?.pass) await this.upsertCredOn(tx, ctx, kp, id, "imap", patch.imap.pass, merged ?? {});
+      // NOT PROBED, and the same exemption `create` states by name: SMTP is a different transport
+      // with its own credential row, sending is not the connect flow, and dialling a second server
+      // doubles both the latency of this request and the connections we open. The IMAP row is the
+      // one the worker logs in with and the one a mistyped password quarantines.
+      if (patch.smtp?.pass) await this.upsertCredOn(tx, ctx, kp, id, "smtp", patch.smtp.pass, metaOf(patch.smtp));
+
+      const [row] = await tx.select().from(mailboxes)
+        .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId))).limit(1);
+      return this.toDTO({ ...ctx, db: tx as unknown as ServiceContext["db"] }, row!);
+    }).catch((err: unknown) => {
+      // The RE-ENABLE path hits the same index: `disabled → connected` inserts a new entry
+      // into it, so reconnecting an address another live row already holds raises 23505 here
+      // rather than in `create`. That is the constraint doing its job — without it, re-enable
+      // is a second way past the rule, exactly as it was a second way past the allowance gate.
+      if (isActiveAddressConflict(err)) throw addressTaken();
+      throw err;
+    });
+  }
+
+  /**
+   * Disconnect a mailbox. SOFT-delete: set `status='disabled'` AND remove its
+   * credential rows so the worker stops syncing it. We deliberately do NOT
+   * hard-delete the `mailboxes` row — `messages.mailbox_id` FK-references it, so a
+   * hard delete would orphan real message history. 404 if not owned.
+   *
+   * **ONE TRANSACTION, UNDER A ROW LOCK.** This used to be three separate
+   * autocommits — an unlocked read, the status flip, the credential delete — which left two
+   * windows a concurrent credential PATCH could commit into, and the second of them ends with a
+   * disabled mailbox that still owns a live IMAP secret: exactly the state 0021's comment says
+   * cannot happen. The lock is taken in the same order (`id`) as the dedup resolver's, and
+   * `update` takes it too, so no two of the three can interleave into that state and none of
+   * them can deadlock.
+   */
+  async delete(ctx: ServiceContext, id: string): Promise<void> {
+    await asTx(ctx).transaction(async (tx) => {
+      await this.ownedRowOn(tx, ctx, id, { forUpdate: true }); // 404 if not owned
+      await tx.update(mailboxes).set({
+        status: "disabled",
+        // ── AND THE LEASE COLUMNS GO WITH IT (mail 0027) ──────────────────────────────────
+        //
+        // `disabled_reason` is WHY the ORGANIZER stopped, and a user disconnecting the mailbox
+        // makes that statement untrue in the only way that matters: they are not asking why it
+        // is not syncing, they have said stop. Left behind, the reason survives on the tombstone
+        // for ever, and the new disabled-row copy would tell somebody "another ohmail install has
+        // claimed this mailbox" about a mailbox they deliberately removed — the same class of
+        // false statement that copy exists to end, introduced by the fix for it.
+        //
+        // This is the rule `packages/db/src/mailbox-errors.ts` already states for
+        // `sync_blocked_reason` — "every writer that makes the statement untrue clears it in the
+        // same statement" — applied to the column beside it. The four worker writers hold it;
+        // this was the one caller that did not, because until now nothing read the column.
+        disabledReason: null,
+        // §4, "No seize-back". An authorization is permission for ONE becoming, and disconnecting
+        // ends the relationship it was granted inside. Left set, it would be spent by whatever
+        // re-enabled the row months later — the standing right the one-shot rule forbids.
+        takeoverAuthorizedAt: null,
+        // ── AND THE SYNC BLOCK, FOR THE IDENTICAL REASON (mail 0029) ─────────────────────
+        //
+        // `mailbox-errors.ts` names the writers that hold "every writer that makes the statement
+        // untrue clears it in the same statement" — `markMailboxConnected`, `markMailboxStoodDown`,
+        // `markMailboxFailed`, `MailboxService.update`. This method is the one that was missing,
+        // and `update` states the argument for both directions of a status move already: "a
+        // tombstone carries no explanation of why it was not syncing". It went unnoticed because
+        // nothing rendered a disabled row's block; the disabled-row rendering work is what would
+        // have surfaced it.
+        syncBlockedReason: null,
+        syncBlockedSince: null,
+      })
+        .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)));
+      await tx.delete(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, id));
+    });
+  }
+
+  /**
+   * Force a reconcile pass. Clearing each folder's CONDSTORE cursor + delta_token
+   * makes the worker re-scan from scratch on its next cycle (durable marker).
+   */
+  async requestResync(ctx: ServiceContext, id: string): Promise<void> {
+    await this.ownedRow(ctx, id); // 404 if not owned
+    await asTx(ctx).update(mailboxFolders)
+      .set({ highestmodseq: null, deltaToken: null, updatedAt: ctx.now() })
+      .where(eq(mailboxFolders.mailboxId, id));
+  }
+
+  /**
+   * ASK TO BECOME THE ORGANIZER OF A MAILBOX THIS SIDE STOOD DOWN FROM.
+   *
+   * ── THE RULE THIS IMPLEMENTS, AND THE HALF PEOPLE GET WRONG ────────────────────────────────
+   *
+   * Exactly one active organizer per mailbox, ever. Ceasing to organize is always automatic;
+   * BECOMING an organizer always requires an explicit human action — and that second half binds
+   * the hosted service exactly as it binds a desktop install. There is no billing event, no
+   * re-subscription and no deploy that may quietly make this side the organizer again of a mailbox
+   * somebody deliberately moved to their own machine. This method is that human action, and it is
+   * the mirror of the `organize here` command a local install already has.
+   *
+   * ── IT AUTHORIZES AN ASK. IT DOES NOT WIN ANYTHING ─────────────────────────────────────────
+   *
+   * Nothing here opens IMAP, and that is a hard boundary rather than an implementation detail:
+   * organization lands in real folders on the user's server, and it is the WORKER that moves mail,
+   * through desired state, so that a serverless function can never leave a mailbox half-organized.
+   * All this writes is a stamp. The worker's next roster pass reads the claim in the mailbox and
+   * decides — and if another organizer is still renewing and outranks us, this side stands down
+   * again on that same pass and the stamp is voided with it.
+   *
+   * ── THREE COLUMNS, ONE STATEMENT, AND EACH OMISSION HAS ITS OWN FAILURE ────────────────────
+   *
+   * Learned on the local side and true verbatim here:
+   *
+   *  · The stamp alone is INERT. A row that still carries a stand-down reason is refused before
+   *    the gate is ever consulted, so the mailbox never reaches the code the stamp is for.
+   *  · Clearing the reason alone gets as far as consulting the claim, which then reports the
+   *    mailbox merely *available* — nobody renewing, nobody authorized — and this side stands down
+   *    again on the same pass. An action that appears to do nothing, at exactly the moment
+   *    somebody chose to use it.
+   *  · Restoring the status alone is the one that CORRUPTS. A stand-down and a user's
+   *    disconnect share `status='disabled'` and are told apart ONLY by whether a reason is set, so
+   *    clearing the reason without restoring the status converts a paused mailbox into a
+   *    tombstone.
+   *
+   * ── AND WHY A DISCONNECTED MAILBOX IS REFUSED RATHER THAN REVIVED ──────────────────────────
+   *
+   * `disabled` with NO reason is a mailbox the user disconnected. Re-adding it is a different
+   * action with different consequences — it needs credentials, it consumes an allowance slot as a
+   * new connection, and it is reached through a different door. Quietly converting a takeover into
+   * a resurrection would bring back a mailbox somebody deliberately removed, and would do it
+   * without the credential it no longer has.
+   */
+  async takeover(ctx: ServiceContext, id: string): Promise<MailboxTakeoverResult> {
+    return asTx(ctx).transaction(async (tx) => {
+      // `FOR UPDATE`, in the same order and on the same row as `update` and `delete` take it, so
+      // the three serialize instead of interleaving. Without it, a takeover and a `delete` can
+      // both read `disabled` + reason and commit in either order, and the losing order leaves a
+      // mailbox that is `connected`, authorized to organize, and has had its credentials deleted.
+      const current = await this.ownedRowOn(tx, ctx, id, { forUpdate: true }); // 404 if not owned
+
+      if (current.status !== "disabled") return { outcome: "already_organizing" as const };
+      // The tombstone. See the header — this is a refusal, never a revival.
+      if (current.disabledReason === null) return { outcome: "disconnected" as const };
+
+      // THE ALLOWANCE GATE, BEFORE THE WRITE, for the reason `update` states at its own re-enable:
+      // `disabled → connected` IS a connection, whichever door it comes through. Omitting it here
+      // would make this the cheapest way past a plan limit — and cheaper than the door `update`
+      // guards, because a user can cause a stand-down at will simply by pointing another install
+      // at their own mailbox, minting the free slot themselves. The row is excluded from the count
+      // because it does not yet hold the slot it is asking for.
+      await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now(), { excludeMailboxId: id });
+
+      const rows = await tx.update(mailboxes).set({
+        status: "connected",
+        disabledReason: null,
+        takeoverAuthorizedAt: ctx.now(),
+        // The block is this process's report about the worker's relationship to the mailbox, and a
+        // status move invalidates it in both directions — the same rule `update` applies. The
+        // worker re-writes it within one roster pass if it is still true.
+        syncBlockedReason: null,
+        syncBlockedSince: null,
+      })
+        // ── THIS PREDICATE IS UNREACHABLE TODAY, AND IT IS NOT THE CONCURRENCY CONTROL ─────
+        //
+        // Stated plainly because the tempting reading is the opposite one. MEASURED by mutation
+        // against real Postgres: deleting these two clauses leaves the whole suite green,
+        // including the two-concurrent-confirms case. What refuses the second confirm is the row
+        // lock plus the re-read above it — the loser blocks, then reads a row that is now
+        // `connected`, and returns `already_organizing` before reaching this statement.
+        //
+        // It stays for the reason `markMailboxStoodDown`'s reason-coercion stays: it is the guard
+        // for the call site nobody has written yet. An UPDATE that is safe only in the presence of
+        // a lock taken thirty lines earlier is one refactor away from being unsafe, and the
+        // refactor would not fail anything. `rows.length === 0` below is the arm it feeds.
+        .where(and(
+          eq(mailboxes.id, id),
+          eq(mailboxes.accountId, ctx.accountId),
+          eq(mailboxes.status, "disabled"),
+          isNotNull(mailboxes.disabledReason),
+        ))
+        .returning({ id: mailboxes.id });
+
+      if (rows.length === 0) return { outcome: "already_organizing" as const };
+      return { outcome: "authorized" as const, previousReason: current.disabledReason };
+    }).catch((err: unknown) => {
+      // `disabled → connected` inserts into the active-address index, so a takeover of an old row
+      // whose address has since been re-added as a NEW mailbox raises 23505 here. Reachable in
+      // order: stand down, add the same address again, then ask to take the old one over.
+      if (isActiveAddressConflict(err)) throw addressTaken();
+      throw err;
+    });
+  }
+
+  /**
+   * Envelope-encrypt `pass` and insert/update the `(mailboxId, transport)` row ON THE GIVEN
+   * EXECUTOR. It takes `tx` rather than reaching for `ctx.db` because the write paths are
+   * transactional now: a credential written on the ambient handle would commit
+   * independently of the mailbox row it belongs to.
+   */
+  /**
+   * Resolve the config a credential rotation will be STORED with, having just proved it
+   * works. Returns the merged non-secret `meta`; throws rather than returning on any refusal.
+   *
+   * ── THE MERGE IS THE POINT, NOT A CONVENIENCE ───────────────────────────────────────────────
+   *
+   * `PATCH` bodies are partial by design — "here is my new password", or "my provider moved to a
+   * new host, same everything else". So neither half is dialable alone: the patch alone has no
+   * port (and `metaOf` drops the undefined rather than inventing one), and the stored config
+   * alone ignores the correction the user just typed. Probing either would prove a login the
+   * worker will never make, which is worse than not probing — it is a green light with a
+   * different config's name on it.
+   *
+   * Patch WINS field by field, because the patch is the newer statement about the same mailbox.
+   */
+  private async probedImapMeta(
+    ctx: ServiceContext, id: string, patch: UpdateMailboxBody, opts?: UpdateMailboxOptions,
+  ): Promise<Record<string, unknown>> {
+    // The guard the type cannot enforce in a package whose tests are not compiled. See
+    // {@link UpdateMailboxOptions}: this throw is the half that runs.
+    if (!opts?.probe) throw probeMissing();
+
+    const current = await this.ownedRow(ctx, id); // 404 before anything is dialled
+
+    /**
+     * ── DISABLED IS REFUSED HERE TOO, AND IT IS NOT A REDUNDANT COPY ────────────────────────
+     *
+     * `delete` disables the row AND deletes its credential rows together. So for a disconnected
+     * mailbox there is no stored `meta` left to merge against, and without this branch the merge
+     * below produces a config with no host — and the caller is told **"imap host and port are
+     * required"** about a mailbox whose real problem is that they disconnected it. A true
+     * sentence about the wrong thing is the exact failure mode the probe exists to end, so getting
+     * it right on the refusal path matters as much as on the dial path.
+     *
+     * IT DOES NOT COST THE IN-TRANSACTION CHECK ITS TEETH, which was the reason to hesitate.
+     * That check is still the authority and is still exercised, because the case that exercises
+     * it has REAL concurrency: a twelve-case storm against real Postgres starts a patch and a
+     * delete 30 ms apart in both orders, so the unlocked read here legitimately sees `connected`
+     * and only the locked re-read can refuse. That alternation is what keeps the
+     * effective-status refusal honest. The two sequential
+     * cases beside it ("DELETE first", "resolver first") await their first actor to completion,
+     * so no lock ever blocks in them and they were never the guard on the locking.
+     */
+    const effectiveStatus = patch.status ?? current.status;
+    if (effectiveStatus === "disabled") throw mailboxDisabled();
+
+    const stored = (await asTx(ctx).select({ meta: mailboxCredentials.meta })
+      .from(mailboxCredentials)
+      .where(and(eq(mailboxCredentials.mailboxId, id), eq(mailboxCredentials.transport, "imap")))
+      .limit(1))[0]?.meta as Record<string, unknown> | null | undefined;
+
+    const merged: Record<string, unknown> = { ...(stored ?? {}), ...metaOf(patch.imap ?? {}) };
+
+    // Same refusal `create` owes and for the same reason: a configuration the adapter could never
+    // use is rejected BEFORE the dial, rather than reported as a mail-server failure. Reachable
+    // here when a mailbox has no stored `meta` at all and the patch supplies none either.
+    const host = typeof merged.host === "string" ? merged.host : "";
+    const port = typeof merged.port === "number" ? merged.port : 0;
+    if (!host || !port) {
+      throw new ServiceError("validation_failed", 400, "imap host and port are required");
+    }
+
+    const verdict = await opts.probe({
+      accountId: ctx.accountId,
+      address: current.address,
+      imap: {
+        host,
+        port,
+        secure: typeof merged.secure === "boolean" ? merged.secure : true,
+        user: typeof merged.user === "string" ? merged.user : "",
+        pass: patch.imap!.pass!,
+      },
+    });
+    if (verdict.verdict === "refuse") throw probeRefused(verdict.code);
+    return merged;
+  }
+
+  private async upsertCredOn(
+    tx: Tx, ctx: ServiceContext, kp: KeyProvider, mailboxId: string,
+    transport: "imap" | "smtp" | "graph", pass: string, metaIn: Record<string, unknown>,
+  ): Promise<void> {
+    const { ciphertext, keyVersion } = await kp.encrypt(pass);
+    const meta = Object.keys(metaIn).length > 0 ? metaIn : undefined;
+    const now = ctx.now();
+    await tx.insert(mailboxCredentials).values({
+      mailboxId, transport, secretEnc: ciphertext, keyVersion,
+      ...(meta ? { meta } : {}), updatedAt: now,
+    }).onConflictDoUpdate({
+      target: [mailboxCredentials.mailboxId, mailboxCredentials.transport],
+      set: {
+        secretEnc: ciphertext, keyVersion, updatedAt: now,
+        // ── MERGED, NOT REPLACED ──────────────────────────────────────────────────────────
+        //
+        // This assigned `meta` wholesale, so a partial patch DESTROYED the stored fields it
+        // did not mention: `PATCH {imap:{pass, host}}` left a row whose port, user and TLS mode
+        // were gone, and `loadMailboxCreds` then handed the worker a config that had never been
+        // tried — a mailbox that was working before somebody corrected its hostname.
+        //
+        // `||` is jsonb concatenation, right-hand side wins, so the patch's fields overwrite and
+        // the rest survive. Done in SQL rather than by read-modify-write because this runs inside
+        // the transaction that already holds the row lock, and a second round trip to merge in
+        // application code would be both slower and a place for two writers to interleave.
+        // `coalesce` covers the row whose meta is NULL.
+        ...(meta
+          ? { meta: sql`coalesce(${mailboxCredentials.meta}, '{}'::jsonb) || ${JSON.stringify(meta)}::jsonb` }
+          : {}),
+      },
+    });
+  }
+
+  private requireKeyProvider(): KeyProvider {
+    if (!this.deps.keyProvider) {
+      throw new ServiceError("internal", 500, "mailbox service not configured with a key provider");
+    }
+    return this.deps.keyProvider;
+  }
+
+  /** Load a mailbox row scoped to the account, or 404. */
+  private async ownedRow(ctx: ServiceContext, id: string): Promise<MailboxRow> {
+    return this.ownedRowOn(asTx(ctx), ctx, id);
+  }
+
+  /**
+   * {@link ownedRow} on an explicit db handle — the transactional read the write paths need.
+   *
+   * `forUpdate` is OPT-IN, on the `liveSubscriptionOf` pattern, and only `update` and `delete`
+   * pass it. The read paths (`get`, `list`, `requestResync`, the DTO build) must not take write
+   * locks on every request — a lock on the read path would serialize the mailbox panel behind
+   * whatever mutation happens to be in flight. When it IS passed the handle must be a real
+   * transaction: a row lock taken outside one is released immediately and serializes
+   * nothing, which is worse than not taking it because it reads as protection.
+   */
+  private async ownedRowOn(
+    tx: Tx, ctx: ServiceContext, id: string, opts: { forUpdate?: boolean } = {},
+  ): Promise<MailboxRow> {
+    const base = tx.select().from(mailboxes)
+      .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId))).limit(1);
+    const [m] = await (opts.forUpdate ? base.for("update") : base);
+    if (!m) throw new ServiceError("not_found", 404, "mailbox not found");
+    return m as MailboxRow;
+  }
+
+  /** MailboxDTO — identity + lifecycle + a per-folder sync summary. NEVER credentials. */
+  private async toDTO(ctx: ServiceContext, m: MailboxRow): Promise<MailboxDTO> {
+    const fRows = await ctx.db.select().from(mailboxFolders)
+      .where(eq(mailboxFolders.mailboxId, m.id)).orderBy(asc(mailboxFolders.folder));
+    const folders: MailboxFolderSummary[] = fRows.map((f) => ({
+      folder: f.folder,
+      hasSyncCursor: f.highestmodseq != null,
+      updatedAt: f.updatedAt.toISOString(),
+    }));
+    return {
+      id: m.id,
+      provider: m.provider,
+      address: m.address,
+      displayName: m.displayName,
+      status: m.status as MailboxDTO["status"],
+      authKind: m.authKind as MailboxDTO["authKind"],
+      lastSyncAt: m.lastSyncAt ? m.lastSyncAt.toISOString() : null,
+      // Projected only while the mailbox IS in error. The columns are already cleared on
+      // recovery, so this is belt-and-braces — but the wire contract ("null unless error") is
+      // one a client should not have to trust a background job to have honoured.
+      errorCode: m.status === "error" ? (m.errorCode as MailboxDTO["errorCode"]) ?? "unknown" : null,
+      errorDetail: m.status === "error" ? m.errorDetail : null,
+      failedAt: m.status === "error" && m.failedAt ? m.failedAt.toISOString() : null,
+      retryCount: m.status === "error" ? m.retryCount : 0,
+      // ── NOT GATED ON `status`, UNLIKE THE FOUR ABOVE (mail 0029) ────────────────────────
+      //
+      // The asymmetry is the entire reason this column exists. Every state it describes — an
+      // unreadable organizer lease, credentials not yet provisioned, this deployment's mailbox cap
+      // — happens while `status` IS `connected`, because an infrastructure fault must never
+      // quarantine a mailbox. Gating these two the way the failure four are gated would make them
+      // permanently NULL on the wire, reproducing the silent not-syncing failure this column
+      // exists to end, one column over. A reviewer reaching for consistency here should read this
+      // paragraph first:
+      // the failure four are gated because the wire contract is "null unless error"; these two ARE
+      // the contract for "connected but not syncing".
+      //
+      // Safe to project verbatim: a closed set of three with a CHECK behind it, so no value a mail
+      // server chose can reach this field — which is exactly what `errorDetail` needed an
+      // allowlist at the write site to achieve.
+      syncBlockedReason: isMailboxSyncBlockReason(m.syncBlockedReason) ? m.syncBlockedReason : null,
+      syncBlockedSince: m.syncBlockedSince ? m.syncBlockedSince.toISOString() : null,
+      // ── WHY A DISABLED MAILBOX IS DISABLED (mail 0027) ─────────────────────────────────
+      //
+      // Until this line the organizer lease's verdict was invisible to every client. A mailbox
+      // stood down because another install holds it has `error_code` NULL and
+      // `sync_blocked_reason` NULL — `markMailboxStoodDown` clears both, CORRECTLY, because a
+      // stand-down is neither a failure nor an infrastructure block — so this column was the only
+      // one carrying the fact, and it never left the server. Measured consequence in the field's
+      // doc in `dto/types.ts`.
+      //
+      // GATED, and read that doc before "fixing" it into agreement with the two lines above: the
+      // gate is what stops a re-enabled mailbox shipping `connected` and "somebody else holds
+      // this" in one row, because the clear belongs to the worker's gate and not to `update`.
+      //
+      // AND AN UNRECOGNISED NON-NULL VALUE BECOMES `:unknown`, NEVER `null`. Under `disabled`,
+      // `null` is the ordinary user disconnect — a different state with different copy — so
+      // narrowing a fourth member to `null` the way `syncBlockedReason` may would tell an older
+      // client "the user disconnected this" about a mailbox a newer worker stood down. The closed
+      // set carries its own catch-all for precisely this, and `markMailboxStoodDown` applies the
+      // same rule at the write site.
+      disabledReason: m.status !== "disabled" ? null
+        : m.disabledReason === null ? null
+          : isMailboxDisabledReason(m.disabledReason) ? m.disabledReason : "organized_elsewhere:unknown",
+      // WHEN the first import finished (mail 0038). Projected UNCONDITIONALLY and as `=== null` the
+      // client reads it: the worker writes it once a cycle drains with no backlog, and a NULL is
+      // the floor `mail-state.ts` holds under "still importing". Gating it on a status would hide
+      // the partial-import case it exists to disclose.
+      initialImportCompletedAt: m.initialImportCompletedAt ? m.initialImportCompletedAt.toISOString() : null,
+      folders,
+      createdAt: m.createdAt.toISOString(),
+    };
+  }
+}
+
+/** Construct a write-capable MailboxService with an injected KeyProvider. */
+export function makeMailboxService(deps: MailboxServiceDeps = {}): MailboxService {
+  return new MailboxService(deps);
+}
+
+/** Read-only singleton (no KeyProvider) — the write methods require `makeMailboxService`. */
+export const mailboxService = new MailboxService();

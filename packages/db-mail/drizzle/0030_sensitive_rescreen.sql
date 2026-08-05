@@ -1,0 +1,96 @@
+-- THE ONE-TIME RE-EVALUATION MARKER — the half of the consent fix that reaches mail already on
+-- disk.
+--
+-- ══ WHAT THIS FIXES, MEASURED ════════════════════════════════════════════════════════════
+--
+-- An earlier fix subordinated the sensitivity verdict to the consent gate in the pipeline. That
+-- line used to read `sensitivity.sensitive ? "INBOX" : decision.destination`, and because
+-- `classifySensitivity` reads the SUBJECT and the BODY — both of them written by the sender —
+-- `Subject: your verification code` was a remote, unauthenticated, one-message defeat of the
+-- Screener, and an OTP-shaped body freed a sender the user had explicitly Quarantined.
+--
+-- **That fix is forward-looking only.** It changes where the next message goes; it does not move
+-- one message that is already filed. Measured on a live database AFTER the fix had shipped:
+--
+--   folder_state.desired_folder = 'INBOX'                          981 rows
+--     · of them sensitive (`messages.sensitivity_category` set)    587  (otp 314,
+--       security_alert 138, verification 77, password_reset 58)
+--     · of THOSE, sender absent from `contacts`                    582
+--
+-- 60% of the Ohbox is mail from a stranger that `evaluateRules` would have held for the
+-- Screener, and the user sees all of it every time they open the app. It is not a bug that can
+-- be waited out: nothing re-routes a message once it is filed.
+--
+-- ══ WHY A COLUMN, AND WHY THIS ONE AND NOT `kickstart_at` ════════════════════════════════
+--
+-- 0025's argument for a column over a job table holds here verbatim — the fact is one bit per
+-- mailbox and it belongs to the mailbox — so it is not repeated. What IS worth writing down is
+-- why the kickstart could not simply be re-run, because "clear `kickstart_at` and let it do it"
+-- is the first idea anybody has and it is wrong twice:
+--
+--   1. **Its candidate query is the INVERSE of this one.** `listScreenerBacklog` selects
+--      `folder_state.desired_folder = 'ohmail/Screener'` and re-routes mail OUT of the Screener.
+--      The damage here is mail that never reached the Screener at all. The kickstart would
+--      examine none of it.
+--   2. **Its marker is already stamped** on mailboxes in the field. Clearing it to reuse
+--      the vehicle would ALSO re-run the Sent scan and the out-of-Screener pass — two passes
+--      whose work is already done — and would destroy the one record of whether it has run.
+--
+--   sensitive_rescreen_at   when the one-time re-evaluation pass COMPLETED for this mailbox.
+--                           NULL = never run. Written by
+--                           the rescreen pass, and by nothing else.
+--
+-- ══ WRITTEN AFTER THE WORK, AND THE DIRECTION IS THE WHOLE OF THE CRASH POLICY ═══════════
+--
+-- Same rule as 0025, and for a sharper reason. Claiming the marker first would make a crash
+-- mid-pass PERMANENT: a mailbox marked re-screened with half its misrouted mail still in the
+-- Ohbox, and nothing that would ever look at it again. Stamping it last means a crash re-runs
+-- the pass, and re-running is safe because the pass's own candidate query is what makes it
+-- idempotent — a message it has already moved has `desired_folder = 'ohmail/Screener'` and is no
+-- longer a candidate. The second run over a completed mailbox writes zero `folder_state` rows
+-- and zero `change_log` rows, marker or no marker; the marker only saves the scan.
+--
+-- ══ IT MOVES NO MAIL. IT WRITES AN INTENT. ═══════════════════════════════════════════════
+--
+-- The pass writes `folder_state.desired_folder` and a `move` change and stops. The physical IMAP
+-- move is the worker's reconcile pass, on its next cycle, through the one code path that already
+-- knows how to do it crash-safely. The mailbox is the master (GOALS #3): nothing in the API tier
+-- and nothing in this pass opens an IMAP connection, and `sensitive-rescreen.no-imap.test.ts`
+-- asserts it by failing the test if a client is constructed.
+--
+-- ══ NO BACKFILL, NO CHECK, NO DATA STATEMENT ═════════════════════════════════════════════
+--
+-- Additive and nullable, so existing rows stay valid — and NULL is exactly right for them: every
+-- mailbox that exists today genuinely has never been re-screened. There is deliberately no
+-- `UPDATE` here. This migration's whole subject is a correction to already-stored mail, so a
+-- reader will look for the correction IN it; it is not here, and it must not be. The decision is
+-- `evaluateRules` — the user's own rules, their `contacts`, and a header heuristic — and SQL
+-- cannot re-implement that without becoming a second router that drifts from the first. The
+-- journal states the marker; the code makes the decision.
+--
+-- No CHECK, because there is no set to close: it is a timestamp, on 0027's own rule that a CHECK
+-- is for a column whose VALUE could be chosen by something outside our code.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═══════════════════════════════════════════════════════
+--
+-- Deploy order is migration → API, for the reason every `mailboxes` column on this list carries:
+-- `MailboxService.list` selects WHOLE ROWS through the drizzle schema, so an API deployed ahead
+-- of this migration answers Postgres 42703 on the mailbox panel and on the connect flow.
+-- `["mailboxes","sensitive_rescreen_at"]` therefore joins `MAIL_SCHEMA_MARKERS` in
+-- `packages/api/src/routes/health.ts` and `MAIL_SCHEMA_MARKER_JOURNAL_TAG` moves to this tag in
+-- the same diff, so that mistake reports `503 schema_incomplete` naming this migration instead
+-- of a 500 nobody can attribute. `health.test.ts` fails if the tag is left behind — which is how
+-- 0029 caught a migration shipping with a stale pin.
+--
+-- The WORKER is not in the order at all, and that is a fact about this slice worth stating: the
+-- pass does not run there. The worker's dependency-direction test forbids its sources from
+-- importing `@trafficflow/services` (services is an API-host concern and is not installed
+-- in the worker's image), so a pass that lives in `packages/services` cannot be scheduled from an
+-- attach. It is an operator one-shot instead; the worker's only role is the one it already has,
+-- which is to reconcile the intent this pass writes.
+--
+-- ROLLBACK is `ALTER TABLE mailboxes DROP COLUMN sensitive_rescreen_at`. The cost is that the
+-- pass would run once more on a mailbox it has already finished, which by the paragraph above
+-- writes nothing — not a data loss.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "sensitive_rescreen_at" timestamp with time zone;

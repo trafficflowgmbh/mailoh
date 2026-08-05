@@ -1,0 +1,116 @@
+-- WHY A `connected` MAILBOX IS NOT BEING SYNCED — the row's own answer, at last.
+--
+-- ══ WHAT THIS FIXES, MEASURED ════════════════════════════════════════════════════════════
+--
+-- The first real mailbox connected to this system never synced. The cause was an adoption bug — a
+-- `FETCH 1:*` issued against an empty `ohmail/_meta`, which Dovecot refuses and GreenMail
+-- tolerates — and that half is fixed and confirmed against a real server. This migration is the
+-- OTHER half: for over half an hour the system knew exactly what was
+-- wrong, and wrote it only to a log. Settings → Mailboxes said `connected`. The admin console said
+-- `connected`. Nothing anywhere said "this mailbox is not being served, and here is why."
+--
+-- Three branches in the worker's main loop declined to serve a mailbox they KNEW was expected
+-- and left its row pristine. Fixing one would have got the other two re-found twice:
+--
+--   1. `LeaseUnavailableError` — added to an in-memory set, logged, returned. Deliberately NOT a
+--      quarantine, which is correct: an infrastructure fault must never earn a mailbox a backoff
+--      or a `status='error'`. But the row stayed clean.
+--   2. `awaitingCreds` — logged ONCE EVER, behind an `announced.creds` set. Strictly more silent
+--      than the lease arm: after the first pass there was not even a log line.
+--   3. `mailbox_cap_exceeded` — mailboxes dropped by `TF_MAX_MAILBOXES` are not counted in
+--      `expected` at all, so `/health` stayed `degraded: false` while nothing served them.
+--
+-- ══ THE COLUMN SEMANTICS, SO NOBODY RE-DERIVES THEM ══════════════════════════════════════
+--
+--   sync_blocked_reason  WHY this mailbox is not being synced, while its `status` is unchanged.
+--                        A CLOSED set of three: 'lease_unreadable' | 'awaiting_credentials' |
+--                        'at_capacity'. NULL means "nothing is blocking it", which is the true
+--                        state of every existing row.
+--   sync_blocked_since   when the CURRENT block began. Written `coalesce(sync_blocked_since,
+--                        now)`, exactly as `failed_at` is, so a mailbox blocked for three days
+--                        reports three days rather than "just now, again" every roster pass.
+--
+-- ══ WHY THE SET IS CLOSED, AND WHY 0023'S ARGUMENT DOES NOT APPLY HERE ═══════════════════
+--
+-- 0023 argued that the failure taxonomy must be TEXT with NO constraint, because a taxonomy of
+-- PROVIDER failures grows and a new classification must be a code deploy rather than a migration
+-- that has to land before the worker that emits it. Someone will read this column as the same
+-- thing. It is not.
+--
+-- This set is "the ways OUR OWN INFRASTRUCTURE declines to serve a mailbox". Not one member is
+-- chosen by, derived from, or influenced by a mail server: each is a branch we wrote, and the set
+-- is enumerable by reading one file. A new member can only appear alongside a new refusal branch
+-- in the worker — a code change either way — so the migration lands in the same slice as the code
+-- that emits it, and the ordering problem 0023 was avoiding cannot arise.
+--
+-- So it gets a CHECK, like `disabled_reason` and unlike `error_code`. Same GOALS #9 reasoning as
+-- 0027: the column is read by the account's own user and by the admin console, and the write site
+-- being allowlisted (`markMailboxSyncBlocked`) is the half that only holds for today's tree. The
+-- constraint is the half that survives a call site nobody has written yet.
+-- A real-Postgres test watches it refuse.
+--
+-- ══ THERE IS NO `no_organizer` MEMBER, AND THIS PARAGRAPH IS WHY ═════════════════════════
+--
+-- "No worker is running at all" is the one blocked state this column structurally CANNOT record,
+-- because the worker is its only writer: nobody would be there to write it, and — worse — nobody
+-- would be there to clear it, so every row would carry a stale reason for ever after the deploy
+-- that stopped a shard. That state belongs to the sync fleet's liveness table (one row per shard,
+-- beat staleness) and to the `worker_down` alert rule. Without this note
+-- the member gets added, because it looks like it belongs.
+--
+-- ══ WHY NOT `error_code`, A NEW `status`, OR FLEET LIVENESS ══════════════════════════════
+--
+-- All three were considered and all three are dead on evidence, recorded here so the next reader
+-- does not spend the afternoon re-deriving them:
+--
+--   · An `error_code` value with `status='connected'` is INVISIBLE ON THE WIRE.
+--     `packages/services/src/mailbox-service.ts` gates all four failure columns on
+--     `m.status === "error"` in `toDTO`, and `admin-service.ts` does the same for `lastError` /
+--     `lastErrorAt`. The reason would reach the database and stop there.
+--   · A fourth `status` value BREAKS THE WEBAPP AT RUNTIME. `MailboxSection.tsx` renders
+--     `` t(`status_${m.status}`) `` against exactly three keys in `messages/en.json`, so a fourth
+--     renders the literal key path; `MailboxDTO.status` is a 3-member union; and
+--     `mailboxes_active_address_uq` is a PARTIAL index on `status <> 'disabled'`, which a new
+--     value would silently join.
+--   · Deriving it from FLEET LIVENESS CANNOT ANSWER THE QUESTION. That table is one row per
+--     SHARD with a shard-wide `degraded` boolean, so with two mailboxes and one blocked, a derived
+--     signal defames the healthy one.
+--
+-- ══ COMPATIBILITY ════════════════════════════════════════════════════════════════════════
+--
+-- Additive and nullable, no backfill: NULL is the true state of every existing row, and inventing
+-- a reason for a mailbox that is syncing fine would be the opposite of this slice's point. A worker
+-- binary that predates this migration keeps writing `status` alone and keeps being silent, which is
+-- today's behaviour exactly.
+--
+-- Deploy order is migration → API → worker, for 0027's two reasons plus a sharper third:
+--   · `MailboxService.list` selects WHOLE ROWS through the drizzle schema, so an API deployed
+--     ahead of this migration answers Postgres 42703 on the mailbox panel and on the connect flow;
+--   · the WORKER is the only writer of this column, and a worker deployed ahead of the migration
+--     fails the write and RESTORES TOTAL SILENCE — the exact defect this migration exists to end,
+--     reintroduced by a deploy ordering mistake.
+-- `["mailboxes","sync_blocked_reason"]` therefore joins `MAIL_SCHEMA_MARKERS` in
+-- `packages/api/src/routes/health.ts`, so that mistake reports `503 schema_incomplete` naming this
+-- migration instead of a 500 nobody can attribute.
+--
+-- The UI half is a SEPARATE slice and ships separately, for the same ordering reason: one slice
+-- would mean either a UI state that cannot occur yet or a worker writing to an un-migrated column.
+--
+-- ROLLBACK is `ALTER TABLE mailboxes DROP CONSTRAINT mailboxes_sync_blocked_reason_closed`, then
+-- `DROP COLUMN` on both. The cost is a return to the 32 minutes: a mailbox nothing is serving
+-- reads as `connected` and healthy. No data is lost — both columns are derived from live worker
+-- state and are rewritten on the next roster pass.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "sync_blocked_reason" text;--> statement-breakpoint
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "sync_blocked_since" timestamp with time zone;--> statement-breakpoint
+-- IDEMPOTENT, because `ADD CONSTRAINT` has no `IF NOT EXISTS` and every other statement in this
+-- journal is replayable. A real-Postgres test rewinds a fully-migrated
+-- database and re-migrates, and a bare ADD then raises 42710 and takes the whole pass with it. The
+-- same shape reaches production through `openLocalDb` (which re-runs both journals on every
+-- launch) and through any recovery from a `PartialMigrationError`. The `duplicate_object` catch is
+-- the pattern 0000, 0009, 0013 and 0027 already use for their constraints.
+DO $$ BEGIN
+  ALTER TABLE "mailboxes" ADD CONSTRAINT "mailboxes_sync_blocked_reason_closed" CHECK ("sync_blocked_reason" IS NULL OR "sync_blocked_reason" IN ('lease_unreadable', 'awaiting_credentials', 'at_capacity'));
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;

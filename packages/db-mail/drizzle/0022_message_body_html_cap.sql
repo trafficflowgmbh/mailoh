@@ -1,0 +1,74 @@
+-- A CEILING ON ONE STORED HTML BODY — the tripwire for a storage outage that really happened.
+--
+-- ══ WHAT HAPPENED, MEASURED BEFORE ANY CHANGE ════════════════════════════════════════════
+--
+-- A single mailbox filled a 512 MB database and Postgres began answering
+-- `53100 disk_full`. The mailbox was quarantined, the worker crash-looped, and the whole
+-- deployment went dark. The breakdown, not guessed:
+--
+--     message_bodies   465.6 MB   95% of the entire database
+--       html            372.1 MB stored / 482.7 MB raw   ← 76% of the table
+--       headers          27.5 MB
+--       body_tsv         19.8 MB  (+ 28.1 MB for its GIN index)
+--       text             12.0 MB
+--     messages          10.7 MB
+--     change_log         2.7 MB
+--
+-- html compressed at only 1.30x where `text` managed 1.77x, and 555 rows were stored WHOLLY
+-- uncompressed (pglz abandons input it cannot shrink by 25%). The reason: mailparser's
+-- `simpleParser`, called with default options, rewrites every `cid:` reference into
+-- `data:<type>;base64,<the entire attachment>`. base64 of an already-compressed JPEG is
+-- incompressible, so it was stored verbatim. 717 rows carried `;base64,` and held 90% of all
+-- html bytes; 53 rows held 248 MB between them — 48% of the database in 53 messages — and the
+-- largest single body was 19,276,606 bytes.
+--
+-- That is a GOALS #3 violation before it is a sizing problem: the invariant says on-demand
+-- attachment fetch "stores no bytes", and `packages/api/src/routes/attachments.ts` implements
+-- exactly that. Inlining the bytes into the body stored them anyway, through a side door.
+--
+-- ══ WHY THIS FILE CARRIES NO BACKFILL ════════════════════════════════════════════════════
+--
+-- An earlier draft of this migration opened with a `regexp_replace` prelude that stripped the
+-- base64 payloads out of the 717 damaged rows, plus a byte-exact plpgsql truncation loop for
+-- what remained over the cap. Neither is here, and the reason is a RULING, not an oversight:
+-- discarding the synced copy of that mailbox outright was authorised instead. The mail-content
+-- tables were TRUNCATEd — 492 MB down to 11 MB — and the mailbox re-syncs from IMAP with the
+-- fixed parser. The IMAP mailbox is the master; a synced copy is regenerable by definition,
+-- which is exactly why throwing it away was cheaper and more honest than rewriting it in place.
+--
+-- Verified before this shipped: EVERY database that runs this journal held zero rows over the
+-- cap — the live one (emptied by the truncation above), the shared test accumulator and all 16
+-- per-file worker databases. So `ADD CONSTRAINT` validates
+-- without a prelude to help it. Do not add one back speculatively.
+--
+-- ══ WHAT THIS CONSTRAINT IS FOR ══════════════════════════════════════════════════════════
+--
+-- It is a TRIPWIRE, not a working part. Three lines defend this column and they are ordered:
+--
+--   1. `packages/core/src/mime.ts` passes `keepCidLinks: true`, so we never manufacture the
+--      bloat. This is the actual fix.
+--   2. `packages/core/src/html-storage.ts` (`prepareHtmlForStorage`) strips oversized inline
+--      payloads a SENDER authored — `keepCidLinks` has no opinion about those — and then caps
+--      what is left. It is wired at the single writer, `pipeline.ts`.
+--   3. This constraint, which can only fire if (1) or (2) regresses.
+--
+-- 262144 = 256 KiB, and it is deliberately generous. Measured over a real corpus of html bodies
+-- AFTER stripping data: payloads: p50 20,499 · p90 46,823 · p99 105,162 · max 441,692 bytes.
+-- The cap sits above the 99th percentile and would have caught two rows in several thousand.
+--
+-- The storage layer's own test suite pins `STORED_HTML_CAP_BYTES` to the literal below.
+-- A migration freezes the moment it is applied, so the code and the SQL cannot be kept equal by
+-- construction — that test is the reconciliation point. If you change this number, change it
+-- there in the same commit or the test says so.
+--
+-- ══ THE FAILURE MODE, NAMED HERE RATHER THAN DISCOVERED IN AN INCIDENT ═══════════════════
+--
+-- `apps/worker/src/sync.ts` has no per-message catch, so a violation throws out of the sync
+-- cycle and quarantines that ONE mailbox as a poison-message loop. That is the intended
+-- loudness. The alternative — the behaviour this migration exists to end — is silent re-bloat
+-- until Postgres quarantines the whole DATABASE, which is the outage above.
+--
+-- `octet_length(NULL)` is NULL and a CHECK passes on NULL, so the nullable column needs no
+-- special-casing: a message with no html, and a sensitive message whose html is deliberately
+-- never stored (GOALS #1), both satisfy this without an `IS NULL` arm.
+ALTER TABLE "message_bodies" ADD CONSTRAINT "message_bodies_html_cap" CHECK (octet_length("html") <= 262144);

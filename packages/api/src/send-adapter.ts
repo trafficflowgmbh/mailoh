@@ -1,0 +1,87 @@
+import { eq } from "drizzle-orm";
+import { mailboxCredentials } from "@trafficflow/db";
+import { ImapAdapter } from "@trafficflow/core/adapters/imap";
+import type { SendAdapter } from "@trafficflow/core/mail";
+import { ServiceError } from "@trafficflow/services/mail";
+import type { ApiDeps } from "./deps.js";
+
+interface CredMeta { host?: string; port?: number; secure?: boolean; user?: string }
+
+/**
+ * Build the API's send adapter (Phase 3c, R-P3-5). Unlike `makeOpenAdapter`
+ * (attachments) which reads ONLY the `imap` cred row — so `ImapConfig.smtp` is
+ * unset and `ImapAdapter.send` would throw "SMTP not configured" — this reads BOTH
+ * the `imap` AND the `smtp` `mailbox_credentials` rows (envelope-encrypted at
+ * rest), decrypts each via `deps.keyProvider`, and constructs a connected
+ * `ImapAdapter` with `smtp` populated so it can SMTP-send AND IMAP-append to
+ * Sent. The returned handle
+ * exposes the `SendAdapter` seam (`send` / `messageInSent` / `close`) SendService
+ * drives; credentials never leave the server (RC1).
+ *
+ * If the mailbox has no dedicated `smtp` row we fall back to the imap host + the
+ * imap secret (the single-credential generic-IMAP convention) rather than error —
+ * many providers use one password for both transports.
+ */
+export async function makeSendAdapter(deps: ApiDeps, mailboxId: string): Promise<SendAdapter> {
+  const rows = await deps.db.select().from(mailboxCredentials)
+    .where(eq(mailboxCredentials.mailboxId, mailboxId));
+
+  const imapRow = rows.find((r) => r.transport === "imap");
+  if (!imapRow) throw new ServiceError("upstream_unavailable", 502, "mailbox has no IMAP credentials");
+  const smtpRow = rows.find((r) => r.transport === "smtp");
+
+  const imapMeta = (imapRow.meta ?? {}) as CredMeta;
+  const imapPass = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
+
+  // Resolve the SMTP transport: the dedicated smtp row when present, else fall back
+  // to the imap host/user + imap secret (shared-credential providers, e.g. GreenMail).
+  let smtpMeta: CredMeta;
+  let smtpPass: string;
+  if (smtpRow) {
+    smtpMeta = (smtpRow.meta ?? {}) as CredMeta;
+    smtpPass = await deps.keyProvider.decrypt(smtpRow.secretEnc, smtpRow.keyVersion);
+  } else {
+    smtpMeta = { host: imapMeta.host, port: 587, secure: false, user: imapMeta.user };
+    smtpPass = imapPass;
+  }
+
+  const smtpUser = smtpMeta.user ?? imapMeta.user ?? "";
+  const adapter = new ImapAdapter({
+    host: imapMeta.host ?? "",
+    port: imapMeta.port ?? 993,
+    secure: imapMeta.secure ?? true,
+    auth: { user: imapMeta.user ?? "", pass: imapPass },
+    smtp: {
+      host: smtpMeta.host ?? imapMeta.host ?? "",
+      port: smtpMeta.port ?? 587,
+      secure: smtpMeta.secure ?? false,
+      // GreenMail runs with auth disabled; omit auth when there is no user to bind.
+      ...(smtpUser ? { auth: { user: smtpUser, pass: smtpPass } } : {}),
+    },
+    sentDomain: domainOf(imapMeta.user),
+  });
+  // Same reason as `makeOpenAdapter`: `connect()` logs in and LISTs, so a failure after login
+  // leaves an authenticated socket open that the caller has no handle to close. Close it here
+  // and rethrow the original error — on the SEND path a leaked socket is worse than elsewhere,
+  // because the retry that follows is a retry of a send.
+  try {
+    await adapter.connect();
+  } catch (err) {
+    await adapter.close().catch(() => { /* the connection is already broken */ });
+    throw err;
+  }
+
+  return {
+    send: async (msg) => {
+      const res = await adapter.send(msg);
+      return { providerMessageId: res.providerMessageId };
+    },
+    messageInSent: (messageId) => adapter.messageInSent(messageId),
+    close: () => adapter.close(),
+  };
+}
+
+function domainOf(address: string | undefined): string | undefined {
+  const at = (address ?? "").lastIndexOf("@");
+  return at >= 0 ? address!.slice(at + 1) : undefined;
+}

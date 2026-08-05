@@ -1,0 +1,10 @@
+{
+  "name": "@ohmail/db-mail",
+  "version": "0.0.0",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {}
+}

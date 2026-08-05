@@ -1,0 +1,79 @@
+-- THE RICH HALF OF A DRAFT — one nullable column, and the same ceiling `message_bodies.html`
+-- already carries.
+--
+-- ══ WHY A SECOND COLUMN AND NOT A REPLACEMENT ════════════════════════════════════════════
+--
+-- `drafts.body` is `text NOT NULL DEFAULT ''` and it is what `SendService.reserve` puts in
+-- `OutboundMessage.text`. Adding `html` beside it rather than turning `body` into markup keeps
+-- three properties that a replacement would each quietly break:
+--
+--   1. Every draft stays sendable by code that predates this migration. A row written by the
+--      new compose surface and sent by an API instance still running the old build produces a
+--      plain-text message — the right content, the wrong richness — instead of an envelope
+--      whose text/plain part is a page of raw tags.
+--   2. `body` remains the TEXT/PLAIN ALTERNATIVE of the multipart, and a real one. The two
+--      parts of a `multipart/alternative` are a promise that they say the same thing; keeping
+--      the plain part in its own column is what lets the writer derive it from the sanitized
+--      markup and store both in the same statement, so nothing can drift between them later.
+--   3. A draft with no `html` is not a special case. NULL means "this draft is plain text",
+--      which is the truth for every draft that exists today and for every draft a client that
+--      never learned about rich text will write tomorrow. There is no backfill in this file
+--      for exactly that reason: manufacturing `<p>…</p>` around somebody's stored plain text
+--      would invent a rich draft they never composed, and would do it with an escaping rule
+--      chosen inside a schema change where no reviewer would look for one.
+--
+-- ══ THE CEILING IS `message_bodies`' CEILING, AND THE NUMBER IS THE SAME ON PURPOSE ══════
+--
+-- 262144 = 256 KiB, mirroring `0022_message_body_html_cap`. That migration's header explains
+-- where the number came from (the 2026-08-01 storage outage, and a measured p99 of 105,162
+-- bytes over production's stored bodies); it is not re-derived here. What is worth stating is
+-- why the same number is right for a column holding the opposite direction of mail:
+--
+--   · It is a TRIPWIRE, not a working part. The editor emits a deliberately small tag set —
+--     bold, italic, strike, link, lists, blockquote, inline code — with no images and no
+--     inline `data:` payloads, which is what made INBOUND html large. 256 KiB of that is on
+--     the order of a quarter of a million characters of prose. Nothing a person types reaches
+--     it; only a client that has started sending something other than what it claims does.
+--   · Two ceilings that differ would be a second number to keep true. A reply quoting a
+--     stored body is the obvious future path from one column to the other, and the moment the
+--     caps disagree that path has a size at which the quote is storable and the reply is not.
+--
+-- WHAT HAPPENS WHEN IT FIRES, named here rather than discovered later. Unlike 0022 — whose
+-- violation throws out of the sync cycle and quarantines a whole mailbox — this one fires on a
+-- draft WRITE, in a request the user is waiting on, with their text still on screen and still
+-- in the browser's scratch buffer. Nothing is lost and nothing is stuck. `DraftsService`
+-- refuses above the cap with a 400 before the statement is issued, so in practice the
+-- constraint can only fire if that refusal regresses, which is the same relationship 0022 has
+-- to `prepareHtmlForStorage`.
+--
+-- `octet_length(NULL)` is NULL and a CHECK passes on NULL, so the nullable column needs no
+-- `IS NULL` arm — a plain-text draft satisfies this without special-casing.
+--
+-- ══ DEPLOY ORDER IS MIGRATION → API ══════════════════════════════════════════════════════
+--
+-- `materializeDraft` selects the draft through the drizzle schema, so an API carrying this
+-- column against a database without it answers Postgres 42703 on every draft read AND on the
+-- send path, which reads the row to build the envelope. That is compose and reply both dark.
+-- The health marker (`drafts.html`) is what turns it into a 503 naming the file to run rather
+-- than a 500 nobody can attribute. There is no worker half: nothing in `apps/worker` reads or
+-- writes `drafts`.
+--
+-- ROLLBACK is `ALTER TABLE drafts DROP COLUMN html`. The cost is that rich drafts already
+-- stored lose their markup and send as the plain text in `body`, which is the same content
+-- with the formatting removed — never an empty message, because `body` is written on every
+-- write and is never derived away.
+
+ALTER TABLE "drafts" ADD COLUMN IF NOT EXISTS "html" text;--> statement-breakpoint
+-- IDEMPOTENT, because `ADD CONSTRAINT` has no `IF NOT EXISTS` and every other statement in this
+-- journal is replayable. This is 0029's pattern and 0029's reason, restated because the bare form
+-- shipped here first and was caught by the same real-Postgres test
+-- rewinds a fully-migrated database and re-migrates, and a bare ADD then raises 42710
+-- (`constraint "drafts_html_cap" for relation "drafts" already exists`) and takes the whole pass
+-- with it. The same shape reaches a real install through `openLocalDb`, which re-runs both
+-- journals on every launch, and through any recovery from a `PartialMigrationError`. The catch is
+-- the pattern 0000, 0009, 0013, 0027 and 0029 already use for their constraints.
+DO $$ BEGIN
+  ALTER TABLE "drafts" ADD CONSTRAINT "drafts_html_cap" CHECK (octet_length("html") <= 262144);
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;

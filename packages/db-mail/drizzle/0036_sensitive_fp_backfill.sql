@@ -1,0 +1,81 @@
+-- PUTTING BACK THE HTML A CLASSIFIER FALSE POSITIVE THREW AWAY — the durable half of the
+-- CLS-OTP-FP repair.
+--
+-- ══ WHAT HAPPENED, AND WHY THE CODE FIX WAS NOT THE END OF IT ════════════════════════════
+--
+-- Bulk senders percent-escape the target inside a click tracker, so `/` becomes `-2F`. `-` is
+-- not a word character, which put a word boundary on each side of the three characters `2Fa`,
+-- and the sensitivity vocabulary read that as the standalone acronym `2fa`. Ordinary mail —
+-- newsletters, invoices, delivery notices, monitoring alerts — was therefore judged to contain
+-- an authentication code, and mail judged sensitive is stored REDACTED WITH NO HTML AT ALL.
+-- The verdict was decided by a random token: three copies of one usage notice from one sender
+-- classified differently, because one copy's tracker happened to contain no escape.
+--
+-- The classifier is fixed and deployed. That fix is forward-looking only, and it has to be:
+-- nothing re-reads a stored body. So the mail already damaged stays damaged, and there is no
+-- rehydrate path anywhere in the product — the single writer of `message_bodies.html` writes
+-- NULL for anything judged sensitive, and the only remaining copy of that HTML is the message
+-- sitting on the IMAP server. Census over the sensitivity-categorised bodies of a live mailbox:
+-- 52 clear under the fixed classifier, 906 do not. Those 52 are what this column exists for.
+--
+-- ══ ONE COLUMN, AND WHY THE CANDIDATE SET CANNOT BE THE MARKER ═══════════════════════════
+--
+-- 0025 and 0030 both mark a MAILBOX because both are per-mailbox one-shot corrections, and this
+-- is a third of exactly that kind; their arguments hold verbatim and are not repeated. The one
+-- thing worth stating is why a marker is needed AT ALL, because two earlier passes in this repo
+-- did without one:
+--
+-- The candidate set does not shrink. `thread-backfill` needs no marker because a message it
+-- threads stops having a NULL `thread_id`; the kickstart re-route needs none because a message
+-- it moves stops being desired into the Screener. Here a message that is STILL sensitive under
+-- the fixed classifier is still categorised, still without HTML, and therefore still a
+-- candidate — for ever. Without a marker the pass would re-read every candidate off somebody's
+-- IMAP server on every worker cycle, permanently, to reach the same answer every time.
+--
+--   sensitive_fp_backfill_at   NULL means "never run", a timestamp means "done, never again".
+--                              Written AFTER the pass, never before it: claiming it first makes
+--                              a crash permanent — a mailbox marked repaired with most of its
+--                              mail still unreadable and nothing that would ever look again.
+--                              Re-running is safe without it, because a message the pass has
+--                              cleared no longer has a category and drops out of the candidate
+--                              query. The marker saves the IMAP reads, not the correctness.
+--
+-- CLEARING IT IS THE SUPPORTED WAY TO ASK FOR THE PASS AGAIN. That is the mechanism the repair
+-- is triggered through on a mailbox that was already stamped, and it is deliberately the only
+-- one — there is no re-run flag, no CLI and no route, so the operation an operator performs is
+-- the same statement the product's own idempotency is built on.
+--
+-- ══ IT REPAIRS A RECORD. IT DOES NOT RE-ROUTE ANYTHING ═══════════════════════════════════
+--
+-- Clearing a sensitivity category is display-only and moves no mail. The router reads the
+-- in-memory verdict computed at ingest and never `messages.sensitivity_category`; the folder
+-- reconciler reads `folder_state` and nothing else. So the pass writes no `folder_state` row,
+-- no `move` change and no routing decision, and a test asserts each of those absences rather
+-- than leaving them to be inferred from what the code happens not to call today.
+--
+-- ══ THE DEPLOY ORDER IS MIGRATION → API → WORKER ═════════════════════════════════════════
+--
+-- The API half is the generic `mailboxes` one and it is enough on its own: `MailboxService.list`
+-- selects WHOLE ROWS through the drizzle schema, so an API deployed ahead of this migration
+-- answers Postgres 42703 on the mailbox panel and on the connect flow — a total failure of the
+-- surface, from a column nothing on that surface reads. The health marker
+-- (`mailboxes.sensitive_fp_backfill_at`) is what turns that into a 503 naming the file to run.
+--
+-- The WORKER half is real here, unlike 0030's: the pass lives in
+-- the worker's backfill pass, so a worker deployed ahead of the migration raises
+-- 42703 reading the marker, logs it per mailbox and repairs nothing. Nothing is lost by that —
+-- no marker is written, so the next cycle after the migration does the whole job.
+--
+-- NO INDEX, deliberately. The candidate query filters one mailbox's categorised messages, which
+-- is 718 rows on the largest mailbox in production, paged 100 at a time under a bounded page
+-- count, ONCE for the life of that mailbox. A permanent partial index maintained by every
+-- ingest of every sensitive message, to serve a correction that runs once, is a worse trade
+-- than the handful of scans it saves.
+--
+-- ROLLBACK is `ALTER TABLE mailboxes DROP COLUMN sensitive_fp_backfill_at`. The cost is that
+-- the pass would run once more on a mailbox it has already repaired; by the paragraph above
+-- that re-read finds no candidate it can clear and writes nothing. No repair is lost — a body
+-- restored by this pass is an ordinary stored body afterwards, indistinguishable from one that
+-- was never damaged, and nothing here can take it away again.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "sensitive_fp_backfill_at" timestamp with time zone;

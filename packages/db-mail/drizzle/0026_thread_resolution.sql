@@ -1,0 +1,91 @@
+-- THREADING AT INGEST — the index that makes the parent lookup a seek, and the natural key
+-- that makes find-or-create ON CONFLICT-safe.
+--
+-- ══ WHAT THIS FIXES, MEASURED ════════════════════════════════════════════════════════════
+--
+-- `messages.thread_id` was NULL on all 301 rows of the seeded test world and the `threads`
+-- table was empty. Nothing in the product ever wrote a thread: `ThreadService` can rename,
+-- mute and merge threads, and `materializeThread` can render one, but no code path had ever
+-- CREATED one. So threading failed by construction — no conversation was reachable from any
+-- message — and the inline reply rendered a one-entry conversation list.
+--
+-- The resolution itself is code (`packages/core/src/threading.ts`, called from `commitChange`
+-- inside the persist transaction). This migration is the two pieces of schema that code cannot
+-- work without.
+--
+-- ══ 1. messages_account_message_id_header_idx ════════════════════════════════════════════
+--
+-- The parent lookup is `WHERE account_id = $1 AND message_id_header = ANY($2)` — the whole of
+-- the threading key, since the ruling is header-chain-only with no subject fallback. There was
+-- no index on `message_id_header` at all: `messages` carried `(account_id, thread_id)`,
+-- `(account_id, mailbox_id, unread)`, the subject tsvector GIN and the `(mailbox_id, dedup_key)`
+-- unique, and nothing else. Every parent lookup was therefore a sequential scan, and the
+-- backfill — one lookup per message over every row in the mailbox — was quadratic.
+--
+-- `(account_id, message_id_header)` and not `(message_id_header)` alone, in that order, because
+-- ACCOUNT SCOPING IS THE FIRST PREDICATE, not a filter applied afterwards. GOALS #9: a
+-- Message-ID is attacker-choosable — anybody can send you mail carrying
+-- `Message-ID: <whatever-they-like>` — so a lookup that found a row in another account and then
+-- discarded it would still have read it, and one bug away from adopting its thread. The column
+-- order makes the account the leading key, so the index cannot even be probed cross-account.
+--
+-- NOT unique. Two mailboxes of one account can legitimately hold the same message (the same
+-- mail delivered to two addresses), the pipeline dedups per MAILBOX (`messages_mailbox_id_
+-- dedup_key_unique`), and a unique index here would make the second mailbox's sync fail. When
+-- the lookup returns several rows the resolver takes the first by `date` — they are the same
+-- message, so they carry the same thread.
+--
+-- ══ 2. threads.root_message_id_header + threads_account_root_header_uq ═══════════════════
+--
+--   root_message_id_header   the Message-ID of the conversation's ROOT — the leftmost (oldest)
+--                            entry of the arriving message's `References`, else its
+--                            `In-Reply-To`, else its own Message-ID. NULL only for a message
+--                            that carries no Message-ID header at all.
+--
+-- `threads` had NO natural key: id, account_id, subject, participants, last_message_at, muted,
+-- updated_at. Nothing to write an `ON CONFLICT` against, so a find-or-create could only be a
+-- SELECT followed by an INSERT — and two mailboxes of one account syncing in parallel would
+-- both miss the SELECT and both insert, splitting one conversation across two threads with
+-- nothing to say so. This column is the conflict anchor that makes the race a no-op.
+--
+-- LEFTMOST of `References` and not rightmost, and that choice is the whole reason out-of-order
+-- ingest converges. A 4-deep chain A <- B <- C <- D arriving as D, B, A, C derives root `a`
+-- from every single one of them (D's References are [A,B,C], B's are [A], A is its own root),
+-- so all four find the same row. Keyed on the rightmost they would derive `c`, `a`, `a`, `b`
+-- and produce three threads out of one conversation.
+--
+-- UNIQUE PER ACCOUNT, and per account for the same reason the index above leads with it: two
+-- accounts may hold the same conversation, and one account's thread must never be reachable
+-- from another's. NULLs are DISTINCT in a Postgres unique index by default, which is exactly
+-- right here — a message with no Message-ID anchors nothing, so every one of them is its own
+-- singleton thread rather than all of them colliding on one NULL row.
+--
+-- The unique index deliberately does NOT get an entry in `SCHEMA_INDEX_MARKERS`, unlike
+-- `mailboxes_active_address_uq`. That one earns a marker because its absence is SILENT — two
+-- rows for one address both commit and nothing complains. This one's absence is the loudest
+-- error Postgres has for the case: `ON CONFLICT (account_id, root_message_id_header)` raises
+-- 42P10 on the first message ingested. A marker would report a fault that cannot hide.
+--
+-- ══ COMPATIBILITY ════════════════════════════════════════════════════════════════════════
+--
+-- Additive and nullable. Every existing `threads` row stays valid with NULL — and there are
+-- none in production, because nothing has ever created one. Existing `messages` rows keep
+-- `thread_id` NULL until the worker's thread backfill reaches them,
+-- which it does from the persisted `message_bodies.headers` with no IMAP connection.
+--
+-- DEPLOY ORDER IS migration → API → worker, and the API half is not theoretical.
+-- `materializeThread` reads `select().from(threads)`, which drizzle expands into an explicit
+-- column list from the TS schema, so an API build carrying this column against a database
+-- without it answers Postgres 42703 on `GET /threads/:id` and on every `/sync` page that
+-- materializes a thread. `["threads","root_message_id_header"]` therefore joins
+-- `MAIL_SCHEMA_MARKERS` in `packages/api/src/routes/health.ts`, so that mistake reports
+-- `503 schema_incomplete` naming this migration instead of a 500 nobody can attribute.
+--
+-- ROLLBACK is `DROP INDEX threads_account_root_header_uq`, `ALTER TABLE threads DROP COLUMN
+-- root_message_id_header`, `DROP INDEX messages_account_message_id_header_idx`. The cost is
+-- that already-resolved `messages.thread_id` values survive with no anchor to extend them —
+-- correct, but frozen. Re-applying and re-running the backfill re-derives the anchors.
+
+CREATE INDEX IF NOT EXISTS "messages_account_message_id_header_idx" ON "messages" ("account_id","message_id_header");--> statement-breakpoint
+ALTER TABLE "threads" ADD COLUMN IF NOT EXISTS "root_message_id_header" text;--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "threads_account_root_header_uq" ON "threads" ("account_id","root_message_id_header");

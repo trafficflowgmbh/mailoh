@@ -1,0 +1,85 @@
+-- WHEN THE LEADER WILL TRY THIS MAILBOX AGAIN — durably, so somebody other than the worker can
+-- change the answer.
+--
+-- ══ WHAT THIS FIXES ══════════════════════════════════════════════════════════════════════
+--
+-- A quarantined mailbox could not be released by anyone, from anywhere, short of restarting the
+-- worker. The state lived entirely in `const quarantine = new Map<string, Quarantine>()` in
+-- the worker's main loop — attempt count and next-retry instant, in process memory, written
+-- by `quarantineMailbox()` and read by the roster pass. Nothing about it was persisted, so the
+-- only two exits were the worker's own exponential ladder (up to `retryBaseMs * 16`) and a
+-- process restart. No database write could clear it: not the admin console, not a support
+-- engineer, not the customer. A mailbox parked behind a long backoff after a transient provider
+-- outage stayed parked until the ladder expired or somebody redeployed the worker — a heavy
+-- hammer, and one unavailable to anyone without deploy rights.
+--
+-- The admin console had already accepted the smaller half of this as a display limitation:
+-- "`retryBackoffSeconds` stays null, honestly: the backoff lives in the worker's in-memory
+-- quarantine map and is not persisted", so it renders a dash where the backoff should be. The
+-- operational half is that its designed `resync_mailbox` action — whose stated effect is "clears
+-- the quarantine backoff" — could not be wired at all, because no API write could reach the state
+-- it names.
+--
+-- ══ THE COLUMN SEMANTICS, SO NOBODY RE-DERIVES THEM ══════════════════════════════════════
+--
+--   retry_after   The instant the leader may next ATTACH this mailbox. NULL means "no backoff
+--                 is in force" — either it was never quarantined, or a completed sync cleared
+--                 it, or an operator released it. It is a DURATION'S END, not a schedule:
+--                 nothing polls it, and the roster pass (every 30 s) is what notices.
+--
+-- ══ WHY THERE IS NO SECOND COUNTER, WHICH IS THE MISTAKE THIS PARAGRAPH EXISTS TO PREVENT ═
+--
+-- The obvious next thought is to persist the ladder's attempt count beside the instant, and it
+-- is wrong. `retry_count` already exists and it is NOT that number: `mailboxes.ts` says so at
+-- its write site — retry_count is "the size of this outage", it survives a restart on purpose,
+-- and the in-memory `attempts` is the ladder's input. "Those two counters answer different
+-- questions and are ALLOWED to disagree after a deploy; making the column mirror the map would
+-- tell a user 'attempt 1' about a three-day outage." Both survive, unchanged. This column adds
+-- the one fact neither of them carries — WHEN — and adds nothing else.
+--
+-- ══ WHY A COLUMN AND NOT AN ADMIN-ONLY RELEASE CHANNEL ═══════════════════════════════════
+--
+-- A second mechanism beside the Map would have to agree with it, and two sources of truth about
+-- "may this mailbox be attached" is the dual-organizer bug in miniature. Making the EXISTING
+-- decision durable means the release is a write to the thing the leader already consults: the
+-- roster pass re-reads this row every `TF_ROSTER_INTERVAL_MS` anyway, so clearing the column IS
+-- the release, with no channel, no nonce and nothing to keep in step. It also fixes the half
+-- nobody asked for: a worker restart no longer forgets every backoff, so a redeploy stops being
+-- an operational tool for releasing mailboxes AND stops being an accidental one — a restart
+-- during a provider outage used to re-dial every parked mailbox at once.
+--
+-- ══ THE MAP DOES NOT GO AWAY, AND THAT IS DELIBERATE ═════════════════════════════════════
+--
+-- It stays as the ladder (`attempts`) and as the source of `/health`'s `quarantined` counter.
+-- The column is its durable mirror. The worker carries a `persisted` flag per entry — whether
+-- the write below actually landed — because "the column is NULL" and "the write never happened"
+-- must not be the same thing to a reader: read as a release, a failed bookkeeping write would
+-- have the leader re-dial the mailbox every 30 s, which is the silent DoS against a customer's
+-- provider that `index.ts` spends twenty lines forbidding.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═══════════════════════════════════════════════════════
+--
+-- Additive and nullable, no backfill: NULL is the true state of every existing row, and it means
+-- exactly what it will mean afterwards. No CHECK — unlike `sync_blocked_reason` and
+-- `disabled_reason` there is no value set to close; a timestamp is a timestamp, it is written
+-- only by the worker, and it is never rendered as text.
+--
+-- Deploy order is migration → WORKER → API, and each arrow is load-bearing:
+--   · `MailboxService.list` selects WHOLE ROWS through the drizzle schema, so an API deployed
+--     ahead of this migration answers Postgres 42703 on the mailbox panel and on the connect
+--     flow. `["mailboxes","retry_after"]` therefore joins `MAIL_SCHEMA_MARKERS` in
+--     `packages/api/src/routes/health.ts`, so that mistake reports `503 schema_incomplete`
+--     naming this migration instead of a 500 nobody can attribute;
+--   · the WORKER is the only writer, and one deployed ahead of the migration fails the write
+--     and falls back to the in-memory backoff — today's behaviour exactly, which is why the
+--     `persisted` flag exists rather than a crash;
+--   · the API goes LAST because it is the deploy that flips `resync_mailbox` to `available:
+--     true`, and that flag is a public claim. An operator clicking release against a worker
+--     that does not yet read this column would get a button reporting success it cannot
+--     achieve, which this console refuses to ship on principle.
+--
+-- ROLLBACK is `ALTER TABLE mailboxes DROP COLUMN retry_after`. The cost is a return to
+-- release-by-redeploy. No data is lost: the value is derived from live worker state and is
+-- rewritten on the next failure.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "retry_after" timestamp with time zone;

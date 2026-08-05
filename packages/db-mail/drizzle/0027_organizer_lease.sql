@@ -1,0 +1,88 @@
+-- THE ORGANIZER LEASE, PERSISTED — the two columns `mailboxes` needs before the gate can run.
+--
+-- These two columns were deferred while the mail schema was being split out of the hosted one.
+-- The split has landed, so they are added here.
+--
+-- ══ WHAT THIS FIXES, MEASURED ════════════════════════════════════════════════════════════
+--
+-- Exactly one active organizer per mailbox is the invariant the whole product rests on, and it is
+-- enforced by a lease in `ohmail/_meta`. The lease itself — the claim format, the decision table,
+-- the IO — has been implemented and tested for some time, with a two-worlds GreenMail test beside
+-- it, and had ZERO callers: a search for its gate function across the worker and the sidecar
+-- answered nothing. Meanwhile live mailboxes were being organized with no claim in `ohmail/_meta`
+-- at all — checked against the servers themselves, where the folder did not exist.
+--
+-- So this is a RETROFIT of a birth requirement, and the two columns are what the gate cannot be
+-- wired without: a stand-down has to be distinguishable from a failure, and a takeover has to be
+-- distinguishable from a resubscribe.
+--
+-- ══ THE COLUMN SEMANTICS, SO NOBODY RE-DERIVES THEM ══════════════════════════════════════
+--
+--   disabled_reason        WHY a mailbox is `status='disabled'`, when the reason is the lease.
+--                          A CLOSED set of three: 'organized_elsewhere:cloud' |
+--                          ':local' | ':unknown'. NULL for every other disable — a user
+--                          disconnect, a plan downgrade — which is what makes the UI rows
+--                          "Organized by Cloud" and "Cloud stopped organizing" (§4) tellable
+--                          apart from an ordinary disabled mailbox.
+--   takeover_authorized_at when a human explicitly asked THIS organizer to take this mailbox
+--                          over from another one. NULL = nobody has. §3.2 rule 3 needs it
+--                          because "the user just added this mailbox to Cloud" and "the
+--                          subscription lapsed and came back" are otherwise IDENTICAL to the
+--                          gate — and the second must never seize a mailbox back from a
+--                          deliberate local choice (§4, "No seize-back").
+--
+-- It is deliberately NOT backfilled. Every mailbox that exists today was added through a connect
+-- flow that does not stamp this column yet (that is slice 2, D-transitions), so writing a
+-- timestamp here would be inventing a record of an action nobody performed. NULL is the true
+-- state, and it costs nothing: with `ohmail/_meta` empty on every live mailbox, `decideLease`
+-- takes its "nobody has ever organized this mailbox" arm and organizes without needing an
+-- authorization at all.
+--
+-- ══ WHY `disabled_reason` GETS A CHECK AND `error_code` DID NOT ══════════════════════════
+--
+-- 0023 argued, correctly, that the failure taxonomy must be TEXT with no constraint: it grows,
+-- and a new classification must be a code deploy rather than a migration that has to land before
+-- the worker that emits it. This set does not grow. It is the three organizer kinds of §4 —
+-- `cloud`, `local`, and `unknown` as the catch-all for a peer we cannot rank — and `unknown` is
+-- what makes it closed rather than merely small.
+--
+-- The CHECK is a GOALS #9 boundary, not tidiness. `error_detail` learned this the hard way: a
+-- SHAPE test admitted `serverResponseCode = "SECRETPASSWORD123"` because imapflow derives that
+-- field from the SERVER's own bracket atom, and the value reached a column the account owner and
+-- the admin console both read. The write site here is allowlisted the same way
+-- (`markMailboxStoodDown`, in the worker); the constraint is the half that
+-- survives a call site nobody has written yet. The lease's real-Postgres test
+-- watches it refuse.
+--
+-- ══ COMPATIBILITY ════════════════════════════════════════════════════════════════════════
+--
+-- Additive and nullable, so existing rows stay valid with no backfill and a worker binary that
+-- predates this migration keeps writing `status` alone. The reverse — a NEW binary against an
+-- un-migrated database — is why the deploy order is migration → API → worker: `MailboxService`
+-- selects WHOLE ROWS through the drizzle schema, so an API deployed first answers Postgres 42703
+-- on the mailbox panel and on the connect flow. `["mailboxes","disabled_reason"]` therefore joins
+-- `MAIL_SCHEMA_MARKERS` in `packages/api/src/routes/health.ts`, so that mistake reports
+-- `503 schema_incomplete` naming this migration instead of a 500 nobody can attribute. Same
+-- reasoning, same shape, as 0023 and 0025.
+--
+-- The WORKER is the deploy that matters here and it is deliberately last: it is the only process
+-- that writes either column, and it is the process that starts claiming `ohmail/_meta`.
+--
+-- ROLLBACK is `ALTER TABLE mailboxes DROP CONSTRAINT mailboxes_disabled_reason_closed`, then
+-- `DROP COLUMN` on both. The cost is that a mailbox already stood down stays `disabled` with no
+-- recorded reason — it reads as an ordinary disabled mailbox, which is a loss of legibility and
+-- not of safety, because the lease itself lives in the mailbox and not here.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "disabled_reason" text;--> statement-breakpoint
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "takeover_authorized_at" timestamp with time zone;--> statement-breakpoint
+-- IDEMPOTENT, because `ADD CONSTRAINT` has no `IF NOT EXISTS` and every other statement in this
+-- journal is replayable. A real-Postgres test found this: it rewinds a
+-- fully-migrated database past 0021 and re-migrates, and a bare ADD then raises 42710 and takes
+-- the whole pass with it. The same shape reaches production through `openLocalDb` (which re-runs
+-- both journals on every launch) and through any recovery from a `PartialMigrationError`. The
+-- `duplicate_object` catch is the pattern 0000, 0009 and 0013 already use for their constraints.
+DO $$ BEGIN
+  ALTER TABLE "mailboxes" ADD CONSTRAINT "mailboxes_disabled_reason_closed" CHECK ("disabled_reason" IS NULL OR "disabled_reason" IN ('organized_elsewhere:cloud', 'organized_elsewhere:local', 'organized_elsewhere:unknown'));
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;

@@ -1,0 +1,103 @@
+import type { CreateMailboxBody, UpdateMailboxBody } from "@trafficflow/services/mail";
+import { serviceContext } from "../context.js";
+import { makeImapProbe } from "../imap-probe.js";
+import { jsonResponse } from "../responses.js";
+import type { Route } from "../router.js";
+import { mailbox, readBody, noContent } from "./shared.js";
+
+/**
+ * §5.1 — mailboxes READ + RESYNC + the Phase-2a lifecycle mutations. POST/PATCH/
+ * DELETE are step-up-gated (recent 2FA) — they carry envelope-encrypted credentials
+ * that are encrypted on write and NEVER echoed. DTOs never carry credentials (RC1).
+ * All queries are account-scoped in the service (404 cross-account).
+ */
+export const mailboxRoutes: Route[] = [
+  {
+    method: "GET",
+    pattern: "/mailboxes",
+    cost: "read",
+    handler: async (req, deps) => {
+      const items = await mailbox(deps).list(serviceContext(deps, req));
+      return jsonResponse({ items });
+    },
+  },
+  {
+    method: "GET",
+    pattern: "/mailboxes/:id",
+    cost: "read",
+    handler: async (req, deps, params) => {
+      const dto = await mailbox(deps).get(serviceContext(deps, req), params.id!);
+      return jsonResponse(dto);
+    },
+  },
+  {
+    method: "POST",
+    pattern: "/mailboxes/:id/resync",
+    // `work`. It carried NO options at all until the cost classes existed, which made it the
+    // cheapest way to make the worker re-walk an entire mailbox: one POST, and every folder is
+    // re-listed against the real IMAP server. Nothing about the verb or the path said so.
+    cost: "work",
+    handler: async (req, deps, params) => {
+      await mailbox(deps).requestResync(serviceContext(deps, req), params.id!);
+      return jsonResponse({ status: "queued" }, { status: 202 });
+    },
+  },
+  {
+    method: "POST",
+    pattern: "/mailboxes",
+    // `work`, and it is the most expensive member of that class rather than an exception
+    // to it. The API stores an encrypted credential and returns; what the credential BUYS is a
+    // persistent IMAP connection and a full sync of somebody's mailbox, which is why this was
+    // one of only two routes the verification gate was ever set on by hand. The gate now comes
+    // from the class, ALONGSIDE `stepUp`, because the two answer different questions: the
+    // step-up proves somebody is present at the keyboard right now, and the verification proves
+    // the address on the account is real and belongs to whoever is typing — the backstop at the
+    // other end of the account pre-hijack chain `AuthService.verifyEmail`'s password binding
+    // closes.
+    cost: "work",
+    options: { stepUp: true },
+    handler: async (req, deps) => {
+      const body = await readBody<CreateMailboxBody>(req);
+      // The credentials are tried before they are stored, and the probe is built HERE,
+      // per request, from `deps`. Same seam and same reason as `routes/attachments.ts` building
+      // `makeOpenAdapter(deps)` at its own call site: `packages/services` states what a probe
+      // must answer and never learns how to open a socket, so every service test injects a fake
+      // through this argument. `MailboxService.create` requires it — a create that could omit it
+      // is a create that can store an untried password.
+      const dto = await mailbox(deps).create(serviceContext(deps, req), body, {
+        probe: makeImapProbe(deps),
+      });
+      return jsonResponse(dto, { status: 201 });
+    },
+  },
+  {
+    method: "PATCH",
+    pattern: "/mailboxes/:id",
+    cost: "work",
+    options: { stepUp: true },
+    handler: async (req, deps, params) => {
+      const body = await readBody<UpdateMailboxBody>(req);
+      // The SAME probe, injected the same way, at the other door into `mailbox_credentials`. A
+      // rotated password reaching this route used to be encrypted and stored with zero
+      // connection attempts, which is `POST /mailboxes`'s original defect one screen later —
+      // and this is the route the desktop sends a user to when its stored login can no longer
+      // be read (`apps/sidecar/src/engine.ts`). Built from `deps` per request, so it inherits
+      // the deadline, the tightened client timeouts and the IMAP admission counter rather than
+      // re-deriving any of them.
+      const dto = await mailbox(deps).update(serviceContext(deps, req), params.id!, body, {
+        probe: makeImapProbe(deps),
+      });
+      return jsonResponse(dto);
+    },
+  },
+  {
+    method: "DELETE",
+    pattern: "/mailboxes/:id",
+    cost: "work",
+    options: { stepUp: true },
+    handler: async (req, deps, params) => {
+      await mailbox(deps).delete(serviceContext(deps, req), params.id!);
+      return noContent();
+    },
+  },
+];

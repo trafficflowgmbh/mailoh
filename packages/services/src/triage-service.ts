@@ -1,0 +1,176 @@
+import { and, asc, eq, gt } from "drizzle-orm";
+import { messages, messageStates, folderState, claimIdempotencyKey, recordChange, type Tx } from "@trafficflow/db";
+import type { Db, ServiceContext } from "./context.js";
+import { ServiceError, IdempotencyRaceLost } from "./errors.js";
+import { materializeMessage, materializeMessageState } from "./dto/materialize.js";
+import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
+import type { MessageDTO, MessageStateDTO, Page, TriageState } from "./dto/types.js";
+
+const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+/** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
+const asDb = (tx: Tx): Db => tx as unknown as Db;
+
+export interface TriageSetBody {
+  state: TriageState;
+  bubbleUpAt?: string;   // required when state === "bubbled_up"
+}
+
+/** Idempotency handle threaded in by the route; the row is written IN the setState tx. */
+export interface TriageIdempotency {
+  key: string;
+  requestHash: string;
+}
+
+export interface ListOptions {
+  cursor?: string;
+  limit?: number;
+}
+
+export interface FocusReplyView {
+  items: Array<{ message: MessageDTO; draft: null }>;   // draft populated once drafting is wired
+  remaining: number;
+}
+
+export interface PowerThroughView {
+  current: MessageDTO | null;
+  remaining: number;
+  nextCursor: string | null;
+}
+
+/**
+ * TriageService. The bottom-pile states (`reply_later`, `set_aside`,
+ * `bubbled_up`, `muted`) live in `message_states`; every transition is user-wins
+ * (no If-Match) and emits a `message_state` `update` change through the same
+ * `change_log` seam SyncService reads. The Reply Run and Power Through are pure
+ * read views over these states + the Imbox — no separate write logic.
+ */
+export class TriageService {
+  /**
+   * Upsert the triage state for a message and emit the `message_state` update change
+   * atomically. `bubbleUpAt` is REQUIRED when transitioning to `bubbled_up`.
+   */
+  async setState(
+    ctx: ServiceContext, messageId: string, b: TriageSetBody,
+    opts: { idempotency?: TriageIdempotency | null } = {},
+  ): Promise<MessageStateDTO> {
+    if (b.state === "bubbled_up" && !b.bubbleUpAt) {
+      throw new ServiceError("validation_failed", 400, "bubbleUpAt is required when state is 'bubbled_up'");
+    }
+    const bubbleUpAt = b.state === "bubbled_up" ? new Date(b.bubbleUpAt!) : null;
+    if (bubbleUpAt && Number.isNaN(bubbleUpAt.getTime())) {
+      throw new ServiceError("validation_failed", 400, "bubbleUpAt is not a valid ISO datetime");
+    }
+
+    return asTx(ctx).transaction(async (tx) => {
+      // Cross-account guard: the message must belong to the caller's account.
+      const [msg] = await tx.select({ id: messages.id }).from(messages)
+        .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId))).limit(1);
+      if (!msg) throw new ServiceError("not_found", 404, "message not found");
+
+      const now = ctx.now();
+      const [row] = await tx.insert(messageStates).values({
+        accountId: ctx.accountId, messageId, state: b.state, bubbleUpAt, setAt: now, updatedAt: now,
+      }).onConflictDoUpdate({
+        target: messageStates.messageId,
+        set: { state: b.state, bubbleUpAt, updatedAt: now },
+      }).returning({ id: messageStates.id });
+
+      const seqBig = await recordChange(tx, {
+        accountId: ctx.accountId, entityType: "message_state", entityId: row!.id, op: "update", meta: null,
+      });
+
+      // Materialize the DTO INSIDE the tx (reads the uncommitted upsert) so the
+      // idempotency row stores the exact response.
+      const dto = await materializeMessageState(asDb(tx), ctx.accountId, row!.id);
+      if (!dto) throw new ServiceError("internal", 500, "message_state vanished after write");
+
+      // Store the verbatim response IN this tx so a commit-then-crash retry
+      // replays the SAME 200. Inserted directly (services can't import packages/api).
+      if (opts.idempotency) {
+        const claimed = await claimIdempotencyKey(tx, {
+          accountId: ctx.accountId,
+          key: opts.idempotency.key,
+          requestHash: opts.idempotency.requestHash,
+          responseStatus: 200,
+          responseJson: dto,
+          seq: Number(seqBig),
+          now: ctx.now(),
+        });
+        // A LOST claim = a concurrent same-key request committed first. Throwing rolls THIS
+        // transaction back (effect included) and the caller replays the winner's response.
+        if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
+      }
+
+      return dto;
+    });
+  }
+
+  // ── Convenience transitions (thin wrappers over setState) ──
+  replyLater(ctx: ServiceContext, messageId: string): Promise<MessageStateDTO> {
+    return this.setState(ctx, messageId, { state: "reply_later" });
+  }
+  setAside(ctx: ServiceContext, messageId: string): Promise<MessageStateDTO> {
+    return this.setState(ctx, messageId, { state: "set_aside" });
+  }
+  bubbleUp(ctx: ServiceContext, messageId: string, untilTs: string): Promise<MessageStateDTO> {
+    return this.setState(ctx, messageId, { state: "bubbled_up", bubbleUpAt: untilTs });
+  }
+  mute(ctx: ServiceContext, messageId: string): Promise<MessageStateDTO> {
+    return this.setState(ctx, messageId, { state: "muted" });
+  }
+  clear(ctx: ServiceContext, messageId: string): Promise<MessageStateDTO> {
+    return this.setState(ctx, messageId, { state: "none" });
+  }
+
+  /** The bottom piles: messages currently in a given triage state. */
+  async listByState(ctx: ServiceContext, state: TriageState, opts: ListOptions = {}): Promise<Page<MessageDTO>> {
+    const limit = clampLimit(opts.limit);
+    const filters = [
+      eq(messageStates.accountId, ctx.accountId),
+      eq(messageStates.state, state),
+    ];
+    if (opts.cursor) filters.push(gt(messageStates.messageId, decodeListCursor(opts.cursor)));
+
+    const rows = await ctx.db.select({ messageId: messageStates.messageId }).from(messageStates)
+      .where(and(...filters)).orderBy(asc(messageStates.messageId)).limit(limit + 1);
+
+    const pageRows = rows.slice(0, limit);
+    const items: MessageDTO[] = [];
+    for (const r of pageRows) {
+      const dto = await materializeMessage(ctx.db, ctx.accountId, r.messageId);
+      if (dto) items.push(dto);
+    }
+    const nextCursor = rows.length > limit ? encodeListCursor(pageRows[pageRows.length - 1]!.messageId) : null;
+    return { items, nextCursor };
+  }
+
+  /** Reply Run — the distraction-free batch over the Answer-Later pile. */
+  async focusReply(ctx: ServiceContext): Promise<FocusReplyView> {
+    const page = await this.listByState(ctx, "reply_later", { limit: 200 });
+    return {
+      items: page.items.map((message) => ({ message, draft: null as null })),
+      remaining: page.items.length,
+    };
+  }
+
+  /** Power Through — one-by-one over the "New" group (unread Ohbox / INBOX). */
+  async powerThrough(ctx: ServiceContext, opts: ListOptions = {}): Promise<PowerThroughView> {
+    const filters = [
+      eq(messages.accountId, ctx.accountId),
+      eq(messages.unread, true),
+      eq(folderState.desiredFolder, "INBOX"),
+    ];
+    if (opts.cursor) filters.push(gt(messages.id, decodeListCursor(opts.cursor)));
+
+    const rows = await ctx.db.select({ id: messages.id }).from(messages)
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(and(...filters)).orderBy(asc(messages.id));
+
+    if (rows.length === 0) return { current: null, remaining: 0, nextCursor: null };
+    const current = await materializeMessage(ctx.db, ctx.accountId, rows[0]!.id);
+    const nextCursor = rows.length > 1 ? encodeListCursor(rows[0]!.id) : null;
+    return { current, remaining: rows.length, nextCursor };
+  }
+}
+
+export const triageService = new TriageService();

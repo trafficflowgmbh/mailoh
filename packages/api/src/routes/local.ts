@@ -1,0 +1,75 @@
+import type { Route } from "../router.js";
+import { syncRoutes } from "./sync.js";
+import { eventsRoutes } from "./events.js";
+import { pushRoutes } from "./push.js";
+import { mailboxRoutes } from "./mailboxes.js";
+import { rulesRoutes } from "./rules.js";
+import { messageRoutes } from "./messages.js";
+import { threadRoutes } from "./threads.js";
+import { screenerRoutes } from "./screener.js";
+import { approvalRoutes } from "./approvals.js";
+import { triageRoutes } from "./triage.js";
+import { searchRoutes } from "./search.js";
+import { privacyRoutes } from "./privacy.js";
+import { unsubscribeRoutes } from "./unsubscribe.js";
+import { contactsRoutes } from "./contacts.js";
+import { snippetsRoutes } from "./snippets.js";
+import { notifyRoutes } from "./notify.js";
+import { awayRoutes } from "./away.js";
+import { attachmentRoutes } from "./attachments.js";
+import { kbRoutes } from "./kb.js";
+import { tagsRoutes } from "./tags.js";
+import { draftsRoutes } from "./drafts.js";
+import { workflowsRoutes } from "./workflows.js";
+import { healthRoutes } from "./health.js";
+
+/**
+ * THE MAIL-ONLY ROUTE TABLE — what a single-user engine on the user's own machine serves.
+ *
+ * A SEPARATE ARRAY rather than a filter over {@link apiRoutes}, and the difference matters: a
+ * filter would still `import` every route module to build the list it then discards, so the
+ * artifact would carry the billing handler, the Stripe webhook and the cross-account admin reads
+ * whether or not anything could route to them. Only a distinct import list actually leaves them
+ * out of the module graph. `routes/index.ts` is untouched and still owns the hosted table.
+ *
+ * ── WHAT IS ABSENT, AND WHY EACH ONE ──────────────────────────────────────────────────────
+ *
+ *  · the 20 AUTH routes — registration, password login, WebAuthn, TOTP, recovery, OAuth, devices.
+ *    There is nobody to register: the engine mints one session per launch for the shell that
+ *    spawned it, and the machine's own login is the boundary. The routes are not merely
+ *    unreachable, they are not built.
+ *  · `billing`, `waitlist` — Cloud is what you pay for and there is no funnel to join on a laptop.
+ *  · `account` — Art. 17 erasure is a hosted-account operation. Here, deleting the data directory
+ *    IS the erasure, and it takes nothing from the mailbox on the user's own server.
+ *  · `ai-settings` — the managed-AI off switch governs OUR spend on OUR models. Desktop is BYO.
+ *  · `internal`, `admin` — an operator surface on one person's machine is only attack surface.
+ *
+ * `events` STAYS despite SSE being disabled in this host. Disabled, `GET /events` answers a
+ * finite 503 that the client adapter already tolerates as "no wake signal, keep polling `/sync`".
+ * Dropping the module would answer 404 instead, which is a different contract for no gain.
+ */
+export const localRoutes: Route[] = [
+  ...healthRoutes,
+  ...syncRoutes,
+  ...eventsRoutes,
+  ...pushRoutes,
+  ...mailboxRoutes,
+  ...rulesRoutes,
+  ...messageRoutes,
+  ...threadRoutes,
+  ...screenerRoutes,
+  ...approvalRoutes,
+  ...triageRoutes,
+  ...searchRoutes,
+  ...privacyRoutes,
+  ...unsubscribeRoutes,
+  ...contactsRoutes,
+  ...snippetsRoutes,
+  ...notifyRoutes,
+  ...awayRoutes,
+  ...attachmentRoutes,
+  ...kbRoutes,
+  ...tagsRoutes,
+  ...draftsRoutes,
+  ...workflowsRoutes,
+];

@@ -1,0 +1,286 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1785184187039,
+      "tag": "0000_wealthy_miek",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785185425588,
+      "tag": "0001_cute_black_queen",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785189005449,
+      "tag": "0002_wet_thunderball",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785190651291,
+      "tag": "0003_identity_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785192935050,
+      "tag": "0004_graduations",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785194204180,
+      "tag": "0005_warm_black_bird",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785197635203,
+      "tag": "0006_idempotency_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785207104501,
+      "tag": "0007_amusing_nextwave",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785209590445,
+      "tag": "0008_hybrid_search",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785211170579,
+      "tag": "0009_tracker_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785212770816,
+      "tag": "0010_optimal_roland_deschain",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785214381004,
+      "tag": "0011_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785216438278,
+      "tag": "0012_spicy_gravity",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785219327084,
+      "tag": "0013_outbound_sends",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1785221291809,
+      "tag": "0014_bent_lady_deathstrike",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1785221291810,
+      "tag": "0015_workflow_step_dedup",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1785225286206,
+      "tag": "0016_workflow_proposals",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785570886206,
+      "tag": "0017_enrollment",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785833686206,
+      "tag": "0018_login_email_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785920086206,
+      "tag": "0019_ai_switch",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786006486206,
+      "tag": "0020_email_verified_column",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786092886206,
+      "tag": "0021_mailbox_address_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786179286206,
+      "tag": "0022_message_body_html_cap",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1786265686206,
+      "tag": "0023_mailbox_failure_reason",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786352086206,
+      "tag": "0024_flag_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1786438486206,
+      "tag": "0025_mailbox_kickstart",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1786524886206,
+      "tag": "0026_thread_resolution",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1786611286206,
+      "tag": "0027_organizer_lease",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1786697686206,
+      "tag": "0028_message_instances",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1786784086206,
+      "tag": "0029_mailbox_sync_block",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1786870486206,
+      "tag": "0030_sensitive_rescreen",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1786956886206,
+      "tag": "0031_tags",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1787043286206,
+      "tag": "0032_unsubscribe_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1787129686206,
+      "tag": "0033_workflow_run_claim",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1787216086206,
+      "tag": "0034_rule_retro",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1787302486206,
+      "tag": "0035_account_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1787388886206,
+      "tag": "0036_sensitive_fp_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1787475286206,
+      "tag": "0037_draft_html",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1787561686206,
+      "tag": "0038_initial_import_completed",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1787604886206,
+      "tag": "0039_mailbox_retry_after",
+      "breakpoints": true
+    }
+  ]
+}

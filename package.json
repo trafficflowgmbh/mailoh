@@ -1,0 +1,14 @@
+{
+  "name": "ohmail-desktop",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "workspaces": [
+    "apps/sidecar",
+    "apps/worker",
+    "packages/api",
+    "packages/core",
+    "packages/db",
+    "packages/db-mail",
+    "packages/services"
+  ]
+}

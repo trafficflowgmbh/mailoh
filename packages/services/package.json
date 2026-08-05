@@ -1,0 +1,18 @@
+{
+  "name": "@trafficflow/services",
+  "version": "0.0.0",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    "./mail": "./src/mail.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.36.4",
+    "htmlparser2": "12.0.0",
+    "jszip": "3.10.1",
+    "sanitize-html": "2.17.6",
+    "tldts": "7.4.9",
+    "@trafficflow/core": "*",
+    "@trafficflow/db": "*"
+  }
+}

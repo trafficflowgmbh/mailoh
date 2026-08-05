@@ -1,0 +1,212 @@
+import { and, eq, isNull, sql } from "drizzle-orm";
+import { accounts, mailboxes, sessions, users } from "@trafficflow/db";
+import { generateToken, hashToken } from "@trafficflow/services/mail";
+import type { LocalDb } from "./db.js";
+
+/**
+ * THE LOCAL WORLD: who the desktop user is, to a schema that was written for Cloud.
+ *
+ * The desktop tier is free, fully standalone and has **no account and no signup** — there is
+ * nobody to register with and no limit to enforce. But `packages/api`'s middleware chain is not
+ * optional and should not be: it is the same chain Cloud runs, and running a second, laxer one
+ * locally is precisely the divergence the single-implementation rule exists to prevent. So
+ * instead of bypassing the gates, the sidecar SATISFIES them against a single-user database that
+ * lives on the user's own disk.
+ *
+ * Three rows, and each one answers a specific middleware:
+ *
+ *  · `accounts` — the tenant every row in the schema is scoped by. Exactly one, ever.
+ *  · `users` with `emailVerifiedAt` SET — `withVerifiedEmail` (packages/api/src/middleware.ts)
+ *    403s an unproven address. On Cloud that gate stops an unverified stranger generating cost;
+ *    here the "address" is the user's own mailbox on their own machine, there is no cost to
+ *    generate and nobody to prove anything to. Setting it is not weakening the gate, it is
+ *    recording that the question the gate asks has already been answered by the tier.
+ *  · `sessions` with `scope: 'full'` and `lastTwofaAt` SET — `withStepUp` gates the sensitive
+ *    routes on a recent second factor. There is no second factor on a local install and inventing
+ *    one would be theatre; the credential is the pipe, and the pipe is the parent process.
+ *
+ * ── THE SESSION IS PER LAUNCH, AND THAT IS ENFORCED HERE ──────────────────────────────────
+ *
+ * Sessions are minted per launch and never persisted. On-disk PGlite makes that a thing you have
+ * to DO: a `sessions` row survives a reboot, so without {@link mintLaunchSession} revoking what it
+ * finds, every token ever minted would stay a live credential inside a file on disk. Only the hash
+ * is ever written; the token itself exists in memory and in the `ready` frame, and dies with the
+ * process.
+ */
+
+/** The synthetic local identity. Never mailed, never shown — it exists to satisfy the schema. */
+export interface LocalWorld {
+  accountId: string;
+  userId: string;
+  mailboxId: string;
+  /**
+   * The lease reason on this mailbox's row, when there is one — `organized_elsewhere:*`.
+   *
+   * Present iff this install previously STOOD DOWN from the mailbox. It is what keeps a lapsed
+   * Cloud subscription from auto-resuming the desktop across a relaunch, and the lease alone
+   * cannot do it: once Cloud releases its claim the folder is empty, and an empty folder
+   * correctly reads as "nobody has ever organized this mailbox", which organizes. The row is the
+   * memory the mailbox cannot hold.
+   */
+  standDownReason: string | null;
+  /**
+   * Set iff a human has explicitly asked THIS install to become the organizer of this mailbox.
+   *
+   * Ceasing to organize is automatic; becoming an organizer never is. When the mailbox holds a
+   * claim from an organizer that has gone quiet, the lease reports the mailbox as available and
+   * refuses to take it — because "nobody is renewing" and "the user chose this machine" are
+   * different facts, and only the second one authorizes a takeover. This stamp carries the second.
+   *
+   * It authorizes ONE becoming, not a standing right: it is cleared as soon as it is spent, so an
+   * install that later stands down cannot silently seize the mailbox back on a subsequent launch.
+   */
+  takeoverAuthorizedAt: Date | null;
+}
+
+export interface EnsureLocalWorldInput {
+  /** The mailbox this install organizes. Doubles as the local user's address. */
+  address: string;
+  displayName?: string;
+  now: Date;
+}
+
+/**
+ * Find-or-create the one account, user and mailbox. Idempotent: the second launch finds all three.
+ *
+ * The mailbox lookup honours the partial unique index `mailboxes_active_address_uq`
+ * (`packages/db/src/schema-mail.ts`) — `(account_id, lower(address)) where status <> 'disabled'` —
+ * so a mailbox the user removed leaves a tombstone rather than blocking a reconnect, exactly as
+ * Cloud behaves.
+ *
+ * ── A LEASE STAND-DOWN IS NOT A TOMBSTONE ─────────────────────────────────────────────────
+ *
+ * `disabled` covers two completely different events and the reason column is what tells them
+ * apart. A REMOVAL ("Remove from this Mac…", `disabled_reason` NULL) is a tombstone: re-adding the
+ * address is a new mailbox and must not be blocked. A LEASE STAND-DOWN
+ * (`disabled_reason = 'organized_elsewhere:*'`) is the SAME mailbox, paused, and it has to be
+ * found on the next launch — otherwise relaunching the app mints a fresh `connected` row and the
+ * install silently resumes organizing a mailbox it stood down from. That is the forbidden
+ * auto-resume: a forgotten install on an office machine quietly becoming the thing that moves
+ * someone's mail. Restarting an app is not an explicit human action about who organizes a
+ * mailbox.
+ *
+ * A stood-down row is therefore returned as-is, still `disabled`, with its reason — never
+ * re-enabled here. Only an explicit action clears it.
+ */
+export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput): Promise<LocalWorld> {
+  const existingAccount = (await db.select({ id: accounts.id }).from(accounts).limit(1))[0];
+  const accountId =
+    existingAccount?.id ??
+    (await db.insert(accounts).values({ name: "This Mac" }).returning({ id: accounts.id }))[0]!.id;
+
+  const existingUser = (
+    await db.select({ id: users.id }).from(users).where(eq(users.accountId, accountId)).limit(1)
+  )[0];
+  const userId =
+    existingUser?.id ??
+    (
+      await db
+        .insert(users)
+        .values({
+          accountId,
+          email: input.address.toLowerCase(),
+          displayName: input.displayName ?? "",
+          // See the header: the gate's question is answered by the tier, not skipped.
+          emailVerifiedAt: input.now,
+        })
+        .returning({ id: users.id })
+    )[0]!.id;
+
+  // Active first, then a stood-down row for the same address. Ordered rather than filtered, so a
+  // user who removed the mailbox and re-added it still gets the ACTIVE row and not the paused one.
+  const existingMailbox = (
+    await db
+      .select({
+        id: mailboxes.id,
+        status: mailboxes.status,
+        disabledReason: mailboxes.disabledReason,
+        takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
+      })
+      .from(mailboxes)
+      .where(
+        and(
+          eq(mailboxes.accountId, accountId),
+          sql`lower(${mailboxes.address}) = ${input.address.toLowerCase()}`,
+          sql`(${mailboxes.status} <> 'disabled' or ${mailboxes.disabledReason} is not null)`,
+        ),
+      )
+      .orderBy(sql`(${mailboxes.status} <> 'disabled') desc`)
+      .limit(1)
+  )[0];
+  if (existingMailbox) {
+    return {
+      accountId,
+      userId,
+      mailboxId: existingMailbox.id,
+      standDownReason: existingMailbox.status === "disabled" ? existingMailbox.disabledReason ?? null : null,
+      takeoverAuthorizedAt: existingMailbox.takeoverAuthorizedAt ?? null,
+    };
+  }
+
+  const mailboxId = (
+    await db
+      .insert(mailboxes)
+      .values({
+        accountId,
+        provider: "imap",
+        address: input.address,
+        ...(input.displayName ? { displayName: input.displayName } : {}),
+        status: "connected",
+      })
+      .returning({ id: mailboxes.id })
+  )[0]!.id;
+
+  return { accountId, userId, mailboxId, standDownReason: null, takeoverAuthorizedAt: null };
+}
+
+export interface LaunchSession {
+  /** The bearer token. In memory only — the database holds its hash. */
+  token: string;
+  sessionId: string;
+  /** How many stale sessions this launch revoked. Nonzero on every launch after the first. */
+  revoked: number;
+}
+
+/**
+ * Revoke every session the database still holds, then mint one for this launch.
+ *
+ * `accessExpiresAt` is a day out rather than the Cloud default's 15 minutes: there is no refresh
+ * ceremony on this transport and no user to re-authenticate, so a short expiry would only mean the
+ * app stops working while it is open. The real lifetime bound is the process — the token is never
+ * written down and the next launch revokes whatever it finds.
+ */
+export async function mintLaunchSession(
+  db: LocalDb,
+  world: LocalWorld,
+  now: Date,
+  ttlMs = 24 * 60 * 60 * 1000,
+): Promise<LaunchSession> {
+  const stale = await db
+    .update(sessions)
+    .set({ revokedAt: now })
+    .where(and(eq(sessions.accountId, world.accountId), isNull(sessions.revokedAt)))
+    .returning({ id: sessions.id });
+
+  const token = generateToken();
+  const [row] = await db
+    .insert(sessions)
+    .values({
+      accountId: world.accountId,
+      userId: world.userId,
+      familyId: crypto.randomUUID(),
+      accessTokenHash: hashToken(token),
+      accessExpiresAt: new Date(now.getTime() + ttlMs),
+      refreshExpiresAt: new Date(now.getTime() + ttlMs),
+      // See the header: there is no second factor on a local install.
+      lastTwofaAt: now,
+      scope: "full",
+    })
+    .returning({ id: sessions.id });
+
+  return { token, sessionId: row!.id, revoked: stale.length };
+}

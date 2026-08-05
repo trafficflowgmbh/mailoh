@@ -1,0 +1,21 @@
+-- SPLIT FROM `0023_email_verification` (single-journal era, migration 0023) — the MAIL half:
+-- the COLUMN only. The backfill that populates it reads `invites`, a Cloud table, so it is
+-- the Cloud journal's `0006_email_verified_backfill`.
+--
+-- ══ WHY IT IS ON `users` AND NULLABLE ═════════════════════════════════════════════════════
+--
+-- The address IS the login identity (`users_email_unique_idx`, mail 0018), so the proof
+-- belongs on the row the identity lives on — not on `accounts`, which can outlive a user row
+-- and has no address of its own.
+--
+-- NULLABLE rather than `NOT NULL DEFAULT false`, because the column stores WHEN the proof
+-- arrived and not merely whether it did. A boolean would answer a gate and nothing else; a
+-- timestamp also answers "how long has this account been able to act", which is the question
+-- any later abuse investigation actually asks. `NULL` means unproven, and nothing ever writes
+-- it back to `NULL` — verification is monotonic (`COALESCE` on write).
+--
+-- ROLLBACK is `DROP COLUMN`: no code that predates this migration reads the column, and the
+-- gate that does fails closed — an absent column makes the schema-marker probe answer
+-- `503 schema_incomplete` rather than silently treating every account as verified.
+
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "email_verified_at" timestamp with time zone;

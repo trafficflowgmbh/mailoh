@@ -1,0 +1,15 @@
+{
+  "name": "@trafficflow/worker",
+  "version": "0.0.0",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    "./sync": "./src/sync.ts",
+    "./lease": "./src/lease.ts",
+    "./classifier-fault": "./src/classifier-fault.ts"
+  },
+  "dependencies": {
+    "@trafficflow/core": "*",
+    "@trafficflow/db": "*"
+  }
+}

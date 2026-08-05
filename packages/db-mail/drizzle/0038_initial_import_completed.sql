@@ -1,0 +1,72 @@
+-- Mail 0038 — WHEN A MAILBOX'S FIRST IMPORT ACTUALLY FINISHED, so a partial mailbox stops
+-- presenting itself as a complete one.
+--
+-- ══ THE DEFECT ════════════════════════════════════════════════════════════════════════════
+--
+-- A first import drains newest-first in bounded batches over many minutes. Until it finishes
+-- the server holds a PARTIAL mailbox — a recent block of mail, then a gap, then whatever older
+-- mail an earlier cycle happened to fetch. The client can see its own mirror growing while that
+-- is happening and says "still syncing", which is right. What it could NOT see is the moment the
+-- growth stops for a reason OTHER than completion: a tab that catches up to the partial server
+-- state, or opens onto it after the growth run has already lapsed, finds a settled mirror and
+-- declares the mailbox done. The Screener then shows a recent block and jumps to old mail with a
+-- hole in between, presented as the whole of it.
+--
+-- ══ WHY A NEW COLUMN AND NOT `last_sync_at` ═══════════════════════════════════════════════
+--
+-- `last_sync_at` cannot answer "is the import finished", in either direction, and the client's
+-- progress module (`apps/webapp/app/shell/mail-state.ts`) documents both defects at length:
+--
+--   · IT IS SHARED. The worker stamps it in one `UPDATE … WHERE id IN (…)` covering every
+--     mailbox a cycle served, so two mailboxes on one account report an identical age and the
+--     column cannot tell one mailbox's progress from another's.
+--   · IT LANDS EARLY. A mailbox is stamped after EVERY successful cycle whether or not it still
+--     owes a backlog, so a mailbox thirty seconds into a thirty-minute import already carries a
+--     stamp.
+--
+-- This column is the signal `last_sync_at` is not: PER-MAILBOX, and written only once the import
+-- has genuinely drained.
+--
+--   initial_import_completed_at   NULL means "the first import is not known to have finished".
+--                                 A timestamp means "a sync cycle completed for THIS mailbox with
+--                                 no backlog remaining". Written by the worker's cycle
+--                                 (`stampInitialImportComplete`, in the worker)
+--                                 the first time it observes `hasBacklog === false`, and by
+--                                 nothing else.
+--
+-- ══ NULLABLE, NO DEFAULT, NO BACKFILL ═════════════════════════════════════════════════════
+--
+-- Additive and nullable, so existing rows stay valid — and NULL is exactly right for them. A
+-- default, or a backfill of `now()` onto rows that predate the column, would assert that every
+-- mailbox already connected has finished importing. Some have; a large mailbox mid-backfill at
+-- the moment this lands has not, and stamping it would tell its owner the import is complete
+-- while a hole is still on screen — the precise defect this column exists to remove. So it ships
+-- empty and the worker fills it on the first no-backlog cycle after the deploy, which is the same
+-- evidence a fresh mailbox is judged by.
+--
+-- WRITTEN AFTER THE DRAIN, and the direction is deliberate: the stamp is a floor the client reads
+-- as `IS NULL ⇒ still importing`, so stamping before the backlog is gone would lower the floor
+-- under a mailbox that is not done. The write guards on `initial_import_completed_at IS NULL`, so
+-- it is a once-per-mailbox event and a later no-backlog cycle is a no-op. Clearing it back to NULL
+-- is the supported way to make the client speak "still importing" again.
+--
+-- No CHECK, because there is no set to close: it is a timestamp, on 0027's rule that a CHECK is
+-- for a column whose value could be chosen by something outside our code.
+--
+-- ══ THE DEPLOY ORDER IS MIGRATION → API → WORKER ═════════════════════════════════════════
+--
+-- The API half is the generic `mailboxes` one: `MailboxService.list` selects WHOLE ROWS through
+-- the drizzle schema, so an API deployed ahead of this migration answers Postgres 42703 on the
+-- mailbox panel and on the connect flow. The health marker (`mailboxes.initial_import_completed_at`)
+-- turns that into a 503 that names the file to run.
+--
+-- The WORKER half is real: `stampInitialImportComplete` writes this column, so a worker deployed
+-- ahead of the migration raises 42703 on the write. The write is best-effort inside the cycle's
+-- success path and never fails the cycle, so nothing is lost — no stamp is written, and the first
+-- no-backlog cycle after the migration does the whole job.
+--
+-- ROLLBACK is `ALTER TABLE mailboxes DROP COLUMN initial_import_completed_at`. Code that predates
+-- this migration never reads it, and the client degrades to its prior growth-only behaviour when
+-- the field is absent from the DTO.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "initial_import_completed_at" timestamp with time zone;

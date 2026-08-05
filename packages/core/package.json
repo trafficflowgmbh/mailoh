@@ -1,0 +1,19 @@
+{
+  "name": "@trafficflow/core",
+  "version": "0.0.0",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    "./mail": "./src/mail.ts",
+    "./adapters/imap": "./src/adapters/imap.ts",
+    "./adapters/organizer-lease": "./src/adapters/organizer-lease.ts",
+    "./adapters/drizzle-repo": "./src/adapters/drizzle-repo.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.36.4",
+    "imapflow": "1.5.0",
+    "mailparser": "3.9.14",
+    "nodemailer": "6.10.1",
+    "@trafficflow/db": "*"
+  }
+}

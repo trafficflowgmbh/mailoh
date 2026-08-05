@@ -1,0 +1,131 @@
+-- APPLYING A RULE TO MAIL THAT IS ALREADY FILED — the durable half of retroactive rules.
+--
+-- ══ WHAT IS MISSING, AND IT IS THE DEFAULT THE OWNER ASKED FOR ═══════════════════════════
+--
+-- A rule is consulted when mail ARRIVES and never afterwards. `RulesService.create` writes the
+-- row and one `change_log` entry and touches no mail; `DELETE /rules/:id` likewise leaves
+-- `folder_state` alone. So until now, writing a rule left the mailbox exactly as it was — which
+-- is the opposite of what it was asked for:
+--
+--   *"but also allow it to actually create the rule and apply it to ALL messages future and
+--    previous, this should be the default behaviour to efficiently manage the mailbox."*
+--
+-- The sheet's answer so far was to compose one `move` mutation per message the client mirror
+-- holds and fire them all from the browser. On a warmed account that mirror is COMPLETE —
+-- `/sync` replays the whole `change_log` from seq 0 and the engine drains until `hasMore` is
+-- false — so the SET was right, and everything else about it was wrong: one HTTP request per
+-- message, each taking the account's `account_sync_state` row lock, unawaited, unreported,
+-- and abandoned mid-way if the tab is closed. Three thousand messages is three thousand POSTs
+-- and no way to finish the other 2 300.
+--
+-- ══ FOUR COLUMNS, AND WHY NOT A JOB TABLE ════════════════════════════════════════════════
+--
+-- 0025's argument holds verbatim — the fact is per-rule and it belongs to the rule — and the
+-- shape is 0030's, so neither is repeated. What IS new here is the SCOPE, and it is the one
+-- thing that could not be copied:
+--
+--   retro_requested_at  the user asked for this rule to reach mail already on disk. Written by
+--                       `RulesService.create` and by `RulesService.update` when a retarget
+--                       changes the destination — the retarget is the COMMON path (a user
+--                       changing their mind about a sender they already ruled on) and a rule
+--                       that applied retroactively on create but not on retarget would make the
+--                       sheet's own sentence false for it.
+--   retro_done_at       the pass finished. NULL with `retro_requested_at` set IS the definition
+--                       of owed work; there is no queue and no second source of truth.
+--   retro_cursor        the last `messages.id` of the last COMMITTED page.
+--   retro_moved         desired-state rows written. Reported to the user, never read by logic.
+--
+-- **ACCOUNT-SCOPED, and that is why it is a column on `rules` and not a marker on `mailboxes`.**
+-- 0025 and 0030 both mark a MAILBOX, because both passes are per-mailbox corrections. A rule's
+-- scope is `rules.account_id`, and an account may hold several mailboxes; one cursor paging
+-- `messages` by `account_id` covers all of them, which a per-mailbox marker structurally cannot.
+--
+-- ══ WRITTEN AFTER THE WORK ═══════════════════════════════════════════════════════════════
+--
+-- `retro_done_at` last, on 0030's rule and for the same reason: claiming it first makes a crash
+-- PERMANENT — a rule marked applied with most of its mail unmoved and nothing that would ever
+-- look again. Written last, a crash re-runs, and re-running is safe because the candidate query
+-- is itself the idempotency: a message already desired into the rule's destination is not a
+-- candidate. `RuleRetroDeps.force` exists so that is exercised rather than asserted.
+--
+-- ══ IT MOVES NO MAIL. IT WRITES AN INTENT. ═══════════════════════════════════════════════
+--
+-- GOALS #3: the API never opens IMAP to apply organization, and neither does this pass. It
+-- writes `folder_state.desired_folder` plus a `move` change and stops; the worker's reconcile
+-- pass performs the physical move on its next cycle, through the one code path that already
+-- knows how to do it crash-safely. `rule-retro.no-imap.test.ts` fails if a client is
+-- constructed anywhere on the path.
+--
+-- ══ THE TWO INDEXES ARE NOT BOOKKEEPING — ONE OF THEM DID NOT EXIST AT ALL ═══════════════
+--
+-- `messages` carried NO index on `from_address`. Not a poor one — none. Every reader of it in
+-- this tree (this pass, `sensitive-rescreen`'s candidate query, `heldRowsForDomain`) is a
+-- sequential scan over the account's messages, and this pass would run one PER PAGE, per worker
+-- cycle, per owed rule. So:
+--
+--   messages_account_from_addr_idx    (account_id, lower(from_address), id) — the SENDER scope,
+--                                     and the keyset page: `ORDER BY id` after the equality is
+--                                     served by the index instead of a sort.
+--   messages_account_from_domain_idx  (account_id, <first-@ domain>, id) — the DOMAIN scope.
+--
+-- **A SECOND INDEX AND NOT A RANGE SCAN, because a suffix is not a prefix.** The obvious saving
+-- is to serve `@corp.com` as a range on `lower(from_address)`; it cannot be done. Addresses at
+-- one domain differ in their LOCAL part, which sorts first, so they are scattered across the
+-- whole index rather than adjacent in it. `like '%@corp.com'` is worse still — it can use no
+-- index at all, and it also matches `evil-corp.com`, which is a correctness bug on top of a
+-- performance one. The domain therefore needs its own expression, and every function in it
+-- (`lower`, `position`, `substring`) is IMMUTABLE, which is what makes it indexable.
+--
+-- **FIRST-@ semantics, matching `domainOf` — deliberately NOT `split_part(…, '@', 2)`.** The two
+-- disagree on an address containing two `@`, and the tree currently contains both:
+-- `screener-service#heldRowsForDomain` uses first-@ (the ruling required it, so the mail a
+-- decision MOVES and the rule it writes have one subject), while `sensitive-rescreen.ts` uses
+-- `split_part`. This pass moves the mail a sheet has just previewed with the client's `domainOf`,
+-- so it must use first-@ or it rules on a different set than the user was shown. The
+-- `split_part` call sites are a separate, pre-existing inconsistency and are not touched here.
+--
+--   rules_retro_owed_idx  the owed-work probe, once per account per worker cycle. PARTIAL, so in
+--                         the steady state it holds zero rows and costs nothing to keep.
+--
+-- ══ NO BACKFILL, AND NO CHECK ════════════════════════════════════════════════════════════
+--
+-- Additive and nullable, so existing rows stay valid — and NULL is exactly right for them: no
+-- rule that exists today was ever asked to apply retroactively, and back-dating them would move
+-- mail nobody asked to move, which is the one thing this whole area must never do. The four
+-- rules already on an existing account are explicitly included in that.
+--
+-- No CHECK, on 0027's rule that a CHECK is for a column whose VALUE could be chosen by something
+-- outside our code. These are timestamps, a uuid and a counter, all written by two named callers.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═══════════════════════════════════════════════════════
+--
+-- Migration → API → worker. `RulesService.list`/`materializeRule` read `rules` through the
+-- drizzle schema, so an API deployed ahead of this answers Postgres 42703 on the rules surface
+-- and on every rule creation; `["rules","retro_requested_at"]` therefore joins
+-- `MAIL_SCHEMA_MARKERS` and `MAIL_SCHEMA_MARKER_JOURNAL_TAG` moves to this tag in the same diff,
+-- so that mistake reports `503 schema_incomplete` naming this migration instead of a 500 nobody
+-- can attribute.
+--
+-- `messages_account_from_addr_idx` also earns a `SCHEMA_INDEX_MARKERS` entry, on that list's own
+-- rule: an absent index is invisible to a column probe, and this one absent is not a wrong answer
+-- but a correct answer computed by a sequential scan per page — the failure mode is a worker
+-- cycle that quietly stops finishing, which is precisely the silence that list exists for.
+--
+-- The WORKER is last in the order and, unlike 0030, it IS in the order: the pass lives in
+-- the worker's retro pass, and runs on its per-account cycle. It could live there
+-- because it needs nothing from `@trafficflow/services` — `@trafficflow/db` and
+-- `@trafficflow/core` are the whole of its imports, so the dependency-direction rule is
+-- satisfied rather than dodged. A worker deployed ahead of this migration would fail its owed
+-- probe on a missing column and log it per account; no mail moves and nothing is marked.
+--
+-- ROLLBACK is four `ALTER TABLE rules DROP COLUMN` and three `DROP INDEX`. The cost is that
+-- owed retro work is forgotten — mail already moved stays moved, which is correct, and the
+-- rules keep routing new mail, which is also correct.
+
+ALTER TABLE "rules" ADD COLUMN IF NOT EXISTS "retro_requested_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "rules" ADD COLUMN IF NOT EXISTS "retro_done_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "rules" ADD COLUMN IF NOT EXISTS "retro_cursor" uuid;--> statement-breakpoint
+ALTER TABLE "rules" ADD COLUMN IF NOT EXISTS "retro_moved" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "rules_retro_owed_idx" ON "rules" USING btree ("account_id") WHERE "retro_requested_at" is not null and "retro_done_at" is null;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "messages_account_from_addr_idx" ON "messages" USING btree ("account_id",lower("from_address"),"id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "messages_account_from_domain_idx" ON "messages" USING btree ("account_id",substring(lower("from_address") from position('@' in lower("from_address")) + 1),"id");

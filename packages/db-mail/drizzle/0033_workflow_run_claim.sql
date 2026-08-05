@@ -1,0 +1,54 @@
+-- Mail 0033 — CRASH-RESUME FOR WORKFLOW RUNS: date the claim, so a stranded one is findable.
+--
+-- ══ THE DEFECT ════════════════════════════════════════════════════════════════════════════
+--
+-- `workflowDrainPass` selected `status='pending'`, flipped the row to `running` under a guarded
+-- UPDATE, and handed it to the executor. NOTHING anywhere selected `status='running'`. A worker
+-- that died between the claim and the finish — a deploy, an OOM kill, a lost lease — left the row
+-- at `running` for ever: never retried, never failed, never surfaced to anyone. The executor's own
+-- comment promised that "a re-drained run re-executes its steps idempotently", and no deployed
+-- code could ever re-drain one.
+--
+-- ══ WHY A NEW COLUMN AND NOT `created_at` ═════════════════════════════════════════════════
+--
+-- Staleness has to be measured from the CLAIM, and `created_at` dates the ENQUEUE. A worker that
+-- comes up after an outage drains an hour-old backlog; every one of those rows has an hour-old
+-- `created_at`, so a reaper reading it would declare each run stale in the same second it was
+-- claimed and hand it to a second executor. `finished_at` is no use either — it is precisely the
+-- column a stranded row does not have.
+--
+-- ══ NULLABLE, NO DEFAULT ══════════════════════════════════════════════════════════════════
+--
+-- A default would stamp every `pending` row at INSERT with a claim time no worker ever asserted,
+-- which is a fabricated liveness signal for a run nobody has picked up. NULL means "claimed by
+-- code that predates this column" — the runs already stranded when this shipped, plus anything
+-- the old build claims during the deploy window — and the reaper resolves exactly that
+-- population through `created_at`.
+--
+-- ══ THERE IS NO BACKFILL, AND THAT IS A CORRECTION, NOT AN OMISSION ═══════════════════════
+--
+-- The obvious second statement is `UPDATE workflow_runs SET claimed_at = created_at WHERE
+-- status = 'running' AND claimed_at IS NULL`, to give the already-stranded rows a stamp. It was
+-- written, and it is a silent, permanent bug.
+--
+-- `created_at` is `DEFAULT now()`, which Postgres stores at MICROSECOND precision. The reaper's
+-- guarded requeue re-asserts the claim stamp it observed — `WHERE claimed_at = <observed>` — and
+-- that observation has made a round trip through a JS `Date`, which has MILLISECOND precision.
+-- Measured on the :5433 Postgres: `now()` stored `…:05.404402+00`, came back as `…:05.404Z`, and
+-- the equality matched ZERO rows. Every backfilled row would be selected as stale by every pass,
+-- for ever, and requeued by none of them — and nothing would go red, because no test can hold
+-- production's `created_at` values.
+--
+-- So the column ships empty and the reaper reads NULL through `created_at` instead. Same rows,
+-- same outcome, one fewer way to be silently wrong.
+--
+-- THE INVARIANT THIS LEAVES BEHIND, which any future writer of this column must keep:
+-- `claimed_at` is written ONLY from a JS `Date` (millisecond precision). Never `now()`, never
+-- `DEFAULT`, never `sql\`now()\``. A sub-millisecond value in this column disables the reaper's
+-- guard for that row, silently.
+--
+-- ROLLBACK is `DROP COLUMN`. Code that predates this migration never reads it. Note the deploy
+-- ORDER, though: the worker's claim UPDATE names this column, so a WORKER deployed ahead of this
+-- migration answers 42703 on every drain — and the cycle's per-account try/catch swallows it, so
+-- workflow automation would stop with nothing but a log line. Migration first, then the worker.
+ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "claimed_at" timestamp with time zone;

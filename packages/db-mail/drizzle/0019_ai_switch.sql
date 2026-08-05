@@ -1,0 +1,28 @@
+-- SPLIT FROM `0022_ai_switch` (single-journal era, migration 0022) — THE AI OFF SWITCH.
+--
+-- The published copy promises: "you can switch the AI off entirely without losing a single
+-- feature that files your mail." This column is what makes that a property of the server
+-- rather than of a checkbox. `false` means this account calls no model, ever, and every
+-- message is still filed by the deterministic rules.
+--
+-- ══ WHY IT IS HERE, IN THE MAIL SCHEMA ════════════════════════════════════════════════════
+--
+-- It is a column on `accounts`, and a shared table's columns are all shared: the mail journal
+-- alone must produce exactly the schema the mail package declares, or a local database is
+-- missing a column that drizzle puts in every select list. The switch is also a user
+-- preference, not a billing fact — an install with its own model endpoint needs the same one.
+--
+-- What reads it to REFUSE a spend is a Cloud gate, and that lives with the Cloud half.
+--
+-- ══ WHY `NOT NULL DEFAULT true` ═══════════════════════════════════════════════════════════
+--
+-- Purely additive and reversible (rollback = DROP COLUMN). Every existing account reads
+-- `true`, so applying this changes no behaviour for anyone — the switch only does something
+-- once somebody turns it off. The opposite default would silently disable AI for every
+-- account the moment a live model was wired.
+--
+-- It is on `accounts` and not on `users` because every entitlement in this product is
+-- account-scoped; a per-user AI switch would be a different (and, on a shared mailbox,
+-- incoherent) promise.
+
+ALTER TABLE "accounts" ADD COLUMN IF NOT EXISTS "ai_enabled" boolean NOT NULL DEFAULT true;

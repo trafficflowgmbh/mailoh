@@ -1,0 +1,73 @@
+-- WHY A MAILBOX FAILED — the four columns `mailboxes` never had.
+--
+-- ══ WHAT THIS FIXES, MEASURED ════════════════════════════════════════════════════════════
+--
+-- A disk-full incident quarantined a live mailbox. `mailboxes.status`
+-- flipped to 'error' and that was the ENTIRE record: no code, no time, no attempt count. The
+-- diagnostic string, the moment it was emitted and the retry backoff all lived in the worker's
+-- process memory and in a log line nobody was tailing, and the process had since restarted. So
+-- Settings → Mailboxes said "Sync failed" and the admin console said `lastError: null`, and the
+-- only way to learn WHY was to reproduce the failure. The incident stayed opaque for hours for
+-- exactly this reason.
+--
+-- The operator surface had already written the gap down in a comment
+-- ("`mailboxes` HAS NO ERROR COLUMNS … Null is what this source knows, and inventing 'OK' here
+-- would be the console telling an operator a broken mailbox is fine"). This migration is the
+-- other half of that sentence.
+--
+-- ══ WHAT MAY BE STORED HERE, AND WHY THE RULE IS STRUCTURAL ══════════════════════════════
+--
+-- `error_detail` IS NEVER `err.message`, `err.stack`, OR A SERVER RESPONSE STRING. It is built
+-- from an ALLOWLIST at the single write site (`markMailboxFailed` in
+-- by the worker): an IMAP response code token (`AUTHENTICATIONFAILED`), a Node
+-- syscall errno (`ECONNREFUSED`, `ETIMEDOUT`), a TLS error constant, an SQLSTATE, or our own
+-- configured `host:port`. Everything else yields NULL.
+--
+-- That is not caution, it is invariant 9. A throw out of `runSyncCycle` can be a parse or
+-- constraint error that embeds RFC822 header bytes — sender names and subjects — and a failed
+-- login's server text can echo the login argument. Persisting `err.message` would put mail
+-- content and credentials in a column the account's own user AND the admin console read, which
+-- is the one thing GOALS #9 says must be impossible for staff. The same reasoning
+-- `packages/core/src/log.ts` already applies to every log line ("`err` is serialised to CLASS +
+-- CODE, never message + stack") — this column inherits that contract rather than inventing a
+-- second, weaker one.
+--
+-- Because the redaction is at the WRITE, not at each projection, no reader has to remember to
+-- stay narrow. That is the difference between a rule and a habit.
+--
+-- ══ THE COLUMN SEMANTICS, SO NOBODY RE-DERIVES THEM ══════════════════════════════════════
+--
+--   error_code   the stable failure taxonomy: 'auth' | 'connect' | 'tls' | 'timeout' |
+--                'storage' | 'sync' | 'unknown'. TEXT and not an enum, deliberately: a new
+--                classification must be a code deploy, never a migration that has to land
+--                before the worker that emits it.
+--   error_detail the allowlisted token above, or NULL. Capped at 200 chars by the writer.
+--   failed_at    when the CURRENT outage began — written with COALESCE, so a mailbox failing
+--                for three days reports three days and not "just now, again".
+--   retry_count  attempts within the CURRENT outage, incremented in SQL. It deliberately does
+--                NOT mirror the worker's in-memory `quarantine` map, which resets on every
+--                deploy: the map answers "when do I retry next", this answers "how long has
+--                this been broken", and after a restart they are SUPPOSED to disagree. Telling
+--                a user "attempt 1" about a three-day outage would be the dishonest option.
+--
+-- All four are cleared as one statement by `markMailboxConnected` on a VERIFIED recovery
+-- (connect + folders + two full sync cycles + IDLE), so `status='connected'` can never be read
+-- alongside a stale reason.
+--
+-- ══ COMPATIBILITY ════════════════════════════════════════════════════════════════════════
+--
+-- Additive and nullable (`retry_count` carries a server default), so existing rows stay valid
+-- with no backfill and a worker binary that predates this migration keeps writing `status`
+-- alone. The reverse — a NEW binary against an un-migrated database — is why the deploy order
+-- is migration → API → worker: `MailboxService` selects whole rows, so an API deployed first
+-- would answer 42703 on the mailbox list. `["mailboxes","error_code"]` joins
+-- `MAIL_SCHEMA_MARKERS` in `packages/api/src/routes/health.ts` so that mistake reports
+-- `503 schema_incomplete` naming this migration instead of a 500 nobody can attribute.
+--
+-- ROLLBACK is `DROP COLUMN` on all four: nothing reads them to make a decision — they are
+-- evidence, not control flow — and every consumer treats NULL as "not recorded".
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "error_code" text;--> statement-breakpoint
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "error_detail" text;--> statement-breakpoint
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "failed_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "retry_count" integer DEFAULT 0 NOT NULL;
