@@ -646,6 +646,16 @@ export interface EngineCounts {
   resurface: number;
 }
 
+/**
+ * GIVE THIS THE PRESENTED READER, NOT THE MIRROR — it has no production caller today, and that is
+ * the only reason it is a note rather than a defect.
+ *
+ * Every count here groups by folder, so over a raw mirror `screenerWaiting` answers "how much mail
+ * is filed in `ohmail/Screener`" rather than "how many senders owe a decision". Those two numbers
+ * differed by 1,500 on a real backfilled mailbox, which is the whole subject of the header on
+ * {@link screenerSegments}. The shell's own badge comes from `useScreenerState`, which is fed
+ * `presentationReader`'s output; a second badge derived from here would silently disagree with it.
+ */
 export function unreadCounts(reader: EntityReader, now: Date = new Date()): EngineCounts {
   const ohbox = messagesIn(reader, FOLDER_OF_VIEW.ohbox);
   const piles = triagePiles(reader);

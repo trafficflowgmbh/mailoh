@@ -23,9 +23,29 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
    about it is a decision for a person.
 
    The consequence to hold onto: after a reset, mail physically filed in the Screener folder
-   still belongs to a sender with no decision. The presentation layer already handles exactly
-   that — it partitions by consent rather than by folder — so the account presents correctly
-   without a single message moving.
+   still belongs to a sender with no decision. The presentation layer handles exactly that — it
+   partitions by consent rather than by folder — so the account presents correctly without a
+   single message moving.
+
+   ── WHICH SURFACES THAT IS TRUE OF, BECAUSE IT WAS ONCE WRITTEN AS THOUGH IT WERE ALL OF THEM ──
+
+   This paragraph used to end at "presents correctly", and it was false where it mattered most.
+   The web client partitions Ohbox, Reads, Receipts, the triage piles, Tags and History through
+   `presentationReader`, and for a year the SCREENER QUEUE — the one surface the cutline exists
+   for — grouped the raw mirror by folder instead. On an account with a large backfill behind it
+   that queue offered an order of magnitude more sender rows than the real queue, with
+   the dormant remainder presented in History at the same time. Fixed in the webapp; the claim is
+   narrowed here rather than restated, because it is the reset's own justification for leaving
+   mail where it is and a reader has to be able to check it.
+
+   Still NOT covered, and both are real rather than theoretical:
+
+     · `GET /screener` — the SERVER's queue (`screener-service.ts`, `heldRows`) selects on
+       `desired_folder = 'ohmail/Screener'` with no cutline, so any client that trusts it rather
+       than partitioning locally sees the unfiltered backlog, and `suggestable.credits` prices it.
+     · DESKTOP / Local tier — `apps/desktop/src/no-api-client.ts` pins `apiConfigured()` false, so
+       the consent state never arrives and the partition is never switched on at all. The sidecar
+       serves no consent endpoint to switch it on with.
 
    ── IT TELLS THE CLIENTS ──────────────────────────────────────────────────────────────────
 
