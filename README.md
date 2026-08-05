@@ -432,8 +432,11 @@ Eleven lines of Rust, and a 330 KB bundle.
 `apps/webapp/app/` here is **only** the client shell, its views and the components
 they compose. The Cloud web app's sign-in, its API topology and its server-side
 plumbing are not in this repository, and neither is the `/sync` protocol client
-nor the Cloud API client — each of those two resolves to a stub that throws, so
-the tree compiles and the bundle cannot call either one.
+nor the Cloud API client. Each of those two resolves to a stub, so the tree
+compiles and the bundle can reach neither: the sync client throws on any use, and
+the API client throws on every call but answers plainly that no Cloud is
+configured — which is what the shared sources ask it before they act, and what
+lets them skip a Cloud path instead of crashing on one.
 
 Worth knowing if you plan to read the code:
 
