@@ -138,7 +138,7 @@ function derivedScreenerEffects(
   // The folder the SERVER will write, computed from the same two fields it reads. `m.dest` is
   // honoured now — it is on the wire. While it was not, this had to ignore it and the surface
   // composed a follow-up `move`, which is the composition that lost a race against the decide's
-  // own `folder_state` write and put 97 bulletins in the Ohbox on a live account.
+  // own `folder_state` write and filed bulk mail to the Ohbox for senders admitted to Reads.
   const destination = decideFolder(m);
   const effects: MutationEffect[] = reader
     .list<EngineMessage>("message")

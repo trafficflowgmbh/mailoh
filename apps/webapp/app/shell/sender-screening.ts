@@ -27,9 +27,9 @@
  * honestly in the toast rather than closed. The composition was worse than a limitation. It was
  * a RACE: `decide` reads its held rows outside its transaction and upserts `desired_folder`
  * inside it, so a `move` committing in that window was silently stamped back to the endpoint's
- * default. On production that read as four `provenance:'promoted'` rules at `INBOX` for senders
- * admitted with **Reads**, 97 bulletins in the Ohbox behind them, and `ohmail/Reads` holding one
- * message out of 503 — under a toast that said *"Reads — filed. Future mail from … files there
+ * default. What that produced was `provenance:'promoted'` rules pointing at `INBOX` for senders
+ * admitted with **Reads**, the mail behind them sitting in the Ohbox, and `ohmail/Reads` left
+ * very nearly empty — under a toast that said *"Reads — filed. Future mail from … files there
  * automatically."* Both halves of that sentence were false. Documenting a limitation is only
  * honest while the thing documented is the limitation and not a coin toss.
  *
