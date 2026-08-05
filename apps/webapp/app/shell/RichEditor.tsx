@@ -155,9 +155,25 @@ export function RichEditor({
    * the loader is the only check that cannot drift from it. Same discipline, and the same
    * sentence, as `serializeRichValue`.
    */
-  /** The value we were last handed, for the no-op guard in `emit`. */
-  const held = useRef<RichValue>(value);
-  held.current = value;
+  /**
+   * WHAT THE CALLER ALREADY KNOWS — updated on render AND inside `emit`, and the second half
+   * is not redundant.
+   *
+   * The no-op guard below compares against this. Tracking only the `value` PROP looks
+   * equivalent and is not: a prop refreshes on render, so two transactions inside one tick are
+   * both measured against the state before the first of them. Measured in production, on the
+   * live build, before this line existed: `setContent` → `toggleBold` → `clearContent` in one
+   * block wrote the text, wrote the formatted envelope, and then SILENTLY DROPPED the clear,
+   * because emptying the editor produced the same `{"",""}` the stale prop still held. The
+   * scratch buffer kept a reply that was no longer on screen.
+   *
+   * A person cannot do that — React flushes between discrete events, so each keystroke gets its
+   * own render — but a program can, and several already do: a generated draft landing at a
+   * caret, a paste handler, a future clear button. Recording what we told the caller, at the
+   * moment we tell them, is exact in both cases and costs one assignment.
+   */
+  const told = useRef<RichValue>(value);
+  told.current = value;
 
   const emit = useCallback((editor: Editor) => {
     const text = editor.getText();
@@ -168,7 +184,7 @@ export function RichEditor({
     // in both branches, which is what makes one ref serve both.
     emitted.current = markup;
     /**
-     * A TRANSACTION THAT PRODUCED THE VALUE WE WERE ALREADY HOLDING IS NOT A CHANGE.
+     * A TRANSACTION THAT PRODUCED THE VALUE THE CALLER ALREADY HAS IS NOT A CHANGE.
      *
      * TipTap emits `update` for things that are not edits — `setEditable` does it by default,
      * and that one cost a real draft (see the effect below). The caller cannot tell such an
@@ -177,11 +193,14 @@ export function RichEditor({
      * spurious empty emission on mount is somebody's unsent message, deleted by the editor
      * that was opening to show it to them.
      *
-     * Compared against the value we were HANDED rather than against `emitted.current`: the
-     * question is whether the caller's state would change, and only the caller's own value
-     * answers that.
+     * Compared against what the caller KNOWS (`told`) rather than against `emitted.current`:
+     * that ref holds the document's serialisation, which is a different question — it answers
+     * "would re-setting the content be a no-op", not "would the caller's state change". They
+     * disagree for a plain document, where `emitted.current` is `<p>hi</p>` and the caller was
+     * told `html: ""`.
      */
-    if (text === held.current.text && html === held.current.html) return;
+    if (text === told.current.text && html === told.current.html) return;
+    told.current = { text, html };
     onChange({ text, html });
   }, [onChange]);
 
