@@ -59,8 +59,13 @@ describe("tauri.conf.json", () => {
     expect(conf.productName).toBe("ohmail");
     // Bare, with no `-preview` suffix: the MSI bundler rejects a semver
     // pre-release identifier, and this number reaches the installer filenames
-    // (`ohmail_0.3.0_amd64.deb`).
-    expect(conf.version).toBe("0.3.0");
+    // (`ohmail_0.4.0_amd64.deb`).
+    //
+    // 0.4.0 rather than another 0.3.0: 0.3.0 is already published as an
+    // interface-only preview, and reusing the number would leave the two sets
+    // of checksums ambiguous about which artifact they describe. A version is
+    // how a downloader names what they have.
+    expect(conf.version).toBe("0.4.0");
     expect(conf.identifier).toBe("io.ohmail.desktop.tauri");
   });
 
@@ -84,6 +89,12 @@ describe("tauri.conf.json", () => {
       plist,
     )?.[1];
 
+    /* THE `-preview` SUFFIX IS A CLAIM, NOT DECORATION, so it is asserted rather
+     * than tolerated. "Beta" was defined here to require an auto-updater, and
+     * this artifact does not have one: a build that cannot update itself is a
+     * preview whatever else it can do. So the suffix stays until that ships,
+     * and a bump that drops it has to fail here and be argued rather than
+     * slipped in with a version number. */
     expect(pkg.version).toBe(`${conf.version}-preview`);
     expect(shortVersion).toBe(`${conf.version}-preview`);
     // The crate the installers are built from, and the lockfile the mirror
