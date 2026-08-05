@@ -237,13 +237,16 @@ jobs:
           grep -aq "connect-src 'none'" "$BIN"
           echo "URLs in the binary:"
           grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u
-          # Both READMEs list these strings ONE BY ONE and say there are 14.
+          # Both READMEs list these strings ONE BY ONE and say there are 15.
           # A claim that specific has to be enforced or it rots: if a Rust,
           # wry or React bump changes the set, this line goes red and whoever
-          # bumps it updates the list. That is the intended cost.
+          # bumps it updates the list. That is the intended cost, and it has
+          # been paid once: 14 became 15 when the rich text editor entered the
+          # bundle and brought ProseMirror's documentation link with it, in a
+          # thrown message. Third-party docs, like React's beside it.
           URLS=$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u | wc -l)
-          echo "unique URL strings: $URLS (expected 14)"
-          test "$URLS" -eq 14
+          echo "unique URL strings: $URLS (expected 15)"
+          test "$URLS" -eq 15
           # Nothing may point at ohmail infrastructure.
           ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'ohmail|mailoh|trafficflow'
 
@@ -376,9 +379,11 @@ jobs:
           grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u
           # See the Windows job: the READMEs enumerate these, so the count is
           # pinned and a toolchain bump that changes it must update the list.
+          # 13 became 14 with ProseMirror's documentation link, which arrived
+          # with the rich text editor.
           URLS=$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u | wc -l)
-          echo "unique URL strings: $URLS (expected 13)"
-          test "$URLS" -eq 13
+          echo "unique URL strings: $URLS (expected 14)"
+          test "$URLS" -eq 14
           # Nothing may point at ohmail infrastructure.
           ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'ohmail|mailoh|trafficflow'
 

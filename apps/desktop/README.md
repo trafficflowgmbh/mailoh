@@ -140,18 +140,19 @@ strings -a src-tauri/target/release/ohmail \
   | grep -oE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' | sort -u
 ```
 
-That is the exact command CI runs, and on Linux it returns **thirteen** strings.
-Here are all thirteen, with nothing withheld:
+That is the exact command CI runs, and on Linux it returns **fourteen** strings.
+Here are all fourteen, with nothing withheld:
 
 | string | what it is |
 |---|---|
 | `http://www.w3.org/1999/xhtml`, `…/2000/svg`, `…/1998/Math/MathML`, `…/1999/xlink`, `…/XML/1998/namespace` | the five XML namespace **constants** React's DOM code compares against. Identifiers, not addresses — nothing dials a namespace. |
 | `https://reactjs.org/docs/error-decoder.html?invariant=` | React's minified-error link, printed in a thrown message. |
+| `https://prosemirror.net/docs/guide/#generatable)` | the same kind of thing one row up, from the editor instead of from React: ProseMirror's guide, cited in a thrown message about a schema it cannot generate a node for. The trailing `)` is prose, caught mid-sentence. |
 | `https://github.com/tauri-apps/muda`, `…/tauri/issues/2549#issuecomment-1250036908`, `…/tauri/issues/8306)`, `…/wry/blob/a0403b9…/src/lib.rs#L1130)`, `https://github.com/whatwg/html/issues/7428` | five source-comment and panic-message URLs from wry, muda and Tauri. Note the trailing `)` on two of them: they are prose, caught mid-sentence. |
 | `http://invalid` | **not a URL.** Rust `&str` literals carry their length in the pointer and get packed into rodata with no separator, so `strings` cannot see where one ends. This is the `http` crate's `"http://"` literal immediately followed by its error table; the full line reads `http://invalid uri characterinvalid schemeinvalid authorityinvalid port…`. |
 | `https://AllocErrKatakanaDeadlock` | the same artifact: `"https://"` followed by the interned symbols `AllocErr`, `Katakana`, `Deadlock`. The full line reads `…XCloseOMoverflowhttps://AllocErrKatakanaDeadlock`. |
 
-Windows returns **fourteen**. The eleven real ones above are identical; neither
+Windows returns **fifteen**. The twelve real ones above are identical; neither
 rodata join survives (different linker, different neighbours) and three others
 take their place: `http://https://invalid` (the `"http://"` and `"https://"`
 literals adjacent, then the same `http`-crate error table), `http://I` (a third
@@ -162,9 +163,11 @@ not fetch the runtime for you.
 
 Drop the `| sort -u` and read the whole lines if you want to check the three
 adjacency claims yourself — that is the point of shipping uncompressed. CI
-prints the list on every run, **asserts the count** (13 and 14; a toolchain bump
+prints the list on every run, **asserts the count** (14 and 15; a toolchain bump
 that changes it turns the job red, which is the only way a number in a README
-stays true), and **fails** if any URL in the binary matches `ohmail` or
+stays true — it did exactly that when the editor arrived and brought ProseMirror's
+link, which is why these read 14 and 15 rather than 13 and 14), and **fails** if
+any URL in the binary matches `ohmail` or
 `trafficflow`. And `strings … | grep Ohbox` finds the interface, so you can see
 that the binary contains the app you were promised without running it. With
 brotli on, all of that is an opaque blob.

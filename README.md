@@ -237,17 +237,17 @@ strings -a ohmail.exe | grep -oE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' | s
 strings -a ohmail.exe | grep -c Ohbox      # the interface really is in there
 ```
 
-The first command prints **13 strings on Linux, 14 on Windows**, and every one
+The first command prints **14 strings on Linux, 15 on Windows**, and every one
 of them is one of four things: an XML namespace constant React compares against,
 a documentation link inside a panic or error message, Microsoft's own WebView2
 download page (see the Windows note above), or — three of them — an artifact of
 grepping a Rust binary, where `"http://"` is a string literal that sits in
 read-only data with no terminator between it and whatever was placed next to it.
-`apps/desktop/README.md` lists all fourteen, one by one, with the full
+`apps/desktop/README.md` lists all fifteen, one by one, with the full
 surrounding line for the three that are not URLs at all.
 
 CI runs exactly these greps on every build, prints the complete list in the job
-log, **asserts the count** so that "13 and 14" cannot quietly stop being true,
+log, **asserts the count** so that "14 and 15" cannot quietly stop being true,
 and **fails the run** if any URL in the binary points at ohmail or TrafficFlow
 infrastructure. It also fails the Windows job if the `.msi` or the `-setup.exe`
 contains a WebView2 downloader.
