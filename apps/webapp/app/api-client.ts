@@ -298,6 +298,7 @@ export interface ConsentStateWire {
     seedConfirmedAt: string | null;
     screeningResetAt: string | null;
     dormancyDays: number;
+    autoSuggestAt?: string | null;
     counts: {
         decidedSenders: number;
         activeUndecidedSenders: number;
@@ -325,6 +326,9 @@ export interface SeedReviewWire {
 
 export const consent: {
     state: () => Promise<ConsentStateWire>;
+    setAutoSuggest: (enabled: boolean) => Promise<{
+        autoSuggestAt: string | null;
+    }>;
     seedReview: () => Promise<SeedReviewWire>;
     confirmSeed: (addresses: string[], opts?: {
         idempotencyKey?: string;
