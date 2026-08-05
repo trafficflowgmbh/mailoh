@@ -83,6 +83,31 @@ export function hasLeaseIo(adapter: MailboxAdapter): adapter is MailboxAdapter &
 }
 
 /**
+ * IS SOMEBODY ELSE STILL RENEWING, OR DID THEY STOP?
+ *
+ * `held` — a live foreign claim (the engine's `stand_down`).
+ * `stopped` — somebody WAS organizing and nothing has renewed since (the engine's `available`).
+ *
+ * The engine has three verdicts and this composition used to collapse two of them into one
+ * `organize: false` carrying the same `organized_elsewhere:*` reason, which made "Cloud is
+ * organizing this mailbox" and "Cloud stopped organizing this mailbox" the same value by the time
+ * anything downstream saw it — and those two want opposite actions offered to the user.
+ *
+ * ── IT IS CORRECT WHEN PRODUCED AND STALE ONE MINUTE LATER, SO IT IS NEVER PERSISTED ───────
+ *
+ * A mailbox that has been stood down is `status='disabled'`, and `loadEnabledMailboxes` filters
+ * those out — so nothing re-reads its lease, ever, until a human asks for it. A `held` written to
+ * a column would therefore be frozen at the instant of the stand-down and would keep saying
+ * "somebody is organizing this" long after they stopped. That is the same half-truth
+ * `mailbox-errors.ts` removes when it makes every writer clear the statements its write
+ * falsifies, and the fix there does not transfer: there is no later writer to clear this one.
+ *
+ * So it is carried, logged and returned, and the durable answer to "who holds this mailbox now"
+ * is obtained by LOOKING AGAIN at the moment somebody asks — `readLeasePeek`.
+ */
+export type LeaseOccupancyState = "held" | "stopped";
+
+/**
  * The verdict, reduced to what the worker acts on.
  *
  * `organize: false` carries a reason, always — the worker's stand-down write has nowhere to put
@@ -90,7 +115,12 @@ export function hasLeaseIo(adapter: MailboxAdapter): adapter is MailboxAdapter &
  */
 export type MailboxLeaseOutcome =
   | { organize: true; nonce: string | null; by: null }
-  | { organize: false; reason: MailboxDisabledReason; by: OrganizerClaim | null };
+  | {
+    organize: false;
+    reason: MailboxDisabledReason;
+    state: LeaseOccupancyState;
+    by: OrganizerClaim | null;
+  };
 
 export interface MailboxLeaseInput {
   adapter: MailboxAdapter;
@@ -139,7 +169,16 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
   });
 
   if (result.verdict.verdict === "organize") return { organize: true, nonce: result.nonce, by: null };
-  return { organize: false, reason: standDownReason(result.verdict), by: byOf(result.verdict) };
+  return {
+    organize: false,
+    reason: standDownReason(result.verdict),
+    // Derived from the verdict and from nothing else. `stand_down` is only ever constructed from a
+    // parsed FRESH foreign claim and `available` only from a stale or malformed one, so this
+    // mapping cannot drift from the engine's own freshness judgement — there is no second clock
+    // here and no second staleness window.
+    state: result.verdict.verdict === "stand_down" ? "held" : "stopped",
+    by: byOf(result.verdict),
+  };
 }
 
 /**
@@ -205,3 +244,4 @@ export async function releaseMailboxClaim(adapter: MailboxAdapter, installId: st
 /** Re-exported so the worker's `catch` arms name one class, imported from one place. */
 export { LeaseUnavailableError, DEFAULT_STALE_AFTER_MS, META_FOLDER };
 export type { LeaseSelf, OrganizerClaim, LeaseOp };
+export type { LeasePeek, LeaseHolder, LeaseOccupancy } from "@trafficflow/core/adapters/organizer-lease";

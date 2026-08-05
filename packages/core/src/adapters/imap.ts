@@ -24,7 +24,10 @@ import {
   type OutboundMessage, type SendResult, type FetchedPart, type FetchPartOptions,
   type FetchRawOptions, type NetTimeouts,
 } from "./imap-types.js";
-import { makeLeaseIo, type LeaseImapClient, type LeaseIo } from "./organizer-lease.js";
+import {
+  makeLeaseIo, makeLeasePeekIo,
+  type LeaseImapClient, type LeaseIo, type LeasePeekIo,
+} from "./organizer-lease.js";
 
 // Re-export the adapter types + folder constants so consumers can import them from this entrypoint.
 export * from "./imap-types.js";
@@ -609,6 +612,22 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    */
   leaseIo(): LeaseIo {
     return makeLeaseIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
+  }
+
+  /**
+   * The organizer lease, READ-ONLY, for a surface that reports who holds a mailbox rather than
+   * competing for it.
+   *
+   * A SECOND accessor rather than a flag on {@link leaseIo}, because the difference has to be
+   * visible at the call site and unreachable from it. `leaseIo()` hands out APPEND and EXPUNGE;
+   * an API process holding that object is one line away from becoming an organizer — and the
+   * failure would not look like a bug, it would look like a settings pane that quietly stood the
+   * user's own laptop down. The object this returns has one method, and it reads.
+   *
+   * It also never CREATEs `ohmail/_meta`. See {@link makeLeasePeekIo}.
+   */
+  leasePeekIo(): LeasePeekIo {
+    return makeLeasePeekIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
   }
 
   toServerPath(canonical: string): string {

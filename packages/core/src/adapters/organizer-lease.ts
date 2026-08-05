@@ -156,6 +156,31 @@ export type StandDownReason =
 export interface OrganizeVerdict {
   verdict: "organize";
   renew: true;
+  /**
+   * REFS OF THE FOREIGN CLAIMS THIS WIN DISPLACED, for the IO layer to expunge.
+   *
+   * ── WHY A TAKEOVER MUST CHANGE THE FOLDER, AND NOT JUST OUR MIND ───────────────────────────
+   *
+   * Populated only on an AUTHORIZED takeover — never on an ordinary renew, and never on
+   * own-role resumption. It is the mechanism that makes a handover converge, and without it the
+   * whole arbitration below is undone one cycle after it runs.
+   *
+   * The sequence it closes, measured rather than imagined: a human authorizes install B over
+   * install A's claim. B wins and appends. On the NEXT cycle both sides election over `{A, B}`
+   * and A wins on incumbency — so B stands down again, and the takeover the user asked for is
+   * quietly reversed. A permanent state, because nothing else ever changes.
+   *
+   * The folder is the only medium the two installs share, so the decision has to be recorded
+   * THERE. Once A's claim is gone, A's own next read finds its claim missing and another live
+   * claim present, and A stands down — which is the correct outcome reached from the shared
+   * medium rather than from either side's opinion about the other's clock.
+   *
+   * Expunging somebody else's bookkeeping is a real side effect and it is deliberately narrow:
+   * it happens only when a human explicitly asked this install to take this mailbox, and its
+   * worst case if the peer is alive is that the peer stands down — the SAFE direction, fewer
+   * organizers and never more.
+   */
+  displace: readonly unknown[];
 }
 
 /** Somebody else is organizing this mailbox right now. Stop, and release our own claim. */
@@ -251,19 +276,43 @@ export function formatClaim(c: ClaimInput): string {
 export function parseClaim(raw: string, ref?: unknown): ClaimRecord | null {
   const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
   const headers = new Map<string, string>();
+  const seen = new Map<string, number>();
   // Unfold continuation lines before splitting: a long display name may be wrapped by the
   // server, and a folded header read line-by-line loses everything after the first line.
   for (const line of headerBlock.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/)) {
     const at = line.indexOf(":");
     if (at <= 0) continue;
-    headers.set(line.slice(0, at).trim().toLowerCase(), line.slice(at + 1).trim());
+    const name = line.slice(0, at).trim().toLowerCase();
+    headers.set(name, line.slice(at + 1).trim());
+    seen.set(name, (seen.get(name) ?? 0) + 1);
   }
 
   const get = (k: string): string | undefined => headers.get(k.toLowerCase());
-  if (get(H.lease) !== "1") return null; // not a claim — a stray, or a future meta record type
+  const count = (k: string): number => seen.get(k.toLowerCase()) ?? 0;
 
   const malformed = (reason: string): MalformedClaim =>
     ref === undefined ? { malformed: true, reason } : { malformed: true, reason, ref };
+
+  // ── A RECORD THAT SAYS `X-Ohmail-Lease: 1` ANYWHERE IS NEVER INVISIBLE ────────────────────
+  //
+  // The discriminator used to be read with last-value-wins, so a record whose headers were
+  // `X-Ohmail-Lease: 1` … `X-Ohmail-Lease: 0` parsed as NOT A CLAIM AT ALL — `null`, which the
+  // gate drops entirely. An incumbent's only claim could therefore be erased from every reader's
+  // view by one duplicated header, and the next install to look would find an empty folder and
+  // start organizing beside it. Reproduced against the parser, not inferred.
+  //
+  // So the DUPLICATE is what is refused, and it is refused as `malformed` rather than as `null`:
+  // "a message that announces itself and cannot be read" is evidence somebody claimed, and
+  // evidence produces `available` at worst. `null` is reserved for a record that never claimed
+  // anything — a stray note, or a future meta record type this build does not know.
+  if (count(H.lease) > 1) return malformed("duplicate lease header");
+  if (get(H.lease) !== "1") return null; // not a claim — a stray, or a future meta record type
+  // Every field the decision reads gets the same treatment, for the same reason: a duplicated
+  // `X-Ohmail-Install-Id` or `X-Ohmail-Heartbeat` would let a crafted record present one identity
+  // to a reader that takes the first value and another to one that takes the last.
+  for (const field of [H.kind, H.installId, H.protocol, H.heartbeat, H.claimedAt, H.nonce]) {
+    if (count(field) > 1) return malformed(`duplicate ${field}`);
+  }
 
   const installId = get(H.installId);
   if (!installId) return malformed("no install id");
@@ -335,41 +384,204 @@ function coalesce(claims: readonly ClaimRecord[]): { valid: OrganizerClaim[]; ma
       continue;
     }
     const prior = newest.get(c.installId);
-    if (!prior || c.heartbeat.getTime() > prior.heartbeat.getTime()) newest.set(c.installId, c);
+    // ── ORDER-INDEPENDENT, AND THE TIE-BREAK IS NOT COSMETIC ────────────────────────────────
+    //
+    // `>` alone left equal heartbeats resolved by INPUT ORDER, and IMAP does not promise one. Two
+    // restored clones sharing an install id and renewing in the same millisecond therefore each
+    // selected the record whose nonce happened to arrive first — which each then recognised as its
+    // own, so both organized. Measured against the decision function with the two orderings.
+    //
+    // The nonce is a per-write random, so comparing it gives every reader the same answer from the
+    // same set regardless of the order the server hands it over.
+    if (!prior || compareRecency(c, prior) < 0) newest.set(c.installId, c);
   }
   return { valid: [...newest.values()], malformed };
 }
 
+/** Newest heartbeat first; equal heartbeats break on the nonce, so the result is order-free. */
+function compareRecency(a: OrganizerClaim, b: OrganizerClaim): number {
+  const d = b.heartbeat.getTime() - a.heartbeat.getTime();
+  if (d !== 0) return d;
+  return a.nonce < b.nonce ? -1 : a.nonce > b.nonce ? 1 : 0;
+}
+
 /**
- * THE DECISION TABLE. Pure — no clock of its own, no IO, no side effects.
+ * HOW FAR INTO THE FUTURE A PEER'S CLOCK IS BELIEVED.
  *
- * Priority, and every arm traces to a ruling rather than to a preference:
+ * A heartbeat later than our own clock is normal and must be tolerated — two machines have two
+ * clocks, and treating a slightly-ahead peer as gone is how both sides conclude they are the
+ * organizer. But the tolerance has to have an END, and it did not: a claim dated 2099 by a machine
+ * with a dead clock battery stayed "fresh" for seventy-three years, and no authorization could
+ * take the mailbox back from it. Measured against the decision function, not inferred: a `cloud`
+ * claim dated `2099-01-01` produced `stand_down` for an authorized local, indefinitely.
  *
- *  1. A fresh foreign claim with a protocol HIGHER than ours ⇒ stand down (`:unknown`). Never
- *     "unparseable, so ignore": a future format that older installs ignored would silently
- *     re-enable dual organizing against every one of them.
- *  2. We are `local`, a fresh foreign `cloud` claim exists ⇒ stand down (`:cloud`). §4's "a fresh
- *     cloud lease outranks local for CONTINUING coverage".
- *  3. We are `cloud` and hold our OWN fresh claim ⇒ organize, even against a fresh foreign local.
- *     Without this arm both sides stand down and nobody organizes at all — an entitled, actively
- *     covering Cloud is never preempted.
- *  4. We are `cloud`, a fresh foreign `local` claim exists, we hold no fresh claim of our own ⇒
- *     organize ONLY with `takeover: "authorized"`. That is exactly §4's split: adding a mailbox
- *     to Cloud IS the explicit human action, so the connect flow informs and proceeds; whereas a
- *     lapse-then-resubscribe must not let the worker resume over a deliberate local choice.
- *     Without the flag those two are indistinguishable to the gate.
- *  5. `local` vs a fresh foreign `local` ⇒ the OLDEST `claimedAt` wins (the incumbent); ties
- *     break lexicographically on install id. Both sides compute the same winner from the same
- *     folder contents, so exactly one continues and nobody self-promotes. Mutual stand-down
- *     would also be safe and would needlessly stop a mailbox nobody was contending for.
- *  6. No fresh foreign claim, and we hold a claim of our own — fresh or stale ⇒ organize.
- *     Own-role resumption after a crash, a restore or a long sleep. §4: "Continuing is not
+ * One staleness window, so a peer may be believed up to twice the window ahead of reality and no
+ * further. Beyond that the heartbeat is CLAMPED rather than rejected — the claim still counts as a
+ * claim, it simply stops being able to look newer than now.
+ */
+export const MAX_FUTURE_SKEW_MS = DEFAULT_STALE_AFTER_MS;
+
+/**
+ * THE ELECTION. **A pure function of the folder's contents — never of the reader's clock.**
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE RULE THAT MATTERS, AND THE FAMILY OF BUGS IT REPLACES
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The previous table asked "is this peer's claim fresh?" as `now(mine) - heartbeat(theirs) <
+ * staleAfterMs`. That question mixes two clocks, and **two readers of the same folder could answer
+ * it differently** — which is the whole bug family, because two readers that disagree about the
+ * candidate set can each conclude they won.
+ *
+ * Three split-brains were reproduced by execution against the old function, and every one of them
+ * is this single mistake:
+ *
+ *  · **A laptop that slept.** NO CLOCK SKEW REQUIRED, and this is the most reachable of the
+ *    three. Install A sleeps past the window; B is active. B sees A as stale, so A is not in B's
+ *    candidate set and B continues on its own claim. A wakes, sees B as fresh, and beats B on
+ *    incumbency because A's `claimedAt` is older — so A organizes too. Both write, indefinitely.
+ *  · **Five minutes of clock skew.** B's clock runs ahead, so A's claim reads as stale to B and
+ *    the surface actively OFFERS a takeover. B takes it; A then reads B's future-dated claim as
+ *    fresh (correctly) but wins incumbency, so A keeps organizing. No convergence: A is stale to B
+ *    forever.
+ *  · **Two clouds.** `freshCloud` was computed and then consulted only when `self.kind ===
+ *    "local"`, so two cloud organizers each fell through to "I hold a fresh claim, therefore
+ *    organize" for ever. The leader lock masks it in one deployment; the lease provided no
+ *    protection at all, and the leader lock is not the lease.
+ *
+ * So freshness is redefined **relative to the folder**: the newest heartbeat present is the
+ * reference, and a claim more than one window older than it has LAPSED. Every reader computes the
+ * same reference from the same messages, so every reader computes the same candidate set and the
+ * same winner. Agreement is now structural rather than probable.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * WHERE THE READER'S CLOCK IS STILL USED, AND WHY NEITHER USE IS THE ARBITER
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ *  1. **As a CEILING on a future heartbeat** ({@link MAX_FUTURE_SKEW_MS}). An upper bound cannot
+ *     change the order of two honestly-clocked claims; it can only stop a broken clock from
+ *     outranking everything for ever.
+ *  2. **To decide whether the whole folder has gone QUIET** — `now - newest >= staleAfterMs`, which
+ *     is what makes a mailbox OFFERABLE for takeover. This is single-sided and can only ever lead
+ *     to a human being asked a question. Getting it wrong in the permissive direction produces an
+ *     authorized takeover that displaces a live install, which is one organizer — the safe
+ *     direction — and is exactly what an authorized takeover is defined to do.
+ *
+ * Nothing else. **A reader's clock can no longer decide who organizes a mailbox.**
+ */
+interface Election {
+  /** Claims present in the folder, coalesced, with a clamped heartbeat. */
+  candidates: readonly OrganizerClaim[];
+  /** Not lapsed relative to the newest heartbeat in the folder. */
+  live: readonly OrganizerClaim[];
+  /** The strongest live candidate, or `null` when the folder holds no readable claim. */
+  winner: OrganizerClaim | null;
+  /**
+   * Claims whose heartbeat is NOT implausibly far in the future, keyed by the object identity of
+   * the clamped candidate.
+   *
+   * A claim dated 2099 by a machine with a dead clock battery is a claim, and it must still be
+   * RANKED (or two readers would disagree about the candidate set and both organize — see
+   * {@link runElection}). What it must not do is grant its writer the protections reserved for an
+   * organizer that is demonstrably alive. So implausibility is tracked separately from the
+   * election rather than by removing the claim from it.
+   */
+  plausible: ReadonlySet<OrganizerClaim>;
+  /** Nothing PLAUSIBLE in the folder has been renewed within one window of the READER's now. */
+  quiet: boolean;
+  /** Claims that announce themselves and cannot be read. Evidence, never nothing. */
+  malformed: readonly MalformedClaim[];
+}
+
+/** `min(heartbeat, now + MAX_FUTURE_SKEW_MS)` — see {@link MAX_FUTURE_SKEW_MS}. */
+function clampHeartbeat(c: OrganizerClaim, now: Date): OrganizerClaim {
+  const ceiling = now.getTime() + MAX_FUTURE_SKEW_MS;
+  if (c.heartbeat.getTime() <= ceiling) return c;
+  return { ...c, heartbeat: new Date(ceiling) };
+}
+
+/**
+ * Strongest first.
+ *
+ *  1. `cloud` outranks `local` — §4's "a fresh cloud lease outranks local for CONTINUING
+ *     coverage". A cloud claim is only ever IN the folder because a cloud won a gate, and winning
+ *     one over a live local already required a human, so presence is the proof of continuation.
+ *  2. Then INCUMBENCY: the oldest `claimedAt`. Nobody self-promotes by arriving.
+ *  3. Then `installId`, then `nonce` — a TOTAL order, so no two readers can break a tie
+ *     differently. The nonce is what closes the restored-clone case, where two live processes
+ *     share an install id AND a `claimedAt`: `compareIncumbency` returned 0, `Array.sort` is not
+ *     required to be stable across differing input orders, and two clones reading the same folder
+ *     in different orders each elected themselves. Measured, not theorised.
+ */
+function compareStrength(a: OrganizerClaim, b: OrganizerClaim): number {
+  const kindRank = (k: OrganizerClaim["kind"]): number => (k === "cloud" ? 2 : k === "local" ? 1 : 0);
+  const byKind = kindRank(b.kind) - kindRank(a.kind);
+  if (byKind !== 0) return byKind;
+  const byClaimed = a.claimedAt.getTime() - b.claimedAt.getTime();
+  if (byClaimed !== 0) return byClaimed;
+  if (a.installId !== b.installId) return a.installId < b.installId ? -1 : 1;
+  return a.nonce < b.nonce ? -1 : a.nonce > b.nonce ? 1 : 0;
+}
+
+function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: number): Election {
+  const { valid, malformed } = coalesce(claims);
+  const ceiling = now.getTime() + MAX_FUTURE_SKEW_MS;
+  const plausible = new Set<OrganizerClaim>();
+  const candidates = valid.map((raw) => {
+    const c = clampHeartbeat(raw, now);
+    if (raw.heartbeat.getTime() <= ceiling) plausible.add(c);
+    return c;
+  });
+
+  // THE REFERENCE IS IN THE FOLDER, not on this machine. Clamped, so a broken clock cannot lapse
+  // every honest claim in the folder by more than one window.
+  const newest = candidates.reduce<number>((m, c) => Math.max(m, c.heartbeat.getTime()), -Infinity);
+  const live = candidates.filter((c) => newest - c.heartbeat.getTime() < staleAfterMs);
+  const winner = [...live].sort(compareStrength)[0] ?? null;
+
+  // The one place the reader's clock decides anything, and it decides only whether to ASK a human.
+  // Computed over PLAUSIBLE heartbeats only: a folder holding nothing but a claim dated 2099 has
+  // gone quiet, and reading it as busy is what let one dead machine hold a mailbox for seventy-three
+  // years with no way out short of a person deleting the message by hand.
+  const newestPlausible = candidates
+    .filter((c) => plausible.has(c))
+    .reduce<number>((m, c) => Math.max(m, c.heartbeat.getTime()), -Infinity);
+  const quiet = !Number.isFinite(newestPlausible) || now.getTime() - newestPlausible >= staleAfterMs;
+
+  return { candidates, live, winner, plausible, quiet, malformed };
+}
+
+/**
+ * WHO MAY ORGANIZE THIS MAILBOX. Pure — no clock of its own, no IO, no side effects.
+ *
+ * The order below is the order of the reasons, and each traces to a ruling rather than a
+ * preference:
+ *
+ *  1. **A live claim in a protocol we do not understand ⇒ stand down.** Never "unparseable, so
+ *     ignore": a future format that older installs skipped would silently re-enable dual
+ *     organizing against every one of them. No authorization overrides this — we cannot rank what
+ *     we cannot read.
+ *  2. **A live claim of an unrecognised KIND ⇒ stand down.** Same reasoning. The one thing we know
+ *     is that something is organizing this mailbox and we cannot place it.
+ *  3. **We hold the strongest live claim ⇒ organize.** This is continuation, and it covers
+ *     own-role resumption after a crash, a restore or a long sleep: if the folder holds only our
+ *     own claims, however old, we are the newest thing in it and we win. §4: "Continuing is not
  *     becoming."
- *  7. No claims at all ⇒ organize. Nobody has ever organized this mailbox; there is nobody to
- *     take over from.
- *  8. Otherwise a stale or malformed foreign claim exists and we hold none ⇒ `available`, or
- *     `organize` with explicit authorization. This is the Cloud-lapsed case and the
- *     no-seize-back case, and it is the arm a two-verdict table gets wrong.
+ *  4. **The folder holds no readable claim at all ⇒ organize.** Nobody has ever organized this
+ *     mailbox, so there is nobody to take over from. A transient double-append here is the
+ *     designed handover window, and {@link runLeaseGate}'s append-then-verify is what bounds it to
+ *     the cycle in which it happens.
+ *  5. **We lost, and the winner is a LIVE claim of a kind that outranks ours ⇒ stand down, even
+ *     with authorization.** §4 gives a local install no path over a live Cloud: the honest action
+ *     there is `Remove from this Mac`, and the Cloud side is where a mailbox is given up. The
+ *     asymmetry is deliberate and is not a missing feature.
+ *  6. **We lost, and a human authorized THIS install ⇒ organize, and DISPLACE what we beat.** §4's
+ *     "adding a mailbox to Cloud IS the explicit action, so this informs and proceeds". The
+ *     displacement is what records the handover in the shared medium; see {@link OrganizeVerdict}.
+ *  7. **We lost, and the folder is still being renewed ⇒ stand down.** Somebody is organizing it.
+ *  8. **We lost, and the folder has gone quiet ⇒ `available`.** Somebody WAS organizing and
+ *     nothing has renewed since. Offerable, never taken: BECOMING an organizer always requires an
+ *     explicit human action, including for Cloud.
  */
 export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   const { self, now } = input;
@@ -377,81 +589,266 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   const takeover = input.takeover ?? "none";
   const ourProtocol = self.protocol ?? CLAIM_PROTOCOL;
 
-  const { valid, malformed } = coalesce(input.claims);
+  const election = runElection(input.claims, now, staleAfterMs);
 
-  const own: OrganizerClaim[] = [];
-  const foreign: OrganizerClaim[] = [];
-  for (const c of valid) {
-    // The clone defence. Only armed once we have written this process — a fresh start has no
-    // nonce to compare and must trust its own id, or own-role resumption breaks.
+  /**
+   * Is this claim OURS? The clone defence, unchanged in substance.
+   *
+   * A claim bearing our install id whose nonce is not the one we wrote, and which is live, is
+   * somebody else running a restored copy of us. `lastNonce` is memory-only, so a fresh process
+   * trusts its own id exactly once — which is what keeps own-role resumption working after a
+   * crash. The residual case of two clones starting simultaneously (both with a null nonce) is now
+   * caught one cycle later by `compareStrength`'s total order, where it used to be a coin toss.
+   */
+  const isOurs = (c: OrganizerClaim): boolean => {
+    if (c.installId !== self.installId) return false;
     const clonedUs =
-      c.installId === self.installId &&
       self.lastNonce !== null &&
       c.nonce !== self.lastNonce &&
-      c.heartbeat.getTime() > now.getTime() - staleAfterMs;
-    if (c.installId === self.installId && !clonedUs) own.push(c);
-    else foreign.push(c);
+      election.live.includes(c);
+    return !clonedUs;
+  };
+
+  // 1 / 2 — a live peer we cannot rank. Checked first, and no authorization overrides them.
+  const unrankable = election.live.find((c) => !isOurs(c) && (c.protocol > ourProtocol || c.kind === "unknown"));
+  if (unrankable) return { verdict: "stand_down", reason: "organized_elsewhere:unknown", by: unrankable };
+
+  const { winner } = election;
+
+  // 3 — we hold the strongest live claim. Continuation.
+  if (winner && isOurs(winner)) return { verdict: "organize", renew: true, displace: [] };
+
+  // 4 — an EMPTY folder. Nobody has ever organized this mailbox, so there is nobody to take over
+  // from. Emptiness is the whole condition, and "no winner" is deliberately not the test: a folder
+  // that holds only unreadable claims, or only a claim dated 2099, has evidence in it and belongs
+  // to the arms below.
+  if (election.candidates.length === 0 && election.malformed.length === 0) {
+    return { verdict: "organize", renew: true, displace: [] };
   }
 
-  const freshForeign = foreign.filter((c) => isFresh(c.heartbeat, now, staleAfterMs));
-
-  // 1 — a protocol we do not understand, held by someone alive.
-  const ahead = freshForeign.find((c) => c.protocol > ourProtocol);
-  if (ahead) return { verdict: "stand_down", reason: "organized_elsewhere:unknown", by: ahead };
-
-  const freshCloud = freshForeign.filter((c) => c.kind === "cloud");
-  const freshLocal = freshForeign.filter((c) => c.kind === "local");
-  const freshUnknown = freshForeign.filter((c) => c.kind === "unknown");
-
-  // An unrecognised kind held by a live peer: refuse. Same reasoning as the protocol arm — the
-  // one thing we know is that something is organizing this mailbox and we cannot rank it.
-  if (freshUnknown.length > 0) {
-    return { verdict: "stand_down", reason: "organized_elsewhere:unknown", by: freshUnknown[0]! };
+  // 5 — a live organizer of a kind that outranks us is never taken, authorized or not. §4 gives a
+  // local install no path over a live Cloud.
+  //
+  // GATED ON TWO THINGS, and both were learned by watching this arm misfire.
+  //
+  //  · **The folder must not be QUIET.** §4's rule is that a *fresh* cloud lease outranks local for
+  //    continuing coverage — the protection belongs to an organizer that is demonstrably still
+  //    there. Without this clause a Cloud subscription that lapsed months ago still refused
+  //    `Organize from this Mac`, which is precisely the transition §4 spells out as one line and
+  //    one click.
+  //  · **The claim must be PLAUSIBLE.** Otherwise one machine with a broken clock writing a `cloud`
+  //    claim dated 2099 refuses every authorized local takeover for ever, and the only cure is a
+  //    person finding and deleting the bookkeeping message by hand.
+  const ourKindRank = self.kind === "cloud" ? 2 : 1;
+  const winnerKindRank = winner === null ? 0 : winner.kind === "cloud" ? 2 : 1;
+  if (
+    winner !== null && winnerKindRank > ourKindRank
+    && !election.quiet && election.plausible.has(winner)
+  ) {
+    return { verdict: "stand_down", reason: reasonFor(winner), by: winner };
   }
 
-  const ownFresh = own.find((c) => isFresh(c.heartbeat, now, staleAfterMs));
-
-  if (self.kind === "local") {
-    // 2 — a live Cloud outranks us for continuation.
-    if (freshCloud.length > 0) return { verdict: "stand_down", reason: "organized_elsewhere:cloud", by: freshCloud[0]! };
-
-    // 5 — local vs local: the incumbent wins, deterministically, from both sides.
-    if (freshLocal.length > 0) {
-      const ours = own[0];
-      const winner = [...freshLocal, ...(ours ? [ours] : [])].sort(compareIncumbency)[0]!;
-      if (!ours || winner.installId !== self.installId) {
-        return { verdict: "stand_down", reason: "organized_elsewhere:local", by: winner };
-      }
-      return { verdict: "organize", renew: true };
-    }
-  } else {
-    // 3 — the Cloud continuation arm. Checked BEFORE the foreign-local arm, or a fresh local
-    // claim would stand a covering Cloud down and nobody would organize.
-    if (ownFresh) return { verdict: "organize", renew: true };
-
-    // 4 — becoming the organizer over a live local install needs a human.
-    if (freshLocal.length > 0) {
-      if (takeover === "authorized") return { verdict: "organize", renew: true };
-      return { verdict: "stand_down", reason: "organized_elsewhere:local", by: freshLocal[0]! };
-    }
+  // 6 — a human asked for this mailbox. Take it, and record the handover in the folder.
+  if (takeover === "authorized") {
+    const displaced = [...election.candidates, ...election.malformed]
+      .filter((c) => (isMalformed(c) ? true : !isOurs(c)))
+      .map((c) => c.ref)
+      .filter((r): r is unknown => r !== undefined);
+    return { verdict: "organize", renew: true, displace: displaced };
   }
 
-  // 6 — own-role resumption. Continuing is not becoming.
-  if (own.length > 0) return { verdict: "organize", renew: true };
-
-  // 7 — nobody has ever organized this mailbox.
-  if (foreign.length === 0 && malformed.length === 0) return { verdict: "organize", renew: true };
-
-  // 8 — somebody WAS organizing and is not now. Explicit action only.
-  if (takeover === "authorized") return { verdict: "organize", renew: true };
-  const staleBy = foreign.sort((a, b) => b.heartbeat.getTime() - a.heartbeat.getTime())[0] ?? null;
-  return { verdict: "available", by: staleBy };
+  // 7 / 8 — we lost. Whether it is offerable is the only thing left to say.
+  if (!election.quiet && winner !== null) {
+    return { verdict: "stand_down", reason: reasonFor(winner), by: winner };
+  }
+  return { verdict: "available", by: winner };
 }
 
-/** Oldest `claimedAt` first; ties break lexicographically on install id, so both sides agree. */
-function compareIncumbency(a: OrganizerClaim, b: OrganizerClaim): number {
-  const d = a.claimedAt.getTime() - b.claimedAt.getTime();
-  return d !== 0 ? d : a.installId < b.installId ? -1 : a.installId > b.installId ? 1 : 0;
+/** The winning claim's kind, as the closed reason set spells it. */
+function reasonFor(c: OrganizerClaim): StandDownReason {
+  return c.kind === "cloud" ? "organized_elsewhere:cloud"
+    : c.kind === "local" ? "organized_elsewhere:local"
+      : "organized_elsewhere:unknown";
+}
+
+
+
+// ── LAYER 2b: LOOKING WITHOUT DECIDING ──────────────────────────────────────────────────────
+
+/**
+ * WHO HOLDS THIS MAILBOX, REPORTED RATHER THAN RULED ON.
+ *
+ * ── WHY THIS IS NOT `decideLease` WITH THE WRITES TURNED OFF ────────────────────────────────
+ *
+ * A caller that wants to SHOW a person who is organizing their mailbox — before asking them
+ * whether to take it over — needs a different thing from what the gate produces. The gate answers
+ * "may *I* organize?", and to answer it needs an identity: {@link LeaseSelf}, with an install id
+ * and a nonce. A surface that merely reports has no such identity, and giving it a fabricated one
+ * is how a read becomes a write. Two concrete failures, both reachable from one fabricated id:
+ *
+ *  · Against an EMPTY `ohmail/_meta`, arm 7 answers `organize`, and {@link runLeaseGate} then
+ *    APPENDS a claim. A preview would have made the previewer the organizer, and every other
+ *    install would stand down for the whole staleness window on the strength of somebody opening
+ *    a settings pane.
+ *  · Against a live claim carrying the same id, {@link runLeaseGate}'s renew expunges the older
+ *    claims matching that id — so a preview sharing the worker's id can delete the worker's own
+ *    fresh claim out from under it.
+ *
+ * So this layer takes no `self`, returns no verdict, and cannot write: {@link LeasePeekIo} has
+ * exactly one method and it is a read. The confirm step that follows a preview does not consult
+ * this result — it stamps an authorization, and the GATE decides, later, in the process that is
+ * actually going to do the organizing. A preview that decided would be a second decision site,
+ * and §3.4's "exactly one path to stand-down" is the same argument in the other direction.
+ */
+export interface LeaseHolder {
+  kind: OrganizerKind | "unknown";
+  /** `X-Ohmail-Display-Name` — the machine, for a human. May be empty. */
+  displayName: string;
+  /** Last renew, by the WRITER's clock. */
+  heartbeat: Date;
+  /** When this organizer became the organizer, as distinct from last seen. */
+  claimedAt: Date;
+  /** Still being renewed, judged against the same window the gate judges against. */
+  fresh: boolean;
+}
+
+/**
+ * `none` — nobody has ever organized this mailbox.
+ * `held` — at least one claim is still being renewed.
+ * `stopped` — somebody WAS organizing and is not now.
+ *
+ * The three map exactly onto the gate's three verdicts for a FOREIGN claim (`organize` on an
+ * empty folder, `stand_down`, `available`), which is what makes a preview and the gate that runs
+ * afterwards agree about the world rather than merely tend to.
+ */
+export type LeaseOccupancy = "none" | "held" | "stopped";
+
+export interface LeasePeek {
+  state: LeaseOccupancy;
+  /** Freshest first. One entry per install id, the same coalescing the gate does. */
+  holders: LeaseHolder[];
+  /**
+   * Claims that say they are claims and are not readable as one.
+   *
+   * Counted rather than dropped, for {@link MalformedClaim}'s reason: evidence that somebody
+   * claimed is not nothing. A folder holding only unreadable claims is `stopped`, never `none` —
+   * reporting "nobody has ever organized this" about a mailbox with a claim in it is the
+   * dual-organizer bug wearing a UI.
+   */
+  unreadable: number;
+}
+
+export interface PeekLeaseInput {
+  claims: readonly ClaimRecord[];
+  now: Date;
+  staleAfterMs?: number;
+}
+
+/** Pure. No IO, no identity, no side effects — the whole table is unit-testable. */
+export function peekLease(input: PeekLeaseInput): LeasePeek {
+  const staleAfterMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
+  const { valid, malformed } = coalesce(input.claims);
+
+  const holders: LeaseHolder[] = valid
+    .map((c) => ({
+      kind: c.kind,
+      displayName: c.displayName,
+      heartbeat: c.heartbeat,
+      claimedAt: c.claimedAt,
+      fresh: isFresh(c.heartbeat, input.now, staleAfterMs),
+    }))
+    .sort((a, b) => b.heartbeat.getTime() - a.heartbeat.getTime());
+
+  const state: LeaseOccupancy =
+    holders.some((h) => h.fresh) ? "held"
+      : holders.length > 0 || malformed.length > 0 ? "stopped"
+        : "none";
+
+  return { state, holders, unreadable: malformed.length };
+}
+
+/**
+ * The read-only half of {@link LeaseIo}, and the narrowness is the enforcement.
+ *
+ * It is a separate interface rather than `Pick<LeaseIo, "listClaims">` so that a caller cannot
+ * pass a full {@link LeaseIo} where this is expected and quietly regain APPEND: structurally
+ * `LeaseIo` DOES satisfy this type, so the guard cannot live in the type system alone — it lives
+ * in {@link makeLeasePeekIo}, whose returned object has no other method to reach for, and in the
+ * adapter accessor that hands one out.
+ */
+export interface LeasePeekIo {
+  listClaims(): Promise<RawClaimMessage[]>;
+}
+
+/**
+ * A {@link LeasePeekIo} bound to a live connection. LIST, SELECT, FETCH. Nothing else.
+ *
+ * **It does not create `ohmail/_meta`.** {@link makeLeaseIo} does, because an organizer that is
+ * about to write a claim needs somewhere to write it. A reader does not, and creating a folder in
+ * somebody's mailbox to answer a question about it is a side effect no read should have — it also
+ * changes the answer for the next reader, from "no folder" to "empty folder". An absent folder is
+ * reported as zero claims, which is the truth: nobody has ever organized this mailbox.
+ */
+export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonical: string) => string): LeasePeekIo {
+  return {
+    async listClaims(): Promise<RawClaimMessage[]> {
+      const p = toServerPath(META_FOLDER);
+      const list = await client.list();
+      if (!list.some((f) => f.path === p)) return [];
+
+      const lock = await client.getMailboxLock(p);
+      try {
+        const out: RawClaimMessage[] = [];
+        // The same defensive read `makeLeaseIo.listClaims` documents at length: `1:*` is not a
+        // valid messageset against an empty mailbox and Dovecot refuses the command outright,
+        // while GreenMail tolerates it. Only a POSITIVELY KNOWN zero skips the fetch.
+        const selected = client.mailbox;
+        const count = typeof selected === "object" && selected !== null ? selected.exists : undefined;
+        if (count === 0) return out;
+        for await (const m of client.fetch("1:*", { uid: true, headers: true }, { uid: false })) {
+          if (!m.headers) continue;
+          out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
+        }
+        return out;
+      } finally {
+        lock.release();
+      }
+    },
+  };
+}
+
+export interface ReadLeasePeekInput {
+  io: LeasePeekIo;
+  now: Date;
+  staleAfterMs?: number;
+}
+
+/**
+ * READ `ohmail/_meta` AND SAY WHO IS IN IT.
+ *
+ * An IO failure is {@link LeaseUnavailableError}, exactly as it is for the gate, and for §3.4's
+ * reason restated as copy: "could not look" must never render as "nobody holds it". A surface
+ * that showed an empty organizer panel because a FETCH timed out would invite a takeover of a
+ * mailbox somebody is actively organizing.
+ */
+export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePeek> {
+  let messages: RawClaimMessage[];
+  try {
+    messages = await input.io.listClaims();
+  } catch (err) {
+    throw new LeaseUnavailableError(
+      `the organizer lease in ${META_FOLDER} could not be read`,
+      { op: "list_claims", cause: err },
+    );
+  }
+  const claims = messages
+    .map((m) => parseClaim(m.raw, m.ref))
+    .filter((c): c is ClaimRecord => c !== null);
+  return peekLease({
+    claims,
+    now: input.now,
+    ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
+  });
 }
 
 // ── LAYER 3: IO ─────────────────────────────────────────────────────────────────────────────
@@ -789,7 +1186,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   }
 
   // The incumbency clock. Renewing must NOT restart it, or two installs that both renew every
-  // cycle would each keep looking like the newest arrival and rule 5 would never settle.
+  // cycle would each keep looking like the newest arrival and the election would never settle.
   const priorOwn = claims
     .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
     .sort((a, b) => a.claimedAt.getTime() - b.claimedAt.getTime())[0];
@@ -815,9 +1212,77 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     );
   }
 
-  if (ourRefs.length > 0) {
+  /**
+   * ── APPEND, THEN LOOK AGAIN BEFORE TOUCHING ANY MAIL ────────────────────────────────────────
+   *
+   * IMAP has no compare-and-swap, so two installs reading the same folder in the same instant can
+   * both decide to organize and both append. The election above makes that impossible to SUSTAIN —
+   * one cycle later both compute the same winner — but "one cycle" was an unbounded promise: the
+   * gate returned `organize` the moment its own APPEND succeeded and never looked at what else had
+   * landed. Every simultaneous start was therefore a real dual-write window a full poll interval
+   * wide, and it was the missing ceiling under every split-brain reproduced above.
+   *
+   * So the claim we just wrote is read back WITH ITS NEIGHBOURS, and the election is re-run over
+   * what is actually in the folder. Two things make this the right shape rather than a retry loop:
+   *
+   *  · `takeover` is deliberately NOT passed. The authorization was spent on the first decision;
+   *    re-offering it here would let one click win an unbounded number of contests.
+   *  · `lastNonce` is set to the nonce we just wrote, so our own new claim is recognised as ours
+   *    and the clone defence is armed against anything else bearing our id.
+   *
+   * If we lost, we release and report the stand-down — the mailbox has changed hands between our
+   * read and our write, which is exactly the case this exists to catch. A verify that cannot be
+   * READ is not a loss: it is a mailbox fault, and it throws like every other one, because
+   * "somebody else holds this" and "I could not look" must never be reachable from one another.
+   */
+  let verifyClaims: readonly ClaimRecord[];
+  try {
+    const after = await io.listClaims();
+    verifyClaims = after
+      .map((m) => parseClaim(m.raw, m.ref))
+      .filter((c): c is ClaimRecord => c !== null);
+  } catch (err) {
+    throw new LeaseUnavailableError(
+      `the organizer lease in ${META_FOLDER} could not be re-read after the claim was renewed, so ` +
+      `this mailbox cannot be organized safely`,
+      { op: "list_claims", cause: err },
+    );
+  }
+
+  const confirmed = decideLease({
+    self: { ...self, lastNonce: nonce },
+    claims: verifyClaims,
+    now,
+    ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
+  });
+
+  if (confirmed.verdict !== "organize") {
+    const ours = verifyClaims
+      .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
+      .map((c) => c.ref)
+      .filter((r): r is unknown => r !== undefined);
+    if (ours.length > 0) {
+      try {
+        await io.removeClaims(ours);
+      } catch (err) {
+        log("lease_release_failed", {
+          op: "remove_claims" satisfies LeaseOp,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    log("lease_lost_race", { verdict: confirmed.verdict });
+    return { verdict: confirmed, nonce: null };
+  }
+
+  // WHAT THIS WIN DISPLACED, plus our own older copies. One expunge, so a takeover cannot land
+  // half-applied — leaving the beaten claim behind is what made a takeover reverse itself on the
+  // next cycle, and leaving our own older copies behind is the append-then-expunge residue readers
+  // coalesce away.
+  const toRemove = [...ourRefs, ...verdict.displace];
+  if (toRemove.length > 0) {
     try {
-      await io.removeClaims(ourRefs);
+      await io.removeClaims(toRemove);
     } catch (err) {
       // Harmless: the folder now holds our new claim plus one or more older ones, and readers
       // coalesce by newest heartbeat. The next renew tries again.

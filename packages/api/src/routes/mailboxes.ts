@@ -1,6 +1,7 @@
 import type { CreateMailboxBody, UpdateMailboxBody } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { makeImapProbe } from "../imap-probe.js";
+import { makeOrganizerPeek } from "../organizer-peek.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { mailbox, readBody, noContent } from "./shared.js";
@@ -40,6 +41,41 @@ export const mailboxRoutes: Route[] = [
     handler: async (req, deps, params) => {
       await mailbox(deps).requestResync(serviceContext(deps, req), params.id!);
       return jsonResponse({ status: "queued" }, { status: 202 });
+    },
+  },
+  {
+    method: "GET",
+    pattern: "/mailboxes/:id/organizer",
+    // `connection`, NOT `read`. `read` is defined as reading rows already stored for the caller's
+    // own account and writing nothing; this opens an IMAP socket to the user's provider and reads
+    // a folder on it. Classing it `read` would also put it inside the set an UNVERIFIED account
+    // may reach, which would make an unproven address able to make this process dial a mail server
+    // — the thing invariant 11 exists to refuse.
+    cost: "connection",
+    handler: async (req, deps, params) => {
+      const ctx = serviceContext(deps, req);
+      // OWNERSHIP FIRST, AND BEFORE THE DIAL. Without it a guessed mailbox id is a connect oracle
+      // against somebody else's stored credentials — the same reason `probedImapMeta` does its
+      // unlocked pre-read before it probes.
+      await mailbox(deps).get(ctx, params.id!);
+      const organizer = await makeOrganizerPeek(deps)(params.id!);
+      return jsonResponse(organizer);
+    },
+  },
+  {
+    method: "POST",
+    pattern: "/mailboxes/:id/takeover",
+    // `work`: it writes, and what it enqueues is the worker becoming the organizer of a real
+    // mailbox on its next pass. Step-up for the same reason `POST /mailboxes` carries it — this
+    // decides who moves somebody's mail.
+    cost: "work",
+    options: { stepUp: true },
+    handler: async (req, deps, params) => {
+      // NO IMAP. Deliberately, and asserted by a test: organization lands in real folders and the
+      // worker is what puts it there, so this writes a stamp and returns. A confirm that dialled
+      // would be a second organizer deciding things in a serverless function.
+      const result = await mailbox(deps).takeover(serviceContext(deps, req), params.id!);
+      return jsonResponse(result, { status: result.outcome === "authorized" ? 202 : 200 });
     },
   },
   {

@@ -2170,6 +2170,10 @@ body.reading .shell {
 @keyframes mbx-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .mbx-spin { animation: none; } }
 .mbx-btn { font-size: 12px; padding: 5px 12px; }
+/* The takeover panel's two buttons. `wrap` because the confirm sits under a two-sentence
+   explanation that is deliberately not shortened, and at 390px the pair must go to a second line
+   rather than push the row wider than the card. */
+.mbx-actions { display: inline-flex; flex-wrap: wrap; gap: 7px; margin-top: 5px; }
 @media (max-width: 560px) {
   .mbx-row { flex-direction: column; align-items: flex-start; gap: 9px; }
   .mbx-state { width: 100%; justify-content: space-between; }

@@ -241,7 +241,31 @@ export const mailboxes: {
         status: string;
     }>;
     create: (b: CreateMailboxBody) => Promise<MailboxDTO>;
+    organizer: (id: string) => Promise<OrganizerPeek>;
+    takeover: (id: string) => Promise<MailboxTakeover>;
 } = absent;
+
+export interface OrganizerHolder {
+    kind: "local" | "cloud" | "unknown";
+    displayName: string | null;
+    heartbeatAt: string;
+    active: boolean;
+}
+
+export interface OrganizerPeek {
+    state: "none" | "held" | "stopped";
+    holders: OrganizerHolder[];
+    unreadable: number;
+}
+
+export type MailboxTakeover = {
+    outcome: "authorized";
+    previousReason: string;
+} | {
+    outcome: "already_organizing";
+} | {
+    outcome: "disconnected";
+};
 
 export const billing: {
     subscription: () => Promise<SubscriptionStatus>;

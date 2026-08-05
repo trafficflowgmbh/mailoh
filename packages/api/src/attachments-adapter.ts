@@ -173,11 +173,63 @@ function giveLocalSlot(mailboxId: string, gate: MailboxGate): void {
   retireIfIdle(mailboxId, gate);
 }
 
+/**
+ * A LIVE, ADMITTED IMAP CONNECTION FOR ONE MAILBOX, AND THE ONE WAY TO GET ONE HERE.
+ *
+ * `close()` puts BOTH slots back — the per-instance one and the shared database counter — and is
+ * safe to call twice.
+ */
+export interface OpenedMailboxImap {
+  adapter: ImapAdapter;
+  close(): Promise<void>;
+}
+
+/**
+ * Open the mailbox's stored IMAP login, under the connection cap.
+ *
+ * ── EXTRACTED SO THE SECOND CALLER INHERITS THE CAP RATHER THAN RE-DERIVING IT ─────────────
+ *
+ * This was the body of {@link makeOpenAdapter}, and it stayed private for as long as attachments
+ * were the only reason the API dialled IMAP. The organizer peek is the second reason, and the
+ * dangerous version of adding it is a second `new ImapAdapter(...)` somewhere else: it would be
+ * correct on the day it was written and invisible to every one of the cap's tests, so a mailbox's
+ * real concurrent-connection count would quietly stop matching the number this module documents.
+ * The cap is not a nicety — the failure it prevents is a provider refusing the LOGIN, which
+ * `classifyMailboxError` has historically reported to the user as a wrong password.
+ *
+ * So: one place decrypts a credential and opens a socket, and every caller queues in the same
+ * line. {@link makeOpenAdapter} is now a narrowing wrapper over this.
+ */
+export async function openMailboxImap(
+  deps: ApiDeps, mailboxId: string, opts: OpenAdapterOptions = {},
+): Promise<OpenedMailboxImap> {
+  const max = opts.maxPerMailbox ?? MAX_IMAP_PER_MAILBOX;
+  const waitMs = opts.waitMs ?? IMAP_SLOT_WAIT_MS;
+  return openImapUnderCap(deps, mailboxId, max, waitMs);
+}
+
 export function makeOpenAdapter(deps: ApiDeps, opts: OpenAdapterOptions = {}): OpenAdapter {
   const max = opts.maxPerMailbox ?? MAX_IMAP_PER_MAILBOX;
   const waitMs = opts.waitMs ?? IMAP_SLOT_WAIT_MS;
 
   return async (mailboxId: string): Promise<AttachmentAdapter> => {
+    const opened = await openImapUnderCap(deps, mailboxId, max, waitMs);
+    return {
+      // FORWARD `opts` — the ceiling is decided by the service and enforced inside the stream, so
+      // dropping it here would leave `ATTACHMENT_MAX_FETCH_BYTES` looking enforced at every layer
+      // that reads like it while the only code that can actually stop a 90 MB download never hears
+      // the number. The pre-flight would still fire on honest metadata, which is precisely what
+      // makes the omission invisible in a test that uses honest metadata.
+      fetchPart: (locator, partId, o) => opened.adapter.fetchPart(locator, partId, o),
+      close: () => opened.close(),
+    };
+  };
+}
+
+async function openImapUnderCap(
+  deps: ApiDeps, mailboxId: string, max: number, waitMs: number,
+): Promise<OpenedMailboxImap> {
+  {
     const rows = await deps.db.select().from(mailboxCredentials)
       .where(eq(mailboxCredentials.mailboxId, mailboxId));
     const imapRow = rows.find((r) => r.transport === "imap");
@@ -263,12 +315,7 @@ export function makeOpenAdapter(deps: ApiDeps, opts: OpenAdapterOptions = {}): O
       throw err;
     }
     return {
-      // FORWARD `opts` — the ceiling is decided by the service and enforced inside the stream, so
-      // dropping it here would leave `ATTACHMENT_MAX_FETCH_BYTES` looking enforced at every layer
-      // that reads like it while the only code that can actually stop a 90 MB download never hears
-      // the number. The pre-flight would still fire on honest metadata, which is precisely what
-      // makes the omission invisible in a test that uses honest metadata.
-      fetchPart: (locator, partId, opts) => adapter.fetchPart(locator, partId, opts),
+      adapter,
       // The slot is returned AFTER the socket is down, never before: releasing first would admit
       // the next request while this connection is still counted by the provider.
       close: async () => {
@@ -279,5 +326,5 @@ export function makeOpenAdapter(deps: ApiDeps, opts: OpenAdapterOptions = {}): O
         }
       },
     };
-  };
+  }
 }
