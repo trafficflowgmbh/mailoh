@@ -28,7 +28,7 @@
 
 .att-strip { margin-top: 20px; }
 
-/* ── the LIST's own state (AT6): one row, one sentence, at most one action ─────────
+/* ── the LIST's own state: one row, one sentence, at most one action ───────────────
  *
  * The failed TILE's register, at list scale: accent-soft ground and an accent hairline —
  * "a condition inviting one action" — and the same 13px object radius, because this row

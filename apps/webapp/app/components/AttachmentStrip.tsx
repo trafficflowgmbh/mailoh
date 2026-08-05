@@ -3,12 +3,12 @@
 /**
  * ═══ THE ATTACHMENT STRIP ══════════════════════════════════════════════════════════════
  *
- * Owner, verbatim: *"attachments are not shown … I specifically gave the input to show
- * them, and also when multiples are present to allow download all like Apple Mail would
- * with this neat rectangle round UI element."*
+ * What a mail client owes a message that carries files: show them, and when there is more
+ * than one, offer to take them all at once — the neat rounded rectangle Apple Mail puts them
+ * in.
  *
- * Apple Mail's rounded rectangle is taken as INTENT — a tangible object you can act on —
- * and translated into Blanc's own physics, where presence is encoded by light falloff:
+ * That rectangle is taken as INTENT — a tangible object you can act on — and translated into
+ * Blanc's own physics, where presence is encoded by light falloff:
  *
  *   · idle       — a flat impression in the surface (`--tint`, no shadow). The bytes are
  *                  NOT here; they are in the user's mailbox, and the tile says so in
@@ -34,10 +34,11 @@
  * field renders the type glyph instead, so a tracker can never ride in through this prop
  * (the same posture `no-third-party.test.ts` holds the rest of the app to).
  *
- * COPY IS LOCAL BY CONSTRAINT: `messages/en.json` is held by another executor. The exact
- * strings live in `COPY` below and were reported for the owner to apply; swap to
- * `useTranslations("attachments")` when the keys land. Same shim-with-one-exit pattern as
- * `ActionBar`'s `copy()`.
+ * COPY LIVES HERE RATHER THAN IN THE TRANSLATION CATALOGUE — for now, and with one exit.
+ * These sentences have no keys in `messages/en.json` yet, so they are declared in `COPY`
+ * below under the `attachments` namespace they will take there; adding the keys and swapping
+ * for `useTranslations("attachments")` is then a one-line change with exactly one place to
+ * make it. Same shim-with-one-exit pattern as `ActionBar`'s `copy()`.
  */
 import type { ReactNode } from "react";
 import "./attachment-strip.css";
@@ -55,13 +56,14 @@ export interface AttachmentItem {
 }
 
 /**
- * ═══ THE LIST HAS A STATE OF ITS OWN, AND SILENCE IS ONLY ONE OF ITS ANSWERS (gap AT6) ═══
+ * ═══ THE LIST HAS A STATE OF ITS OWN, AND SILENCE IS ONLY ONE OF ITS ANSWERS ══════════════
  *
  * Before this the strip took `AttachmentItem[]` and the shell flattened everything that was
  * not `ready` to `[]`. So a metadata read that FAILED drew exactly what an inline-only message
- * draws: nothing, under a paperclip. Two different sentences rendered as one silence — and
- * after the flag work the second one is the common case, not the edge (808 of the owner's 1,895
- * flagged messages carry nothing downloadable).
+ * draws: nothing, under a paperclip. Two different sentences rendered as one silence — and the
+ * silent-but-fine case is the COMMON one, not the edge: the paperclip is set from the presence
+ * of any non-inline part, so a large share of the messages that carry one hold nothing a reader
+ * could download.
  *
  * ── WHY THIS IS THE `items` PROP AND NOT A NEW ONE ────────────────────────────────────────
  *
@@ -125,7 +127,7 @@ const COPY = {
   /** en.json: "{size} · too large to fetch" */
   tooLarge: (size: string) => `${size} · too large to fetch`,
 
-  /* ── the LIST's own sentences (AT6) ───────────────────────────────────────────────────
+  /* ── the LIST's own sentences ─────────────────────────────────────────────────────────
    *
    * NONE OF THESE MAY SAY "MAILBOX", and that is a fact about the route rather than a
    * preference. `GET /messages/:id/attachments` is `cost: "read"` and
@@ -141,8 +143,8 @@ const COPY = {
   /** en.json: `code: "network"` — the fetch itself never got an answer. */
   listOffline: "Couldn't reach ohmail — check your connection.",
   /**
-   * en.json: `code: "timeout"` (gap AT8) — the request went out, was accepted, and nothing came
-   * back inside `ATTACHMENT_LIST_TIMEOUT_MS`. A THIRD sentence rather than a reuse of either
+   * en.json: `code: "timeout"` — the request went out, was accepted, and nothing came back
+   * inside `ATTACHMENT_LIST_TIMEOUT_MS`. A THIRD sentence rather than a reuse of either
    * neighbour, because it is a third situation and the user's next move differs: `listOffline`
    * tells somebody to check a connection that in this case is demonstrably working, and
    * `listFailed` implies ohmail gave an answer. Neither is true here, and the client aborted the

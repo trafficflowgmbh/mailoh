@@ -1,5 +1,5 @@
 /* ───────────────────────────────────────────────────────────────────────────────────────
-   O11b — the html mail surface. Owns the CHROME around a message, never the message.
+   The html mail surface. Owns the CHROME around a message, never the message.
 
    The rule that shapes every value here: the sender's document lives in an <iframe>, so
    nothing in this file can style it and nothing in it can style this file. What is left for

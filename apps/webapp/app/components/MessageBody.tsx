@@ -1,17 +1,18 @@
 "use client";
 
 /**
- * ── O11b — THE MAIL RENDERER. THE HTML PART, SANITIZED, IN A FRAME THAT CANNOT PHONE HOME ──
+ * ── THE MAIL RENDERER. THE HTML PART, SANITIZED, IN A FRAME THAT CANNOT PHONE HOME ──────
  *
  * ── WHAT WAS WRONG, AND IT WAS NOT THE RENDERER ─────────────────────────────────────────
  *
- * The owner pasted an Anthropic billing notice as ohmail showed it: `Claude
- * [claude.ai/images/email/claude_logo_chip.p…]`, a CTA flattened to
- * `[url8792.mail.anthropic.com/ls/click?upn=…]`, and — as the last visible line —
- * `[url8792.mail.anthropic.com/wf/open?upn=…]`, **which is a tracking pixel printed as
- * prose**. Every bracket is `htmlToText` inlining a `src` or an `href` it had nowhere else
- * to put. That output is the `text/plain` ALTERNATIVE of a `multipart/alternative`; O11
- * added paragraphs and linkification to it, which cannot fix a wrong input.
+ * An ordinary vendor billing notice, shown from its `text/plain` part, reads like this:
+ * `Acme [cdn.example.com/email/logo_chip.p…]`, a call to action flattened to
+ * `[tracker.example.com/ls/click?u=…]`, and — as the last visible line —
+ * `[tracker.example.com/wf/open?u=…]`, **which is a tracking pixel printed as prose**.
+ * Every bracket is `htmlToText` inlining a `src` or an `href` it had nowhere else to put.
+ * That output is the `text/plain` ALTERNATIVE of a `multipart/alternative`, and adding
+ * paragraphs and linkification to it — which is what the plain-text renderer does — cannot
+ * fix a wrong input.
  *
  * The html was there the whole time. `normalizeMime` keeps `htmlBody`; `pipeline.ts` stores
  * it in `message_bodies.html`; `message-service.ts` `getBody` returns it; the route ships
@@ -85,10 +86,10 @@
  * that closes it is one rule, stated on {@link sanitizeMailHtml}: **text is rewritten only
  * BEFORE the sanitizer; after the sanitizer only attributes change.**
  *
- * This is the promise the product is named for, and until now it was unkept in the one place
- * it is made: the server's privacy service and its tracker-blocker were
- * built, hardened and tested, and had **zero production callers** — the reading path never
- * blocked anything, which is why `en.json` still says "Spy pixels, not yet".
+ * This is the promise the product is named for, and until this file it was unkept in the one
+ * place it is made: the server-side privacy service and its tracker blocker were built,
+ * hardened and tested, and **nothing in the reading path ever called them** — which is why
+ * `en.json` still says "Spy pixels, not yet".
  *
  * ── WHAT THIS FILE DELIBERATELY DOES NOT DO ─────────────────────────────────────────────
  *
@@ -115,10 +116,12 @@ import { BodyText } from "../shell/BodyText";
 import "./message-body.css";
 
 /**
- * COPY IS LOCAL BY CONSTRAINT: `apps/webapp/messages/en.json` is held by another executor.
- * The exact strings are reported for the owner to apply under a new `mailBody` namespace;
- * swap to `useTranslations("mailBody")` when the keys land. Same shim-with-one-exit shape
- * `AttachmentStrip` uses for the same reason.
+ * COPY LIVES HERE RATHER THAN IN THE TRANSLATION CATALOGUE — for now, and with one exit.
+ *
+ * These sentences have no keys in `apps/webapp/messages/en.json` yet, so they are declared
+ * locally under the `mailBody` namespace they will take there. Adding the keys and swapping
+ * this constant for `useTranslations("mailBody")` is then a one-line change with exactly one
+ * place to make it. `AttachmentStrip` carries the same shim for the same reason.
  */
 export const COPY = {
   blockedOne: "1 remote image blocked.",
@@ -131,8 +134,10 @@ export const COPY = {
   frameTitle: "Message content",
   unsupported: "Showing the plain-text version of this message.",
   /**
-   * SAID AFTER the image sentence, never before it — `19-o11b-remote-blocked.spec.ts` reads
-   * the FIRST number in this bar and holds it against the images the message names.
+   * SAID AFTER the image sentence, never before it. The browser-level test of the blocking
+   * bar reads the FIRST number in it and holds that against the number of remote images the
+   * message names, so a stylesheet count in front would make the check measure the wrong
+   * thing.
    */
   sheetOne: "A remote stylesheet was blocked, so this message may look plain.",
   sheetMany: (n: number) =>
@@ -150,7 +155,7 @@ export const COPY = {
  * `style` is here and it is the interesting one — see the header: a stylesheet that cannot
  * leave its document is what makes a newsletter look like a newsletter. Its TEXT is still
  * rewritten ({@link neutraliseCss}) so it cannot name a remote url — BEFORE this list is
- * applied, never after, which is the whole of the F1 fix and is stated on
+ * applied, never after. That ordering is the whole of the mutation-XSS rule stated on
  * {@link sanitizeMailHtml}.
  *
  * Everything a mail client's own bug reports are made of is absent BY OMISSION: `script`,
@@ -258,8 +263,9 @@ export interface BlockedAsset {
 }
 
 /**
- * A url shaped like an open-tracking beacon. The owner's own pixel,
- * `url8792.mail.anthropic.com/wf/open?upn=…`, matches on `/wf/open`.
+ * A url shaped like an open-tracking beacon. The common bulk-sender form —
+ * `tracker.example.com/wf/open?u=…` — matches on `/wf/open`; the rest of the alternation is
+ * the other spellings the same beacon is published under.
  */
 const BEACON_PATH =
   /(?:\/(?:wf\/open|open|track|tracking|beacon|pixel|imp|impression)(?:[/?#]|$)|\.(?:gif|png)\?)/i;
@@ -333,7 +339,7 @@ function continuesIdent(code: number): boolean {
 /**
  * The three token starts this file understands, found in ONE forward scan.
  *
- * ── IT IS A TOKEN FINDER, NOT A TOKEN MATCHER, AND THAT IS THE POINT (F3) ───────────────
+ * ── IT IS A TOKEN FINDER, NOT A TOKEN MATCHER, AND THAT IS THE POINT ────────────────────
  *
  * The rule this replaces was `/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi`, and `[^'")]+` cannot
  * cross `)` — so on an input with no `)` at all, EVERY `url(` start scans to the end of the
@@ -351,7 +357,7 @@ const CSS_TOKEN = /@import|(?:-webkit-)?image-set\(|url\(/gi;
 /**
  * `\70` is `p`. `url(htt\70 s://evil.example/x)` is `https://` to the CSS tokenizer and is
  * fetched; it is not `https://` to a regexp reading the raw text, which is how that shape
- * reached the network and was counted as zero blocked (F4).
+ * reached the network and was still counted as zero blocked.
  *
  * Decoding is used ONLY to decide whether a token is remote. Nothing decoded is ever emitted,
  * so a decoding this gets wrong can cost a picture and can never manufacture a url.
@@ -530,10 +536,10 @@ function neutraliseStyleAttr(el: Element, onRemote: (url: string) => string | nu
 /**
  * Does the visible text of this link DISAGREE with where it goes?
  *
- * The case this exists for is the one in the owner's own mail: "Manage usage credits"
- * pointing at `url8792.mail.anthropic.com/ls/click?upn=…`. A reader cannot tell from the
- * page that the click is counted, and the honest thing is to say the destination out loud
- * rather than to hide it or to refuse the link.
+ * The case this exists for is the ordinary click-tracked call to action: a link labelled
+ * "Manage your subscription" pointing at `tracker.example.com/ls/click?u=…`. A reader cannot
+ * tell from the page that the click is counted, and the honest thing is to say the
+ * destination out loud rather than to hide it or to refuse the link.
  *
  * The test is deliberately narrow — the visible text NAMES A HOST, and it is not the host
  * the link goes to. Broadening it to "the text is not the url" would flag every ordinary
@@ -542,8 +548,8 @@ function neutraliseStyleAttr(el: Element, onRemote: (url: string) => string | nu
 export function textDisagreesWithHref(text: string, host: string): boolean {
   // BOUNDED BEFORE IT IS MATCHED. The subject is a sender-authored link label, so it can be
   // any size at all, and `(?:[a-z0-9-]+\.)+` over a megabyte of dotted junk is the same class
-  // of main-thread stall as F3. A link whose visible text names a host names it at the front;
-  // 2 KiB is far past any label a reader can see.
+  // of main-thread stall the CSS scanner above is written to avoid. A link whose visible text
+  // names a host names it at the front; 2 KiB is far past any label a reader can see.
   const claimed = /(?:^|\s)(?:https?:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?:[/\s]|$)/i.exec(
     text.trim().slice(0, 2048),
   );
@@ -744,8 +750,8 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
         record(src, "img", pixel);
         // ── A BEACON IS NEVER FETCHED, NOT EVEN AFTER CONSENT, NOT EVEN THROUGH THE PROXY ──
         //
-        // Found by driving a real browser at the owner's own message with consent granted:
-        // the beacon went through the proxy alongside the four real images. That is not a
+        // Found by driving a real browser at a live newsletter with consent granted: the
+        // beacon went through the proxy alongside the message's real images. That is not a
         // leak of the READER — the proxy's url-only signature means their IP never travels —
         // but the ESP still learns that this message was opened, at that minute, because
         // somebody asked. "Show images" is a request for the pictures; nobody consents to a
@@ -818,8 +824,8 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
    * work — which is why this is written down rather than left to look like a style choice.
    * Handing it `parsed.body` moves the serialize/reparse round-trip from INSIDE the sanitizer
    * to the caller's own `innerHTML` at the end, and a `<style>` text the pre-pass rewrote
-   * would then reach the frame without the sanitizer ever having parsed it. That is defect
-   * F1, restored by a one-token edit that typechecks.
+   * would then reach the frame without the sanitizer ever having parsed it — the mutation-XSS
+   * this file was rearranged to close, restored by a one-token edit that typechecks.
    */
   const sanitized = purify.sanitize(parsed.body.innerHTML, {
       ALLOWED_TAGS,
@@ -894,17 +900,17 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
  * ── THIS POLICY IS AN INTERSECTION WITH THE APP'S OWN, MEASURED IN CHROME ───────────────
  *
  * A `srcdoc` document inherits the embedder's policy container, so what is enforced is the
- * intersection of this and `security-headers.ts`. Verified rather than assumed, 2026-08-04:
- * a control page rendering the owner's mail RAW inside a plain `srcdoc` frame, under the
- * app's real CSP, produced five requests all reported `[FAILED] csp` — including
- * `url8792.mail.anthropic.com/wf/open`. The SAME control with the app CSP removed fetched
- * that beacon successfully, `[200]`. So the app's `img-src 'self' data: blob:` is a real
- * second layer, and the consent path could never have worked by pointing at a sender's host
- * even if this file had let it.
+ * intersection of this and the policy the app itself is served under. Verified in Chrome
+ * rather than assumed: a control page rendering a real marketing message RAW inside a plain
+ * `srcdoc` frame, under the app's own CSP, produced five requests and the browser reported
+ * every one of them as `[FAILED] csp` — the open-tracking beacon among them. The SAME control
+ * with the app CSP removed fetched that beacon successfully, `[200]`. So the app's
+ * `img-src 'self' data: blob:` is a real second layer, and the consent path could never have
+ * worked by pointing at a sender's host even if this file had let it.
  *
- * The architecture review asked for `'self'` in the BLOCKED policy too, so a future
+ * It was argued that `'self'` belongs in the BLOCKED policy too, so a future
  * `cid:`-attachment url could render. Not taken, and the disagreement is recorded rather
- * than silently ignored: blocked-by-default is the product's central promise, `'self'` in
+ * than silently dropped: blocked-by-default is the product's central promise, `'self'` in
  * that state would admit any same-origin image url a sanitizer bug let through, and nothing
  * needs it today — `cid:` references are blanked here, not resolved. The slice that resolves
  * them through `GET /attachments/:id` adds `'self'` deliberately, at the moment something
@@ -1089,7 +1095,7 @@ export function MessageBody({
    *
    * This was `Math.max(documentElement.scrollHeight, body.scrollHeight)`, re-run from a
    * `ResizeObserver` that observed the IFRAME. Both halves of that are wrong, and together
-   * they are a monotonic growth loop. Measured on the owner's own message at 390 px, 2.5 s
+   * they are a monotonic growth loop. Measured on a real newsletter in a 390 px column, 2.5 s
    * after load:
    *
    *   frame.style.height   899px  ·  documentElement.scrollHeight  899  ·  body.scrollHeight  634
@@ -1214,9 +1220,9 @@ export function MessageBody({
                 </span>
               </>
             ) : null}
-            {/* LAST, ALWAYS. `19-o11b-remote-blocked.spec.ts` reads the FIRST number in this
-                bar and holds it against the images the message names; a stylesheet count in
-                front of that would make the guard measure the wrong thing. */}
+            {/* LAST, ALWAYS. The browser-level test of this bar reads the FIRST number in it
+                and holds that against the remote images the message names; a stylesheet count
+                in front of that would make the guard measure the wrong thing. */}
             {sheets.length > 0 ? (
               <>
                 {remote.length > 0 ? " " : null}
