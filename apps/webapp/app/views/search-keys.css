@@ -1,9 +1,9 @@
-/* ═══ THE SEARCH CURSOR (slice U5-OPEN, gap U5c) ══════════════════════════════════════
+/* ═══ THE SEARCH CURSOR ═══════════════════════════════════════════════════════════════
  *
  * `SearchView` declared zero key bindings, so with results on screen the keyboard did
- * nothing at all — the owner's *"search does not allow a message to be opened"*, in the one
- * surface you arrive at by pressing `/`. ↑/↓ and ↵ are the fix; this is the other half of
- * it, because a cursor nobody can see is not a keyboard path, it is a keyboard rumour.
+ * nothing at all — no way to open a message from the one surface you arrive at by pressing
+ * `/`. ↑/↓ and ↵ are the fix; this is the other half of it, because a cursor nobody can see
+ * is not a keyboard path, it is a keyboard rumour.
  *
  * A WRAPPER RATHER THAN A PROP. `SearchHit` is a `@ohmail/ui` primitive with no `selected`
  * in its contract, and widening a shared design-system component for one view's cursor is
