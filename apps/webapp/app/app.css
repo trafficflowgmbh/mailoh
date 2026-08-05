@@ -446,7 +446,7 @@ body.reading .shell {
      · THE FACES YIELD FIRST. They are decorative by the component's own design ("a texture,
        not a census" — `Doorbell.tsx`), so `doorbell.css` drops the whole strip below a
        309px CONTENT box. That returns the ~124px the strip costs on a backlogged mailbox
-       (four faces + a "+1039" counter) exactly where it is needed. Measured against the real
+       (four faces + a four-digit counter) exactly where it is needed. Measured against the real
        build: the row needs 287px of content in that case and 303px at 99,999, and
        the app gives it 246px at a 320px viewport (faces drop), 316px at 390px and 322px in
        the desktop split column (faces stay). The full table is in `doorbell.css`.
@@ -488,8 +488,8 @@ body.reading .shell {
   text-overflow: clip;
 }
 /* The overflow counter, sized to its own digits. `.av.more` inherits `.av.s`'s fixed 26px
-   box, which was built for "+82"; a backlogged mailbox holds four digits of waiting senders,
-   so it renders "+1039" — 34px of text measured inside a 26px box, spilling 8px onto the
+   box, which was built for a two-digit count; a backlogged mailbox holds four digits of
+   waiting senders, so the counter renders 34px of text inside a 26px box, spilling 8px onto the
    avatar beside it. Kept from the earlier fix: wherever the strip IS shown, it must still fit
    its own number. */
 .view-ohbox .doorbell .avs .av.more {
