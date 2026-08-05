@@ -10,21 +10,28 @@
  *
  * ── WHAT THE WIRE WILL ACTUALLY DO, AND WHERE THAT ENDS ─────────────────────────────────
  *
- * `POST /screener/:id` has exactly two outcomes — yes ⇒ `INBOX`, no ⇒ `ohmail/Screened`
- * (`screener-service.ts:17-18`) — and it resolves `:id` only against mail whose desired
- * folder is still `ohmail/Screener` (`:257`). So:
+ * `POST /screener/:id` carries the DESTINATION and resolves `:id` only against mail whose
+ * desired folder is still `ohmail/Screener`. So:
  *
- *   · a sender still WAITING can be re-decided through the endpoint, which also promotes a
- *     rule server-side, and the remaining three destinations are composed on top with
- *     `move` — the same shape `screener-state.ts` already uses for Reads and Receipts;
- *   · a sender whose mail has left the Screener, which is the Ohbox case,
- *     would 404. There is no un-screen endpoint and this slice does not invent one. Their
- *     mail is moved with `move`, which is real and immediate, and **no rule is created** —
- *     so the toast says so rather than promising that future mail will follow.
+ *   · a sender still WAITING is decided through the endpoint, which files their held mail to
+ *     the pressed destination and promotes a rule pointing at that same folder, in one
+ *     transaction. Nothing is composed on top;
+ *   · a sender whose mail has left the Screener, which is the Ohbox case, would 404. There is
+ *     no un-screen endpoint and this slice does not invent one. Their mail is moved with
+ *     `move` and the rule is written with `rule_create`.
  *
- * That second half is a genuine limitation, and the fix for it is server-side: `POST
- * /screener/:id` would have to carry a `dest`. Stating it in the toast is the difference between a product that is narrower
- * than you hoped and one that lies to you.
+ * ── THE SENTENCE THIS FILE USED TO CARRY, AND WHY IT IS WORTH KEEPING ────────────────────
+ *
+ * It read: *"the remaining three destinations are composed on top with `move`"*, and named the
+ * fix — *"`POST /screener/:id` would have to carry a `dest`"* — as a limitation to be stated
+ * honestly in the toast rather than closed. The composition was worse than a limitation. It was
+ * a RACE: `decide` reads its held rows outside its transaction and upserts `desired_folder`
+ * inside it, so a `move` committing in that window was silently stamped back to the endpoint's
+ * default. On production that read as four `provenance:'promoted'` rules at `INBOX` for senders
+ * admitted with **Reads**, 97 bulletins in the Ohbox behind them, and `ohmail/Reads` holding one
+ * message out of 503 — under a toast that said *"Reads — filed. Future mail from … files there
+ * automatically."* Both halves of that sentence were false. Documenting a limitation is only
+ * honest while the thing documented is the limitation and not a coin toss.
  *
  * ── THE SCOPE ───────────────────────────────────────────────────────────────────────────
  *
@@ -104,10 +111,14 @@ export const SCREENING_DESTS: ScreeningDest[] = ["ohbox", "reads", "receipts", "
 /**
  * THE MAPPING THAT MUST NOT SLIP: which destinations ride the endpoint's `no`.
  *
- * The endpoint's yes is `INBOX`, full stop. This was once caught shipping "yes unless screened",
- * which meant "Mark spam" asked the server to file that sender into the Ohbox and promoted
- * a rule sending their future mail there. Spam and Screen-out are the same branch — `no` —
- * and everything else is `yes` with a follow-up move.
+ * `decision` is the CONSENT — admit this sender, or refuse them — and `dest` is the filing
+ * address. Both travel now, and the server refuses a body where they disagree (400), so this
+ * map is what keeps the sheet from writing one. It was once caught shipping "yes unless
+ * screened", which meant "Mark spam" asked the server to file that sender into the Ohbox and
+ * promoted a rule sending their future mail there.
+ *
+ * It is also what `unsubscribes` below is computed from, so a change here moves both the wire
+ * body and the sentence the sheet shows before the click.
  */
 export const DECISION_OF_DEST: Record<ScreeningDest, "yes" | "no"> = {
   ohbox: "yes",
@@ -115,12 +126,6 @@ export const DECISION_OF_DEST: Record<ScreeningDest, "yes" | "no"> = {
   receipts: "yes",
   screened: "no",
   spam: "no",
-};
-
-/** Where each of the endpoint's two answers actually files the mail. */
-export const WIRE_DECIDE_FOLDER: Record<"yes" | "no", Folder> = {
-  yes: FOLDER_OF_VIEW.ohbox,
-  no: FOLDER_OF_VIEW.screened,
 };
 
 /**
@@ -473,30 +478,43 @@ export function planScreeningChange(
       senderId: subject.representativeId,
       decision,
       scope,
-      ...(decision === "yes" ? { dest: "ohbox" as const } : {}),
+      // ── THE BUTTON THE USER PRESSED, AND IT USED TO BE THE LITERAL `"ohbox"` ─────────────
+      //
+      // This read `...(decision === "yes" ? { dest: "ohbox" as const } : {})` — the sheet's
+      // five destinations collapsed to one on the way to the wire, on the ground that the
+      // endpoint could not express the others anyway and the `move`s below would finish the
+      // job. They did not: `decide` reads its held rows outside its transaction and writes
+      // `desired_folder` inside it, so a `move` landing in that window was stamped back.
+      // Production carried four `promoted → INBOX` rules for senders admitted with **Reads**.
+      dest,
     });
-    // ── THE DECIDE OWNS EVERY HELD MESSAGE IN SCOPE, AND IS NOT SECOND-GUESSED ────────────
+    // ── THE DECIDE OWNS EVERY HELD MESSAGE IN SCOPE, AND NOW FILES IT WHERE ASKED ─────────
     //
-    // The endpoint moves the WAITING mail and nothing else, to its own folder. Anything it has
-    // already put where we want it must not be moved a second time — and under `scope:
-    // "domain"` that is now the whole domain's held mail, because `decide` re-routes what its
-    // scope covers (`screener-service.ts#heldRowsForDomain`).
+    // The endpoint moves the WAITING mail and nothing else, and — since `dest` rides the
+    // decision — it moves it to `wanted`. So every held message in scope is already handled
+    // and must not be moved a second time. Under `scope: "domain"` that is the whole domain's
+    // held mail, because `decide` re-routes what its scope covers
+    // (`screener-service.ts#heldRowsForDomain`).
     //
-    // The tempting alternative is to emit `move`s for the domain's OTHER held senders so the
+    // THE CONDITION THAT USED TO GUARD THIS IS GONE, and its removal is the slice.
+    // `WIRE_DECIDE_FOLDER[decision] === wanted` was true only for Ohbox and Screen-out; for
+    // the other three it was false, which is what let the `move` fan-out below cover them —
+    // the composition that lost the race. With the destination on the decide it would be
+    // trivially true for all five, so it is not written.
+    //
+    // The tempting alternative — emit `move`s for the domain's OTHER held senders so the
     // overlay paints them at once, since `mutationEffects` only overlays ONE address's held
-    // mail whatever `scope` says. It is wrong twice. The moves are fired in parallel and not
-    // awaited ({@link dispatchScreeningChange}), so a `move` that lands FIRST takes it out of
-    // `ohmail/Screener` and `decide`'s held-only lookup then cannot see it — the message is
-    // filed with no rule and no consent record, which is the fork this composition exists to
-    // avoid. And a message that reaches the destination through `move` instead of `decide` has
-    // no learning signal behind it.
+    // mail whatever `scope` says — stays wrong for its own reasons. The moves are fired in
+    // parallel and not awaited ({@link dispatchScreeningChange}), so a `move` that lands FIRST
+    // takes the message out of `ohmail/Screener` and `decide`'s held-only lookup then cannot
+    // see it: filed with no rule and no consent record, which is the fork this composition
+    // exists to avoid. And a message that reaches the destination through `move` instead of
+    // `decide` has no learning signal behind it.
     //
     // So those rows lag by one `/sync` drain, visibly and briefly, and that is the accepted
     // cost. The toast already states the true count.
-    if (WIRE_DECIDE_FOLDER[decision] === wanted) {
-      for (const m of subject.messages) {
-        if (m.folder === FOLDER_OF_VIEW.screener) movedByDecide.add(m.id);
-      }
+    for (const m of subject.messages) {
+      if (m.folder === FOLDER_OF_VIEW.screener) movedByDecide.add(m.id);
     }
   }
 

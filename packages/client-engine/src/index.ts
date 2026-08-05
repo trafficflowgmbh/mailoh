@@ -31,6 +31,7 @@ export {
   type Folder,
   type ISODateTime,
   type OhmailView,
+  type ScreenDest,
   type BodyState,
   type MessageBody,
   type MessageBodyRecord,
@@ -122,7 +123,7 @@ export {
 export { SearchIndex, type LocalSearchResult, type SearchFacets, type SearchHit, type SearchMatch } from "./search.js";
 
 // Mutation semantics (shared optimistic/demo source of truth).
-export { mutationEffects, replySubject, type EffectContext, type MutationEffect } from "./mutations.js";
+export { decideFolder, mutationEffects, replySubject, type EffectContext, type MutationEffect } from "./mutations.js";
 
 // Adapters.
 export type { EngineAdapter, MutationOutcome, SyncParams } from "./adapters/adapter.js";

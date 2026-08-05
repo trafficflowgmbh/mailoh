@@ -56,9 +56,40 @@ const SEG_FOLDER: Record<string, Folder> = {
   spam: "ohmail/Quarantine",
 };
 
+/**
+ * WHERE A SCREENER DECISION FILES MAIL — **the one mapping, and there used to be three.**
+ *
+ * `mutations.ts` had two (this and `destFolderOf`'s fallback chain) and
+ * `apps/webapp/app/shell/sender-screening.ts` had a third. While the wire took only
+ * `{decision, scope}` they could not disagree about anything that mattered, because two of them
+ * were describing a two-valued answer. `dest` now rides `POST /screener/:id` and each of the
+ * five buttons files somewhere different, so three copies is three chances for the overlay to
+ * paint a folder the server did not write — the delta-first contract's optimistic-parity rule,
+ * and the exact shape of the `feed_mark_seen` divergence.
+ *
+ * The server computes the same answer from the same two fields
+ * (`screener-service.ts` — `dest ?? (decision === "yes" ? YES_FOLDER : NO_FOLDER)`), so an
+ * overlay built from this function and the row that arrives on the next drain agree.
+ */
+export function decideFolder(
+  m: Pick<Extract<EngineMutation, { kind: "screener_decide" }>, "decision" | "dest">,
+): Folder {
+  if (m.dest) return FOLDER_OF_VIEW[m.dest];
+  return m.decision === "yes" ? "INBOX" : "ohmail/Screened";
+}
+
+/**
+ * The FIXTURE world's answer, which is {@link decideFolder} plus one thing only the demo has:
+ * a stored AI suggestion to fall back on when the press named no destination.
+ *
+ * `SEG_FOLDER` is consulted first for `screened`/`spam` and is redundant with `FOLDER_OF_VIEW`
+ * — kept because the demo's own `ScreenerSenderDTO.ai.dest` vocabulary is not typed to the five
+ * views, so an unknown string must still land somewhere sane rather than `undefined`.
+ */
 function destFolderOf(m: Extract<EngineMutation, { kind: "screener_decide" }>, sender: ScreenerSenderDTO): Folder {
+  if (m.dest) return decideFolder(m);
   if (m.decision === "no") return "ohmail/Screened";
-  const dest = m.dest ?? sender.ai?.dest ?? "ohbox";
+  const dest = sender.ai?.dest ?? "ohbox";
   return SEG_FOLDER[dest] ?? FOLDER_OF_VIEW[dest as keyof typeof FOLDER_OF_VIEW] ?? "INBOX";
 }
 
@@ -84,22 +115,6 @@ function promotedRule(
 }
 
 /**
- * The wire's TWO destinations, and the reason `m.dest` is ignored on a derived row.
- *
- * `POST /screener/:id` takes `{ decision, scope }` and nothing else: yes files to INBOX,
- * no files to `ohmail/Screened` (`screener-service.ts:17-18`). An optimistic effect that
- * honoured `m.dest` would put the mail in `ohmail/Reads` while the server put it in the
- * Ohbox — the same overlay/wire disagreement that made `feed_mark_seen` unusable outside
- * Reads, and it would surface as a row that moves once and then moves again under the
- * cursor on the next drain. The Screener surface composes a follow-up `move` mutation for
- * the other three destinations instead; that half IS in the vocabulary.
- */
-const WIRE_DECIDE_FOLDER: Record<"yes" | "no", Folder> = {
-  yes: "INBOX",
-  no: "ohmail/Screened",
-};
-
-/**
  * A DERIVED sender's decision: `m.senderId` is the REPRESENTATIVE MESSAGE id,
  * so the effect is per-message moves across everything that sender is holding, plus the
  * promoted rule the server will also create.
@@ -120,15 +135,19 @@ function derivedScreenerEffects(
   if (!rep || rep.folder !== FOLDER_OF_VIEW.screener) return [];
 
   const key = senderKey(rep.from.address);
-  const destination = WIRE_DECIDE_FOLDER[m.decision];
+  // The folder the SERVER will write, computed from the same two fields it reads. `m.dest` is
+  // honoured now — it is on the wire. While it was not, this had to ignore it and the surface
+  // composed a follow-up `move`, which is the composition that lost a race against the decide's
+  // own `folder_state` write and put 97 bulletins in the Ohbox on a live account.
+  const destination = decideFolder(m);
   const effects: MutationEffect[] = reader
     .list<EngineMessage>("message")
     .filter((x) => x.folder === FOLDER_OF_VIEW.screener && senderKey(x.from.address) === key)
     .map((msg) => ({
       type: "message",
       id: msg.id,
-      // NO `unread` FLIP. "&read" is not a field on `POST /screener/:id`, so the seen
-      // half of a "file & read" is a separate `mark_seen` the surface dispatches — the
+      // NO `unread` FLIP. "&read" is STILL not a field on `POST /screener/:id`, so the seen
+      // half of a "file & read" remains a separate `mark_seen` the surface dispatches — the
       // two halves of THIS mutation say exactly what the wire says.
       entity: { ...msg, folder: destination, updatedAt: iso } satisfies EngineMessage,
       move: { from: msg.folder, to: destination },

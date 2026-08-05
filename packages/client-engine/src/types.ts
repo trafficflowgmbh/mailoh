@@ -496,6 +496,15 @@ export function folderLeaf(folder: string): string {
   return leaf.trim() || folder;
 }
 
+/**
+ * The five views a Screener decision may file mail INTO — every view except `screener` itself.
+ *
+ * `screener` is where mail is HELD, never a destination consent can choose: a promoted rule
+ * pointing back at the gate would re-screen that sender for ever. The server refuses it with a
+ * 400 (`screener-service.ts` — `DECIDABLE_FOLDERS`); this type is why a client cannot ask.
+ */
+export type ScreenDest = Exclude<OhmailView, "screener">;
+
 export const VIEW_OF_FOLDER: Record<Folder, OhmailView> = {
   "INBOX": "ohbox",
   "ohmail/Reads": "reads",
@@ -519,8 +528,19 @@ export type EngineMutation =
       kind: "screener_decide";
       senderId: string;
       decision: "yes" | "no";
-      /** Where a Yes files the held mail; defaults to the AI suggestion, then ohbox. */
-      dest?: OhmailView;
+      /**
+       * Which of the five the user pressed — **and it is now on the wire.**
+       *
+       * `POST /screener/:id` carries this field, files the held mail there and promotes the
+       * rule at the same folder. It used to be a local-only hint the adapter dropped, which
+       * is what made three of the five buttons decoration: the server answered with `INBOX`
+       * or `ohmail/Screened` whatever was pressed, and the follow-up `move`s the surfaces
+       * composed to cover the difference lost a race against the decide's own write.
+       *
+       * `ScreenDest` and not {@link OhmailView}: `screener` is where mail is HELD, never a
+       * place a decision can file it to, and the server refuses it.
+       */
+      dest?: ScreenDest;
       /** "&read" seen-semantics: a Yes files the held mail already-seen (unread=false). */
       read?: boolean;
       scope?: "sender" | "domain";
