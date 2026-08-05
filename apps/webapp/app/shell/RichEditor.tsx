@@ -5,7 +5,9 @@ import { useTranslations } from "next-intl";
 import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
-import { EMPTY_RICH, type RichValue } from "./rich-text";
+import {
+  EMPTY_RICH, escapeAsParagraphs, isRichEmpty, richToHtml, type RichValue,
+} from "./rich-text";
 
 /**
  * THE COMPOSE AND REPLY EDITOR — eight things it can do, and a list of what it refuses.
@@ -92,6 +94,16 @@ export interface RichEditorProps {
   placeholder?: string;
   className?: string;
   autoFocus?: boolean;
+  /**
+   * False while a send is in flight. It is the textarea's `readOnly` and not its `disabled`:
+   * the text is never taken away from the author — a failed send whose draft had been cleared
+   * would be a message they have to write twice — but the document must not take input either,
+   * because what is on screen is no longer what was handed to the send.
+   *
+   * The toolbar goes with it. A formatting button that still fired would edit a document the
+   * caret cannot reach, which is the inert-affordance class this app keeps closing.
+   */
+  editable?: boolean;
   /** Wired by the reply surface for ⌘↵ — the editor swallows keys the shell would not see. */
   onKeyDown?: (e: React.KeyboardEvent) => void;
   /**
@@ -106,7 +118,8 @@ export interface RichEditorProps {
 }
 
 export function RichEditor({
-  id, value, onChange, ariaLabel, placeholder, className, autoFocus, onKeyDown, editorRef,
+  id, value, onChange, ariaLabel, placeholder, className, autoFocus, editable = true,
+  onKeyDown, editorRef,
 }: RichEditorProps) {
   const t = useTranslations("compose");
 
@@ -116,17 +129,73 @@ export function RichEditor({
    * (re-set the document). Without it, every keystroke would be indistinguishable from an
    * external replace and the caret would jump to the end of the message.
    */
-  const emitted = useRef<string>(value.html);
+  const emitted = useRef<string>(richToHtml(value));
+
+  /**
+   * ── A MESSAGE WITH NO FORMATTING IN IT REPORTS NO MARKUP, AND THAT IS LOAD-BEARING ──────
+   *
+   * `getHTML()` answers `<p>hi</p>` for a document nobody formatted, so emitting it verbatim
+   * would make `html` non-empty for EVERY non-empty editor. Three things downstream read
+   * "there is markup" as a decision rather than as a detail, and all three would be wrong:
+   * `compose.ts` would put `html` on the wire instead of `body`, so a plain note would leave
+   * as a `multipart/alternative` and the recipient's plain part would be the server's
+   * re-rendering of markup nobody wrote; `serializeRichValue` would store an envelope for
+   * every reply, and its bare-string branch — the one that keeps a plain draft readable by
+   * the bundle that predates this editor — would become unreachable code that no test could
+   * distinguish from working; and a plain send would stop being byte-identical to the one
+   * this slice replaced, which is the difference between adding a feature and changing
+   * everybody's mail.
+   *
+   * THE TEST IS THE ROUND TRIP, not a hand-written "does it contain a tag". `richToHtml` is
+   * how a value becomes a document, so a document that serialises to exactly what that helper
+   * would have produced from the text alone carries nothing the text does not already say —
+   * hard breaks and paragraph splits included, which is why this is not `getText()`-only
+   * comparison of the visible characters. A second predicate could disagree with the loader,
+   * and the disagreement would surface as somebody's line breaks vanishing on reload; asking
+   * the loader is the only check that cannot drift from it. Same discipline, and the same
+   * sentence, as `serializeRichValue`.
+   */
+  /** The value we were last handed, for the no-op guard in `emit`. */
+  const held = useRef<RichValue>(value);
+  held.current = value;
 
   const emit = useCallback((editor: Editor) => {
-    const html = editor.isEmpty ? "" : editor.getHTML();
-    emitted.current = html;
-    onChange({ text: editor.getText(), html });
+    const text = editor.getText();
+    const markup = editor.isEmpty ? "" : editor.getHTML();
+    const html = markup === escapeAsParagraphs(text) ? "" : markup;
+    // The document's OWN serialisation, so the sync effect below can recognise this change
+    // coming back and leave the caret alone. `richToHtml` of what we emit is the same string
+    // in both branches, which is what makes one ref serve both.
+    emitted.current = markup;
+    /**
+     * A TRANSACTION THAT PRODUCED THE VALUE WE WERE ALREADY HOLDING IS NOT A CHANGE.
+     *
+     * TipTap emits `update` for things that are not edits — `setEditable` does it by default,
+     * and that one cost a real draft (see the effect below). The caller cannot tell such an
+     * emission from a keystroke, and it must not have to: what it does with a change is
+     * WRITE THE SCRATCH BUFFER, whose rule is that an empty value removes the key. So one
+     * spurious empty emission on mount is somebody's unsent message, deleted by the editor
+     * that was opening to show it to them.
+     *
+     * Compared against the value we were HANDED rather than against `emitted.current`: the
+     * question is whether the caller's state would change, and only the caller's own value
+     * answers that.
+     */
+    if (text === held.current.text && html === held.current.html) return;
+    onChange({ text, html });
   }, [onChange]);
 
   const editor = useEditor({
     extensions: EXTENSIONS,
-    content: value.html || value.text,
+    /**
+     * ESCAPED HERE TOO, and this is not belt-and-braces — it is the same hole in the other
+     * entry point. `setContent` in the sync effect below escapes a plain starting value for a
+     * stated reason (somebody who typed `<b>` into the old textarea must not have it become
+     * formatting), and the INITIAL content is parsed as HTML by exactly the same parser. A
+     * legacy plain buffer restored on first mount never reached that effect, so it went in
+     * raw. One helper, both doors.
+     */
+    content: richToHtml(value),
     // Next renders this shell on the server; ProseMirror needs a DOM. Rendering the editor
     // immediately during SSR produces a hydration mismatch, and TipTap's own answer is this
     // flag rather than a `typeof window` guard.
@@ -151,7 +220,7 @@ export function RichEditor({
    */
   useEffect(() => {
     if (!editor) return;
-    const incoming = value.html || (value.text ? escapeAsParagraphs(value.text) : "");
+    const incoming = richToHtml(value);
     if (incoming === emitted.current) return;
     const current = editor.isEmpty ? "" : editor.getHTML();
     if (incoming === current) return;
@@ -162,6 +231,31 @@ export function RichEditor({
   useEffect(() => {
     if (editor && autoFocus) editor.commands.focus("end");
   }, [editor, autoFocus]);
+
+  /**
+   * Mid-send. `setEditable` rather than a fresh editor, so the document, the caret and the
+   * undo history all survive being locked and unlocked — a failed send must hand the message
+   * back exactly as it was.
+   */
+  useEffect(() => {
+    /**
+     * `emitUpdate: false` — THE SECOND ARGUMENT IS LOAD-BEARING AND ITS DEFAULT IS WRONG HERE.
+     *
+     * `setEditable(editable)` defaults to emitting an `update` (`@tiptap/core`, `setEditable`:
+     * `if (emitUpdate) this.emit("update", …)`), and this effect runs on mount. So a freshly
+     * mounted editor announced a change it had not had, carrying the empty document it starts
+     * with — and Compose's `onChange` writes the scratch buffer, whose rule is that an empty
+     * form removes the key. Opening Compose therefore DELETED the half-written message it was
+     * about to restore. Measured, not reasoned about: the buffer held
+     * `{"body":"Halb fertig."…}` before the remount and nothing after it, and the stack ran
+     * `setEditable → emit(update) → onChange → writeComposeDraft → removeItem`.
+     *
+     * Editability changes no content, so it has no business reporting one. The guard in `emit`
+     * closes the same hole from the other side, and both are kept: this one states the local
+     * fact, that one refuses to believe any emission that says nothing changed.
+     */
+    editor?.setEditable(editable, false);
+  }, [editor, editable]);
 
   useEffect(() => {
     if (!editorRef) return;
@@ -187,9 +281,29 @@ export function RichEditor({
     onKeyDown?.(e);
   };
 
+  /**
+   * THE PLACEHOLDER IS A CLASS ON THE WRAPPER, not TipTap's `Placeholder` extension.
+   *
+   * That extension lives in `@tiptap/extensions`, which is a transitive dependency here rather
+   * than a declared one — reaching into it would make the editor's behaviour depend on a
+   * package this app does not name. `.rte-surface::before` reads the `data-placeholder`
+   * attribute already on the surface and is shown only while this class is on, which needs no
+   * new dependency and no plugin in the transaction pipeline.
+   *
+   * Emptiness is decided on the TEXT, by the same predicate that decides whether there is
+   * anything to send or to keep: an empty ProseMirror document serialises to `<p></p>`, so a
+   * markup test would hide the placeholder the moment the editor mounted.
+   */
+  const cls = [
+    "rte",
+    isRichEmpty(value) ? "is-empty" : "",
+    editable ? "" : "is-locked",
+    className ?? "",
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className={className ? `rte ${className}` : "rte"}>
-      <Toolbar editor={editor} />
+    <div className={cls}>
+      <Toolbar editor={editor} editable={editable} />
       <EditorContent editor={editor} onKeyDown={onEditorKeyDown} />
     </div>
   );
@@ -207,7 +321,7 @@ export function RichEditor({
  * Each button reports its own pressed state from the editor, so the row says what the cursor
  * is standing in rather than what was last clicked.
  */
-function Toolbar({ editor }: { editor: Editor | null }) {
+function Toolbar({ editor, editable }: { editor: Editor | null; editable: boolean }) {
   const t = useTranslations("compose");
 
   /**
@@ -248,11 +362,19 @@ function Toolbar({ editor }: { editor: Editor | null }) {
       key={key}
       type="button"
       className="rte-b"
+      // The glyph is a letter, so the letter has to carry the mark it stands for — a "B" that
+      // is not bold and an "S" that is not struck are eight buttons that all look the same.
+      // An attribute rather than a per-button class so the stylesheet names the mark, and so
+      // adding a control cannot silently inherit another one's look through nth-child.
+      data-mark={key}
       // `aria-pressed` and not a class alone: "is this text already bold" is the question the
       // control answers, and a sighted user reads it from the highlight.
       aria-pressed={isActive}
       aria-label={t(`rte.${key}`)}
       title={t(`rte.${key}`)}
+      // Mid-send. Not merely styled: a live button here would edit a document the caret cannot
+      // reach, and the text on screen would stop being the text handed to the send.
+      disabled={!editable}
       // The editor loses focus to a click, and a formatting command applied with no selection
       // does nothing visible. Preventing the default keeps the caret where it was.
       onMouseDown={(e) => e.preventDefault()}
@@ -300,23 +422,6 @@ function promptForLink(editor: Editor, message: string): void {
     return;
   }
   editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
-}
-
-/**
- * Plain text as paragraphs, for the one case that needs it: a scratch buffer written before
- * this editor existed, or a generated draft that arrived as text.
- *
- * Escaping is not optional here even though the text came from the user's own keyboard —
- * `setContent` parses what it is given as HTML, so somebody who typed `<b>` into the old
- * textarea and left it there would have it become formatting when their draft was restored.
- */
-function escapeAsParagraphs(text: string): string {
-  const esc = text
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return esc
-    .split(/\n{2,}/)
-    .map((para) => `<p>${para.replace(/\n/g, "<br>") || "<br>"}</p>`)
-    .join("");
 }
 
 export { EMPTY_RICH };

@@ -17,13 +17,16 @@ import { createContext, useContext, type ReactNode } from "react";
 import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
 import type { AttachmentsChrome } from "./attachments";
 import type { SendState } from "./mail-send";
+import { EMPTY_RICH, type RichValue } from "./rich-text";
+import type { DraftReplyChrome } from "./InlineReply";
 import type { RemoteImagesChrome } from "./remote-images";
 
 export interface MessageChrome {
   /** The message id whose inline reply editor is open, if any. */
   replyTo: string | null;
-  replyBody: string;
-  onReplyBody: (next: string) => void;
+  /** Both halves of what is typed in it — the markup and its plain rendering. */
+  replyBody: RichValue;
+  onReplyBody: (next: RichValue) => void;
   closeReply: () => void;
   /**
    * Send the open reply to `messageId`. It takes the id rather than closing over
@@ -33,6 +36,15 @@ export interface MessageChrome {
   sendReply: (messageId: string) => void;
   /** Where that message's send has got to — see `mail-send.ts` for why it has four states. */
   replySendState: (messageId: string) => SendState;
+  /**
+   * The AI drafter's offer and the draft waiting to be placed, or absent where there is no
+   * drafter — the desktop shell and every harness that mounts a pane without the shell.
+   *
+   * It travels with the reply draft and for the same reason: `MessagePane` is mounted TWICE
+   * while the reader is open, and an offer held per-pane would be two offers, each able to
+   * spend an AI action the other one did not know about.
+   */
+  draftReply?: DraftReplyChrome;
   /** Open the screening popover for `messageId`, anchored on `anchor`. */
   openSenderMenu: (messageId: string, anchor: HTMLElement | null) => void;
   /**
@@ -133,7 +145,7 @@ const noop = (): void => {};
  */
 const MessageChromeContext = createContext<MessageChrome>({
   replyTo: null,
-  replyBody: "",
+  replyBody: EMPTY_RICH,
   onReplyBody: noop,
   closeReply: noop,
   sendReply: noop,

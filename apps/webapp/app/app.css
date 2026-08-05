@@ -882,25 +882,27 @@ body.reading .shell {
   margin-top: 16px;
   flex-wrap: wrap;
 }
+/* COMPOSE'S EDITOR SHELL. These three selectors used to style a `<textarea>` and now style
+   the `.rte` wrapper around a `contenteditable`, which is why `:focus` became `:focus-within`
+   — the element that takes focus is the surface INSIDE this box, so a `:focus` rule here
+   would never fire again and the field would silently stop showing that it was focused. */
 .compose-editor {
   width: 100%;
-  min-height: 150px;
-  resize: vertical;
   border: 1px solid var(--hair); /* input field — kept */
   border-radius: 18px;
   background: var(--canvas);
-  padding: 14px 16px;
-  font-size: 13.5px;
-  line-height: 1.65;
   margin-top: 4px;
 }
-.compose-editor:focus {
+.compose-editor .rte-surface {
+  min-height: 150px;
+  padding: 4px 16px 14px;
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+.compose-editor:focus-within {
   outline: 1.5px solid var(--accent);
   outline-offset: 0;
   border-color: transparent;
-}
-.compose-editor::placeholder {
-  color: var(--ink2);
 }
 .send-row {
   display: flex;
@@ -2375,35 +2377,216 @@ body.reading .shell {
 .reply-from-sub {
   color: var(--accent);
 }
+/* THE REPLY EDITOR'S SHELL — same swap as `.compose-editor` above: this styles the `.rte`
+   wrapper now, and the ring moved to `:focus-within` because the focusable element is the
+   surface inside it. */
 .reply-editor {
   width: 100%;
-  min-height: 128px;
-  resize: vertical;
   border: 0;
   border-radius: 12px;
   background: var(--float);
   box-shadow: inset 0 0 0 1px var(--hair-soft);
-  padding: 12px 13px;
-  font: inherit;
-  font-size: 13.5px;
-  line-height: 1.62;
   color: var(--ink);
 }
-.reply-editor:focus {
+.reply-editor .rte-surface {
+  min-height: 128px;
+}
+.reply-editor:focus-within {
   outline: none;
   box-shadow: inset 0 0 0 1.5px var(--accent-hair);
 }
-/* Mid-send the textarea is `readOnly` (the draft is never taken away, but it will not take
+/* Mid-send the editor is not editable (the draft is never taken away, but it will not take
    input either). Two things must not lie about that: the text recedes one ink step so the
    field reads "held", and focus keeps a VISIBLE ring — keyboard focus may still be in the
    field when the send starts — but a neutral one, because the accent ring is this app's
-   promise of editability. */
-.reply-editor:read-only {
+   promise of editability. `.is-locked` is the class `RichEditor` puts on for `editable:false`;
+   it replaces `:read-only`, which is a pseudo-class a `contenteditable` does not have. */
+.reply-editor.is-locked:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--hair);
+}
+
+/* ═══ THE RICH EDITOR ═══════════════════════════════════════════════════════════════════
+   One block for all three surfaces — compose, the inline reply and the Reply Run — because
+   the grammar they offer is one decision (`RichEditor.tsx`) and a second stylesheet for it
+   would be a second place for that decision to drift. The wrapper's frame is the surface's
+   own (`.compose-editor`, `.reply-editor`, `.fr-editor` above and below); everything here is
+   the toolbar, the text, and the eight marks the toolbar can produce. */
+.rte {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.rte-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 6px 8px 2px;
+}
+.rte-b {
+  min-width: 27px;
+  height: 26px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink2);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.rte-b:hover:not(:disabled) {
+  background: var(--tint);
+  color: var(--ink);
+}
+/* PRESSED IS THE CURSOR'S STATE, not the last click — the row says what the caret is
+   standing in (`useEditorState` in `RichEditor.tsx`), so this has to read as a state and not
+   as a hover. */
+.rte-b[aria-pressed="true"] {
+  background: var(--tint2);
+  color: var(--ink);
+}
+.rte-b:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.rte-b:focus-visible {
+  outline: 1.5px solid var(--accent);
+  outline-offset: -1px;
+}
+/* The glyph carries the mark it stands for. A "B" that is not bold is a button that has to be
+   read rather than recognised. */
+.rte-b[data-mark="bold"] { font-weight: 700; }
+.rte-b[data-mark="italic"] { font-style: italic; font-family: Georgia, serif; }
+.rte-b[data-mark="strike"] { text-decoration: line-through; }
+.rte-b[data-mark="code"] { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.rte-b[data-mark="ordered"] { font-variant-numeric: tabular-nums; }
+
+.rte-surface {
+  position: relative;
+  padding: 4px 13px 12px;
+  outline: none;
+  font-size: 13.5px;
+  line-height: 1.62;
+  /* A pasted URL has no spaces in it and must not push the column wider than the window. */
+  overflow-wrap: anywhere;
+}
+/* THE PLACEHOLDER, without TipTap's `Placeholder` extension — that lives in
+   `@tiptap/extensions`, which this app does not declare as a dependency, and reaching into a
+   transitive one would make the editor's behaviour hostage to somebody else's dependency
+   graph. `is-empty` is decided on the TEXT by the same predicate that decides whether there
+   is anything to send: an empty ProseMirror document is `<p></p>`, so a markup test would hide
+   the placeholder the moment the editor mounted. */
+.rte.is-empty .rte-surface::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  top: 4px;
+  left: 13px;
+  right: 13px;
+  pointer-events: none;
+  color: var(--ink2);
+}
+.rte.is-locked .rte-surface {
   color: var(--ink2);
   cursor: default;
 }
-.reply-editor:read-only:focus {
-  box-shadow: inset 0 0 0 1.5px var(--hair);
+
+/* The eight marks, as the recipient will see them. Deliberately the same list as the toolbar
+   and the server's outbound allowlist — a style here for something the editor cannot produce
+   would be a style for a message nobody can write. */
+.rte-surface > :first-child { margin-top: 0; }
+.rte-surface > :last-child { margin-bottom: 0; }
+.rte-surface p {
+  margin: 0 0 0.7em;
+}
+.rte-surface ul,
+.rte-surface ol {
+  margin: 0 0 0.7em;
+  padding-left: 1.4em;
+}
+.rte-surface li {
+  margin: 0.15em 0;
+}
+.rte-surface li p {
+  margin: 0;
+}
+.rte-surface blockquote {
+  margin: 0 0 0.7em;
+  padding-left: 0.85em;
+  border-left: 2px solid var(--hair);
+  color: var(--ink2);
+}
+.rte-surface code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+  background: var(--tint2);
+  padding: 0.1em 0.32em;
+  border-radius: 5px;
+}
+.rte-surface a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* THE REPLY RUN'S EDITOR. The overlay's own `textarea` rules live in `focus-reply.css` and
+   still serve every caller that hands in no editor; this is the frame for the one that does,
+   and it matches that textarea rather than the inline reply's so the run keeps looking like
+   the run. */
+.fr-editor {
+  width: 100%;
+  border: 1px solid var(--hair); /* input field — kept */
+  border-radius: 16px;
+  background: var(--canvas);
+  box-sizing: border-box;
+}
+.fr-editor .rte-surface {
+  min-height: 100px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.fr-editor:focus-within {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 0;
+  border-color: transparent;
+}
+
+/* ═══ THE AI DRAFTER'S OFFER ════════════════════════════════════════════════════════════
+   Inside the reply block, above the editor the draft lands in — the adjacency IS the consent
+   context: what is being bought is text for THIS box. Styled as a quiet card rather than as a
+   warning, because nothing here has gone wrong; it is a price and two buttons. */
+.dr-card {
+  border-radius: 12px;
+  background: var(--tint);
+  box-shadow: inset 0 0 0 1px var(--hair-soft);
+  padding: 11px 13px 12px;
+  margin: 0 0 10px;
+}
+.dr-title {
+  display: block;
+  font-size: 12.5px;
+}
+.dr-body {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink2);
+}
+.dr-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+/* The server's own sentence, verbatim. It is a refusal to read, not a field to fix, so it
+   sits under the buttons at the size of the body copy rather than shouting. */
+.dr-note {
+  margin: 9px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink2);
 }
 .reply-actions {
   display: flex;

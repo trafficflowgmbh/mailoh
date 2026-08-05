@@ -59,6 +59,7 @@ import { useTranslations } from "next-intl";
 import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import { clearComposeDraft, type MailSend } from "./compose";
+import { EMPTY_RICH, parseRichValue, serializeRichValue, type RichValue } from "./rich-text";
 
 export type SendPhase = "idle" | "sending" | "queued" | "unverified" | "failed";
 
@@ -113,18 +114,33 @@ export function sendKeyOf(m: MailSend): string {
  */
 export const replyDraftKey = (messageId: string): string => `ohmail.ui.reply:${messageId}`;
 
-export function readReplyDraft(messageId: string): string {
+/**
+ * The buffer HOLDS TWO HALVES NOW, and the key it holds them in did not change.
+ *
+ * Every reply written before the rich editor shipped is a BARE STRING under this key, and the
+ * whole point of the buffer is that nobody's half-written sentence is thrown away by a deploy.
+ * `parseRichValue` is the shape-based read that makes both readable from one key — see
+ * `rich-text.ts` for why it is shape-based and not "did it parse as JSON".
+ */
+export function readReplyDraft(messageId: string): RichValue {
   try {
-    return window.localStorage.getItem(replyDraftKey(messageId)) ?? "";
+    return parseRichValue(window.localStorage.getItem(replyDraftKey(messageId)));
   } catch {
-    return ""; // storage blocked — the editor still works for this session
+    return EMPTY_RICH; // storage blocked — the editor still works for this session
   }
 }
 
-export function writeReplyDraft(messageId: string, body: string): void {
+/**
+ * `serializeRichValue` answers `null` for a value with nothing in it, and null REMOVES the key
+ * — the buffer's rule has always been that an empty draft stores nothing. It also answers a
+ * bare string for a reply with no formatting, so the common case stays readable by a bundle
+ * that predates the envelope.
+ */
+export function writeReplyDraft(messageId: string, value: RichValue): void {
   try {
-    if (body) window.localStorage.setItem(replyDraftKey(messageId), body);
-    else window.localStorage.removeItem(replyDraftKey(messageId));
+    const raw = serializeRichValue(value);
+    if (raw === null) window.localStorage.removeItem(replyDraftKey(messageId));
+    else window.localStorage.setItem(replyDraftKey(messageId), raw);
   } catch {
     /* private mode refuses writes; the draft lives in React state only */
   }

@@ -109,3 +109,66 @@ export function serializeRichValue(v: RichValue): string | null {
   if (v.html === "" && parseRichValue(v.text).text === v.text) return v.text;
   return JSON.stringify({ text: v.text, html: v.html });
 }
+
+/* ── turning a value into a document ──────────────────────────────────────────────────── */
+
+/**
+ * Plain text as paragraphs, escaped.
+ *
+ * ESCAPING IS NOT OPTIONAL even though the text came from the user's own keyboard, because
+ * every consumer hands the result to an HTML parser. Somebody who typed `<b>` into the old
+ * textarea and left it there must get `<b>` back when their draft is restored — not bold text,
+ * and certainly not bold text that the next keystroke then persists as markup they never wrote.
+ *
+ * It lives here rather than in the editor component for the reason the rest of this module
+ * does: it is DOM-free, it is the part that must not break, and it now has three consumers —
+ * the editor's initial content, the editor's sync effect, and {@link appendRich}.
+ */
+export function escapeAsParagraphs(text: string): string {
+  const esc = text
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return esc
+    .split(/\n{2,}/)
+    .map((para) => `<p>${para.replace(/\n/g, "<br>") || "<br>"}</p>`)
+    .join("");
+}
+
+/**
+ * A value as the document to load — the markup when there is any, and the plain text as
+ * escaped paragraphs when there is not.
+ *
+ * One helper for the editor's initial `content` AND for its sync effect, because both hand
+ * their string to the same parser and therefore need the same escaping. They did not have it:
+ * the effect escaped and the initial content did not, so a legacy plain buffer went in raw and
+ * was silently corrected a tick later by the effect — which is exactly why the guard on the
+ * escaping was green. The visible defect was one frame wide; the real one is that only one of
+ * the two doors was locked.
+ */
+export function richToHtml(v: RichValue): string {
+  return v.html || (v.text ? escapeAsParagraphs(v.text) : "");
+}
+
+/**
+ * `b` placed below `a` — what "Add below" means when a drafted reply lands on top of something
+ * already written.
+ *
+ * THE MIXED CASE IS WHY THIS IS NOT A CONCATENATION. A generated draft arrives as plain text
+ * and the editor may hold markup; joining `a.html` to `b.text` would hand the parser a string
+ * whose second half was never escaped, so a draft mentioning `<script>` or an `a > b` would
+ * become markup on the way in. {@link richToHtml} escapes whichever half needs it, which is
+ * the same rule the editor loads a document by.
+ *
+ * The result is plain when BOTH sides are plain — appending must not invent formatting on a
+ * message that had none, because `html` present is what puts the markup on the wire instead of
+ * the text (`compose.ts`).
+ */
+export function appendRich(a: RichValue, b: RichValue): RichValue {
+  if (isRichEmpty(a)) return b;
+  if (isRichEmpty(b)) return a;
+  return {
+    // A blank line between them: two paragraphs of somebody else's prose run together read as
+    // one, and this is the plain half a plaintext recipient may end up reading.
+    text: `${a.text}\n\n${b.text}`,
+    html: a.html || b.html ? richToHtml(a) + richToHtml(b) : "",
+  };
+}

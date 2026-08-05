@@ -15,7 +15,26 @@ import type { EmailAddress, EngineMutation } from "@ohmail/client-engine";
 export interface ComposeFields {
   to: string;
   subject: string;
+  /**
+   * The message as PLAIN TEXT — the editor's own rendering when {@link html} is set.
+   *
+   * It stays the field every local check reads: `canSend` refuses an empty one, the optimistic
+   * draft row shows it, and `writeComposeDraft` decides on it whether there is a draft to keep
+   * at all. It is deliberately NOT what a plaintext recipient reads — the server derives that
+   * from the sanitized markup so the two halves of a `multipart/alternative` cannot be made to
+   * disagree by a client (`outbound-html.ts`).
+   */
   body: string;
+  /**
+   * The markup, or `""` for a message with no formatting in it.
+   *
+   * A SECOND FIELD rather than a `RichValue` in `body`, and rather than the envelope
+   * `rich-text.ts` writes: this buffer is already a JSON object, so an envelope inside it would
+   * be a second encoding to keep true for nothing. The reply key needs one because it holds a
+   * bare string; this one does not. It is read field-wise below, exactly like `fromMailboxId`,
+   * so a buffer written before this field existed still restores as a plain draft.
+   */
+  html: string;
   /**
    * THE SENDER THE USER PICKED, as a mailbox id. `null` = they did not pick one.
    *
@@ -34,7 +53,9 @@ export interface ComposeFields {
   fromMailboxId: string | null;
 }
 
-export const EMPTY_COMPOSE: ComposeFields = { to: "", subject: "", body: "", fromMailboxId: null };
+export const EMPTY_COMPOSE: ComposeFields = {
+  to: "", subject: "", body: "", html: "", fromMailboxId: null,
+};
 
 /** `localStorage` key for the compose scratch buffer — one, because there is one compose. */
 export const COMPOSE_DRAFT_KEY = "ohmail.ui.compose";
@@ -62,6 +83,9 @@ export function readComposeDraft(): ComposeFields {
       to: typeof parsed.to === "string" ? parsed.to : "",
       subject: typeof parsed.subject === "string" ? parsed.subject : "",
       body: typeof parsed.body === "string" ? parsed.body : "",
+      // Same field-wise guard as `fromMailboxId` below, and it is what makes a draft written
+      // by the plain textarea restore as a plain draft rather than as an empty one.
+      html: typeof parsed.html === "string" ? parsed.html : "",
       // Guarded field-wise, so a buffer written before this field existed reads back as "no
       // pick" and one
       // written after it is still readable by a bundle that predates the field. Nothing here
@@ -86,6 +110,11 @@ export function writeComposeDraft(f: ComposeFields): void {
      * turn every visit to Compose into a stored buffer, and it would make the pick sticky in a
      * way ruling 2 rules out: the default is derived on every fresh compose, and the only thing
      * worth remembering is a pick attached to a message somebody is actually writing.
+     *
+     * `html` does not count either, and for a sharper reason: an empty ProseMirror document
+     * serialises to `<p></p>`, so testing it would make every visit to Compose leave a stored
+     * buffer behind. `body` is the editor's plain rendering and is `""` for that document,
+     * which is why it is the field that decides. Same rule as `isRichEmpty`.
      */
     if (f.to === "" && f.subject === "" && f.body === "") {
       window.localStorage.removeItem(COMPOSE_DRAFT_KEY);
@@ -243,6 +272,11 @@ export function composePlan(fields: ComposeFields, mailboxId: string | null): Co
       // `References` off a message that is not answering anyone (see `types.ts`).
       inReplyTo: null,
       body: fields.body,
+      // ONE OR THE OTHER ON THE WIRE, and the adapter is what enforces it: `html` present
+      // means `POST /drafts` carries the markup and no `body` at all, because a client that
+      // supplied its own plain part would be asserting what plaintext readers see. Omitted
+      // rather than sent as `""` so a plain compose produces the same request it always did.
+      ...(fields.html ? { html: fields.html } : {}),
       subject: fields.subject,
       to: parsed.invalid.length === 0 ? parsed.addresses : [],
       ...(mailboxId ? { mailboxId } : {}),

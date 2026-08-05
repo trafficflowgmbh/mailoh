@@ -82,6 +82,9 @@ import {
   EMPTY_COMPOSE,
   type ComposeFields,
 } from "./compose";
+import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text";
+import { useDraftReply, type DraftedReply } from "./draft-reply";
+import { RichEditor } from "./RichEditor";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { TagCreate, TAG_CREATE_ROW_ID } from "./TagCreate";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
@@ -567,7 +570,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   /* The inline reply. The id and the text live HERE, not in `MessagePane`, because
      that pane is mounted twice whenever the reader is open — see `message-chrome.tsx`. */
   const [replyTo, setReplyTo] = useState<string | null>(null);
-  const [replyBody, setReplyBody] = useState("");
+  const [replyBody, setReplyBody] = useState<RichValue>(EMPTY_RICH);
   /**
    * THE COMPOSE FORM, and why it lives up here rather than in `ComposeView`.
    *
@@ -649,7 +652,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * is what lets the run share one scratch buffer with the inline editor rather than inventing
    * a second one that `settle` would not know to clear.
    */
-  const [frValues, setFrValues] = useState<Record<string, string>>({});
+  const [frValues, setFrValues] = useState<Record<string, RichValue>>({});
   const [frDone, setFrDone] = useState<Set<string>>(() => new Set());
   const [ribbonGone, setRibbonGone] = useState(false);
 
@@ -872,11 +875,99 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const closeReply = useCallback(() => setReplyTo(null), []);
 
   const onReplyBody = useCallback(
-    (next: string) => {
+    (next: RichValue) => {
       setReplyBody(next);
       if (replyTo) writeReplyDraft(replyTo, next);
     },
     [replyTo],
+  );
+
+  /* ── buying a drafted reply ───────────────────────────────────────────────────────────── */
+
+  /**
+   * WHAT IS IN THE EDITOR RIGHT NOW, as refs.
+   *
+   * `onDraft` runs when the server answers, which can be seconds after the press, and the
+   * person who pressed is usually still typing. A callback closed over `replyBody` would be
+   * holding the text as it was at press time, so "add the draft below what I wrote" would
+   * silently drop every keystroke made while the request was out. Refs are read at call time,
+   * which is the only moment the question has a correct answer — and they also let `onDraft`
+   * be identity-stable, so the confirm button is not rebound on every keystroke.
+   */
+  const replyBodyRef = useRef(replyBody);
+  replyBodyRef.current = replyBody;
+  const replyToRef = useRef(replyTo);
+  replyToRef.current = replyTo;
+
+  /**
+   * A DRAFT THAT ARRIVED ON TOP OF SOMETHING ALREADY WRITTEN, and has not been placed yet.
+   *
+   * It is NOT cleared when the editor closes. The AI action has been spent by the time this
+   * exists, and dropping the result because somebody pressed Escape would be charging for
+   * something and then throwing it away — reopening the reply on that message asks the
+   * question again. It is cleared when the question is answered, and when a send for that
+   * message settles, which is the one moment the draft is genuinely moot.
+   */
+  const [pendingDraft, setPendingDraft] =
+    useState<{ draft: DraftedReply; messageId: string } | null>(null);
+
+  /** Open the reply on `messageId` and put `next` in it — memory, buffer and mobile alike. */
+  const placeDraft = useCallback(
+    (messageId: string, next: RichValue) => {
+      setReplyTo(messageId);
+      setReplyBody(next);
+      writeReplyDraft(messageId, next);
+      // Same mobile rule `openReply` states: under 900px the reading column is display:none,
+      // so an editor mounted there is one nobody can see.
+      if (readColumnHidden()) setReaderFor(messageId);
+    },
+    [readColumnHidden],
+  );
+
+  /**
+   * THE DRAFT ARRIVES. It goes into the editor and NOWHERE ELSE.
+   *
+   * No mutation is dispatched, nothing is sent, and no triage state moves — a generated draft
+   * is not an answered message, and the Reply Run's debt is discharged by a send settling and
+   * by nothing else (`onSendSettled`). That separation is asserted rather than described; see
+   * `draft-reply-wiring.test.tsx`.
+   *
+   * An empty editor takes the draft directly, because there is no question to ask. A non-empty
+   * one is asked, and keeps its text until it is answered.
+   */
+  const onDraft = useCallback(
+    (draft: DraftedReply, messageId: string) => {
+      const existing =
+        replyToRef.current === messageId ? replyBodyRef.current : readReplyDraft(messageId);
+      if (isRichEmpty(existing)) {
+        placeDraft(messageId, draft);
+        return;
+      }
+      // The reply is opened either way, so the question is asked beside the text it is about
+      // rather than in a dialog over a message that is not on screen.
+      placeDraft(messageId, existing);
+      setPendingDraft({ draft, messageId });
+    },
+    [placeDraft],
+  );
+
+  const draftReply = useDraftReply({ onDraft });
+
+  const resolveDraft = useCallback(
+    (mode: "replace" | "append") => {
+      if (!pendingDraft) return;
+      const { draft, messageId } = pendingDraft;
+      const existing =
+        replyToRef.current === messageId ? replyBodyRef.current : readReplyDraft(messageId);
+      placeDraft(messageId, mode === "replace" ? draft : appendRich(existing, draft));
+      setPendingDraft(null);
+    },
+    [pendingDraft, placeDraft],
+  );
+
+  const draftReplyChrome = useMemo(
+    () => ({ control: draftReply, pending: pendingDraft, resolve: resolveDraft }),
+    [draftReply, pendingDraft, resolveDraft],
   );
 
   /**
@@ -908,6 +999,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       return;
     }
     setReplyTo((cur) => (cur === key ? null : cur));
+    // A reply to this message has been delivered, so a drafted alternative to it is moot.
+    // This is the ONLY thing that discards an unplaced draft other than answering the
+    // question, because the AI action behind it has already been spent.
+    setPendingDraft((p) => (p?.messageId === key ? null : p));
 
     /*
      * Guarded on the item the run is STANDING ON, not on "a run is open". A confirmation can
@@ -986,7 +1081,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       mailSend.send({
         kind: "mail_send",
         inReplyTo: messageId,
-        body: replyBody,
+        // The PLAIN half in `body`, always — it is what `canSend` judges and what the
+        // optimistic row shows. The markup, when there is any, goes in `html` and the adapter
+        // sends it INSTEAD of `body`, so the recipient's plaintext part is the server's own
+        // rendering of the same markup rather than this client's second opinion.
+        body: replyBody.text,
+        ...(replyBody.html ? { html: replyBody.html } : {}),
         ...(from.substituted && from.mailboxId ? { mailboxId: from.mailboxId } : {}),
       });
     },
@@ -1243,10 +1343,18 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           openReply(m.id);
           break;
         case "draft":
-          // The AI draft-review flow is still its own view (it is a card with sources and
-          // a regenerate step, not a text box). It now leaves on Escape; see ComposeView.
-          setReaderFor(null);
-          go("compose");
+          /**
+           * IT NOW ASKS THE DRAFTER, and it used to navigate to Compose.
+           *
+           * `setReaderFor(null); go("compose")` took the message off the screen and left the
+           * user in an empty compose form with no draft in it and nothing having been
+           * requested — `POST /messages/:id/draft` has been live for months with no caller.
+           * The reply editor is opened first so the offer has somewhere to render and so the
+           * price sits beside the box the text will land in; the offer spends nothing until
+           * it is confirmed.
+           */
+          openReply(m.id);
+          draftReply.open(m.id);
           break;
         case "later":
           if (m.triage?.state === "reply_later") {
@@ -1304,7 +1412,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         }
       }
     },
-    [engine, toast, t, piles.replyLater.length, now, openReply, markSeen],
+    [engine, toast, t, piles.replyLater.length, now, openReply, markSeen, draftReply],
   );
 
   /**
@@ -1804,10 +1912,16 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       // focus the moment it opens, so without it the one place the shortcut is for is the one
       // place it would not fire — the same reasoning Escape's binding already carries.
       //
-      // `mod+Enter` and not bare `Enter`, because the field is a multi-line textarea where
-      // Enter is a newline. The four views bind bare `Enter` as "open the row" and none of
-      // them sets `inInput`, so the typing guard already keeps them out of this editor; this
-      // chord does not collide with any of them.
+      // `mod+Enter` and not bare `Enter`, because the field is a multi-line editor where
+      // Enter is a new paragraph. The four views bind bare `Enter` as "open the row" and none
+      // of them sets `inInput`, so the typing guard already keeps them out of this editor
+      // (`isTypingTarget` answers true for a `contenteditable` as it did for the textarea);
+      // this chord does not collide with any of them.
+      //
+      // The rich editor does not swallow it. ProseMirror's keymap handles `Enter` and
+      // `Shift-Enter` and has no `Mod-Enter` binding, so the event is not consumed and reaches
+      // the document listener this registry hangs on — which is why the chord stays here
+      // rather than being reimplemented inside the editor's own `onKeyDown`.
       //
       // It calls the same `sendReply` the button does, so the send lock, the empty-body guard
       // and the whole failure surface apply identically — there is no second path to SMTP.
@@ -2242,11 +2356,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     () => ({
       replyTo, replyBody, onReplyBody, closeReply, sendReply,
       replySendState: mailSend.stateOf,
+      // The offer and the draft waiting to be placed travel with the reply draft, and for the
+      // same reason: `MessagePane` is mounted TWICE while the reader is open, and an offer
+      // held per-pane would be two offers, each able to spend an AI action the other one
+      // knew nothing about.
+      draftReply: draftReplyChrome,
       openSenderMenu, conversationOf,
       bodyOf: bodyOfMessage, hydrateBody,
       attachments, remoteImages,
     }),
-    [replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, openSenderMenu,
+    [replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
+      openSenderMenu,
       conversationOf, bodyOfMessage, hydrateBody, attachments, remoteImages],
   );
 
@@ -2632,15 +2752,34 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
               }
             : undefined
         }
-        value={frItem ? (frValues[frKeyOf(frItem)] ?? "") : ""}
-        onChange={(v) => {
-          if (!frItem) return;
-          setFrValues((vals) => ({ ...vals, [frKeyOf(frItem)]: v }));
-          // Mirrored into the SAME per-message buffer the inline editor writes and `settle`
-          // clears — so the run's text survives a reload exactly as the editor's does, and a
-          // reply begun in one surface can be finished in the other.
-          if (frItem.messageId) writeReplyDraft(frItem.messageId, v);
-        }}
+        /* THE SAME EDITOR THE INLINE REPLY USES, handed in rather than reimplemented.
+           The run writes into the same per-message buffer, so anything less than the same
+           grammar here would read somebody's formatted reply as flattened text and then
+           store the flattening over it — see `FocusReplyOverlay`'s `editor` prop.
+
+           Keyed on the step's message for the reason `InlineReply` keys its own: a document,
+           a selection and an undo history all belong to one message, and stepping forward is
+           exactly the moment they must not be carried over. */
+        editor={
+          frItem ? (
+            <RichEditor
+              key={frKeyOf(frItem)}
+              className="fr-editor"
+              ariaLabel={t("reply.editorAria")}
+              placeholder={t("reply.placeholder")}
+              autoFocus
+              editable={frPhase !== "sending" && frPhase !== "queued"}
+              value={frValues[frKeyOf(frItem)] ?? EMPTY_RICH}
+              onChange={(v) => {
+                setFrValues((vals) => ({ ...vals, [frKeyOf(frItem)]: v }));
+                // Mirrored into the SAME per-message buffer the inline editor writes and
+                // `settle` clears — so the run's text survives a reload exactly as the
+                // editor's does, and a reply begun in one surface can be finished in the other.
+                if (frItem.messageId) writeReplyDraft(frItem.messageId, v);
+              }}
+            />
+          ) : undefined
+        }
         /**
          * DONE SENDS. That is all it does.
          *
@@ -2664,10 +2803,15 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
          */
         onDone={() => {
           if (!frItem?.messageId) return;
+          const v = frValues[frKeyOf(frItem)] ?? EMPTY_RICH;
           mailSend.send({
             kind: "mail_send",
             inReplyTo: frItem.messageId,
-            body: frValues[frKeyOf(frItem)] ?? "",
+            // Same split as `sendReply`, and it has to be the same: the run and the inline
+            // editor share one scratch buffer, so a reply begun in one and finished in the
+            // other must go out as the same message either way.
+            body: v.text,
+            ...(v.html ? { html: v.html } : {}),
           });
         }}
         onSkip={() => fr && setFr({ ...fr, step: fr.step + 1 })}

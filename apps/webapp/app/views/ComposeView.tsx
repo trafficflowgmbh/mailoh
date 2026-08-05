@@ -42,14 +42,16 @@
  * a `draft` entity with a body to review, which is the demo world today and the AI drafter
  * (Phase 3b) on a Cloud account later. Its label is app copy now, not a fixture string.
  */
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { addressBook } from "@ohmail/client-engine";
 import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
+import type { Editor } from "@tiptap/react";
 import { Button, Chip, Icon, useToast } from "@ohmail/ui";
 import { useKeyBindings } from "../shell/keymap";
 import { go } from "../shell/routing";
 import { canSend, type SendState } from "../shell/mail-send";
+import { RichEditor } from "../shell/RichEditor";
 import { SendStatus } from "../shell/SendStatus";
 import { RecipientField } from "../shell/RecipientField";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
@@ -85,7 +87,13 @@ export function ComposeView({
 }) {
   const t = useTranslations("compose");
   const toast = useToast();
-  const editorRef = useRef<HTMLTextAreaElement>(null);
+  /**
+   * The live editor, handed over by `RichEditor` when ProseMirror is ready. It exists for the
+   * one thing accepting a draft needs and `value` cannot express — putting the caret in the
+   * message somebody is now expected to edit.
+   */
+  const editorRef = useRef<Editor | null>(null);
+  const takeEditor = useCallback((e: Editor | null) => { editorRef.current = e; }, []);
 
   /**
    * EVERY ADDRESS THE MIRROR KNOWS, for the To field's suggestions.
@@ -131,9 +139,10 @@ export function ComposeView({
 
   /**
    * Escape leaves. The complaint that Compose could not be left with the keyboard was
-   * literally true: this view had no key bindings at all. `inInput` because the editor is a textarea and is focused
-   * the moment a draft is accepted, so without it the one place you need the exit is the
-   * one place it would not work.
+   * literally true: this view had no key bindings at all. `inInput` because focus is inside the
+   * editor — a `contenteditable`, which `isTypingTarget` counts as typing exactly as it counted
+   * the textarea — and it is focused the moment a draft is accepted, so without it the one
+   * place you need the exit is the one place it would not work.
    *
    * ⌘↩ SENDS, and it is registered HERE rather than in the shell's global map because the
    * global `mod+Enter` belongs to the open reply editor. A view-scope binding outranks a
@@ -169,13 +178,20 @@ export function ComposeView({
       to: fields.to || draft.to.map((a) => (a.name ? `${a.name} <${a.address}>` : a.address)).join(", "),
       subject: fields.subject || draft.subject,
       body: draft.body,
+      // `EngineDraft.body` IS PLAIN TEXT, so the markup half is emptied rather than left
+      // holding whatever the user had typed before. Carrying it over would mean the editor
+      // rendering the old message's formatting around the new message's words — and, worse,
+      // the html would be what went on the wire while `body` said something else entirely.
+      // `RichEditor` escapes the text on the way in, so a draft containing a literal `<b>`
+      // stays a literal `<b>`.
+      html: "",
       // Spread FIRST so `fromMailboxId` survives: taking a draft fills the message, it does not
       // re-decide who is sending it. Written as a spread rather than by naming the field so the
       // next field added to `ComposeFields` is not silently dropped here too.
     });
     void engine.mutate({ kind: "draft_accept", draftId: draft.id });
     if (withToast) toast(t("toastUseDraft"));
-    requestAnimationFrame(() => editorRef.current?.focus());
+    requestAnimationFrame(() => editorRef.current?.commands.focus("end"));
   };
 
   const locked = !canSend(send, plan.mutation);
@@ -301,16 +317,20 @@ export function ComposeView({
             </div>
           ) : null}
 
-          <textarea
-            ref={editorRef}
+          {/* THE TWO HALVES GO BACK INTO THE FORM SEPARATELY. `body` stays the plain
+              rendering — every local check reads it, and `composePlan` sends the markup
+              INSTEAD of it, never beside it. See `compose.ts`. */}
+          <RichEditor
+            editorRef={takeEditor}
             className="compose-editor"
-            aria-label={t("editorAria")}
+            ariaLabel={t("editorAria")}
             placeholder={t("editorPlaceholder")}
-            value={fields.body}
+            value={{ text: fields.body, html: fields.html }}
             /* The text is never taken away from the author, not even mid-send: a failed send
-               whose draft had been cleared would be a message the user has to write twice. */
-            readOnly={inFlight}
-            onChange={(e) => onFields({ ...fields, body: e.target.value })}
+               whose draft had been cleared would be a message the user has to write twice. It
+               stops taking INPUT, which is the textarea's `readOnly` this replaces. */
+            editable={!inFlight}
+            onChange={(v) => onFields({ ...fields, body: v.text, html: v.html })}
           />
 
           <div className="send-row">

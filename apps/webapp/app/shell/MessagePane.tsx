@@ -640,6 +640,10 @@ export function MessagePane({
             onChange={chrome.onReplyBody}
             onClose={chrome.closeReply}
             onSend={() => chrome.sendReply(message.id)}
+            /* The AI drafter's offer renders inside the editor the draft lands in — see
+               `InlineReply`. Absent where there is no drafter: the desktop shell, and any
+               harness that mounts a pane without the shell. */
+            draftReply={chrome.draftReply}
           />
         ) : undefined
       }
