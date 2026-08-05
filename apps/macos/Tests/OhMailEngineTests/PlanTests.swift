@@ -308,17 +308,50 @@ final class PlanTests: XCTestCase {
         XCTAssertEqual(t.backoff(attempt: 40), 8, "the shift must not overflow into a negative delay")
     }
 
-    // MARK: - Finding a Node runtime (this beta vendors none)
+    // MARK: - Finding a Node runtime (the shipped app carries its own)
     //
     // Every case injects ``FakeFS`` and names exactly which paths are runnable, so the real machine's
     // Homebrew node can neither satisfy an assertion by accident nor break one — the search order and
     // the "nothing found" case are both proven against a filesystem the test owns.
 
-    func testAnExplicitNodePathWinsOverEverythingElse() {
-        let fs = FakeFS(runnable: ["/opt/homebrew/bin/node", "/custom/node", "/on/path/node"])
+    private let vendored = URL(fileURLWithPath: "/app/Contents/Resources/node")
+
+    func testTheVendoredRuntimeWinsOverEverythingOnTheMachine() {
+        // A normal user's Finder launch: no OHMAIL_NODE, Homebrew present, but the vendored node must
+        // win so the app never depends on what the user happens to have installed.
+        let fs = FakeFS(runnable: ["/app/Contents/Resources/node", "/opt/homebrew/bin/node", "/on/path/node"])
         let resolved = EngineProcess.resolveNode(
-            environment: [NODE_PATH_VAR: "/custom/node", "PATH": "/on/path"], fileManager: fs)
+            environment: ["PATH": "/on/path"], vendored: vendored, fileManager: fs)
+        XCTAssertEqual(resolved?.path, "/app/Contents/Resources/node")
+    }
+
+    func testAnExplicitNodePathWinsOverTheVendoredOneAndEverythingElse() {
+        let fs = FakeFS(runnable: ["/app/Contents/Resources/node", "/opt/homebrew/bin/node", "/custom/node", "/on/path/node"])
+        let resolved = EngineProcess.resolveNode(
+            environment: [NODE_PATH_VAR: "/custom/node", "PATH": "/on/path"], vendored: vendored, fileManager: fs)
         XCTAssertEqual(resolved?.path, "/custom/node")
+    }
+
+    func testWithTheVendoredRuntimeStrippedItFallsBackToTheMachine() {
+        // The mutation the owner asked to watch: the vendored binary is gone (or points at a
+        // non-executable), so resolution falls through to a node on the machine rather than failing.
+        let fs = FakeFS(runnable: ["/opt/homebrew/bin/node"])   // vendored path is NOT runnable
+        let resolved = EngineProcess.resolveNode(
+            environment: ["PATH": "/usr/bin"], vendored: vendored, fileManager: fs)
+        XCTAssertEqual(resolved?.path, "/opt/homebrew/bin/node")
+    }
+
+    func testWithTheVendoredRuntimeStrippedAndNoNodeAnywhereNothingResolves() {
+        // Stripped vendored AND a bare machine → nil, which supervise turns into the honest named
+        // failure rather than a misleading "engine missing".
+        XCTAssertNil(EngineProcess.resolveNode(
+            environment: ["PATH": "/usr/bin:/bin"], vendored: vendored, fileManager: FakeFS(runnable: [])))
+    }
+
+    func testVendoredIsComputedBesideTheEngineInResourcesNotMacOS() {
+        let engine = URL(fileURLWithPath: "/Apps/ohmail.app/Contents/MacOS/ohmail-engine")
+        XCTAssertEqual(EngineProcess.vendoredNode(besideEngine: engine).path,
+                       "/Apps/ohmail.app/Contents/Resources/node")
     }
 
     func testHomebrewIsPreferredBeforeThePathSearch() {

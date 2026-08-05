@@ -286,21 +286,31 @@ public final class EngineProcess: @unchecked Sendable {
         Bundle.main.executableURL?.deletingLastPathComponent()
     }
 
-    /// The Node runtime the engine is spawned with, or `nil` when this build can find none.
+    /// The vendored Node runtime, computed from the engine's own location: the shipped `.app` carries
+    /// its own `node` in `Contents/Resources/`, one directory over from the engine in `Contents/MacOS/`.
+    /// `nil` when the engine is not laid out that way (a development run from the workspace).
+    static func vendoredNode(besideEngine engine: URL) -> URL {
+        engine.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources").appendingPathComponent("node")
+    }
+
+    /// The Node runtime the engine is spawned with, or `nil` when none can be found.
     ///
-    /// **THE ENGINE IS A NODE SCRIPT AND THIS BETA VENDORS NO RUNTIME**, so one has to be found on
-    /// the machine. The trap this closes is that a Finder or launchd launch runs with
-    /// `PATH=/usr/bin:/bin:/usr/sbin:/sbin` — no Homebrew, no nvm — so the engine's own
-    /// `#!/usr/bin/env node` shebang finds nothing even when the user HAS Node installed. So the
-    /// runtime is resolved explicitly here, and its directory is prepended to the child's `PATH` in
-    /// ``supervise(_:)`` so the shebang runs THIS node.
+    /// **THE SHIPPED `.app` CARRIES ITS OWN NODE**, so a normal user needs nothing installed: the
+    /// vendored runtime wins, and a Finder or launchd launch — whose `PATH` is only
+    /// `/usr/bin:/bin:/usr/sbin:/sbin`, no Homebrew, no nvm — never depends on the user's environment.
+    /// The runtime is resolved explicitly here and its directory is prepended to the child's `PATH` in
+    /// ``supervise(_:)`` so the engine's `#!/usr/bin/env node` shebang runs THIS node.
     ///
-    /// Order, most specific first: ``NODE_PATH_VAR`` (an operator's exact choice), then the two
-    /// default package locations (Homebrew on Apple silicon, then on Intel / the older prefix), then
-    /// whatever the inherited `PATH` already carries — the developer case, whose terminal `PATH` has
-    /// node on it. **Runnable, not merely present**, the same bar ``install(environment:executableDirectory:fileManager:)``
-    /// holds the engine to: a directory or a non-executable at that path is not a runtime.
-    static func resolveNode(environment env: [String: String], fileManager fm: FileManager = .default) -> URL? {
+    /// Order, most specific first: ``NODE_PATH_VAR`` (an operator's exact override), then the
+    /// **vendored** runtime (the standalone path, and the one that must win on a normal machine), then
+    /// the two default package locations (Homebrew on Apple silicon, then Intel / the older prefix),
+    /// then whatever the inherited `PATH` already carries — the developer case, whose terminal `PATH`
+    /// has node on it. **Runnable, not merely present**, the same bar
+    /// ``install(environment:executableDirectory:fileManager:)`` holds the engine to: a directory or a
+    /// non-executable at that path is not a runtime.
+    static func resolveNode(environment env: [String: String], vendored: URL? = nil,
+                            fileManager fm: FileManager = .default) -> URL? {
         func runnable(_ path: String) -> URL? {
             var isDir: ObjCBool = false
             let ok = fm.fileExists(atPath: path, isDirectory: &isDir) && !isDir.boolValue
@@ -308,6 +318,7 @@ public final class EngineProcess: @unchecked Sendable {
             return ok ? URL(fileURLWithPath: path) : nil
         }
         if let explicit = present(env[NODE_PATH_VAR]), let url = runnable(explicit) { return url }
+        if let vendored, let url = runnable(vendored.path) { return url }
         for candidate in ["/opt/homebrew/bin/node", "/usr/local/bin/node"] {
             if let url = runnable(candidate) { return url }
         }
@@ -561,17 +572,20 @@ public final class EngineProcess: @unchecked Sendable {
             var environment = ProcessInfo.processInfo.environment
             for (name, value) in launch.environment { environment[name] = value }
 
-            // FIND A NODE, OR SAY SO PLAINLY. The engine is a Node script and this beta ships no
-            // runtime, so one has to be on the machine — and a Finder/launchd `PATH` finds none even
-            // when the user has Node, which is the whole reason ``resolveNode`` exists. Its directory
-            // is prepended to the child's `PATH` so the engine's shebang runs THIS node. A build that
-            // can find none fails HERE, with the runtime named, rather than at `process.run()` with a
-            // `NotFound` that reads as "the engine is missing" — the engine is right there.
-            guard let node = Self.resolveNode(environment: environment) else {
+            // FIND A NODE, OR SAY SO PLAINLY. The engine is a Node script, and the shipped `.app`
+            // carries its own runtime beside the engine (``vendoredNode(besideEngine:)``) so a normal
+            // user needs nothing installed. ``resolveNode`` prefers that vendored one, then an operator
+            // override, then whatever is on the machine — and its directory is prepended to the child's
+            // `PATH` so the engine's shebang runs THIS node. The only way to reach the failure below is
+            // a build whose runtime was stripped AND a machine with no Node anywhere; it fails HERE,
+            // naming the runtime, rather than at `process.run()` with a `NotFound` that reads as "the
+            // engine is missing" — the engine is right there.
+            guard let node = Self.resolveNode(environment: environment,
+                                              vendored: Self.vendoredNode(besideEngine: launch.program)) else {
                 setStatus(.failed(
-                    reason: "ohmail's engine runs on Node 20 or newer, and this beta does not yet "
-                        + "bundle one. Install Node from nodejs.org and reopen ohmail, or set "
-                        + "\(NODE_PATH_VAR) to a node binary. A later build will ship its own runtime.",
+                    reason: "ohmail could not find the Node runtime it runs on. This build should carry "
+                        + "its own; if it was modified, reinstall ohmail — or set \(NODE_PATH_VAR) to a "
+                        + "Node 20+ binary and reopen ohmail.",
                     last: nil))
                 break
             }

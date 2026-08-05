@@ -1,0 +1,57 @@
+ohmail for macOS — first run
+============================
+
+1.  Drag ohmail.app onto the Applications shortcut in this window.
+
+2.  THE FIRST LAUNCH NEEDS A RIGHT-CLICK.
+
+    In Applications, right-click (or Control-click) ohmail.app and choose
+    "Open", then "Open Anyway". A normal double-click is blocked.
+
+    Why: this build is UNSIGNED and UN-NOTARIZED. It carries only an ad-hoc
+    signature, not an Apple Developer ID, so macOS Gatekeeper refuses it on a
+    plain double-click and says the app "is damaged" or "cannot be opened
+    because the developer cannot be verified". Nothing is damaged — the app has
+    simply not been through Apple's notary service. On macOS 15 (Sequoia) the
+    button may be under System Settings › Privacy & Security › "Open Anyway"
+    after the first blocked attempt. Signed, notarized builds ship once the
+    ohmail Apple Developer account is in place.
+
+    If macOS still refuses after that:
+        xattr -dr com.apple.quarantine /Applications/ohmail.app
+    Run that only if you trust where this DMG came from. The honest alternative
+    is to build it yourself from source:
+        https://github.com/trafficflowhq/ohmail
+
+3.  IT IS SELF-CONTAINED. There is nothing else to install.
+
+    ohmail carries everything it needs to run. You do not need Node, a package
+    manager, or any developer tools — open it and it works.
+
+4.  WHAT IT DOES.
+
+    ohmail connects to your own IMAP mail server, mirrors your mailbox to a local
+    database on this Mac, and organizes new mail into ohmail/ folders (a Screener
+    for first-time senders, and the rest) on the server itself — so the filing is
+    visible in any mail client, not just this one. It asks for your mail server
+    and password on first launch; the password is sealed into a per-install key in
+    your login Keychain and is not written anywhere in the clear.
+
+    Your mail stays on your server. The local mirror is a cache: delete it (or the
+    whole app) and nothing on the server is touched — it re-syncs from scratch next
+    time. Exactly one copy of ohmail organizes a mailbox at a time.
+
+    To look around WITHOUT connecting a mailbox, launch the fixture preview:
+        open -a ohmail --args --demo
+    That runs on a small fictional mailbox that ships inside the app — no server,
+    no network, no account — so you can judge the interface on its own.
+
+Requires macOS 15 (Sequoia) or newer.
+The x86_64 (Intel) build has not been tested on real Intel hardware.
+
+ohmail is free software: GPL-3.0-or-later.
+Copyright (C) 2026 TrafficFlow GmbH, Zürich, Switzerland.
+Source, issues, roadmap:  https://github.com/trafficflowhq/ohmail
+About ohmail:             https://ohmail.app
+Questions:                support@ohmail.app
+Third-party components and their licences are listed in THIRD-PARTY-NOTICES.txt.
