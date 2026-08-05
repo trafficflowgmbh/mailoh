@@ -336,9 +336,17 @@ export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "vi
   const { register } = useKeymap();
   const latest = useRef(bindings);
   latest.current = bindings;
-  const shape = bindings
-    .map((b) => `${b.chord}${b.group}${b.label}${b.disabled ? 1 : 0}${b.inInput ? 1 : 0}`)
-    .join("");
+  /* `JSON.stringify` rather than a separator character, and that is not a style choice.
+     Concatenating these fields with nothing between them makes chord "ab" + group "c"
+     indistinguishable from chord "a" + group "bc", so two different binding sets produce one
+     key and the second never re-registers. Any single separator only postpones that until a
+     label contains it, and a CONTROL character additionally risks the trap that put raw bytes
+     in this file to begin with: one NUL makes the whole file read as binary, after which every
+     grep-family tool skips it in silence. JSON escapes its own delimiters, so the encoding is
+     unambiguous for every string, and every byte of it is printable. */
+  const shape = JSON.stringify(
+    bindings.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true]),
+  );
 
   useEffect(
     () => register({ scope, get: () => latest.current }),
