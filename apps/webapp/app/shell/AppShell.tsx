@@ -45,6 +45,7 @@ import {
   type TriagePileEntry,
 } from "@ohmail/client-engine";
 import {
+  Button,
   CommandPalette,
   Dock,
   DockIcon,
@@ -416,9 +417,22 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * gated on completing it — an account that never does simply screens every stranger, which
    * is the old behaviour and not a broken one — so a modal nobody could leave would be a wall
    * in front of somebody's mail for a step that is an offer.
+   *
+   * ── "NOT NOW" IS NOT "NEVER", AND NEITHER IS "DONE" ───────────────────────────────────────
+   *
+   * `seedReopened` is the door back, and there has to be one. Dismissing used to leave the
+   * screen unreachable for the rest of the tab's life, and CONFIRMING left it unreachable for
+   * the rest of the account's — `seedConfirmedAt` was set and nothing ever unset it short of
+   * wiping every screening decision on the account. Connecting a second mailbox is the case
+   * that makes that wrong rather than merely awkward: it brings a second address book of
+   * people the user has written to, and the screen that consents to them was walled off. The
+   * Settings entry sets this, `confirmSeed` writes only who is new, and the review recomputes
+   * itself from whatever mailboxes are attached when it is opened.
    */
   const [seedDismissed, setSeedDismissed] = useState(false);
-  const seedOwed = !demo && consent.known && consent.seedConfirmedAt === null && !seedDismissed;
+  const [seedReopened, setSeedReopened] = useState(false);
+  const seedOwed = !demo && consent.known
+    && (seedReopened || (consent.seedConfirmedAt === null && !seedDismissed));
   /**
    * The account's OWN addresses, from `GET /mailboxes` — passed EXPLICITLY and not left to
    * the default.
@@ -2486,12 +2500,14 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
               <SeedReviewView
                 onDone={() => {
                   setSeedDismissed(true);
+                  setSeedReopened(false);
                   if (typeof window !== "undefined") window.location.reload();
                 }}
                 /* Nothing was written, so nothing needs re-reading. The offer stands next
                    time this tab loads — it is not remembered on the server, because "not
-                   now" is not an answer to "shall I let these people through". */
-                onLater={() => setSeedDismissed(true)}
+                   now" is not an answer to "shall I let these people through" — and
+                   Settings holds the door open for the rest of this one. */
+                onLater={() => { setSeedDismissed(true); setSeedReopened(false); }}
               />
             ) : null}
 
@@ -2686,6 +2702,25 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                    be a form posting to a server this tab is not talking to. The demo keeps
                    the fixture list, which is the honest thing for it to show. */
                 mailboxSection={demo ? undefined : mailboxSection}
+                /* THE DOOR BACK TO THE REVIEW. Built here rather than injected from
+                   `CloudShell` like the four panes above it, because the only thing it does
+                   is flip this component's own state — the review is a stage view, not a
+                   settings form, so the entry has to be able to reach `seedOwed`. Absent on
+                   the demo for the same reason the others are: there is no server to read a
+                   sent folder from. */
+                seedSection={demo ? undefined : {
+                  label: t("seed.settingsLabel"),
+                  node: (
+                    <SettingsSection>
+                      <p className="set-note-inline">{t("seed.reopenBody")}</p>
+                      <div className="gate-actions">
+                        <Button onClick={() => setSeedReopened(true)}>
+                          {t("seed.reopenAction")}
+                        </Button>
+                      </div>
+                    </SettingsSection>
+                  ),
+                }}
                 billingSection={demo ? undefined : billingSection}
                 /* ABOUT — the one injected pane the demo also gets, because the demo has
                    something true to say here and no API to say it with. The live body comes

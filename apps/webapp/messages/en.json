@@ -376,6 +376,8 @@
     "lede": "Writing to someone is the clearest sign you want to hear back from them. Everyone ticked below gets through to your Ohbox from now on. Untick anyone you'd rather screen.",
     "truncated": "Read from your {scanned, number} most recent sent messages. Anyone you wrote to before that will still reach the Screener if they write again.",
     "filterPlaceholder": "Find someone…",
+    "selectShown": "Tick all {count, plural, one {1 shown} other {# shown}}",
+    "deselectShown": "Untick {count, plural, one {1 shown} other {all # shown}}",
     "wroteN": "{count, plural, one {1 message} other {# messages}}",
     "alreadyDecided": "already decided",
     "excludedSummary": "{count, plural, one {1 address was left out} other {# addresses were left out}}",
@@ -390,7 +392,11 @@
     "later": "Not now",
     "loading": "Reading your sent mail…",
     "errorTitle": "That didn't work.",
-    "errorGeneric": "Something went wrong reading your sent mail."
+    "errorGeneric": "Something went wrong reading your sent mail.",
+    "errorRetry": "Your ticks are still here — press the button again.",
+    "settingsLabel": "People you write to",
+    "reopenBody": "Look again at the people you have written to and decide who gets through. Anyone you have already decided about stays as they are; this only adds people you have not answered for yet — which is what a newly connected mailbox brings.",
+    "reopenAction": "Review them"
   },
   "history": {
     "title": "History",

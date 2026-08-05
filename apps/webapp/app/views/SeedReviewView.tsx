@@ -22,12 +22,21 @@
  * somebody's real mailbox, and somebody about to press a button that could is entitled to
  * know it will not before they press it rather than after.
  *
- * ── AND THERE IS EXACTLY ONE CONFIRM ──────────────────────────────────────────────────────
+ * ── A FAILED CONFIRM KEEPS THE CURATION ───────────────────────────────────────────────────
  *
- * The server refuses a second (409), because the review is an offer made once. A retry of a
- * confirmation whose answer was lost is a different thing and is handled by the idempotency
- * key this screen mints per press — one key per press of one button, so a network retry
- * replays the answer instead of asking the question again.
+ * Someone who has just gone down a list of two hundred people unticking the twelve they would
+ * rather screen has done real work, and it exists nowhere but in this component. The failure
+ * path therefore keeps the review AND the tick state and renders the error above the list, so
+ * "try again" is one press. It used to replace the whole screen with an apology and a way out,
+ * which threw the curation away — and losing somebody's work is worse than the failure that
+ * caused it, because the failure was usually transient and the work is not recoverable.
+ *
+ * ── AND THE CONFIRM MAY BE PRESSED MORE THAN ONCE ─────────────────────────────────────────
+ *
+ * The server writes a rule for whoever does not have one and skips whoever does, so a second
+ * press adds nothing and a retry is safe. The idempotency key this screen mints per press is
+ * still the thing that separates "the user pressed twice" from "the first response never
+ * arrived": a retry of the same press replays its answer rather than re-running the question.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -37,9 +46,11 @@ import { ApiError, consent as consentApi, type SeedReviewWire } from "../api-cli
 
 type Phase =
   | { state: "loading" }
-  | { state: "ready"; review: SeedReviewWire }
+  /** The list is up. `error` is set when a confirm came back refused — the ticks are kept. */
+  | { state: "ready"; review: SeedReviewWire; error?: string }
   | { state: "confirming"; review: SeedReviewWire }
-  | { state: "failed"; message: string };
+  /** Nothing to show. Only the LIST's own failure reaches this: there is no curation to keep. */
+  | { state: "unavailable"; message: string };
 
 /** A stable key per press, so a retry replays rather than re-asks. */
 const newKey = (): string =>
@@ -75,7 +86,7 @@ export function SeedReviewView({
       } catch (err) {
         if (!live) return;
         setPhase({
-          state: "failed",
+          state: "unavailable",
           message: err instanceof ApiError ? err.message : t("errorGeneric"),
         });
       }
@@ -94,6 +105,26 @@ export function SeedReviewView({
     );
   }, [review, filter]);
 
+  /**
+   * The rows a bulk action may touch: what the filter is showing, minus anyone already decided
+   * about. Their boxes are disabled, and a "select all shown" that silently ticked a row the
+   * user cannot untick would be lying about what the button did.
+   */
+  const actionable = useMemo(() => shown.filter((c) => !c.alreadyDecided), [shown]);
+  const shownChecked = useMemo(
+    () => actionable.filter((c) => checked.has(c.address)).length,
+    [actionable, checked],
+  );
+  /**
+   * Whether the bulk pair is offered at all — a question about the WHOLE list, not the filtered
+   * one, so the controls do not appear and vanish under the cursor as somebody types. What they
+   * ACT on is still only what is shown; that is the part that must never widen.
+   */
+  const bulkOffered = useMemo(
+    () => (review?.candidates.filter((c) => !c.alreadyDecided).length ?? 0) > 1,
+    [review],
+  );
+
   const toggle = useCallback((address: string) => {
     setChecked((s) => {
       const next = new Set(s);
@@ -103,6 +134,26 @@ export function SeedReviewView({
     });
   }, []);
 
+  /**
+   * TICK OR UNTICK EVERYTHING THE FILTER IS SHOWING — and only that.
+   *
+   * The list is the whole point of the screen and it is long; on a real mailbox it is hundreds
+   * of rows. Search narrows it to "everyone at that old employer" or "everything from that
+   * mailing list I answered once", and the answer the user has in mind for that subset is one
+   * answer, not forty clicks. Scoped to the FILTERED rows rather than the whole list, because
+   * a control that reaches past what is on screen is the one that loses somebody's curation.
+   */
+  const setShown = useCallback((on: boolean) => {
+    setChecked((s) => {
+      const next = new Set(s);
+      for (const c of actionable) {
+        if (on) next.add(c.address);
+        else next.delete(c.address);
+      }
+      return next;
+    });
+  }, [actionable]);
+
   const confirm = useCallback(async () => {
     if (!review) return;
     setPhase({ state: "confirming", review });
@@ -110,9 +161,12 @@ export function SeedReviewView({
       await consentApi.confirmSeed([...checked], { idempotencyKey: newKey() });
       onDone();
     } catch (err) {
+      // THE REVIEW AND THE TICKS SURVIVE. `checked` is untouched — it lives outside `phase` for
+      // exactly this reason — so the retry sends the same curated list the failed press did.
       setPhase({
-        state: "failed",
-        message: err instanceof ApiError ? err.message : t("errorGeneric"),
+        state: "ready",
+        review,
+        error: err instanceof ApiError ? err.message : t("errorGeneric"),
       });
     }
   }, [review, checked, onDone, t]);
@@ -127,7 +181,7 @@ export function SeedReviewView({
     );
   }
 
-  if (phase.state === "failed") {
+  if (phase.state === "unavailable") {
     return (
       <section className="view center view-seed">
         <div className="gate-card">
@@ -142,6 +196,7 @@ export function SeedReviewView({
   }
 
   const busy = phase.state === "confirming";
+  const failure = phase.state === "ready" ? phase.error : undefined;
 
   return (
     <section className="view center view-seed">
@@ -149,6 +204,15 @@ export function SeedReviewView({
         <h1>{t("title", { count: review!.candidates.length })}</h1>
         <p className="view-note">{t("lede")}</p>
         {review!.truncated ? <p className="view-note">{t("truncated", { scanned: review!.scannedMessages })}</p> : null}
+
+        {/* THE REFUSAL SITS ABOVE THE LIST, NOT INSTEAD OF IT. Everything the user has ticked
+            and unticked is still on screen and still theirs; the only thing that failed is the
+            press. `role="alert"` because it appears after the fact, in response to an action. */}
+        {failure ? (
+          <p className="seed-error" role="alert">
+            <strong>{t("errorTitle")}</strong> {failure} {t("errorRetry")}
+          </p>
+        ) : null}
 
         <input
           className="seed-filter"
@@ -158,6 +222,28 @@ export function SeedReviewView({
           aria-label={t("filterPlaceholder")}
           onChange={(e) => setFilter(e.currentTarget.value)}
         />
+
+        {/* BULK, AND SCOPED TO THE SEARCH. Both directions, because both are real: "everyone
+            from that project, yes" and "this whole mailing list, no" are the same gesture. The
+            counts name what will be touched, so neither button is a leap of faith. */}
+        {bulkOffered ? (
+          <div className="seed-bulk">
+            <Button
+              variant="ghost"
+              disabled={busy || actionable.length === 0 || shownChecked === actionable.length}
+              onClick={() => setShown(true)}
+            >
+              {t("selectShown", { count: actionable.length })}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={busy || shownChecked === 0}
+              onClick={() => setShown(false)}
+            >
+              {t("deselectShown", { count: shownChecked })}
+            </Button>
+          </div>
+        ) : null}
 
         <ul className="seed-list">
           {shown.map((c) => (

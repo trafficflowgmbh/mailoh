@@ -35,7 +35,7 @@ import {
 import { hueOf } from "../shell/format";
 import { RulesView, type RuleOutcome } from "./RulesView";
 
-type PaneId = "general" | "notifications" | "mailboxes" | "billing" | "tags" | "rules" | "about" | "security" | "account";
+type PaneId = "general" | "notifications" | "mailboxes" | "seed" | "billing" | "tags" | "rules" | "about" | "security" | "account";
 
 /**
  * The notification channels, and why this list is here rather than in the fixtures.
@@ -206,6 +206,7 @@ export function SettingsView({
   tagAdmin,
   accountSection,
   mailboxSection,
+  seedSection,
   billingSection,
   securitySection,
   aboutSection,
@@ -272,6 +273,21 @@ export function SettingsView({
    * Desktop and for `?demo=1`.
    */
   mailboxSection?: ReactNode;
+  /**
+   * THE WAY BACK TO THE SENT-MAIL REVIEW, which is the only reason this pane exists.
+   *
+   * The review is offered when an account has never answered it and takes the whole stage
+   * while it is owed, and "Not now" makes it go away. Without an entry here, "Not now" and
+   * "answered it once, two years ago" were both dead ends: a mailbox connected afterwards
+   * brings a whole second address book of people the user has written to, and there was no
+   * door back to the screen that consents to them.
+   *
+   * It carries its own `label` rather than reading one from the `settings` namespace because
+   * the words belong to the consent vocabulary, which this shared file does not own — the
+   * review's own screen has to say the same thing, and one wording in one place is how the two
+   * stay the same sentence.
+   */
+  seedSection?: { label: string; node: ReactNode };
   /** The Cloud client's Subscription pane — plan, the AI switch, and Stripe's portal. */
   billingSection?: ReactNode;
   /**
@@ -313,6 +329,8 @@ export function SettingsView({
     ["general", t("general")],
     ["notifications", t("notifications")],
     ["mailboxes", t("mailboxes")],
+    // Directly after Mailboxes, because connecting one is what makes it owed again.
+    ...(seedSection ? [["seed", seedSection.label] as [PaneId, string]] : []),
     // Only where there is something to bill. Desktop is free and standalone; a Subscription
     // pane there would be offering to sell what the tier already gives away.
     ...(billingSection ? [["billing", t("billing")] as [PaneId, string]] : []),
@@ -498,6 +516,7 @@ export function SettingsView({
             </SettingsSection>
           ) : null}
 
+          {pane === "seed" ? seedSection?.node : null}
           {pane === "about" ? aboutSection : null}
           {pane === "security" ? securitySection : null}
           {pane === "account" ? accountSection : null}
