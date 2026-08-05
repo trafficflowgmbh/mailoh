@@ -16,6 +16,43 @@ Next is the engine slice — IMAP behind today's `AppState` seam, and the thing
 that makes these apps a mail client rather than a preview of one. See
 [Roadmap](README.md#roadmap) and issue #1.
 
+## [0.3.0-preview] — 2026-08-05
+
+**Still a preview**: no engine ships in these artifacts, so they do not connect
+to a mailbox. The macOS app now contains the code to launch and supervise a local
+engine, and it stays inert because it finds nothing to launch.
+
+### Added
+
+- **Compose is a rich text editor.** Bold, italic, lists, headings and links, in
+  the inline reply as well as the compose view, where before it was plain text.
+  A send may now carry markup alongside its plain-text alternative.
+
+### Changed
+
+- **A Screener decision names the folder it chose.** It used to answer with only
+  two destinations, so three of the five decision buttons wrote a rule pointing
+  at a place the user had not picked.
+- **A partial first import stops presenting itself as a finished one**, so a
+  mailbox that is still filling no longer reads as complete.
+
+### Fixed
+
+- The formatting editor kept only the first of two changes that landed in the
+  same tick.
+- Two different sets of key bindings could produce one cache key.
+- A render check that could pass against a stale bundle.
+- The macOS orphan test could time out on a loaded CI runner: its reader kept its
+  buffer in a local, so a line arriving in the same read as the one it matched
+  was discarded. The property under test — that killing the shell leaves no
+  engine process behind — is unchanged.
+- Two installer inspection checks piped a producer into `grep -q`, which exits at
+  its first match and kills the producer; under `set -o pipefail` that reported
+  the wrong thing.
+- The URL-string audit over the shipped binaries counts 14 on Linux and 15 on
+  Windows. The editor brought one new documentation link into the bundle, which
+  is the pinned count doing its job.
+
 ## [0.2.0-preview] — 2026-07-31
 
 The same interface under its real name. **Still a preview**: this build does not
@@ -183,6 +220,7 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.2.0-preview...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.3.0-preview...HEAD
+[0.3.0-preview]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.3.0-preview
 [0.2.0-preview]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.2.0-preview
 [0.1.0-preview]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.1.0-preview

@@ -10,7 +10,7 @@ A native SwiftUI client for macOS and a Tauri shell for Windows and Linux.
 Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/badge/download-v0.2.0--preview-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.2.0-preview)
+[![latest release](https://img.shields.io/badge/download-v0.3.0--preview-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.3.0-preview)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -45,9 +45,9 @@ push. It is a commercial service with a codebase of its own, built by the same
 people, and the desktop app neither asks for it nor needs it.
 [Desktop or Cloud](#desktop-or-cloud) is the full comparison, prices included.
 
-## The current release — v0.2.0-preview
+## The current release — v0.3.0-preview
 
-**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.2.0-preview)**
+**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.3.0-preview)**
 `ohmail.dmg` for macOS, an `.msi` and an NSIS `-setup.exe` for Windows, an
 `.AppImage` and a `.deb` for Linux. Every file was built by GitHub Actions from
 the tree this tag points at, and the run that made them prints the SHA-256 of
@@ -66,10 +66,16 @@ Launched without the flag, the app does not open it. The local mail engine is
 what we are building now; it is
 [issue #1](https://github.com/trafficflowhq/ohmail/issues/1).
 
-This is the first release under the name **ohmail**. v0.1.0-preview shipped as
-`mailoh` and its files are still named that way; it was not relabelled, because
-renaming a released file invalidates every checksum published against it.
-[CHANGELOG.md](CHANGELOG.md) has what changed between the two.
+**What is new since v0.2.0-preview:** compose is a rich text editor now — bold,
+italic, lists, headings and links, in the reply box as well as in the compose
+view — where before it was plain text. A Screener decision names the folder it
+chose rather than implying one, and a partial first import stops presenting
+itself as a finished one. The rest is repair.
+
+v0.1.0-preview shipped under the earlier name `mailoh` and its files are still
+named that way; they were not relabelled, because renaming a released file
+invalidates every checksum published against it. [CHANGELOG.md](CHANGELOG.md) has
+the full list.
 
 ## Status — read this first
 
@@ -80,9 +86,9 @@ launched with `--demo`.
 | | |
 |---|---|
 | ✅ Runs, and is worth looking at | Every surface is real: Ohbox, Screener, Reads, Receipts, triage piles, tags, search, compose, settings — light and dark, down to a 390 pt window, keyboard-first. Native SwiftUI on macOS; the same interface in a locked-down webview on Windows and Linux. |
-| ✅ Tested | 99 tests over the model, the rules and the design tokens, plus a render check (`--smoke`) that hosts every route offscreen, rasterises it, and fails if anything draws nothing or quietly collapses a list. The Tauri shell has its own 31-check render + offline audit over the built bundle, and 14 assertions on its security configuration. |
-| ❌ Does not talk to your mailbox | There is **no IMAP client, no HTTP client, no telemetry and no update check** in either build. `import` lines across the whole macOS app: AppKit, Foundation, SwiftUI, Observation. Nothing else. The Windows/Linux shell forbids connections at the webview level (`connect-src 'none'`) and replaces the page's network APIs with functions that throw. |
-| ❌ No accounts, no credentials | Nothing to sign into, nothing stored in the keychain. |
+| ✅ Tested | 269 tests — the interface model, the rules and the design tokens, and the engine process handling that is not yet used here — plus a render check (`--smoke`) that hosts every route offscreen, rasterises it, and fails if anything draws nothing or quietly collapses a list. The Tauri shell has its own 31-check render + offline audit over the built bundle, and 14 assertions on its security configuration. |
+| ❌ Does not talk to your mailbox | There is **no IMAP client, no HTTP client, no telemetry and no update check** in either build. The IMAP client lives in the local engine, and **no engine ships in these artifacts** — the macOS app now contains the code to launch and supervise one, and it stays inert because it finds nothing to launch. `import` lines across the whole macOS app: AppKit, Dispatch, Foundation, Observation, Security, SwiftUI, and its own two modules. Nothing else. The Windows/Linux shell forbids connections at the webview level (`connect-src 'none'`) and replaces the page's network APIs with functions that throw. |
+| ❌ No accounts, no credentials | Nothing to sign into. The macOS app carries a Keychain-backed keystore for the engine that is coming, and it never runs here: the launch plan looks for the engine binary first and gives up before it reads a key, so an artifact with no engine in it writes nothing to your keychain. |
 | 🔜 Next | The local engine slice — IMAP with IDLE and delta fetch, an on-device store, the rules pipeline, then AI with your own key or a local Ollama. See [Roadmap](#roadmap). |
 
 Nothing in `Views/` reaches past `AppState` — not even for a string. That is the
@@ -167,8 +173,8 @@ what the run made.
 | Platform | Artifacts | Runner |
 |---|---|---|
 | **macOS** | `ohmail.dmg` (universal, arm64 + x86_64), `ohmail.app.zip`, the full screenshot set | `macos-15` |
-| **Windows** | `ohmail_0.2.0_x64_en-US.msi`, `ohmail_0.2.0_x64-setup.exe` (NSIS) | `windows-latest` |
-| **Linux** | `ohmail_0.2.0_amd64.AppImage`, `ohmail_0.2.0_amd64.deb` | `ubuntu-latest` |
+| **Windows** | `ohmail_0.3.0_x64_en-US.msi`, `ohmail_0.3.0_x64-setup.exe` (NSIS) | `windows-latest` |
+| **Linux** | `ohmail_0.3.0_amd64.AppImage`, `ohmail_0.3.0_amd64.deb` | `ubuntu-latest` |
 
 **Nothing here is signed**, on any platform. Code-signing certificates cost money
 ohmail has not spent yet. We would rather say that plainly than have you discover
@@ -215,12 +221,12 @@ Requires Windows 10 or newer, plus the WebView2 runtime as described above.
 > **The AppImage needs the executable bit**, which GitHub's artifact zip does not
 > preserve:
 > ```bash
-> chmod +x ohmail_0.2.0_amd64.AppImage && ./ohmail_0.2.0_amd64.AppImage
+> chmod +x ohmail_0.3.0_amd64.AppImage && ./ohmail_0.3.0_amd64.AppImage
 > ```
 > If it exits immediately on a distribution that has not enabled unprivileged
 > user namespaces, run it with `--appimage-extract-and-run`.
 
-The `.deb` installs with `sudo apt install ./ohmail_0.2.0_amd64.deb` and pulls in
+The `.deb` installs with `sudo apt install ./ohmail_0.3.0_amd64.deb` and pulls in
 WebKitGTK. It is **not** in any repository, so it will never auto-update — and
 there is no update checker in this build at all.
 
@@ -270,7 +276,7 @@ git clone https://github.com/trafficflowhq/ohmail
 cd ohmail
 
 swift build --package-path apps/macos -c release   # ~15 s cold on an M-series Mac
-swift test  --package-path apps/macos              # 99 tests, ~1 s
+swift test  --package-path apps/macos              # 269 tests
 swift run   --package-path apps/macos OhMail       # opens the app
 ```
 
@@ -410,7 +416,7 @@ package, no dependencies.
 |---|---|---|
 | `OhMailKit` | library | `Theme/` (the design tokens), `Models/`, `Fixtures/`, `State/`, `Views/`, `App/` |
 | `OhMail` | executable | `main.swift` — dispatches `--smoke`, `--shot`, or the app |
-| `OhMailKitTests` | tests | 99 tests: counts and seen-semantics, lossless Screener moves, undo, triage, tags, search, numeric design-token fidelity, source audits, and the no-collapse audit |
+| `OhMailKitTests` | tests | 157 tests: counts and seen-semantics, lossless Screener moves, undo, triage, tags, search, numeric design-token fidelity, source audits, and the no-collapse audit |
 
 One of those 99 reports as *skipped* here, and says why when it does: it compares
 the triage pile's sheet-edge shadow against the original design prototype, which
