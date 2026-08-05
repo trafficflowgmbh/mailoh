@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
-import { messages, messageInstances, folderState, flagState, mailboxes, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, type Tx, type EntityType } from "@trafficflow/db";
+import { messages, messageInstances, folderState, flagState, mailboxes, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   Rule, NativeLocator, EmailAddress,
@@ -576,9 +576,23 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     });
   }
 
-  /** Append a delta-log row in the AMBIENT transaction: allocateSeq + insert. */
+  /**
+   * Append a delta-log row in the AMBIENT transaction: allocateSeq + insert.
+   *
+   * THE CAST IS THE ONE PLACE THE TYPE CANNOT HELP, and it is deliberate rather than lazy.
+   * `recordChange` takes `LedgerTx` precisely so that no caller can hand it an autocommit handle
+   * — on one, the seq allocation commits and releases the counter row lock BEFORE the log row is
+   * inserted, and a client polling in that window advances past a seq that is not there yet.
+   * This class, though, holds ONE `db` field that is legitimately either scope: a top-level
+   * handle for every read, and a transaction handle inside `transaction(...)`. Narrowing the
+   * field would break every read-only construction site.
+   *
+   * So the guarantee moves to runtime for this seam only: `assertLedgerTx` inside
+   * `allocateSeqRange` throws `NotInTransactionError` if this repo was NOT built from a
+   * transaction. Calling it on a top-level repo is a loud failure, never a silent reordering.
+   */
   async recordChange(input: RepoChangeInput): Promise<bigint> {
-    return recordChangeTx(this.db, {
+    return recordChangeTx(this.db as LedgerTx, {
       accountId: input.accountId,
       entityType: input.entityType as EntityType,
       entityId: input.entityId,

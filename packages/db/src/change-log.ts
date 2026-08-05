@@ -30,6 +30,38 @@ export type Tx = PgDatabase<any, any, any>;
  */
 export type LedgerTx = PgTransaction<any, any, any>;
 
+/** Thrown when a change-log writer is handed an autocommit handle. See {@link assertLedgerTx}. */
+export class NotInTransactionError extends Error {
+  constructor(fn: string) {
+    super(
+      `${fn} must be called inside db.transaction(...): a top-level handle auto-commits the seq ` +
+      "allocation before the change_log row is inserted, so a polling client can advance past a " +
+      "seq that is not there yet and never see it",
+    );
+    this.name = "NotInTransactionError";
+  }
+}
+
+/**
+ * The RUNTIME half of the transaction requirement, for the seam the type cannot reach.
+ *
+ * {@link LedgerTx} makes `recordChange(db, …)` uncompilable, which covers every direct caller —
+ * and there are around twenty. It cannot cover `DrizzleRepo`, whose ONE `db` field is
+ * legitimately either a top-level handle (for the reads) or a transaction handle (inside
+ * `repo.transaction(...)`), so its `recordChange` has to cast. This is what refuses the cast, and
+ * the `as any` and the JavaScript caller with it. `credits.ts` layers its own transaction
+ * requirement exactly this way and for the same reason.
+ *
+ * Checked here, in the function that takes the row LOCK, rather than in each entry point: a lock
+ * on an autocommit handle is released at the end of its own statement and serializes nothing, so
+ * this is the statement whose correctness the transaction actually buys.
+ */
+export function assertLedgerTx(tx: LedgerTx, fn: string): void {
+  if (typeof (tx as unknown as { rollback?: unknown }).rollback !== "function") {
+    throw new NotInTransactionError(fn);
+  }
+}
+
 // The client-visible entity kinds that flow through `/sync`.
 //
 // GROWING THIS UNION IS NOT FREE, AND HERE IS WHY. The rule is not "never add a type" — it is
@@ -98,9 +130,23 @@ export interface ChangeInput {
  * reconciliation can only ever move the counter FORWARD, never re-issue, and never leave a
  * gap that was not already in the log.
  *
- * MUST be called with the ambient transaction handle.
+ * ── THE TRANSACTION IS NOT ADVICE, AND THE SIGNATURE NOW SAYS SO ──────────────────────────
+ *
+ * This used to read "MUST be called with the ambient transaction handle" and take `Tx`, which
+ * accepts a top-level `PgDatabase`. On an autocommit handle the UPDATE above is its own
+ * transaction: it commits, and RELEASES THE COUNTER ROW LOCK, before its caller inserts the
+ * `change_log` row. So `recordChange(db, …)` for entity A can allocate 5, let a concurrent call
+ * allocate 6 and commit `(acct, 6)`, and only then insert `(acct, 5)`. A client polling
+ * `after=4` in that window sees 6, advances its cursor to 6, and asks `after=6` for ever — seq 5
+ * exists and is unreachable, so that mirror is permanently missing entity A. A statement failure
+ * between the two also leaves a permanent hole.
+ *
+ * {@link LedgerTx} is `PgTransaction`, so a top-level handle no longer compiles;
+ * {@link assertLedgerTx} covers the one seam a type cannot. No production call site was passing
+ * a bare handle — this closes the door rather than fixing a live defect, which is the cheapest
+ * moment to do it.
  */
-export async function allocateSeq(tx: Tx, accountId: string): Promise<bigint> {
+export async function allocateSeq(tx: LedgerTx, accountId: string): Promise<bigint> {
   const [first] = await allocateSeqRange(tx, accountId, 1);
   return first!;
 }
@@ -120,10 +166,11 @@ export async function allocateSeq(tx: Tx, accountId: string): Promise<bigint> {
  *
  * `count` must be positive; a caller with nothing to record must not take the lock at all.
  */
-export async function allocateSeqRange(tx: Tx, accountId: string, count: number): Promise<bigint[]> {
+export async function allocateSeqRange(tx: LedgerTx, accountId: string, count: number): Promise<bigint[]> {
   if (!Number.isInteger(count) || count < 1) {
     throw new Error(`allocateSeqRange: count must be a positive integer, got ${String(count)}`);
   }
+  assertLedgerTx(tx, "allocateSeqRange");
   await tx.insert(accountSyncState).values({ accountId }).onConflictDoNothing();
   const rows = await tx
     .update(accountSyncState)
@@ -146,7 +193,7 @@ export async function allocateSeqRange(tx: Tx, accountId: string, count: number)
  *
  * MUST be called with the ambient transaction handle.
  */
-export async function recordChange(tx: Tx, c: ChangeInput): Promise<bigint> {
+export async function recordChange(tx: LedgerTx, c: ChangeInput): Promise<bigint> {
   const [seq] = await recordChanges(tx, [c]);
   return seq!;
 }
@@ -163,7 +210,7 @@ export async function recordChange(tx: Tx, c: ChangeInput): Promise<bigint> {
  *
  * Returns the assigned seqs, positionally. An empty list writes nothing and takes no lock.
  */
-export async function recordChanges(tx: Tx, changes: readonly ChangeInput[]): Promise<bigint[]> {
+export async function recordChanges(tx: LedgerTx, changes: readonly ChangeInput[]): Promise<bigint[]> {
   if (changes.length === 0) return [];
   const accountId = changes[0]!.accountId;
   // One account per call: the seqs come from ONE counter, so a mixed list would silently

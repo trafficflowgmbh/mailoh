@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import {
   workflows, workflowRuns, workflowProposals, claimIdempotencyKey,
-  folderState, drafts, kbEntries, auditLog, messages, recordChange, type Tx,
+  folderState, drafts, kbEntries, auditLog, messages, recordChange, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import {
   validateSteps, validateTrigger,
@@ -290,8 +290,15 @@ export class WorkflowsService {
     });
   }
 
-  /** Apply one recorded inverse, guarded on current state. Emits effect changes in-tx. */
-  private async applyInverse(tx: Tx, ctx: ServiceContext, inv: WorkflowInverse): Promise<void> {
+  /**
+   * Apply one recorded inverse, guarded on current state. Emits effect changes in-tx.
+   *
+   * `LedgerTx`, not `Tx`: it calls `recordChange`, whose seq allocation only serializes while the
+   * row lock outlives its own statement. The only caller is inside `undoRun`'s
+   * `transaction(...)`, so this narrows a parameter rather than changing behaviour — and now the
+   * compiler says so instead of the reader having to check.
+   */
+  private async applyInverse(tx: LedgerTx, ctx: ServiceContext, inv: WorkflowInverse): Promise<void> {
     if (inv.tool === "file_message") {
       const observed = await this.observedFolder(tx, inv.messageId);
       const reconcileStatus = observed === inv.toFolder ? "reconciled" : "pending";
