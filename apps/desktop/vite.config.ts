@@ -112,7 +112,8 @@ function shellMessagesOnly(): Plugin {
  * self-contained folder of files that Tauri embeds. No dev server, no CDN, no
  * remote origin, no Next.js.
  *
- * Three seams are aliased, and only three — everything else is the shared source:
+ * Three kinds of seam are aliased, and only three — everything else is the shared
+ * source:
  *
  *  1. `next-intl` → `use-intl`. next-intl IS use-intl plus Next server plumbing
  *     (both are 3.26.5 here), and the thirteen shell/view files only ever call
@@ -124,12 +125,21 @@ function shellMessagesOnly(): Plugin {
  *     not in the module graph, and `scripts/publish-desktop.mjs` does not publish
  *     the file at all — the public tree cannot contain it.
  *
- *  3. `react` / `react-dom` are pinned to THIS package's copy by absolute path.
- *     `dedupe` is not enough: in the published mirror there is no
- *     `packages/ui/node_modules`, so a bare "react" from a design-system source
- *     file would have to walk up to a root install that does not exist. An
- *     absolute alias resolves identically in the monorepo and in the mirror, and
- *     guarantees one React instance for both.
+ *  3. Every third-party package the SHARED sources import is pinned to THIS
+ *     package's copy by absolute path — react and react-dom, and the rich text
+ *     editor and HTML sanitizer the compose, reply and reading surfaces use.
+ *     `dedupe` is not enough, and neither is declaring them in package.json:
+ *     resolution walks up from the IMPORTER, and in a published checkout there is
+ *     no `node_modules` anywhere above `apps/webapp/app/` or `packages/ui/src/` to
+ *     walk up into — the only install is this directory's. An absolute alias
+ *     resolves identically in the monorepo and in a clone, and for react it also
+ *     guarantees one instance for both.
+ *
+ *     This list has to move with `tsconfig.json`'s `paths`, which pins the same
+ *     names for the same reason. They were out of step once: the editor and
+ *     sanitizer were added to the manifest and to `paths`, so `tsc --noEmit`
+ *     passed while `vite build` could not resolve them — one tool reading the
+ *     pins and the other not.
  *
  * One further transform, and it is a `load` hook rather than an alias because it
  * rewrites a module's body: `shellMessagesOnly()` above keeps the marketing site's
@@ -158,6 +168,15 @@ export default defineConfig({
       { find: "react-dom", replacement: r("./node_modules/react-dom") },
       { find: "react", replacement: r("./node_modules/react") },
       { find: "next-intl", replacement: r("./node_modules/use-intl") },
+
+      /* The editor and the sanitizer, imported from apps/webapp/app/** rather than
+         from anything under this directory — so they need pinning for the reason
+         react does, and they are listed after it because a prefix match on "react"
+         must not be given the chance to see "@tiptap/react". */
+      { find: "@tiptap/react", replacement: r("./node_modules/@tiptap/react") },
+      { find: "@tiptap/starter-kit", replacement: r("./node_modules/@tiptap/starter-kit") },
+      { find: "@tiptap/extension-link", replacement: r("./node_modules/@tiptap/extension-link") },
+      { find: "dompurify", replacement: r("./node_modules/dompurify") },
 
       /* Anchored at both ends: a RegExp `find` replaces only the matched span,
          so a pattern that leaves the leading "./" behind yields a broken path. */

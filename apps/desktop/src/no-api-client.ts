@@ -26,9 +26,17 @@ const absent: any = new Proxy(function () { refuse(); } as any, {
   construct: () => refuse(),
 });
 
-export const API_BASE: string | null = absent;
+/* The two exports that ANSWER rather than refuse. Everything else here is a way to reach a
+ * server; these two exist to report whether there is one, and the shared client asks before it
+ * acts — it skips its Cloud path whenever the answer is no. Refusing the question instead of
+ * answering it turns that guard into a crash on first render, so these say what is true of this
+ * build: there is no Cloud behind it. */
+const noCloudBase = null;
+const noCloudConfigured = () => false;
 
-export const apiConfigured: () => boolean = absent;
+export const API_BASE: string | null = noCloudBase;
+
+export const apiConfigured: () => boolean = noCloudConfigured;
 
 export class ApiError extends Error {
   declare readonly status: number;
@@ -134,7 +142,7 @@ export interface SubscriptionStatus {
     }>;
 }
 
-export declare const auth: {
+export const auth: {
     register: (b: {
         email: string;
         password: string;
@@ -203,9 +211,7 @@ export declare const auth: {
     }) => Promise<AuthenticatedSession & {
         remainingCodes: number;
     }>;
-}
-
-;
+} = absent;
 
 export interface CreateMailboxBody {
     provider: string;
@@ -227,7 +233,7 @@ export interface CreateMailboxBody {
     };
 }
 
-export declare const mailboxes: {
+export const mailboxes: {
     list: () => Promise<{
         items: MailboxDTO[];
     }>;
@@ -235,11 +241,9 @@ export declare const mailboxes: {
         status: string;
     }>;
     create: (b: CreateMailboxBody) => Promise<MailboxDTO>;
-}
+} = absent;
 
-;
-
-export declare const billing: {
+export const billing: {
     subscription: () => Promise<SubscriptionStatus>;
     portal: () => Promise<{
         url: string;
@@ -247,9 +251,7 @@ export declare const billing: {
     checkout: (plan: "solo" | "plus" | "pro") => Promise<{
         url: string;
     }>;
-}
-
-;
+} = absent;
 
 export interface ErasureResult {
     erased: true;
@@ -259,16 +261,14 @@ export interface ErasureResult {
     subscription: "none" | "cancelled" | "cancel_failed";
 }
 
-export declare const aiSettings: {
+export const aiSettings: {
     get: () => Promise<{
         aiEnabled: boolean;
     }>;
     set: (aiEnabled: boolean) => Promise<{
         aiEnabled: boolean;
     }>;
-}
-
-;
+} = absent;
 
 export interface ConsentStateWire {
     seedConfirmedAt: string | null;
@@ -299,7 +299,7 @@ export interface SeedReviewWire {
     truncated: boolean;
 }
 
-export declare const consent: {
+export const consent: {
     state: () => Promise<ConsentStateWire>;
     seedReview: () => Promise<SeedReviewWire>;
     confirmSeed: (addresses: string[], opts?: {
@@ -328,23 +328,17 @@ export declare const consent: {
             observed: number;
         }>;
     }>;
-}
+} = absent;
 
-;
-
-export declare const account: {
+export const account: {
     erase: () => Promise<ErasureResult>;
-}
+} = absent;
 
-;
-
-export declare const privacy: {
+export const privacy: {
     loadRemote: (messageId: string) => Promise<{
         remoteContent: string;
     }>;
-}
-
-;
+} = absent;
 
 export interface ScreenerWireItem {
     id: string;
@@ -395,7 +389,7 @@ export interface ScreenerSuggestWire {
     }>;
 }
 
-export declare const screener: {
+export const screener: {
     list: (opts?: {
         limit?: number;
         cursor?: string;
@@ -404,9 +398,7 @@ export declare const screener: {
         dryRun?: boolean;
         idempotencyKey?: string;
     }) => Promise<ScreenerSuggestWire>;
-}
-
-;
+} = absent;
 
 export interface PublicKeyCredentialCreationOptionsJSON {
     challenge: string;
@@ -455,6 +447,4 @@ export const messageOf: (err: unknown) => string = absent;
 
 export const codeOf: (err: unknown) => string = absent;
 
-export {}
-
-;
+export {};
