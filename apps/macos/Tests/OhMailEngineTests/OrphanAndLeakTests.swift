@@ -86,25 +86,58 @@ final class OrphanAndLeakTests: XCTestCase {
         return (probe, out)
     }
 
-    /// Read the probe's report until `prefix` shows up, or give up.
+    /// Everything read off the probe's stdout that no `readUntil` has consumed yet.
+    ///
+    /// **It is a property and not a local, and that is the whole point of it.** A pipe read hands
+    /// back whatever bytes happen to be buffered, not one line, so `serving …` and `pid …` — which
+    /// the probe writes back to back — routinely arrive in the SAME chunk. While this accumulator
+    /// was local to `readUntil`, the call that matched `serving` returned it and dropped every other
+    /// byte in that chunk on the floor; the next call started from empty and waited out its deadline
+    /// for a line that had already been read and thrown away. The test then failed with "the probe
+    /// never said pid", having been told the pid and forgotten it.
+    ///
+    /// It passed on a fast machine only because the reader usually woke between the two writes, and
+    /// failed on a loaded CI runner where it did not — a 60-second timeout for a line delivered in
+    /// the first millisecond. The orphan test now waits before its first read so the coalesced chunk
+    /// is what it always meets, rather than what it meets on somebody else's machine.
+    private var pending = ""
+
+    /// Read the probe's report until a line beginning `prefix` shows up, or give up.
     ///
     /// `availableData` and not `read(upToCount:)`: the latter does not return until it has the count
     /// asked for or the far end closes, so reading a probe that is still running — which is the only
     /// interesting case here — waits for its exit. That is the same trap `EngineProcess.readSome`
     /// exists to avoid, and it bit this file too.
+    ///
+    /// Only COMPLETE lines are matched. A prefix can otherwise be satisfied by a line the far end is
+    /// still in the middle of writing, and the caller would parse a truncated value out of it — a pid
+    /// of `12` for a process numbered `12345`.
     private func readUntil(_ prefix: String, from pipe: Pipe, within: TimeInterval = 30) throws -> String {
-        var text = ""
         let deadline = Date().addingTimeInterval(within)
-        while Date() < deadline {
-            for line in text.split(separator: "\n") where line.hasPrefix(prefix) {
-                return String(line)
-            }
+        while true {
+            if let line = takePending(prefix) { return line }
+            if Date() >= deadline { break }
             let chunk = pipe.fileHandleForReading.availableData
             if chunk.isEmpty { break }   // the probe closed its output
-            text += String(decoding: chunk, as: UTF8.self)
+            pending += String(decoding: chunk, as: UTF8.self)
         }
-        for line in text.split(separator: "\n") where line.hasPrefix(prefix) { return String(line) }
-        throw Failure("the probe never said “\(prefix)”. It said:\n\(text)")
+        if let line = takePending(prefix) { return line }
+        throw Failure("the probe never said “\(prefix)”. It said:\n\(pending)")
+    }
+
+    /// The first complete line in `pending` starting with `prefix`, removed from it along with
+    /// everything before it. Consuming is what lets successive calls read successive lines.
+    private func takePending(_ prefix: String) -> String? {
+        var offset = pending.startIndex
+        while let newline = pending[offset...].firstIndex(of: "\n") {
+            let line = String(pending[offset..<newline])
+            if line.hasPrefix(prefix) {
+                pending = String(pending[pending.index(after: newline)...])
+                return line
+            }
+            offset = pending.index(after: newline)
+        }
+        return nil
     }
 
     private struct Failure: Error, CustomStringConvertible {
@@ -132,6 +165,11 @@ final class OrphanAndLeakTests: XCTestCase {
         let (probe, out) = try startProbe(token: "tok_orphan", quitAfterMS: nil, stderr: nil)
         defer { if probe.isRunning { kill(probe.processIdentifier, SIGKILL) } }
 
+        // Deliberate, and not a settling delay: it lets the probe's first three report lines pile up
+        // in the pipe so ONE read returns all of them. That is the hard case for `readUntil` — the
+        // one a fast machine skips and a loaded runner hits — so waiting makes it the case this test
+        // always exercises, instead of the one it meets occasionally and fails on.
+        Thread.sleep(forTimeInterval: 2)
         _ = try readUntil("serving ", from: out)
         let pidLine = try readUntil("pid ", from: out)
         let enginePID = try XCTUnwrap(Int32(pidLine.dropFirst("pid ".count)))
