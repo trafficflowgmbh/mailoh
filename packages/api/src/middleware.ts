@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
   ServiceError, IdempotencyRaceLost, resolveSession, sha256, isAllowedOrigin,
 } from "@trafficflow/services/mail";
 import { silentLogger } from "@trafficflow/core/mail";
+import { csrfTokenFor } from "./csrf.js";
 import { errorResponse, jsonResponse } from "./responses.js";
 import { lookupIdempotent, type StoredIdempotent } from "./idempotency.js";
 import type { SessionVia } from "./deps.js";
@@ -300,15 +301,56 @@ export const withSpendGate: Middleware = (next, route) => async (req, deps, para
   return next(req, deps, params);
 };
 
-/** Double-submit CSRF: unsafe + cookie-auth requires `X-CSRF-Token` == `tf_csrf` cookie. Bearer exempt. */
+/**
+ * CSRF on unsafe + cookie-authenticated requests. Bearer callers are exempt: a bearer token is
+ * something a caller TYPED, never ambient authority a browser attaches on its own.
+ *
+ * ── THE TOKEN IS CHECKED AGAINST THE SESSION, NOT AGAINST ITSELF ──────────────────────────
+ *
+ * This asked one question — is the `tf_csrf` cookie equal to the `X-CSRF-Token` header — and any
+ * pair of equal values answered it. The token was never bound to the session presented with it,
+ * so an attacker who could put a value in BOTH places passed.
+ *
+ * They can. `tf_session` is host-only by design and cannot be widened, but `tf_csrf` is a
+ * different cookie: script on an allow-listed same-site sibling origin sets
+ * `tf_csrf=A; Domain=ohmail.app`, the browser then sends both copies, `parseCookies` keeps the
+ * last (the tossed one), and the sibling posts with `X-CSRF-Token: A`. The victim's session
+ * cookie rides along as ambient authority and a mutating route runs — send a draft, move mail,
+ * delete it — with a token that was never minted for that session.
+ *
+ * So the EXPECTED value is recomputed from the session token this request actually presented
+ * (`csrfTokenFor`), and both the header and the cookie must equal it. A tossed cookie now
+ * matches nothing. `via === "cookie"` is what guarantees `tf_session` is the credential in play,
+ * so the derivation subject is exactly the session being protected.
+ *
+ * ── CONSTANT-TIME, AND WHY IT IS WORTH THE THREE LINES ────────────────────────────────────
+ *
+ * `!==` on strings gives no timing guarantee, and this value is now DERIVABLE from a secret
+ * (the access token) rather than merely random — so a byte-at-a-time oracle on an allowed origin
+ * would recover a token that authorises mutations. `timingSafeEqual` costs nothing here and
+ * removes the question. Length is compared first, outside the constant-time path, because
+ * `timingSafeEqual` throws on unequal lengths and the length of a digest is not a secret.
+ */
 export const withCsrf: Middleware = (next) => async (req, deps, params) => {
   if (UNSAFE_METHODS.has(req.method.toUpperCase()) && deps.session?.via === "cookie") {
-    const cookie = parseCookies(req.headers.get("cookie"))["tf_csrf"];
+    const cookies = parseCookies(req.headers.get("cookie"));
+    const presented = cookies["tf_csrf"];
     const header = req.headers.get("x-csrf-token");
-    if (!cookie || !header || cookie !== header) return errorResponse("csrf_failed", 403, "csrf validation failed");
+    const sessionToken = cookies["tf_session"];
+    const failed = errorResponse("csrf_failed", 403, "csrf validation failed");
+    if (!presented || !header || !sessionToken) return failed;
+    const expected = csrfTokenFor(sessionToken);
+    if (!sameToken(header, expected) || !sameToken(presented, expected)) return failed;
   }
   return next(req, deps, params);
 };
+
+/** Constant-time string compare. Unequal lengths are refused before the comparison. */
+function sameToken(a: string, b: string): boolean {
+  const left = Buffer.from(a, "utf8");
+  const right = Buffer.from(b, "utf8");
+  return left.length === right.length && timingSafeEqual(left, right);
+}
 
 /**
  * The canonical query representation that goes into the request hash.
