@@ -110,10 +110,10 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
   /**
    * THE TOAST WAITS FOR THE OUTCOME, AND IT LIVES HERE RATHER THAN IN THE SHELL.
    *
-   * It fired immediately in the first cut, and on a live account that printed *"Rule revoked.
-   * Your mail hasn't moved."* over a `403` — the optimistic tombstone rolled back, so the rule
-   * REAPPEARED underneath a message saying it was gone. That could only be caught against
-   * production: `FixturesAdapter` never refuses, so every test stayed green.
+   * It fired immediately in the first cut, so a server that answered `403` got *"Rule revoked.
+   * Your mail hasn't moved."* printed over the refusal — the optimistic tombstone rolled back,
+   * so the rule REAPPEARED underneath a message saying it was gone. Only a refusal surfaces
+   * this, and `FixturesAdapter` never refuses, so every test stayed green.
    *
    * The reason it belongs in this file and not in `AppShell` is the same reason the pane takes
    * one prop instead of three — a shell that has to remember to branch on three statuses is a
