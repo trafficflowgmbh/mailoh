@@ -260,8 +260,10 @@ export function useScreenerState(
       // name — Reads, Receipts, Quarantine — dispatched unawaited beside the decide. It lost:
       // `decide` reads its held rows outside its transaction and then upserts `desired_folder`
       // inside it, so a `move` that committed in that window was stamped back to the decide's
-      // own folder. Measured on production 2026-08-05 as four `promoted → INBOX` rules and 97
-      // bulletins in the Ohbox for senders the user had admitted with **Reads**.
+      // own folder. The observable damage was a rule that named the decide's destination rather
+      // than the one the user picked, and bulk mail sitting in the Ohbox for senders the user
+      // had admitted with **Reads** — the wrong answer, persisted, with nothing to attribute it
+      // to.
       //
       // Two independent requests writing one field cannot be ordered into correctness from a
       // browser, so the destination travels WITH the decision instead. The server also refuses
