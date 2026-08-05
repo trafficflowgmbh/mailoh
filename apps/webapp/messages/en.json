@@ -297,7 +297,16 @@
       "stoppedCredits": "Stopped — credits ran out.",
       "stoppedUnavailable": "Stopped — AI spending is unavailable on this account.",
       "withheld": "{count, plural, one {1 sender held back from the model} other {# senders held back from the model}}.",
-      "aria": "How many waiting senders to suggest for"
+      "aria": "How many waiting senders to suggest for",
+      "autoTitle": "Suggest for new senders automatically",
+      "autoWhat": "When you open the Screener, ohmail buys a suggestion for the first {count, plural, one {sender} other {# senders}} waiting without a decision, and shows what it thinks and why.",
+      "autoCost": "Each sender costs one AI action from your plan. Opening the Screener again buys the next few.",
+      "autoDecides": "It decides nothing. Every sender still waits for you, and no mail moves until you say so.",
+      "autoOff": "Off. New senders wait in the Screener until you decide.",
+      "autoOn": "On since {when}.",
+      "autoTurnOn": "Turn on",
+      "autoTurnOff": "Turn off",
+      "autoFailed": "That setting did not save. It is unchanged."
     },
     "markAllSpam": "Mark all spam",
     "noSuggestion": "No suggestion yet for this sender. Choose where their mail goes.",

@@ -576,7 +576,12 @@ export async function confirmSeed(
 /** Whether this account has been through the seed review, and the window it uses. */
 export async function consentSettings(
   ctx: ServiceContext,
-): Promise<{ seedConfirmedAt: string | null; dormancyDays: number | null; screeningResetAt: string | null }> {
+): Promise<{
+  seedConfirmedAt: string | null;
+  dormancyDays: number | null;
+  screeningResetAt: string | null;
+  autoSuggestAt: string | null;
+}> {
   const [row] = await ctx.db.select().from(accountSettings)
     .where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
   // An absent row is every account that has never changed anything. Defaults, not an error.
@@ -584,7 +589,54 @@ export async function consentSettings(
     seedConfirmedAt: row?.seedConfirmedAt ? row.seedConfirmedAt.toISOString() : null,
     dormancyDays: row?.dormancyDays ?? null,
     screeningResetAt: row?.screeningResetAt ? row.screeningResetAt.toISOString() : null,
+    // NULL is OFF, and so is an absent row. This `?? null` is the whole default: there is no
+    // branch anywhere that turns a missing value into ON, because ON authorises spending.
+    autoSuggestAt: row?.autoSuggestAt ? row.autoSuggestAt.toISOString() : null,
   };
+}
+
+/**
+ * TURN AUTO-SUGGEST ON OR OFF — the first WRITE any account setting has ever had.
+ *
+ * `dormancy_days` has been in the schema since 0035 with no writer at all, which is the shape
+ * this function exists to avoid repeating: a column with no knob is a setting nobody can change.
+ *
+ * ── WHAT THE FLAG AUTHORISES, STATED HERE BECAUSE THIS IS WHERE IT IS GRANTED ─────────────
+ *
+ * ON lets the Screener surface buy a classifier suggestion for the senders at the front of the
+ * queue without a per-batch click. That is a METERED spend against the account's credits, so
+ * this write is the moment the account said yes to it — and it is the ONLY thing the flag does.
+ * It grants no authority to decide: `POST /screener/suggest` writes a `routing_decisions` row
+ * with `status = 'suggestion'` and deliberately no `change_log` entry, so nothing it produces
+ * reaches the delta feed, moves a message, or writes a rule. A stranger still waits for a human.
+ *
+ * ── THE UPSERT, AND WHY IT IS `onConflictDoUpdate` AND NOT A SELECT-THEN-INSERT ───────────
+ *
+ * `account_settings` rows are created lazily by whichever feature writes first, so this races
+ * `confirmSeed` and `resetScreeningState` — three writers, one primary key, and onboarding runs
+ * all of them within a minute. A read-then-write would lose one of the two settings under
+ * concurrency; the conflict target makes the outcome the same whichever arrives second, and
+ * touching only this column plus `updated_at` means a concurrent seed confirmation is not
+ * clobbered by a stale snapshot of the row. Proven under real Postgres in
+ * `consent-auto-suggest.concurrency.pg.test.ts`, because PGlite serialises this by construction
+ * and would report green for the losing implementation.
+ *
+ * Returns the stored instant so the caller echoes what the database holds rather than what it
+ * hoped to write — the flag's whole purpose is to be readable back later.
+ */
+export async function setAutoSuggest(
+  ctx: ServiceContext, enabled: boolean,
+): Promise<{ autoSuggestAt: string | null }> {
+  // `now()` from the context clock, not the database's: every other consent timestamp is
+  // written this way, and a settings row whose columns come from two clocks cannot be ordered.
+  const at = enabled ? ctx.now() : null;
+  await ctx.db.insert(accountSettings)
+    .values({ accountId: ctx.accountId, autoSuggestAt: at })
+    .onConflictDoUpdate({
+      target: accountSettings.accountId,
+      set: { autoSuggestAt: at, updatedAt: ctx.now() },
+    });
+  return { autoSuggestAt: at ? at.toISOString() : null };
 }
 
 /* `assertNotConfirmed` used to live here: a helper that turned a non-null `seed_confirmed_at`

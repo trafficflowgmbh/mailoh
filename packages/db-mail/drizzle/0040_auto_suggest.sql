@@ -1,0 +1,60 @@
+-- AUTO-SUGGEST FOR NEW SENDERS — the opt-in `account_settings` was built to hold.
+--
+-- `0035_account_settings.sql` named this feature while it was still queued: *"Two features want
+-- per-account settings within days of each other: the consent cutline (this slice) and an
+-- auto-work opt-in flag (queued) … the second feature is `ALTER TABLE account_settings ADD
+-- COLUMN …` — additive, no data motion, no conflict with anything written here."* This is that
+-- column, and it is deliberately nothing more than that.
+--
+-- ══ WHAT THE FLAG BUYS, AND WHAT IT EXPLICITLY DOES NOT ══════════════════════════════════
+--
+-- ON: when the Screener is open, ohmail buys a classifier suggestion for the senders at the
+-- front of the queue and stores it (`routing_decisions`, `input_provenance =
+-- 'screener_suggestion'`, `status = 'suggestion'`) so the queue shows a verdict and a reason
+-- next to each stranger instead of a bare address.
+--
+-- It does NOT decide. No `rules` row, no `contacts` row, no `folder_state` write, no IMAP move,
+-- and no `change_log` entry — `ScreenerService.store` refuses to emit one on purpose, so a
+-- suggestion never enters the delta feed. A stranger still waits for a human, which is the
+-- product's premise and is why this is an opt-in to WORK rather than to a decision.
+--
+-- The reason it needs an opt-in at all is money: a suggestion is a metered AI action charged to
+-- the account. Spending somebody's credits on their behalf is the thing that requires asking,
+-- and it is also why opting out is complete — nothing has to be undone, because nothing moved.
+--
+-- ══ WHY timestamptz AND NOT boolean ══════════════════════════════════════════════════════
+--
+-- The same argument `seed_confirmed_at` makes one column up: *"a timestamp and not a boolean
+-- because 'when' is the only form of this fact that can be reasoned about later"*. "Was this on
+-- before or after the screening reset?" is a question somebody will ask of a support thread, and
+-- a boolean cannot answer it. NULL = off, and off is the default for every account — including
+-- every account with no `account_settings` row at all, which is most of them. Absence must read
+-- as OFF at every layer; a settings read that fails must also read as OFF. Defaulting the other
+-- way would spend money on a failed fetch.
+--
+-- No CHECK: any instant is a legal answer, including one in the past after a clock correction.
+-- The column is read as a predicate (`IS NOT NULL`), never as a deadline, so a skewed value
+-- cannot make it mean something other than "on".
+--
+-- ══ NOT A NEW TABLE, SO NOT A LOCKDOWN TRIGGER ═══════════════════════════════════════════
+--
+-- A hosted deployment has to re-run its privilege lockdown after any migration that CREATES A
+-- TABLE, because a new table is what inherits the permissive default role's privileges. `ADD
+-- COLUMN` on an existing table inherits that table's grants instead, and `account_settings` was
+-- created by 0035 under the tightened defaults. So no lockdown pass is owed here. The
+-- content-blind operator role gains nothing either: 0035's header states that a column added here
+-- is NOT automatically visible to it, and an opt-in flag is not something an operator needs.
+--
+-- ══ RE-RUN AND ROLLBACK ══════════════════════════════════════════════════════════════════
+--
+-- `ADD COLUMN IF NOT EXISTS` — the whole statement is idempotent, so `setup-prod.ts` replaying
+-- the journal applies nothing the second time and a partially-applied window cannot wedge it.
+-- (There is no `ADD CONSTRAINT` here, which is the form that genuinely needs guarding.)
+--
+-- ROLLBACK is `ALTER TABLE account_settings DROP COLUMN auto_suggest_at`. The cost is that every
+-- account that opted in is silently opted out — which is the safe direction, since the column's
+-- only effect is to authorise spending. Nothing about the mail moves, no consent is lost (consent
+-- lives in `rules`), and the suggestions already bought stay in `routing_decisions` where they
+-- are still readable: paid advice survives the rollback of the thing that bought it.
+
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "auto_suggest_at" timestamp with time zone;

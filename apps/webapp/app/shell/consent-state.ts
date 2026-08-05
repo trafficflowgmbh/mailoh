@@ -25,7 +25,7 @@
  * existed, so a network blip must not produce an error anybody has to read.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_DORMANCY_DAYS } from "@ohmail/client-engine";
 import { apiConfigured, consent as consentApi, type ConsentStateWire } from "../api-client";
 
@@ -36,6 +36,16 @@ export interface ConsentState {
   dormancyDays: number;
   /** Senders still owed a decision, as the SERVER counts them. */
   activeUndecidedSenders: number;
+  /**
+   * IS AUTO-SUGGEST ON — the one field on this object that authorises spending.
+   *
+   * A boolean and not the instant, because the only consumer asks a yes/no question. It starts
+   * FALSE and stays false unless the server said otherwise, which is the direction that matters:
+   * `RESTING` is false, a failed fetch leaves `RESTING` in place, an API too old to carry the
+   * field sends `undefined`, and all three read as off. There is no path here from "I do not
+   * know" to "buy something".
+   */
+  autoSuggest: boolean;
   /** False until the first answer lands — an onboarding step must not flash before then. */
   known: boolean;
 }
@@ -44,6 +54,7 @@ const RESTING: ConsentState = {
   seedConfirmedAt: null,
   dormancyDays: DEFAULT_DORMANCY_DAYS,
   activeUndecidedSenders: 0,
+  autoSuggest: false,
   known: false,
 };
 
@@ -51,7 +62,17 @@ const RESTING: ConsentState = {
  * @param active `false` on the demo and the desktop, which have no server. Both keep
  * {@link RESTING}, which is the same window the engine would have used unasked.
  */
-export function useConsentState(active: boolean): ConsentState {
+export function useConsentState(active: boolean): ConsentState & {
+  /**
+   * Flip auto-suggest and keep the local answer in step with the stored one.
+   *
+   * Resolves to what the DATABASE holds, and the local state is set from that rather than from
+   * the argument — so a refused write leaves the flag showing its real value instead of the one
+   * the click hoped for. It rethrows, because a settings toggle that silently did nothing is the
+   * failure the caller has to be able to tell the user about.
+   */
+  setAutoSuggest: (enabled: boolean) => Promise<boolean>;
+} {
   const [state, setState] = useState<ConsentState>(RESTING);
 
   useEffect(() => {
@@ -75,6 +96,11 @@ export function useConsentState(active: boolean): ConsentState {
           seedConfirmedAt: wire.seedConfirmedAt ?? null,
           dormancyDays: wire.dormancyDays,
           activeUndecidedSenders: wire.counts?.activeUndecidedSenders ?? 0,
+          // `== null` covers BOTH null (off) and undefined (an API from before mail 0040).
+          // Written as one comparison because the two are the same answer to the only question
+          // asked of this field, and splitting them would invite a branch where one of them
+          // becomes true.
+          autoSuggest: wire.autoSuggestAt != null,
           known: true,
         });
       } catch {
@@ -84,5 +110,12 @@ export function useConsentState(active: boolean): ConsentState {
     return () => { live = false; };
   }, [active]);
 
-  return state;
+  const setAutoSuggest = useCallback(async (enabled: boolean): Promise<boolean> => {
+    const res = await consentApi.setAutoSuggest(enabled);
+    const on = res.autoSuggestAt != null;
+    setState((prev) => ({ ...prev, autoSuggest: on }));
+    return on;
+  }, []);
+
+  return { ...state, setAutoSuggest };
 }

@@ -536,6 +536,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    */
   const suggestions = useScreenerSuggestions({
     active: !demo && route.view === "screener",
+    // The opt-in, straight off `GET /consent`. `consent.autoSuggest` is false until the server
+    // has said otherwise — on the demo, on a failed fetch, and against an API from before mail
+    // 0040 — so the automatic purchase cannot happen on a guess.
+    autoSuggest: consent.autoSuggest,
     toast,
   });
   const screener = useScreenerState(engine, version, toast, suggestions.suggestions);
