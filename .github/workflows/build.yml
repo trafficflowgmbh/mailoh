@@ -223,8 +223,25 @@ jobs:
           rm -rf nsis-unpacked
           7z x -y -onsis-unpacked "$EXE" > /dev/null
           find nsis-unpacked
-          ! find nsis-unpacked -iname 'NSISdl.dll' | grep -q .
-          ! grep -rlai 'MicrosoftEdgeWebview2Setup' nsis-unpacked | grep -q .
+          # Collected into variables and tested for emptiness, rather than
+          # `! <producer> | grep -q .`. That form can fail in the direction that
+          # matters. When there IS something to find, `grep -q` exits at the
+          # first line; if the producer is still writing after that it dies on
+          # the closed pipe, `pipefail` makes the pipeline non-zero, and the
+          # leading `!` turns that into a PASS — green exactly when the
+          # downloader is back.
+          #
+          # It depends on how much the producer writes, because everything up to
+          # the pipe buffer lands before grep can exit. Measured, with the string
+          # present in every file: 200 files (8 KB of paths) failed correctly;
+          # 4 000 files (168 KB) and 20 000 files (840 KB) both PASSED. So one
+          # stray bootstrapper is caught and a broad regression need not be,
+          # which is the worst way round. The variable form has no pipe and no
+          # threshold.
+          NSISDL="$(find nsis-unpacked -iname 'NSISdl.dll')"
+          test -z "$NSISDL"
+          BOOTSTRAPPER="$(grep -rlai 'MicrosoftEdgeWebview2Setup' nsis-unpacked || true)"
+          test -z "$BOOTSTRAPPER"
           rm -rf nsis-unpacked
 
           BIN=src-tauri/target/release/ohmail.exe
@@ -357,13 +374,24 @@ jobs:
 
           echo "--- .deb control ---"
           dpkg-deb -I "$DEB"
+          # Read the listing ONCE, into a variable, and match against that.
+          #
+          # Not four `dpkg-deb -c "$DEB" | grep -q …` pipelines, which is what
+          # this was: `grep -q` exits at its first match and closes the pipe,
+          # and the tar subprocess behind dpkg-deb then dies writing to it —
+          # `tar: stdout: write error`, `dpkg-deb: error: tar subprocess
+          # returned error exit status 2`. `pipefail` turns that into a failed
+          # step, so a passing assertion reported a broken build. Whether it
+          # happens depends on where the match sits relative to what tar has
+          # already flushed, so it passed most runs and failed some.
+          CONTENTS="$(dpkg-deb -c "$DEB")"
           echo "--- .deb contents ---"
-          dpkg-deb -c "$DEB"
+          printf '%s\n' "$CONTENTS"
           # dpkg-deb lists paths with no leading slash, so anchor on the space
           # that ends the tar columns instead.
-          dpkg-deb -c "$DEB" | grep -qE ' usr/bin/ohmail$'
-          dpkg-deb -c "$DEB" | grep -qiE ' usr/share/applications/.+\.desktop$'
-          dpkg-deb -c "$DEB" | grep -qiE ' usr/share/icons/hicolor/128x128/apps/.+\.png$'
+          grep -qE ' usr/bin/ohmail$' <<< "$CONTENTS"
+          grep -qiE ' usr/share/applications/.+\.desktop$' <<< "$CONTENTS"
+          grep -qiE ' usr/share/icons/hicolor/128x128/apps/.+\.png$' <<< "$CONTENTS"
           # The bundler kebab-cases productName to get the package name. Since
           # productName is `ohmail`, so is the package — `apt remove ohmail`
           # works, and it matches /usr/bin/ohmail and the AppImage. Pinned so a
