@@ -30,6 +30,11 @@ ohmail for macOS — first run
     ohmail carries everything it needs to run. You do not need Node, a package
     manager, or any developer tools — open it and it works.
 
+    It keeps itself up to date: when a new version is available it asks before
+    installing — it never updates silently. You can also check any time from the
+    menu bar, under ohmail > Check for Updates. Updates are cryptographically
+    signed, and ohmail installs one only if that signature checks out.
+
 4.  WHAT IT DOES.
 
     ohmail connects to your own IMAP mail server, mirrors your mailbox to a local

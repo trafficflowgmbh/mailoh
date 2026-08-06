@@ -3,9 +3,11 @@
 The **free flagship native app** — Tier 1 of ohmail, built in SwiftUI on the Blanc
 design system. The macOS build now ships the mail engine: it connects to your IMAP
 mailbox and organises it, behind these same views, through
-[`MailSource`](Sources/OhMailKit/State/MailSource.swift). The SwiftUI shell itself has
-no network code — it renders the interface and talks to the engine over a local
-bridge. Launched with `--demo` it runs on Mila's fixture world with no network at all.
+[`MailSource`](Sources/OhMailKit/State/MailSource.swift). The SwiftUI shell binary opens
+no socket of its own — it renders the interface and talks to the mail engine over a local
+bridge; the engine (a separate embedded binary) and the Sparkle update framework are the
+two components that reach the network. Launched with `--demo` it runs on Mila's fixture
+world — no mailbox and no account — though it still checks for its own updates.
 
 **Mail reaches a view only through `AppState`.** No content, no fixture, no
 sender — the views know the model and nothing behind it. Chrome vocabulary is the
@@ -251,14 +253,16 @@ left behind, because at that point they would be false.
 ### The SwiftUI shell has no network of its own
 
 The engine that reaches the network is a **separate binary** (Node), embedded beside
-the shell at packaging time; the shell talks to it over a local bridge. The SwiftUI
-binary itself has no IMAP client and no network code — it renders the interface, and
-with `--demo` it renders the small fictional mailbox compiled into it with no engine
-running at all.
+the shell at packaging time; the shell talks to it over a local bridge. Updates are
+fetched by a second embedded component — the Sparkle framework — which is the only thing
+that contacts the release feed. The SwiftUI binary itself has no IMAP client and opens no
+socket of its own — it renders the interface, and with `--demo` it renders the small
+fictional mailbox compiled into it with no engine running.
 
-That claim — about the SwiftUI binary, not the engine beside it — is checked rather
-than believed, and it is checked on the SYMBOLS the binary imports rather than on the
-libraries it links. Two libraries that could
+That claim — about the SwiftUI binary, not the engine or the Sparkle updater beside it —
+is checked rather than believed, and it is checked on the SYMBOLS the binary imports
+rather than on the libraries it links. (Sparkle is linked, but it is its own framework:
+the audit reads the OhMail binary's imports, and its networking stays inside Sparkle.) Two libraries that could
 reach a network are linked and both are there for something else — CFNetwork for
 `HTTPURLResponse`, which is the shape the bridge to the local engine puts its
 replies in, and Security for the four `SecItem` calls the keystore makes. Neither

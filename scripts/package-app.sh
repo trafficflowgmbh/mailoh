@@ -36,9 +36,13 @@ say() { printf '\n\033[1m▸ %s\033[0m\n' "$*"; }
 ARCH_FLAGS=()
 for a in $ARCHS; do ARCH_FLAGS+=(--arch "$a"); done
 
+# -rpath @executable_path/../Frameworks so the OhMail executable finds the Sparkle.framework we embed
+# below. swift build links Sparkle but cannot embed it (it is a binary framework), so the app carries
+# its own copy in Contents/Frameworks and reaches it by this rpath.
+LDFLAGS=(-Xlinker -rpath -Xlinker @executable_path/../Frameworks)
 say "swift build -c release ${ARCH_FLAGS[*]}"
-swift build --package-path "$PKG" -c release "${ARCH_FLAGS[@]}"
-BIN_DIR="$(swift build --package-path "$PKG" -c release "${ARCH_FLAGS[@]}" --show-bin-path)"
+swift build --package-path "$PKG" -c release "${ARCH_FLAGS[@]}" "${LDFLAGS[@]}"
+BIN_DIR="$(swift build --package-path "$PKG" -c release "${ARCH_FLAGS[@]}" "${LDFLAGS[@]}" --show-bin-path)"
 BIN="$BIN_DIR/OhMail"
 [ -x "$BIN" ] || { echo "no executable at $BIN" >&2; exit 1; }
 lipo -info "$BIN"
@@ -52,12 +56,37 @@ cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/Resources/ohmail.icns" "$APP/Contents/Resources/ohmail.icns"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+# ---------------------------------------------------------------- updater framework
+# Sparkle is the update framework. swift build linked it; the .app has to carry it. Find the
+# framework SPM extracted from the binary package and copy it in beside the executable's rpath.
+say "embedding Sparkle.framework"
+SPARKLE_FW="$(/usr/bin/find "$PKG/.build/artifacts" -type d -name 'Sparkle.framework' 2>/dev/null | /usr/bin/grep -i 'macos' | head -1)"
+[ -n "$SPARKLE_FW" ] || SPARKLE_FW="$(/usr/bin/find "$PKG/.build/artifacts" -type d -name 'Sparkle.framework' 2>/dev/null | head -1)"
+[ -d "$SPARKLE_FW" ] || { echo "Sparkle.framework not found under $PKG/.build/artifacts — did 'swift build' resolve Sparkle?" >&2; exit 1; }
+mkdir -p "$APP/Contents/Frameworks"
+ditto "$SPARKLE_FW" "$APP/Contents/Frameworks/Sparkle.framework"
+
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_VERSION" "$APP/Contents/Info.plist"
 SHORT="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
 
+# The app is unsigned, so the EdDSA public key in Info.plist is the whole of what makes an update
+# safe: an archive is installed only if its signature verifies against it. A bundle with no key
+# would trust an unsigned feed, which is remote code execution — refuse to build one.
+SUKEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP/Contents/Info.plist" 2>/dev/null || true)"
+if [ -z "$SUKEY" ]; then
+  echo "Info.plist has no SUPublicEDKey: the updater would trust an unsigned feed. Refusing." >&2
+  exit 1
+fi
+
 # Ad-hoc signature. On Apple silicon an unsigned Mach-O will not launch at all,
 # so this is the floor, not a claim of provenance.
+#
+# Nested code signs before its container: the embedded Sparkle.framework (and its own helpers —
+# XPCServices, the auto-update relaunch tool) are re-signed ad-hoc first, so codesign can seal the
+# app over already-signed inner code rather than failing on a signature it did not make. --deep is
+# used ONLY here, on the framework, to reach those helpers; the app itself is signed shallowly.
 say "ad-hoc signing (NOT a Developer ID, NOT notarized)"
+codesign --force --sign - --timestamp=none --deep "$APP/Contents/Frameworks/Sparkle.framework"
 codesign --force --sign - --timestamp=none "$APP"
 codesign --verify --verbose=2 "$APP"
 

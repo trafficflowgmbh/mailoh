@@ -22,7 +22,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.4.0-preview</string>
+	<string>0.5.0</string>
 	<key>CFBundleVersion</key>
 	<string>0</string>
 	<key>LSApplicationCategoryType</key>
@@ -37,5 +37,27 @@
 	<string>NSApplication</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
+	<!-- Sparkle auto-updater (see apps/macos Sources/OhMailKit/Update).
+	     The app is unsigned, so this EdDSA public key is the whole of what makes an update
+	     trustworthy: an archive is installed only if its signature verifies against it. Its
+	     private half is held outside the repo and never shipped. A build MUST NOT ship without a
+	     valid key here — package-app.sh refuses to assemble one that is missing or empty, because
+	     an empty key would make the app trust an unsigned feed. -->
+	<key>SUPublicEDKey</key>
+	<string>yHMOFvqQ6/MzGRkj74xS3NH8kHU76w2LHh23Ss3i67I=</string>
+	<!-- Where the app looks for updates: one pinned HTTPS endpoint on the project's own repo. The
+	     appcast served here is produced by the release CI, not by this client; the client's
+	     only expectation of it is that it is EdDSA-signed with the key above and orders versions the
+	     way OhMailVersionComparator does. -->
+	<key>SUFeedURL</key>
+	<string>https://github.com/trafficflowhq/ohmail/releases/latest/download/appcast-macos.xml</string>
+	<!-- Check on a schedule, but NEVER install silently: a found update is always presented for the
+	     user to accept (notify-and-install). Daily is Sparkle's usual cadence. -->
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

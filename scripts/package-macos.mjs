@@ -51,6 +51,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { isValidSparklePublicKey } from "./lib/sparkle-key.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -410,7 +411,11 @@ step("licence + inventory gate");
  * Until this line existed the packager could not build at all: the corpus landed with the wire
  * decoder and every run since died here, which is a build break rather than a licence finding. */
 const ALLOWED_EXT = new Set([".swift", ".plist", ".icns", ".txt", ".sh", ".md", ".ts", ".css", ".json"]);
-const ALLOWED_BASENAMES = new Set([".gitignore"]);
+/* `Package.resolved` is the pinned SPM dependency lock (Sparkle, the update framework). It is
+ * committed and published on purpose — an installer a stranger downloads should be reproducible from
+ * the tree it was built from — but its basename has no extension in ALLOWED_EXT, so it is named here
+ * rather than widening the extension set. */
+const ALLOWED_BASENAMES = new Set([".gitignore", "Package.resolved"]);
 
 function walk(dir, into = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -897,6 +902,24 @@ for (const [k, want] of Object.entries({
 }
 if (plist(INFO, "CFBundleVersion") === "0") {
   fail("Info.plist CFBundleVersion", "is 0 — package-app.sh's fallback fired, so the build number is not one");
+}
+
+/* 1b. The update-signing key. The app is unsigned, so this EdDSA public key is the whole of what
+ *     makes a downloaded update safe: an archive is installed only if its signature verifies against
+ *     it. A missing, empty or malformed key would make the app trust an unsigned feed — remote code
+ *     execution — so a build that ships one must not exist. package-app.sh already refuses to
+ *     assemble one; this is the second, independent gate, on the SAME predicate the test pins. */
+const suKey = plist(INFO, "SUPublicEDKey");
+if (!isValidSparklePublicKey(suKey)) {
+  fail("the update-signing key",
+       `Info.plist SUPublicEDKey is missing, empty or not a valid Ed25519 key (got ${JSON.stringify(suKey)}).\n` +
+       `      An updater with no trusted key installs an unsigned feed. Refusing to package.`);
+}
+const suFeed = plist(INFO, "SUFeedURL");
+if (!/^https:\/\//.test(suFeed || "")) {
+  fail("the update feed",
+       `Info.plist SUFeedURL must be an https URL (got ${JSON.stringify(suFeed)}).\n` +
+       `      The feed and the payload it names are fetched over the network; http would be MITM-able.`);
 }
 
 /* 2. The brand. "MailOh" is the pre-rename name and must not reach anything a

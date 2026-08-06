@@ -25,6 +25,12 @@ public struct OhMailApp: App {
         return EngineSource(requester: transport, token: ready.sessionToken)
     })
 
+    /// The self-updater, or `nil` when this process must not run one (a `swift run` build, a render
+    /// check, the test bundle). Read once at launch off the bundle — the same reason the engine
+    /// install is. When it is `nil` the "Check for Updates…" command is present but disabled, which
+    /// tells the truth: this build cannot update itself.
+    @State private var updater = UpdaterController.forCurrentProcess()
+
     public init() {}
 
     public var body: some Scene {
@@ -42,7 +48,7 @@ public struct OhMailApp: App {
         // style leaves undone (the titlebar separator).
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1440, height: 900)
-        .commands { OhMailCommands(state: root.mail) }
+        .commands { OhMailCommands(state: root.mail, updater: updater) }
     }
 }
 
@@ -55,10 +61,20 @@ public struct OhMailApp: App {
 /// be a second place mail could come from.
 struct OhMailCommands: Commands {
     let state: AppState?
+    /// The self-updater, when this build has one. `nil` on a `swift run` build or a render check, and
+    /// the "Check for Updates…" item is disabled there rather than pretending it can act.
+    var updater: UpdaterController? = nil
 
     private var idle: Bool { state == nil }
 
     var body: some Commands {
+        // In the application menu, right after "About ohmail" — the standard home for this on macOS,
+        // and it deliberately does NOT depend on `state`: a person can check for updates from the
+        // setup form or a failed start, which is exactly when they might need a fix.
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") { updater?.checkForUpdates() }
+                .disabled(updater == nil)
+        }
         CommandGroup(replacing: .newItem) {
             Button("New Message") { state?.route = .compose }
                 .keyboardShortcut("n", modifiers: .command)
