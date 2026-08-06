@@ -20,7 +20,7 @@ use base64::Engine as _;
 use std::fs;
 use std::path::PathBuf;
 
-const B64: base64::engine::general_purpose::GeneralPurpose = base64::engine::general_purpose::STANDARD;
+const BASE64: base64::engine::general_purpose::GeneralPurpose = base64::engine::general_purpose::STANDARD;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -49,12 +49,12 @@ fn shipped_pubkey() -> String {
 /// tauri wraps both the public key and the signature as base64 over the whole
 /// minisign file text; unwrap that and parse the minisign content.
 fn minisign_public_key() -> minisign_verify::PublicKey {
-    let text = String::from_utf8(B64.decode(shipped_pubkey().trim()).unwrap()).unwrap();
+    let text = String::from_utf8(BASE64.decode(shipped_pubkey().trim()).unwrap()).unwrap();
     minisign_verify::PublicKey::decode(&text).unwrap()
 }
 
 fn minisign_signature(sig_b64: &str) -> minisign_verify::Signature {
-    let text = String::from_utf8(B64.decode(sig_b64.trim()).unwrap()).unwrap();
+    let text = String::from_utf8(BASE64.decode(sig_b64.trim()).unwrap()).unwrap();
     minisign_verify::Signature::decode(&text).unwrap()
 }
 

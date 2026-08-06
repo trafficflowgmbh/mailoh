@@ -13,7 +13,7 @@
     "tauri": "tauri"
   },
   "//devDeps": "vitest is here because this project's own tests under test/ are published and import it — a clone should be able to run the suite it can read, not just look at it. MIT.",
-  "//deps": "The four below are not used by anything under apps/desktop/src — they are imported by the shared client sources this project compiles (the rich text editor in the compose and reply surfaces, and the mail renderer's HTML sanitizer). They are declared here because this manifest is the only one published with those sources: without them the mirror's `tsc --noEmit` and `vite build` both fail on modules npm was never asked to install. Licences, checked before adding: the TipTap packages and their transitive @tiptap/core and @tiptap/pm are MIT; dompurify is (MPL-2.0 OR Apache-2.0), taken here under Apache-2.0. All are compatible with this repository's GPL-3.0.",
+  "//deps": "The five below are not used by anything under apps/desktop/src — they are imported by the shared client sources this project compiles (the rich text editor in the compose and reply surfaces, the mail renderer's HTML sanitizer, and the PDF renderer behind the attachment Quick Look). They are declared here because this manifest is the only one published with those sources: without them the mirror's `tsc --noEmit` and `vite build` both fail on modules npm was never asked to install. Licences, checked before adding: the TipTap packages and their transitive @tiptap/core and @tiptap/pm are MIT; dompurify is (MPL-2.0 OR Apache-2.0), taken here under Apache-2.0; pdfjs-dist (pdf.js) is Apache-2.0. All are compatible with this repository's GPL-3.0, and none is AGPL.",
   "//engineDeps": "The nine below belong to the local mail engine — its IMAP client, mail parser, mail sender, on-device database, HTML sanitizer, public-suffix list and archive reader. That engine's source is NOT in this repository, so nothing here imports them today and nothing here will until it lands. They are declared ahead of it because this manifest is the only one published beside those sources, and the two do not have to arrive together. Ranges are the ones the rest of the workspace already resolves. Licences, checked before adding: drizzle-orm and @electric-sql/pglite are Apache-2.0; imapflow, mailparser, tldts, sanitize-html and htmlparser2 are MIT; nodemailer is MIT-0; jszip is (MIT OR GPL-3.0-or-later), taken here under MIT. All are compatible with this repository's GPL-3.0, and none is AGPL — an AGPL dependency would force publishing the hosted service alongside this client.",
   "dependencies": {
     "@electric-sql/pglite": "^0.2.0",
@@ -29,6 +29,7 @@
     "@tiptap/react": "^3.29.2",
     "@tiptap/starter-kit": "^3.29.2",
     "dompurify": "^3.4.13",
+    "pdfjs-dist": "6.2.108",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "use-intl": "^3.26.5"
