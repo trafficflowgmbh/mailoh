@@ -140,13 +140,34 @@ export function MailStateProvider({
    * rather than once per render attempt — `growthStep` records a TIME, and a double-invoked
    * render (StrictMode) recording two rises for one arrival would let a single message satisfy
    * the two-rise rule.
+   *
+   * ── WHILE THE FIRST DRAIN IS STILL LANDING, THE MIRROR IS BEING READ, NOT GROWING ────────
+   *
+   * `seedGrowth`'s own note assumes the sampler is seeded from the SETTLED count — "a tab that
+   * opens onto a settled mailbox starts at 495 rather than at 0". In production it was not: the
+   * live engine is constructed with an EMPTY in-memory mirror and the shell renders before the
+   * device's copy has been read out of IndexedDB, so the seed captured 0. Hydration then arrived
+   * as one jump from 0 to the whole persisted count — read by `growthStep` as the first rise of a
+   * first import (`runStartCount === 0`) — and a single ordinary message within the run window
+   * latched the "Syncing your mail. N messages" episode over a mailbox whose import finished long
+   * ago. The count shown was the size of the whole mirror, not import progress.
+   *
+   * So while `bootstrapping` is true — hydration, then this tab's first drain — every observation
+   * RE-BASELINES the sampler instead of folding a rise. The initial load establishes the baseline;
+   * it is not growth. A genuine first import is still announced: `deriveMailState`'s import FLOOR
+   * reads the server's own `initialImportCompletedAt`, which a growth-only reading cannot, and it
+   * speaks the whole time that stamp is null. Once the first drain settles, live arrivals are
+   * measured from the count actually on the device, so the hydration jump can no longer be mistaken
+   * for an import.
    */
   useEffect(() => {
-    setGrowth((prev) => growthStep(prev, mirrored, Date.now()));
+    setGrowth((prev) =>
+      sync.bootstrapping ? seedGrowth(mirrored) : growthStep(prev, mirrored, Date.now()),
+    );
     // The clock is re-read whenever the mirror moves, not only on the interval — otherwise a
     // rise arriving during a quiet spell would be judged against a `beat` minutes old.
     setBeat(Date.now());
-  }, [mirrored]);
+  }, [mirrored, sync.bootstrapping]);
 
   const state = useMemo(
     () =>

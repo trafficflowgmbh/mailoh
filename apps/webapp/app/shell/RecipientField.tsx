@@ -45,6 +45,91 @@ import { matchAddresses, type AddressBookEntry } from "@ohmail/client-engine";
 const MAX_SUGGESTIONS = 6;
 
 /**
+ * How many characters of an address the popover shows before it is truncated.
+ *
+ * Tuned to the popover's NARROWEST width — it is pinned to the field's own edges, so on a 390px
+ * compose form there is room for roughly this many at 11.5px. The point of a character budget
+ * rather than leaning on the browser is that the browser's only truncation is `text-overflow:
+ * ellipsis`, which cuts the END — and the end of an address is the domain, the one part that most
+ * often tells two recipients apart. So the domain is protected in CSS and the LOCAL part is
+ * middle-truncated here.
+ */
+export const ADDRESS_MAX = 34;
+
+/** Keep the head and tail of `s`, an ellipsis in the MIDDLE, to `keep` visible characters. */
+function middle(s: string, keep: number): string {
+  if (s.length <= keep) return s;
+  if (keep <= 1) return "…";
+  const head = Math.ceil((keep - 1) / 2);
+  const tail = keep - 1 - head;
+  return `${s.slice(0, head)}…${tail > 0 ? s.slice(s.length - tail) : ""}`;
+}
+
+/**
+ * One address, shortened for the list but with its DOMAIN kept whole.
+ *
+ * "verylong…name@company.com": the local part loses its middle, the domain stays. A recipient in
+ * a mail client is chosen by both halves — `john@work.example` and `john@home.example` are two
+ * different people — so the browser's end-ellipsis, which would show `john@work.exa…` and
+ * `john@home.exa…`, is exactly the wrong cut. The middle of the local part is the least
+ * load-bearing thing to drop.
+ */
+export function truncateAddress(address: string, max = ADDRESS_MAX): string {
+  if (address.length <= max) return address;
+  const at = address.lastIndexOf("@");
+  if (at <= 0) return middle(address, max);
+  const domain = address.slice(at); // includes the "@"
+  const local = address.slice(0, at);
+  // The domain is never dropped. Whatever is left of the budget goes to the local part; if the
+  // domain alone is already at the budget, the local collapses to a bare marker but is still there.
+  const room = max - domain.length - 1; // 1 for the "…"
+  if (room < 1) return `…${domain}`;
+  return `${middle(local, room)}${domain}`;
+}
+
+/**
+ * Labels for the whole shown list, middle-truncated AND guaranteed distinct.
+ *
+ * Truncating two different addresses to the same visible text in a mail client is a
+ * wrong-recipient risk, not a cosmetic one — the reader picks the wrong row and the mail goes to
+ * the wrong person. So any address whose short form collides with another in the SAME list is
+ * shown in full instead. The inputs are distinct addresses, so the full-text fallback always
+ * resolves; it only ever fires for the pathological case of two addresses that share a domain, a
+ * local head and a local tail and differ only in a dropped middle.
+ */
+export function addressLabels(addresses: readonly string[], max = ADDRESS_MAX): string[] {
+  const labels = addresses.map((a) => truncateAddress(a, max));
+  for (;;) {
+    const byLabel = new Map<string, number[]>();
+    labels.forEach((label, i) => {
+      const group = byLabel.get(label);
+      if (group) group.push(i);
+      else byLabel.set(label, [i]);
+    });
+    let progressed = false;
+    for (const group of byLabel.values()) {
+      if (group.length < 2) continue;
+      for (const i of group) {
+        if (labels[i] !== addresses[i]) {
+          labels[i] = addresses[i]!;
+          progressed = true;
+        }
+      }
+    }
+    // Either nothing collided, or every colliding entry is already shown in full — in which case
+    // the inputs themselves were equal and no truncation is to blame.
+    if (!progressed) return labels;
+  }
+}
+
+/** Split a display label at its last "@" into the local part and the domain (with the "@"). */
+function splitLabel(label: string): { local: string; domain: string } {
+  const at = label.lastIndexOf("@");
+  if (at < 0) return { local: label, domain: "" };
+  return { local: label.slice(0, at), domain: label.slice(at) };
+}
+
+/**
  * The span of `value` the caret is editing — everything after the last comma before it.
  *
  * Exported for the tests, because this is the whole of the "act on the last entry" rule and it
@@ -123,6 +208,13 @@ export function RecipientField({
   // A list with nothing in it is not a list. This also closes it as the query stops matching,
   // without a second piece of state to keep in step.
   const live = open && suggestions.length > 0;
+
+  // The shortened address for each row, computed over the whole shown set so no two collapse to
+  // the same visible text. Keyed positionally to the suggestions, so the map below reads it by index.
+  const labels = useMemo(
+    () => addressLabels(suggestions.map((s) => s.address)),
+    [suggestions],
+  );
 
   useEffect(() => {
     if (cursor >= suggestions.length) setCursor(0);
@@ -236,9 +328,20 @@ export function RecipientField({
               onMouseDown={(e) => { e.preventDefault(); accept(entry); }}
             >
               {/* Name AND address, always both when a name is known: two people called Lena
-                  are told apart only by the address, and an address alone is unreadable. */}
+                  are told apart only by the address, and an address alone is unreadable. The
+                  address is middle-truncated with its domain kept whole (`title` reveals the
+                  full string on hover), and the domain rides in its own span so CSS can refuse
+                  to shrink it — the local part gives up space first. */}
               {entry.name ? <b>{entry.name}</b> : null}
-              <span>{entry.address}</span>
+              {(() => {
+                const { local, domain } = splitLabel(labels[i] ?? entry.address);
+                return (
+                  <span className="rcp-addr" title={entry.address}>
+                    <span className="rcp-local">{local}</span>
+                    {domain ? <span className="rcp-domain">{domain}</span> : null}
+                  </span>
+                );
+              })()}
             </li>
           ))}
         </ul>

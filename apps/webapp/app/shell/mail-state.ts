@@ -195,8 +195,14 @@ export interface MailboxFacts {
    * not deployed the column — reads as `undefined`, which is not `=== null`, so a deploy skew
    * degrades to the prior growth-only behaviour rather than a false "still importing". See the
    * header.
+   *
+   * OPTIONAL, and that is the whole of the distinction: a server that omits the column must reach
+   * the ladder as `undefined`, never as `null`. A seam that collapsed the absent field to `null`
+   * (a `?? null` at the probe) would read every non-empty mirror as "still importing" for ever —
+   * the floor arm fires on `=== null`, and a deploy skew has no null to offer it. `CloudShell`
+   * therefore forwards the field untouched.
    */
-  initialImportCompletedAt: string | null;
+  initialImportCompletedAt?: string | null;
   /** When this mailbox was connected. The one per-mailbox clock that is not shared. */
   createdAt: string;
 }
