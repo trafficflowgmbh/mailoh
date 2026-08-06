@@ -463,8 +463,9 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // nothing is marked — visible, not silent. Deploy order: migration → worker (and API).
   //
   // No CHECK marker (0030's rule); the INDEX this migration also creates is on `change_log`, not
-  // here, and joins `SCHEMA_INDEX_MARKERS` below because its absence is SILENT. It is the NEWEST
-  // entry in the mail journal.
+  // here, and joins `SCHEMA_INDEX_MARKERS` below because its absence is SILENT. It was the newest
+  // mail entry until 0044 added the dormancy-dial ceiling — whose marker is a CHECK, so it lives in
+  // `SCHEMA_CHECK_MARKERS` rather than here, and `MAIL_SCHEMA_MARKER_JOURNAL_TAG` moved to it.
   ["account_settings", "ohbox_tidy_requested_at"],
 ] as const;
 
@@ -566,6 +567,18 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // whatever the write site lets through and nothing raises, which is the exact shape of the
   // 0027 argument on a column that carries more of it.
   "drafts_html_cap",
+  // mail 0044_dormancy_days_max — the one-year ceiling on `account_settings.dormancy_days`, and the
+  // FIRST CHECK marker that is not about storage size. It is listed on `message_bodies_html_cap`'s
+  // rule and it is the sharpest case of it: the migration's ENTIRE content is this constraint (there
+  // is no column to add — 0035 created `dormancy_days`), so a database that ran through 0043 but not
+  // 0044 has every column marker present and is invisible to the column probe. What that database
+  // loses is not a slow path but a LOUD crash the bound exists to prevent — a stored value above the
+  // cap makes `cutlineCounts`' `toISOString()` throw `RangeError`, and `GET /consent` 500s for that
+  // account on every tab load. `setDormancyDays` refuses >365 with a 400, but that refusal is code and
+  // can regress; the CHECK is the one layer that holds for every writer, and this marker is what makes
+  // a deploy against a database missing 0044 say `503 schema_incomplete` and name the file to run. It
+  // is the NEWEST entry in the mail journal.
+  "account_settings_dormancy_days_max",
 ];
 
 /* `EXPECTED_MARKERS` — the BOTH-HALVES count — moved to `./health-cloud.js` with the list it
@@ -736,7 +749,7 @@ export const MAIL_EXPECTED_MARKERS =
  * `message_failures_code_closed` is created INSIDE the `CREATE TABLE` and could only ever fail
  * together with the column above.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0043_ohbox_tidy";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0044_dormancy_days_max";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

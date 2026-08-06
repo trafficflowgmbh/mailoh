@@ -528,6 +528,7 @@
     "general": "General",
     "notifications": "Notifications",
     "mailboxes": "Mailboxes",
+    "screener": "Screener",
     "tags": "Tags",
     "language": "Language",
     "languageHint": "More languages coming",
@@ -548,6 +549,14 @@
       "reset": "Use the default",
       "microcopy": "This changes how new mail is filed. It doesn't move mail already in your Ohbox.",
       "saved": "Saved.",
+      "failed": "Couldn't save that — try again."
+    },
+    "dormancy": {
+      "title": "When a sender goes quiet",
+      "description": "Days of quiet before a sender you've never decided about waits in History instead of the Screener.",
+      "dayLabel": "{days}",
+      "ariaLabel": "Days before a sender goes quiet",
+      "microcopy": "This only changes who the Screener asks you about. No mail moves, and anything unread always shows.",
       "failed": "Couldn't save that — try again."
     },
     "channel": {

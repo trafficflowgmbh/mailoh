@@ -82,6 +82,18 @@ export function useConsentState(active: boolean): ConsentState & {
    * failure the caller has to be able to tell the user about.
    */
   setAutoSuggest: (enabled: boolean) => Promise<boolean>;
+  /**
+   * Move the dormancy dial and keep the local window in step with the stored one.
+   *
+   * Resolves to the EFFECTIVE window the server counted with, and `state.dormancyDays` is set from
+   * THAT echo, not from the argument — so passing the product default (which the server stores as
+   * NULL) leaves the state showing the real number, and a refused write is never mistaken for a
+   * move. The control MUST write through here rather than calling `consentApi` directly: the memo
+   * that partitions the mirror (`consentPartition` in `AppShell`) is keyed on `consent.dormancyDays`,
+   * so setting it from the echo re-partitions the same render — a component with its own fetch would
+   * leave the open tab counting with the stale window.
+   */
+  setDormancyDays: (days: number | null) => Promise<number>;
 } {
   const [state, setState] = useState<ConsentState>(RESTING);
 
@@ -132,5 +144,13 @@ export function useConsentState(active: boolean): ConsentState & {
     return on;
   }, []);
 
-  return { ...state, setAutoSuggest };
+  const setDormancyDays = useCallback(async (days: number | null): Promise<number> => {
+    const res = await consentApi.setDormancyDays(days);
+    // FROM THE SERVER ECHO, never the argument — the server stores the default as NULL and reads it
+    // back as the default number, so this is the window the partition memo must re-key on.
+    setState((prev) => ({ ...prev, dormancyDays: res.dormancyDays }));
+    return res.dormancyDays;
+  }, []);
+
+  return { ...state, setAutoSuggest, setDormancyDays };
 }

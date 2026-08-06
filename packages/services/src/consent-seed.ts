@@ -3,6 +3,8 @@ import {
   accountSettings, contacts, mailboxes, messageBodies, messages, recordChanges, rules, type Tx,
 } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
+import { DEFAULT_DORMANCY_DAYS } from "./consent-cutline.js";
+import { ServiceError } from "./errors.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
@@ -596,10 +598,12 @@ export async function consentSettings(
 }
 
 /**
- * TURN AUTO-SUGGEST ON OR OFF — the first WRITE any account setting has ever had.
+ * TURN AUTO-SUGGEST ON OR OFF — a column-scoped write on the shared `account_settings` row.
  *
- * `dormancy_days` has been in the schema since 0035 with no writer at all, which is the shape
- * this function exists to avoid repeating: a column with no knob is a setting nobody can change.
+ * `dormancy_days` sat in the schema from 0035 with no writer at all — a column with no knob is a
+ * setting nobody can change — until {@link setDormancyDays} below gave it one. Both follow the same
+ * shape: a lazy upsert touching only its own column plus `updated_at`, so neither clobbers the other
+ * when onboarding runs them on the same primary key within a minute.
  *
  * ── WHAT THE FLAG AUTHORISES, STATED HERE BECAUSE THIS IS WHERE IT IS GRANTED ─────────────
  *
@@ -637,6 +641,68 @@ export async function setAutoSuggest(
       set: { autoSuggestAt: at, updatedAt: ctx.now() },
     });
   return { autoSuggestAt: at ? at.toISOString() : null };
+}
+
+/**
+ * SET THE DORMANCY WINDOW — the cutline dial, the second knob on `account_settings`.
+ *
+ * The dial decides how long a sender may be quiet before the Screener stops asking about them: a
+ * sender with no recent mail and no decision waits in History rather than the queue. It is PURE
+ * VISIBILITY — it changes which UNDECIDED senders are SHOWN, never where any mail lives. Nothing
+ * here writes a rule, a contact, a `folder_state` row or a `change_log` entry, and the pg test
+ * proves all three by making a stamp of any of them turn the assertion red. Recompute is READ-TIME
+ * on both sides — `cutlineCounts` takes the window per request and the client re-partitions its own
+ * mirror — so this writer moves no mail and arms no pass. It must NEVER travel through a writer that
+ * can arm the tidy (`setScreeningPreference` stamps `ohbox_tidy_requested_at`); that is why the dial
+ * lands on `PATCH /consent/settings` and not on `PATCH /account/screening`.
+ *
+ * ── THE 1–365 REFUSAL, AND WHY THE SERVICE RESTATES THE CHECK ──────────────────────────────
+ *
+ * The column's CHECK is `dormancy_days > 0 AND dormancy_days <= 365` (0035 + 0044). The service
+ * refuses the same band with a 400 so a caller gets a readable answer rather than the raw 23514 —
+ * the pattern `OHBOX_BAR_MAX_BYTES` uses one file over. The ceiling is load-bearing, not cosmetic: a
+ * value like 2e8 is legal under the old floor alone and makes `cutlineCounts`' `toISOString()` throw
+ * a `RangeError`, so `GET /consent` 500s for that account for ever. A non-integer (60.5) is refused
+ * too — the column is `integer`, and a rounded float is a window nobody chose.
+ *
+ * ── NEVER STORE THE DEFAULT ────────────────────────────────────────────────────────────────
+ *
+ * `null` reverts to the product default, and so does passing the default value itself: storing 60
+ * would freeze this account at 60 even after the product default moves — exactly what
+ * `0035_account_settings.sql` calls "a constant wearing a dial's name". So both `null` and
+ * `DEFAULT_DORMANCY_DAYS` persist NULL, and the read side substitutes the default unchanged
+ * (`consent.ts`'s `?? DEFAULT_DORMANCY_DAYS`).
+ *
+ * ── THE UPSERT, COLUMN-SCOPED ──────────────────────────────────────────────────────────────
+ *
+ * Same shape and reason as {@link setAutoSuggest}: rows are created lazily by whichever feature
+ * writes first, so this races `confirmSeed`, `resetScreeningState`, `setAutoSuggest` and
+ * `setScreeningPreference` — five writers on one primary key. Touching only `dormancy_days` +
+ * `updated_at` means a concurrent seed confirmation keeps its `seed_confirmed_at`. Proven under real
+ * Postgres because PGlite serialises the race by construction.
+ *
+ * Returns the EFFECTIVE window — always a number — so the caller echoes what the account will be
+ * counted with, which is what the open tab re-partitions on.
+ */
+export async function setDormancyDays(
+  ctx: ServiceContext, days: number | null,
+): Promise<{ dormancyDays: number }> {
+  if (days !== null && (!Number.isInteger(days) || days < 1 || days > 365)) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      "dormancyDays must be an integer between 1 and 365, or null",
+    );
+  }
+  // NEVER STORE THE DEFAULT — see the note above. `null` and the default both mean "use the product
+  // default", so both persist NULL and let the read side substitute it.
+  const stored = days === null || days === DEFAULT_DORMANCY_DAYS ? null : days;
+  await ctx.db.insert(accountSettings)
+    .values({ accountId: ctx.accountId, dormancyDays: stored })
+    .onConflictDoUpdate({
+      target: accountSettings.accountId,
+      set: { dormancyDays: stored, updatedAt: ctx.now() },
+    });
+  return { dormancyDays: stored ?? DEFAULT_DORMANCY_DAYS };
 }
 
 /* `assertNotConfirmed` used to live here: a helper that turned a non-null `seed_confirmed_at`

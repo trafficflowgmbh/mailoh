@@ -1,9 +1,11 @@
 "use client";
 
 /**
- * Settings — General (language + theme, wired to the ThemeProvider),
- * Notifications (only-what-matters defaults + VIP + the learned
- * suggestion), Mailboxes (the mirror's mailbox entities) and Tags.
+ * Settings, grouped so the nav reads top-to-bottom as client basics -> mail plumbing -> account
+ * administration -> facts: General (language + theme, wired to the ThemeProvider), Notifications
+ * (only-what-matters defaults + VIP + the learned suggestion), Mailboxes (the mirror's mailbox
+ * entities), Screener (the posture, the dormancy dial, the auto-suggest opt-in, and the door back to
+ * the sent-mail review), Rules, Tags, Subscription, Security, Account, and About (last).
  *
  * ── AND A FIFTH PANE THIS FILE DELIBERATELY KNOWS NOTHING ABOUT ─────────────────────────
  *
@@ -35,7 +37,7 @@ import {
 import { hueOf } from "../shell/format";
 import { RulesView, type RuleOutcome } from "./RulesView";
 
-type PaneId = "general" | "notifications" | "mailboxes" | "seed" | "billing" | "tags" | "rules" | "about" | "security" | "account";
+type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "billing" | "tags" | "rules" | "about" | "security" | "account";
 
 /**
  * The notification channels, and why this list is here rather than in the fixtures.
@@ -212,6 +214,7 @@ export function SettingsView({
   aboutSection,
   autoSuggestSection,
   screeningSection,
+  dormancySection,
 }: {
   /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
   notifications: NotificationsMeta | null;
@@ -276,7 +279,7 @@ export function SettingsView({
    */
   mailboxSection?: ReactNode;
   /**
-   * THE WAY BACK TO THE SENT-MAIL REVIEW, which is the only reason this pane exists.
+   * THE WAY BACK TO THE SENT-MAIL REVIEW — the bottom section of the Screener pane.
    *
    * The review is offered when an account has never answered it and takes the whole stage
    * while it is owed, and "Not now" makes it go away. Without an entry here, "Not now" and
@@ -287,7 +290,9 @@ export function SettingsView({
    * It carries its own `label` rather than reading one from the `settings` namespace because
    * the words belong to the consent vocabulary, which this shared file does not own — the
    * review's own screen has to say the same thing, and one wording in one place is how the two
-   * stay the same sentence.
+   * stay the same sentence. The `label` is rendered as a {@link SettingsSubhead} over the `node`
+   * at the foot of the Screener pane; the `node` carries the review's own copy and its button and
+   * must NOT wrap itself in a `SettingsSection`, because the pane already provides one.
    */
   seedSection?: { label: string; node: ReactNode };
   /** The Cloud client's Subscription pane — plan, the AI switch, and Stripe's portal. */
@@ -315,7 +320,7 @@ export function SettingsView({
    */
   aboutSection?: ReactNode;
   /**
-   * THE AUTO-WORK OPT-IN, injected — the general pane's one row that can spend money.
+   * THE AUTO-WORK OPT-IN, injected — the Screener pane's one row that can spend money.
    *
    * The same seam as {@link accountSection} and for the same two reasons at once. It needs
    * `app/api-client` (a `dryRun` quote and a consent write), which `scripts/publish-desktop.mjs`
@@ -324,14 +329,15 @@ export function SettingsView({
    * exist, so the setting is structurally unreachable wherever it could not work — rather than
    * present and refusing, which is a control that cost something to discover.
    *
-   * It is a node and not a `{ label, node }` like {@link seedSection} because it belongs INSIDE
-   * the general pane's existing section rather than adding a pane of its own: it is a setting
-   * about the Screener, and a nav entry for one row is a worse place to find it than under the
-   * heading everything else about defaults already lives.
+   * It is a node and not a `{ label, node }` like {@link seedSection} because it belongs INSIDE the
+   * Screener pane's section rather than owning one. It renders LAST of the three Screener behaviour
+   * controls (posture, then the dormancy dial, then this), because it is the only one that spends —
+   * a control with a cost sits below the ones without.
    */
   autoSuggestSection?: ReactNode;
   /**
-   * THE EDITABLE OHBOX PREFERENCE, injected — "what deserves my Ohbox".
+   * THE EDITABLE OHBOX PREFERENCE, injected — "what deserves my Ohbox". The FIRST section of the
+   * Screener pane (the posture switch and the free-text bar).
    *
    * The same seam as {@link autoSuggestSection}: it reads and writes `GET/PATCH /account/screening`
    * through `app/api-client`, which `scripts/publish-desktop.mjs` DENYs from this shared file. A
@@ -340,6 +346,18 @@ export function SettingsView({
    * section does not render (the demo, or a surface with no account).
    */
   screeningSection?: ReactNode;
+  /**
+   * THE DORMANCY DIAL, injected — the Screener pane's second control, between the posture
+   * ({@link screeningSection}) and the auto-suggest opt-in ({@link autoSuggestSection}).
+   *
+   * The same seam as {@link autoSuggestSection}: it writes `PATCH /consent/settings` through
+   * `app/api-client` AND through the shell's `useConsentState` hook (so the mirror re-partitions on
+   * the same render), neither of which this shared, desktop-mirrored file may name. It is pure
+   * VISIBILITY — it changes which undecided senders the Screener SHOWS, moves no mail and spends
+   * nothing — so it sits above the auto-suggest row. Absent ⇒ no dial (the demo, or a surface with
+   * no account).
+   */
+  dormancySection?: ReactNode;
 }) {
   const t = useTranslations("settings");
   /** The `tag` namespace owns what a tag IS; `settings` owns this pane's chrome. */
@@ -353,29 +371,37 @@ export function SettingsView({
   /** The mirror's list until the user changes it; `null` (and absent) on a live account. */
   const vipList = vips ?? notifications?.vips ?? [];
 
+  // THE NAV ORDER, grouped: client basics (General, Notifications) -> mail plumbing (Mailboxes,
+  // Screener, Rules, Tags) -> account administration (Subscription, Security, Account) -> facts
+  // (About). Each group moves from what the app IS to the user, through what it DOES with their
+  // mail, to what governs the account, and ends on facts that are not controls at all.
+  const screenerPane = Boolean(screeningSection || dormancySection || autoSuggestSection || seedSection);
   const panes: Array<[PaneId, string]> = [
     ["general", t("general")],
     ["notifications", t("notifications")],
     ["mailboxes", t("mailboxes")],
-    // Directly after Mailboxes, because connecting one is what makes it owed again.
-    ...(seedSection ? [["seed", seedSection.label] as [PaneId, string]] : []),
-    // Only where there is something to bill. Desktop is free and standalone; a Subscription
-    // pane there would be offering to sell what the tier already gives away.
-    ...(billingSection ? [["billing", t("billing")] as [PaneId, string]] : []),
+    // Directly after Mailboxes, because everything in it — the posture, the dormancy dial, the
+    // auto-suggest opt-in and the door back to the sent-mail review — is about the mail a connected
+    // mailbox brings. Present IFF the shell wired any of its nodes; the demo passes none, so the
+    // pane does not exist there, structurally, rather than rendering empty.
+    ...(screenerPane ? [["screener", t("screener")] as [PaneId, string]] : []),
     // BEFORE Tags. A tag is something the user chose to make; a rule is something the
     // product made on their behalf while they were deciding about a sender, and that is the
     // one that has to be findable. Present only where the shell wired it — a nav entry
     // leading to an empty list on an account that HAS rules is the defect, not the fix.
     ...(rules ? [["rules", t("rules")] as [PaneId, string]] : []),
     ["tags", t("tags")],
-    // After the panes that DO something and before the two that end things. Its content is
-    // facts about the running build and who publishes it — nothing here is a control.
-    ...(aboutSection ? [["about", t("about")] as [PaneId, string]] : []),
-    // LAST, and only where there is an account to act on. Last because the pane's only
-    // content is irreversible, and a destructive control at the top of a list is one
-    // mis-click away from the thing above it.
+    // Account administration. Only where there is something to bill: Desktop is free and standalone,
+    // and a Subscription pane there would offer to sell what the tier already gives away.
+    ...(billingSection ? [["billing", t("billing")] as [PaneId, string]] : []),
+    // Only where there is an account to act on. Security before Account, and both after the panes
+    // that organise mail: a destructive control belongs near the bottom, where a mis-click is not
+    // one row away from a mail setting.
     ...(securitySection ? [["security", t("security")] as [PaneId, string]] : []),
     ...(accountSection ? [["account", t("account")] as [PaneId, string]] : []),
+    // LAST. Facts about the running build and who publishes it — nothing here is a control, so it
+    // is the safe place to end. About-below-Account is harmless: unlike Account it acts on nothing.
+    ...(aboutSection ? [["about", t("about")] as [PaneId, string]] : []),
   ];
 
   return (
@@ -422,11 +448,6 @@ export function SettingsView({
                   />
                 }
               />
-              {/* LAST in the pane, because it is the only row here that spends money: language
-                  and theme are free and reversible, and a control with a cost belongs below the
-                  ones without. Absent on Desktop and on the demo — see the prop. */}
-              {autoSuggestSection}
-              {screeningSection}
             </SettingsSection>
           ) : null}
 
@@ -549,7 +570,26 @@ export function SettingsView({
             </SettingsSection>
           ) : null}
 
-          {pane === "seed" ? seedSection?.node : null}
+          {/* THE SCREENER PANE — every control about the mail a connected mailbox brings, in one
+              section: the posture first, then the dormancy dial (both about what the Screener SHOWS
+              and neither spends), then the auto-suggest opt-in (LAST, because it is the one that can
+              cost money), and the door back to the sent-mail review at the foot. Each node is absent
+              on Desktop and the demo — the pane itself is withheld from the nav when all four are.
+              The seed section renders its own copy under its own subhead; its `node` brings no
+              `SettingsSection` of its own, because this one wraps the whole pane. */}
+          {pane === "screener" ? (
+            <SettingsSection>
+              {screeningSection}
+              {dormancySection}
+              {autoSuggestSection}
+              {seedSection ? (
+                <>
+                  <SettingsSubhead>{seedSection.label}</SettingsSubhead>
+                  {seedSection.node}
+                </>
+              ) : null}
+            </SettingsSection>
+          ) : null}
           {pane === "about" ? aboutSection : null}
           {pane === "security" ? securitySection : null}
           {pane === "account" ? accountSection : null}

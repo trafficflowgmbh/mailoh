@@ -78,6 +78,7 @@ import { useScreenerState } from "./screener-state";
 import { useScreenerSuggestions } from "./screener-suggest";
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
+import { DormancyRow } from "./DormancyRow";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
   composePlan,
@@ -2740,15 +2741,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                    sent folder from. */
                 seedSection={demo ? undefined : {
                   label: t("seed.settingsLabel"),
+                  /* No `SettingsSection` of its own — the Screener pane wraps the whole thing, and
+                     this renders under its `seed.settingsLabel` subhead at the foot of it. */
                   node: (
-                    <SettingsSection>
+                    <>
                       <p className="set-note-inline">{t("seed.reopenBody")}</p>
                       <div className="gate-actions">
                         <Button onClick={() => setSeedReopened(true)}>
                           {t("seed.reopenAction")}
                         </Button>
                       </div>
-                    </SettingsSection>
+                    </>
                   ),
                 }}
                 /* THE AUTO-WORK OPT-IN. Built here rather than injected from `CloudShell` for
@@ -2773,6 +2776,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                   )
                 }
                 screeningSection={demo ? undefined : <ScreeningSection />}
+                /* THE DORMANCY DIAL. Like `autoSuggestSection`, built here rather than injected from
+                   `CloudShell` because it must write through the SAME `useConsentState` the
+                   partition memo reads (`consentPartition` above is keyed on `consent.dormancyDays`),
+                   or a moved dial would leave this tab counting with the stale window. Gated on
+                   `consent.known` so it renders only once the server's real window has landed —
+                   showing the RESTING default first and snapping to the stored value is the
+                   wrong-then-right flash `ScreeningSection` avoids by loading before it draws. Absent
+                   on the demo (`useConsentState(!demo)` never fetches, so `known` stays false). */
+                dormancySection={demo || !consent.known ? undefined : (
+                  <DormancyRow days={consent.dormancyDays} setDormancyDays={consent.setDormancyDays} />
+                )}
                 billingSection={demo ? undefined : billingSection}
                 /* ABOUT — the one injected pane the demo also gets, because the demo has
                    something true to say here and no API to say it with. The live body comes
