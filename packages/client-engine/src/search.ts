@@ -1,5 +1,5 @@
 import type { EntityReader } from "./store.js";
-import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage, type MessageBodyRecord } from "./types.js";
+import { folderLeaf, isProtectedMessage, VIEW_OF_FOLDER, type EngineMessage, type MessageBodyRecord } from "./types.js";
 
 /**
  * The instant local search over the mirror (brief §1: "the client should ALSO run instant
@@ -161,13 +161,19 @@ export class SearchIndex {
    */
   add(m: EngineMessage, hydrated?: string): void {
     this.messages.set(m.id, m);
-    const whole = m.body ?? hydrated;
+    // INVARIANT #1 — a PROTECTED message's raw body is never indexed, and never counted as
+    // covered. `store.ts` and `engine.ts` purge the cached `message_body` on the protect
+    // transition and on load, so `hydrated` is normally already gone by the time `build` runs;
+    // withholding `whole` here refuses to index the full text even if a record briefly survives
+    // (a delta this build applied but has not yet cascaded), or a fixture carries `body` on the
+    // row. A search for a secret's distinctive text therefore cannot match on this device.
+    const whole = isProtectedMessage(m) ? undefined : (m.body ?? hydrated);
     if (whole !== undefined) this.full++;
     for (const t of tokenize(m.subject)) this.index(t, m.id, FIELD_WEIGHT.subject);
     for (const t of tokenize(`${m.from.name ?? ""} ${m.from.address}`)) this.index(t, m.id, FIELD_WEIGHT.from);
-    // The snippet is indexed even when the whole text is here: it is a REDACTED preview for a
-    // sensitive message, so the two strings are not always prefix-related, and dropping it
-    // would lose terms on exactly the rows invariant #1 governs.
+    // The snippet IS indexed, protected or not: it is a REDACTED preview for a sensitive message
+    // (server-side, invariant #1), so it carries no secret, the two strings are not always
+    // prefix-related, and dropping it would lose terms on exactly the rows the invariant governs.
     for (const t of tokenize(`${m.snippet} ${whole ?? ""}`)) this.index(t, m.id, FIELD_WEIGHT.text);
   }
 

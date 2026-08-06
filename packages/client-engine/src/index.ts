@@ -19,6 +19,7 @@ export {
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
   folderLeaf,
+  isProtectedMessage,
   encodeSeqCursor,
   decodeSeqCursor,
   type ChangeOp,

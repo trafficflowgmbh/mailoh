@@ -6,6 +6,7 @@ import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.
 import {
   CursorExpiredError,
   MutationRejectedError,
+  isProtectedMessage,
   type EngineMessage,
   type EngineMutation,
   type MessageBodyRecord,
@@ -397,6 +398,10 @@ export class OhmailEngine {
     if (this.hydrating) return this.hydrating;
     this.hydrating = this.store
       .load()
+      // Reconcile invariant #1 before publishing: a body cached by an older engine (or by a
+      // delta that arrived before the protect cascade shipped) for a message that is protected in
+      // the mirror this load just read must not survive. See {@link purgeProtectedBodies}.
+      .then(() => this.purgeProtectedBodies())
       .then(() => {
         this.notify();
       })
@@ -404,6 +409,31 @@ export class OhmailEngine {
         this.hydrating = null;
       });
     return this.hydrating;
+  }
+
+  /**
+   * INVARIANT #1 AT REST, RECONCILED ON LOAD.
+   *
+   * The delta cascade in {@link MirrorStore} purges a body the moment a message TRANSITIONS to
+   * protected. This covers the two cases that transition cannot reach: a body cached by an engine
+   * build from before that cascade existed, and a message that is ALREADY protected in the mirror
+   * this load read (its protecting delta landed while a purge-less build was running). A protected
+   * message must hold no cached `message_body`, and because {@link SearchIndex} is built from
+   * those records, purging here is also what keeps the raw text out of the local search index —
+   * so a client that cached the body under an old engine, then updates, converges.
+   *
+   * One pass over the client-local bodies, tombstoning only the ids whose message is protected; on
+   * the ordinary mirror — where no protected message ever cached a body — it writes nothing. It
+   * does not `notify()`: `hydrate` publishes once after this settles, over the already-bumped
+   * store version.
+   */
+  private async purgeProtectedBodies(): Promise<void> {
+    const reader = this.read();
+    const victims: string[] = [];
+    for (const { id } of this.store.entries<MessageBodyRecord>("message_body")) {
+      if (isProtectedMessage(reader.get<EngineMessage>("message", id))) victims.push(id);
+    }
+    for (const id of victims) await this.store.putLocal("message_body", id, null);
   }
 
   /** Hydrate the mirror, then bootstrap/catch up. */
@@ -629,17 +659,26 @@ export class OhmailEngine {
      */
     if (msg.body !== undefined) return;
     /**
-     * A PROTECTED MESSAGE HAS NO BODY TO ASK FOR.
+     * A PROTECTED MESSAGE HAS NO BODY TO ASK FOR — AND MUST HOLD NONE AT REST.
      *
-     * Its surface renders `ProtectedBlock` and no text whatever the mirror holds
-     * (invariant #1, and `MessagePane` is where that decision lives), so a request here
-     * could only ever produce a record nothing reads. Not a safety check — the endpoint's
-     * text is already redacted server-side and asking would be harmless — it is simply the
-     * one case where the answer cannot change the screen. Skipping it also keeps the demo's
-     * one body-less fixture from churning a loading record and a tombstone every time it is
-     * selected.
+     * Its surface renders `ProtectedBlock` and no text whatever the mirror holds (invariant #1,
+     * and `MessagePane` is where that decision lives), so a fetch here could only ever produce a
+     * record nothing reads. Skipping it also keeps the demo's one body-less fixture from churning
+     * a loading record every time it is selected.
+     *
+     * The second clause is the at-rest half. A message that cached a body while it was ORDINARY
+     * and then became protected is the raw secret invariant #1 forbids, sitting in IndexedDB (and,
+     * via {@link SearchIndex}, the local search index). The delta cascade in {@link MirrorStore}
+     * purges on the transition; this is the belt-and-braces for a body cached by an older engine,
+     * or one the transition missed — purge any held record before returning. `isProtectedMessage`
+     * keys on `sensitivity.sensitive` (the Cloud signal) as well as the fixture `protected` extra,
+     * so the real reclassification case is covered, not only the demo.
      */
-    if (msg.protected != null) return;
+    if (isProtectedMessage(msg)) {
+      const held = this.read().get<MessageBodyRecord>("message_body", messageId);
+      if (held !== undefined) await this.putBody(messageId, null);
+      return;
+    }
     const held = this.read().get<MessageBodyRecord>("message_body", messageId);
     /**
      * ── ALREADY READY — **AND FROM A BUILD THAT KNEW ABOUT `html`** ─────────────────────

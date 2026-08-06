@@ -1,5 +1,6 @@
 import { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
-import type { Cursor, SyncChange, SyncResponse } from "./types.js";
+import { isProtectedMessage } from "./types.js";
+import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js";
 
 /**
  * Synchronous, read-only access to the mirror — what selectors and the search
@@ -125,29 +126,41 @@ export abstract class BaseMirrorStore implements MirrorStore {
   }
 
   /**
-   * A DELETED MESSAGE TAKES ITS HYDRATED BODY WITH IT.
+   * A DELETED — OR NEWLY PROTECTED — MESSAGE SHEDS ITS HYDRATED BODY.
    *
-   * `message_body` is client-local, so `/sync` can never delete one — which is exactly the
-   * property that makes a delta unable to wipe a body mid-read, and exactly the property
-   * that would otherwise leave the FULL TEXT of a deleted message sitting in IndexedDB
-   * forever. A `message` delete tombstones `message:id`, so the DTO is gone and nothing
-   * renders it; `message_body:id` would survive, unreferenced, un-evicted and undeletable
-   * through any path the product offers. GOALS #5 says Cloud data is deletable, and residue
-   * nobody can see is the hardest kind to honour that with.
+   * `message_body` is client-local, so `/sync` can never delete or overwrite one — the property
+   * that makes a delta unable to wipe a body mid-read. The flip side is that nothing ELSE will
+   * ever remove one either, so the two transitions that must not leave the raw text behind have
+   * to be cascaded here or it sits in IndexedDB (and, through {@link SearchIndex}, the local
+   * search index) unreferenced and unreachable:
    *
-   * So the cascade is structural rather than a cleanup somebody runs: the tombstones join
-   * the page's own dirty set and land in the SAME `persist` flush, which is the atomicity
-   * contract §3.3 step 3 already gives the cursor. A crash between the two is not a state
-   * this can be in.
+   *  · a `message` DELETE — the FULL TEXT of a deleted message would otherwise survive forever,
+   *    un-evicted and undeletable through any path the product offers, against GOALS #5's
+   *    deletable-Cloud-data promise; and
+   *  · a `message` that BECOMES PROTECTED — a body cached while the message was ordinary, then
+   *    flipped sensitive by a server-side redaction pass or a late reclassification, is invariant
+   *    #1's raw-secret-at-rest reproduced on the client. `hydrateBody` refuses to cache one going
+   *    forward; this purges one already cached. The protected test reads the POST-APPLY mirror
+   *    state — this method runs after `applyToRecords` has mutated the map — so a replayed or
+   *    older-seq update that did NOT win cannot trigger a purge, and no false `message` delete is
+   *    emitted (the message is not deleted; its DTO stays, only the local body goes).
    *
-   * It is one pass over the changes, and it touches the map only for ids that actually have
-   * a live body — on the ordinary drain (no deletes, or deletes for messages nobody opened)
-   * it allocates nothing.
+   * So the cascade is structural rather than a cleanup somebody runs: the tombstones join the
+   * page's own dirty set and land in the SAME `persist` flush, which is the atomicity contract
+   * §3.3 step 3 already gives the cursor. A crash between the two is not a state this can be in.
+   *
+   * It is one pass over the changes, and it touches the map only for ids that actually have a
+   * live body — on the ordinary drain (nothing deleted, nothing newly protected, or such changes
+   * for messages nobody opened) it allocates nothing.
    */
   private cascadeLocalDeletes(changes: SyncChange[]): MirrorRecord[] {
     const out: MirrorRecord[] = [];
     for (const ch of changes) {
-      if (ch.op !== "delete" || ch.type !== "message") continue;
+      if (ch.type !== "message") continue;
+      // A delete always sheds the body. A non-delete sheds it only when the message is now
+      // protected — read from the mirror rather than the raw delta, so a change `applyToRecords`
+      // refused (older-or-equal seq) cannot purge a body it never applied.
+      if (ch.op !== "delete" && !isProtectedMessage(this.get<EngineMessage>("message", ch.id))) continue;
       const key = recordKey("message_body", ch.id);
       const held = this.records.get(key);
       if (!held || held.entity === null) continue;

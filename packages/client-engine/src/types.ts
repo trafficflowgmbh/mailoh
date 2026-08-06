@@ -181,6 +181,30 @@ export interface EngineMessage extends EngineMessageExtras {
   updatedAt: ISODateTime;
 }
 
+/**
+ * IS THIS MESSAGE PROTECTED — the one predicate that decides whether its raw body may sit at rest.
+ *
+ * Invariant #1: a sensitive message's body must never persist unredacted, on the server OR on the
+ * client. A message can be cached and indexed while it is ORDINARY and later BECOME protected — a
+ * server-side redaction pass, a late sensitivity reclassification arriving as a `message` update —
+ * so the raw body it cached beforehand has to be shed. This predicate is the single place that
+ * decision is made, consulted where a `message` delta lands (purge the cached body on the
+ * transition, {@link MirrorStore}), on engine load (reconcile a body cached by an older build),
+ * and where the local search index is built (never index a protected body).
+ *
+ * TWO SIGNALS, because two worlds feed it. `sensitivity.sensitive` is the wire DTO's own flag and
+ * the signal on a Cloud account. `protected` is the fixture world's display extra, which
+ * `FixturesAdapter` sets alongside `sensitivity.sensitive`; the reader surfaces route on it
+ * (`MessagePane`), so keying on it too keeps the demo and a live account answering the same way.
+ */
+export function isProtectedMessage(
+  m: { sensitivity?: SensitivityFlags | null; protected?: unknown } | null | undefined,
+): boolean {
+  if (m == null) return false;
+  if (m.protected != null) return true;
+  return m.sensitivity?.sensitive === true;
+}
+
 // ── message bodies ─────────────────────────────────────────────────────────
 
 /**
