@@ -1,6 +1,6 @@
 import {
   planChange, commitChange, MAX_RAW_MESSAGE_BYTES,
-  type Change, type ClassifierPort, type CreditGate, type Logger,
+  type Change, type ClassifierPort, type CreditGate, type Logger, type OhboxPolicy,
 } from "@trafficflow/core/mail";
 import {
   WATCHED_FOLDERS, MessageGoneError, parseRef,
@@ -34,6 +34,17 @@ export interface SyncDeps {
    * one would charge the wrong customer.
    */
   credits?: CreditGate;
+  /**
+   * The account's Ohbox posture, resolved from `account_settings.ohbox_policy` and threaded into
+   * `planChange`. ABSENT ⇒ `planChange` resolves it to the lenient `DEFAULT_OHBOX_POLICY`, so a
+   * caller that does not set it (a reconcile/restart pass, a test) routes byte-identically to before
+   * this field existed. The main sync loop resolves it per account and passes it; see
+   * `index.ts#screeningFor`.
+   */
+  ohboxPolicy?: OhboxPolicy;
+  /** The account's free-text Ohbox bar, resolved from `account_settings.ohbox_bar`, into the
+   * classifier's user turn only. Absent ⇒ omitted. */
+  ohboxBar?: string;
   /**
    * The per-message terminal-failure ledger, one per attached mailbox.
    *
@@ -170,7 +181,7 @@ function siteOf(ch: Change): { folder: string; uidValidity: string; uid: number 
  * the difference between one opaque multi-hour cycle and a series of short, observable ones.
  */
 export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolean }> {
-  const { repo, adapter, accountId, mailboxId, classifier, credits, log } = deps;
+  const { repo, adapter, accountId, mailboxId, classifier, credits, ohboxPolicy, ohboxBar, log } = deps;
   const deadLetters = deps.deadLetters ?? new DeadLetterLedger();
   const version = deps.buildVersion ?? buildVersionOf(process.env);
   deadLetters.beginCycle();
@@ -338,7 +349,7 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
   // ingested; a FLAG is a cursor-only signal, and a DELETE is the move evidence recorded above.
   for (const ch of [...batch.creates, ...batch.moves]) {
     await attempt(ch, async () => {
-      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo });
+      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, ohboxPolicy, ohboxBar });
       await repo.transaction((txRepo) =>
         commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId }),
       );
@@ -430,7 +441,7 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
 async function retryFailedMessages(
   deps: SyncDeps, deadLetters: DeadLetterLedger, version: string,
 ): Promise<void> {
-  const { repo, adapter, accountId, mailboxId, classifier, credits, log } = deps;
+  const { repo, adapter, accountId, mailboxId, classifier, credits, ohboxPolicy, ohboxBar, log } = deps;
   // A backend that cannot re-read one message degrades to the pre-0041 behaviour rather than
   // erroring: the rows stay owed and a later deploy (or a real adapter) picks them up.
   if (!adapter.fetchByUid) return;
@@ -528,7 +539,7 @@ async function retryFailedMessages(
       // dual-key lookup answers `duplicate` for a message a previous attempt already committed, and
       // `own_copy` for a Sent twin of mail we hold.
       try {
-        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo });
+        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, ohboxPolicy, ohboxBar });
         await repo.transaction((txRepo) =>
           commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId }),
         );
