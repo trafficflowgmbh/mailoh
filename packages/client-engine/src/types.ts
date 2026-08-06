@@ -412,6 +412,18 @@ export interface ScreenerHeldMail {
    * consent decision taken on a truncation is the risk the Screener exists to remove.
    */
   bodyState?: BodyState;
+  /**
+   * The stored `text/html` part, or null. Carried so the Screener renders a stranger's mail
+   * with the SAME sandboxed renderer the reading pane uses — sanitized, in a frame that cannot
+   * phone home, remote images blocked until consent — rather than as a text dump the consent
+   * decision is taken on. Null on a fixture row (the demo carries text only) and on every
+   * non-`full` `bodyState`, which is the contract {@link bodyOf} already keeps: only a hydrated
+   * `ready` body has a document to show. Optional so a `screener_sender` fixture entity, whose
+   * held array is carried verbatim, needs no new field.
+   */
+  html?: string | null;
+  /** Whether the reader has consented to remote content for THIS held message. */
+  loadedRemoteContent?: boolean;
   trackerNote?: string;
 }
 

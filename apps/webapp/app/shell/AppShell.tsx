@@ -2622,6 +2622,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                    "all clear" meta are the same claim the Ohbox was making. */
                 settled={mailState.settled}
                 hydrateBody={hydrateBody}
+                /* The reading pane's remote-image consent chrome, so a held preview blocks
+                   and gates images exactly as the pane does. Absent on the demo. */
+                remoteImages={remoteImages}
                 full={screenerFull}
                 onFull={setScreenerFull}
               />

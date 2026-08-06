@@ -369,6 +369,11 @@ function heldOf(reader: EntityReader, m: EngineMessage, now: Date): ScreenerHeld
     time: messageDisplayTime(m, now),
     body: body.text,
     bodyState: body.state,
+    // Carried so the preview can render the mail the way the reading pane does. `bodyOf`
+    // reports `html` only on a hydrated `ready` body, so this is null until `hydrateBody`
+    // has run — a consent decision is never rendered against a stale frame under a snippet.
+    html: body.html,
+    loadedRemoteContent: body.loadedRemoteContent,
     ...(m.trackerNote ? { trackerNote: m.trackerNote } : {}),
   };
 }

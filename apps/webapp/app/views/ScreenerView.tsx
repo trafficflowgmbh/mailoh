@@ -31,6 +31,8 @@ import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { goScreener, type ScreenerSegmentId } from "../shell/routing";
 import type { ScreenerState, SpamRow } from "../shell/screener-state";
 import type { SuggestBatchControl } from "../shell/screener-suggest";
+import type { RemoteImagesChrome } from "../shell/remote-images";
+import { MessageBody } from "../components/MessageBody";
 
 /**
  * ASKING FOR SUGGESTIONS — the control that names the cost before it spends.
@@ -172,6 +174,7 @@ export function ScreenerView({
   settled,
   onSelect,
   hydrateBody,
+  remoteImages,
   full,
   onFull,
 }: {
@@ -182,6 +185,13 @@ export function ScreenerView({
    * the control is not offered at all rather than offered and inert.
    */
   suggest?: SuggestBatchControl;
+  /**
+   * The remote-image consent chrome, threaded to every held preview so the Screener's
+   * "Show images" path is the reading pane's, unchanged. ABSENT on a client with no server
+   * (the demo, a test) — `MessageBody` then blocks remote content and offers no button, which
+   * is the correct posture, not a degraded one.
+   */
+  remoteImages?: RemoteImagesChrome;
   segment: ScreenerSegmentId;
   selection: Record<ScreenerSegmentId, string | null>;
   /**
@@ -580,6 +590,7 @@ export function ScreenerView({
             }}
             onDecide={(dest, opts) => decideCurrent(dest, opts.markRead)}
             onRetryBody={retryBody}
+            remoteImages={remoteImages}
             onBack={() => onFull(false)}
           />
         ) : segment === "screened" ? (
@@ -593,6 +604,7 @@ export function ScreenerView({
               setChoosing(null);
             }}
             onRetryBody={retryBody}
+            remoteImages={remoteImages}
             onBack={() => onFull(false)}
           />
         ) : (
@@ -611,6 +623,7 @@ export function ScreenerView({
             }}
             onDelete={() => state.deleteSpam(current as SpamRow)}
             onRetryBody={retryBody}
+            remoteImages={remoteImages}
             onBack={() => onFull(false)}
           />
         )}
@@ -629,13 +642,36 @@ function newestHeld(w: ScreenerSenderDTO) {
   return w.held[w.held.length - 1];
 }
 
+/**
+ * The remote-image consent wiring for ONE held message, resolved exactly as `MessagePane`
+ * resolves it: `remoteLoaded` is the OR of the stored flag and this session's consent (the
+ * body record is not re-fetched on consent, so without the second term the button would write
+ * a row and change nothing on screen); the proxy is curried by message id, which is the
+ * authorisation, not decoration; and an ABSENT chrome — the demo, a test with no API — offers
+ * no button rather than a dead one. One place, so the three previews cannot drift.
+ */
+function heldRemoteProps(
+  remoteImages: RemoteImagesChrome | undefined,
+  h: { id: string; loadedRemoteContent?: boolean },
+): { remoteLoaded: boolean; imageProxy: ((url: string) => string) | null; onLoadRemote?: () => void } {
+  return {
+    remoteLoaded: (h.loadedRemoteContent ?? false) || (remoteImages?.consented(h.id) ?? false),
+    imageProxy: remoteImages ? remoteImages.proxyFor(h.id) : null,
+    onLoadRemote: remoteImages ? () => remoteImages.consent(h.id) : undefined,
+  };
+}
+
 function HeldMail({
   from,
   address,
   subject,
   time,
   body,
+  html,
   bodyState,
+  remoteLoaded,
+  imageProxy,
+  onLoadRemote,
   onRetry,
   trackerNote,
   dull,
@@ -645,8 +681,20 @@ function HeldMail({
   subject: string;
   time?: string;
   body: string;
+  /**
+   * The sanitized-in-a-frame html part, when the body has hydrated to `full`. Null on a
+   * fixture row and on every non-`full` state, so this preview falls back to the text part —
+   * exactly the reading pane's behaviour. See {@link MessageBody}.
+   */
+  html?: string | null;
   /** Absent ⇒ full, which is a fixture row. See `ScreenerHeldMail.bodyState`. */
   bodyState?: BodyState;
+  /** Whether remote content has been consented to for THIS held message. */
+  remoteLoaded?: boolean;
+  /** How to reach a remote image after consent, or null for "no way to". */
+  imageProxy?: ((url: string) => string) | null;
+  /** The reader pressed "Show images". Absent ⇒ no button, matching the pane. */
+  onLoadRemote?: () => void;
   /** Ask for this held message's body again. Rendered only in the `failed` state. */
   onRetry?: () => void;
   trackerNote?: string;
@@ -696,7 +744,20 @@ function HeldMail({
           </span>
         </div>
       ) : null}
-      <div className="hm-body">{body}</div>
+      {/* THE SAME RENDERER THE READING PANE USES — sanitized html in a sandboxed frame that
+          cannot phone home, remote images blocked until consent — so the surface where a
+          stranger's mail is judged is a mail client and not a text dump. With no html (a
+          fixture row, or a body not yet hydrated to `full`) `MessageBody` renders the text
+          part, which is what this preview showed before. */}
+      <div className="hm-body">
+        <MessageBody
+          text={body}
+          html={html}
+          remoteLoaded={remoteLoaded}
+          imageProxy={imageProxy}
+          onLoadRemote={onLoadRemote}
+        />
+      </div>
       {note ? (
         <p className={bodyState === "failed" ? "hm-state warn" : "hm-state"} role="status">
           {note}{" "}
@@ -717,6 +778,7 @@ function WaitingPreview({
   onScopeChange,
   onDecide,
   onRetryBody,
+  remoteImages,
   onBack,
 }: {
   sender: ScreenerSenderDTO;
@@ -725,6 +787,7 @@ function WaitingPreview({
   onDecide: Parameters<typeof DecisionBar>[0]["onDecide"];
   /** Ask for one held message's body again. */
   onRetryBody: (id: string) => void;
+  remoteImages?: RemoteImagesChrome;
   onBack: () => void;
 }) {
   const t = useTranslations("screener");
@@ -798,10 +861,12 @@ function WaitingPreview({
             subject={h.subject}
             time={h.time}
             body={h.body}
+            html={h.html}
             bodyState={h.bodyState}
             onRetry={() => onRetryBody(h.id)}
             trackerNote={h.trackerNote}
             dull={sender.dull}
+            {...heldRemoteProps(remoteImages, h)}
           />
         ))}
       </div>
@@ -816,6 +881,7 @@ function ScreenedPreview({
   onCancel,
   onAllow,
   onRetryBody,
+  remoteImages,
   onBack,
 }: {
   sender: ScreenerSenderDTO;
@@ -824,6 +890,7 @@ function ScreenedPreview({
   onCancel: () => void;
   onAllow: (dest: "ohbox" | "reads") => void;
   onRetryBody: (id: string) => void;
+  remoteImages?: RemoteImagesChrome;
   onBack: () => void;
 }) {
   const t = useTranslations("screener");
@@ -870,10 +937,12 @@ function ScreenedPreview({
             subject={h.subject}
             time={h.time}
             body={h.body}
+            html={h.html}
             bodyState={h.bodyState}
             onRetry={() => onRetryBody(h.id)}
             trackerNote={h.trackerNote}
             dull
+            {...heldRemoteProps(remoteImages, h)}
           />
         ))}
       </div>
@@ -890,6 +959,7 @@ function SpamPreview({
   onToOhbox,
   onDelete,
   onRetryBody,
+  remoteImages,
   onBack,
 }: {
   row: SpamRow;
@@ -900,6 +970,7 @@ function SpamPreview({
   onToOhbox: () => void;
   onDelete: () => void;
   onRetryBody: (id: string) => void;
+  remoteImages?: RemoteImagesChrome;
   onBack: () => void;
 }) {
   const t = useTranslations("screener");
@@ -956,10 +1027,12 @@ function SpamPreview({
             subject={h.subject}
             time={h.time}
             body={h.body}
+            html={h.html}
             bodyState={h.bodyState}
             onRetry={() => onRetryBody(h.id)}
             trackerNote={h.trackerNote}
             dull
+            {...heldRemoteProps(remoteImages, h)}
           />
         ))}
       </div>
