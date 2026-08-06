@@ -875,16 +875,38 @@ function submitAndCheck(artifact) {
 if (SIGN) signAndNotarize();
 
 /* ──────────────────────────────────────────────── what the bundle claims ──
- * Claims are contracts. The DMG ships first-run notes telling a stranger this
- * build has "no IMAP client, no network code" and that their own mail "is not
- * involved and cannot be". Those are the strongest statements ohmail makes to
+ * Claims are contracts. The DMG ships first-run notes telling a stranger what
+ * this build is — a self-contained mail client that connects to their own IMAP
+ * server, can sign in to ohmail Cloud (door two), and keeps itself up to date
+ * over a signed feed — and those are the strongest statements ohmail makes to
  * someone who has just downloaded a binary, so they are checked against the
- * bytes rather than trusted from the copy.
+ * bytes rather than trusted from the copy. The network claim in particular is
+ * NOT "it reaches nothing" any more; it is "it reaches these hosts and no
+ * others", and that is what the allow-lists below hold the bytes to.
  */
 step("verifying the bundle against what it claims");
 
 const problems = [];
 const fail = (what, why) => problems.push({ what, why });
+
+/* ── THE EGRESS ALLOW-LISTS ────────────────────────────────────────────────────
+ * The one hostname the running app opens a connection to is the Cloud API; the
+ * updater fetches a second host, named in Info.plist and reached by Sparkle. Every
+ * OTHER host string in the binary is accounted for here with the reason it is
+ * present, and anything not on the list fails the build — a telemetry endpoint, an
+ * analytics SDK or a bundled third-party service cannot slip in unremarked. This is
+ * the shape of the api-vercel cookie-host split: a compiled allow-list, not a
+ * denylist someone has to keep adding to. */
+const HOST_ALLOWLIST = new Map([
+  ["api.ohmail.app", "ohmail Cloud — the one host door two's URLSession transport dials"],
+  ["sidecar", "the local engine bridge's pseudo-host: a stdio pipe, never a socket"],
+  ["myaccount.google.com", "app-password help, rendered as selectable text (the shell opens nothing)"],
+  ["appleid.apple.com", "app-password help, rendered as selectable text"],
+  ["app.fastmail.com", "app-password help, rendered as selectable text"],
+]);
+/* The updater's feed lives in Info.plist and is fetched by Sparkle, not from a URL
+ * literal in the Mach-O, so it is held to its own allow-list where it actually is. */
+const UPDATE_FEED_HOSTS = new Set(["github.com"]);
 
 /* 1. Identity and metadata. */
 for (const [k, want] of Object.entries({
@@ -916,10 +938,14 @@ if (!isValidSparklePublicKey(suKey)) {
        `      An updater with no trusted key installs an unsigned feed. Refusing to package.`);
 }
 const suFeed = plist(INFO, "SUFeedURL");
-if (!/^https:\/\//.test(suFeed || "")) {
+let suFeedHost = null;
+try { suFeedHost = suFeed ? new URL(suFeed).host.toLowerCase() : null; } catch { suFeedHost = null; }
+if (!/^https:\/\//.test(suFeed || "") || !suFeedHost || !UPDATE_FEED_HOSTS.has(suFeedHost)) {
   fail("the update feed",
-       `Info.plist SUFeedURL must be an https URL (got ${JSON.stringify(suFeed)}).\n` +
-       `      The feed and the payload it names are fetched over the network; http would be MITM-able.`);
+       `Info.plist SUFeedURL must be an https URL on ${[...UPDATE_FEED_HOSTS].join(", ")} ` +
+       `(got ${JSON.stringify(suFeed)}).\n` +
+       `      The feed and the payload it names are fetched over the network; http would be\n` +
+       `      MITM-able, and a feed on any other host is off-origin egress the download does not disclose.`);
 }
 
 /* 2. The brand. "MailOh" is the pre-rename name and must not reach anything a
@@ -945,36 +971,54 @@ for (const a of ARCHS.split(/\s+/).filter(Boolean)) {
   if (!arches.includes(a)) fail("architectures", `${a} was requested but the binary has: ${arches.join(" ") || "none"}`);
 }
 
-/* 5. "No network code" — asserted, not merely asserted in prose.
+/* 5. Off-origin egress — held to an ALLOW-LIST OF HOSTS, not banned outright.
  *
- * ── THIS USED TO REFUSE THE DYLIB, AND THE DYLIB IS THE WRONG UNIT ──────────
+ * ── WHY THIS STOPPED BEING A "NO NETWORK CODE" CHECK ────────────────────────
  *
- * It read `otool -L` and failed on CFNetwork, Network, Security or libnetwork
- * appearing at all. That was a good proxy while the app was one window over
- * fixtures, and it stopped being one twice over:
+ * Through the fixture preview this binary opened no socket of its own, and the
+ * gate proved it: `dyld_info -imports` was held so that the only symbols taken
+ * from a network-capable framework were value types that dial nothing — an
+ * `HTTPURLResponse` the local-engine bridge fills in for itself, the `SecItem*`
+ * the Keychain reads. Anything that could open a socket failed.
  *
- *   · the bridge to the local engine shapes its replies as `HTTPURLResponse`,
- *     whose Objective-C class lives in CFNetwork. It is a value type. It has no
- *     socket in it, and constructing one dials nothing;
- *   · the keystore reads one item out of the Keychain, which is `SecItem*` in
- *     Security. Also no socket.
+ * Door two ends that. The Cloud transport (`CloudRequester`) is a real
+ * `URLSession` client that signs in to `api.ohmail.app` and reads mail over
+ * HTTPS, so the binary now legitimately imports `NSURLSession` and reaches the
+ * network. "No network code" is no longer true, and a check that enforced it
+ * would be enforcing a false claim.
  *
- * So the check moved from WHICH LIBRARIES ARE LINKED to WHICH SYMBOLS ARE
- * IMPORTED, which is the thing the claim is actually about — and is stricter,
- * not looser: `dyld_info -imports` attributes every imported symbol to the
- * library it comes from, so the two libraries a socket could come out of are
- * held to an explicit list of what may be taken from them. A build that started
- * using `NSURLSession`, `SSLHandshake` or `SecureTransport` fails here, and
- * nothing has to remember to add it to a denylist.
+ * The claim that IS true and worth enforcing is narrower and stronger: this
+ * build reaches a KNOWN, SHORT list of hosts and no others. So the gate keeps
+ * three real refusals and adds a fourth:
  *
- * Network.framework and libnetwork stay refused outright: nothing in either is
- * anything but networking, so there is no allowed symbol to enumerate. */
+ *   (a) Network.framework and libnetwork are refused outright — nothing in
+ *       either is anything but raw sockets, and a hand-rolled IMAP or telemetry
+ *       client that bypassed URLSession would reach for one of them;
+ *   (b) every symbol imported FROM a network-capable framework is still held to
+ *       an allow-list, so a new capability has to be declared here with a reason
+ *       (the URL-loading classes door two uses are named below; a raw
+ *       `SSLHandshake` or `SecureTransport` from Security still fails);
+ *   (c) the update feed in Info.plist must be on the update-feed host allow-list
+ *       (checked in step 1b above);
+ *   (d) every http(s) host string compiled into the Mach-O must be on
+ *       HOST_ALLOWLIST — a telemetry or analytics endpoint fails here.
+ *
+ * (b) narrows the old symbol allow-list rather than deleting it; (d) is the new
+ * egress bound that makes permitting URLSession safe. */
 const NETWORK_CAPABLE = {
-  // Response metadata the engine bridge fills in itself. Nothing here opens
-  // anything; `EngineTransport` states why no `URLSession` is involved.
-  CFNetwork: new Set(["_OBJC_CLASS_$_NSHTTPURLResponse"]),
+  // The URL Loading System's Objective-C classes. Door two's Cloud transport is a
+  // `URLSession` client, so these are now expected and allowed — the egress they
+  // perform is bounded by HOST_ALLOWLIST, not pretended away. `NSHTTPURLResponse`
+  // is also the value type the local-engine bridge fills in for itself.
+  CFNetwork: new Set([
+    "_OBJC_CLASS_$_NSHTTPURLResponse",
+    "_OBJC_CLASS_$_NSURLSession",
+    "_OBJC_CLASS_$_NSURLSessionConfiguration",
+    "_OBJC_CLASS_$_NSHTTPCookie",
+  ]),
   // The Keychain, and the system random source. `KeychainKeyStore` is the only
-  // caller.
+  // caller. An app that rolled its own TLS would import SSLHandshake / SecureTransport
+  // from Security; those are NOT in this set and still fail.
   Security: new Set([
     "_SecItemAdd", "_SecItemCopyMatching", "_SecItemDelete",
     "_SecRandomCopyBytes", "_SecCopyErrorMessageString",
@@ -986,21 +1030,22 @@ const NETWORK_CAPABLE = {
   ]),
 };
 
+/* (a) The two frameworks that are only raw networking, refused wholesale. */
 const linked = (capture("otool", ["-L", MACHO]) || "").split("\n")
   .filter((l) => /\/Network\.framework|libnetwork/.test(l));
 if (linked.length) {
-  fail("the no-network claim",
-       `the first-run notes tell the downloader this build has "no network code",\n` +
-       `      but the binary links:\n${linked.map((l) => `        ${l.trim()}`).join("\n")}\n` +
-       `      Either the claim or the link has to go.`);
+  fail("the network-egress claim",
+       `this build reaches the network only through URLSession, to an allow-list of hosts,\n` +
+       `      but the binary links a raw-socket framework:\n${linked.map((l) => `        ${l.trim()}`).join("\n")}\n` +
+       `      Nothing in the shipping code needs it; either it or the claim has to go.`);
 }
 
-/* `dyld_info` is part of the toolchain this script already requires. A null
+/* (b) `dyld_info` is part of the toolchain this script already requires. A null
  * capture means it could not be run at all, which is a check that did not
  * happen — reported, never passed over. */
 const imports = capture("dyld_info", ["-imports", MACHO]);
 if (imports === null) {
-  fail("the no-network claim", "dyld_info could not read the binary's imports, so the claim was never checked");
+  fail("the network-egress claim", "dyld_info could not read the binary's imports, so the symbol check never ran");
 } else {
   const unexpected = [];
   for (const line of imports.split("\n")) {
@@ -1011,12 +1056,39 @@ if (imports === null) {
     if (allowed && !allowed.has(symbol)) unexpected.push(`${symbol}  (from ${library})`);
   }
   if (unexpected.length) {
-    fail("the no-network claim",
-         `the first-run notes tell the downloader this build has "no network code",\n` +
-         `      and it imports from a library that can reach one:\n` +
+    fail("the network-egress claim",
+         `the binary imports a network-capable symbol that is not on the allow-list:\n` +
          `${unexpected.map((s) => `        ${s}`).join("\n")}\n` +
-         `      If these open nothing, add them to NETWORK_CAPABLE above with the\n` +
-         `      reason. If any of them opens a socket, the claim has to go instead.`);
+         `      If it opens nothing, add it to NETWORK_CAPABLE above with the reason. If it\n` +
+         `      opens a socket to somewhere new, that host has to be disclosed and allow-listed first.`);
+  }
+}
+
+/* (d) THE HOST ALLOW-LIST. dyld says the binary CAN speak HTTP; this says WHERE.
+ * Every http(s) host string compiled into the Mach-O must be one accounted for in
+ * HOST_ALLOWLIST — the Cloud API it dials, the local-engine pipe pseudo-host, and
+ * the app-password pages it shows as selectable text. A telemetry or analytics
+ * endpoint, or any other third-party host, is not on the list and fails.
+ *
+ * `strings -a` reads every printable run including those in NUL-bearing sections,
+ * and its output is captured into a variable and tested by length — never
+ * `producer | grep -q`, whose SIGPIPE death would read as "found nothing". A null
+ * capture is a check that did not run, reported rather than passed over. */
+const embedded = capture("strings", ["-a", MACHO]);
+if (embedded === null) {
+  fail("the host allow-list", "strings could not read the binary, so the embedded hosts were never checked");
+} else {
+  const hosts = new Set();
+  const hostRe = /\bhttps?:\/\/([A-Za-z0-9.-]+)/g;
+  let hm;
+  while ((hm = hostRe.exec(embedded)) !== null) hosts.add(hm[1].toLowerCase());
+  const offAllowlist = [...hosts].filter((h) => !HOST_ALLOWLIST.has(h));
+  if (offAllowlist.length) {
+    fail("the host allow-list",
+         `the binary embeds off-allow-list host(s):\n${offAllowlist.map((h) => `        ${h}`).join("\n")}\n` +
+         `      This build may reach ${[...HOST_ALLOWLIST.keys()].join(", ")} and nothing else.\n` +
+         `      A new host is a new disclosure: add it to HOST_ALLOWLIST with why it is there,\n` +
+         `      or take it out of the binary.`);
   }
 }
 
@@ -1052,10 +1124,13 @@ try {
     /* The disclosure, phrase by phrase, for the ENGINE-BEARING build. This app connects to a real
      * mailbox and carries its own runtime, so the notes must say what it IS — self-contained — and
      * still name the fixture door (`--args --demo`), which is now one mode of a real client rather
-     * than the whole product. Reworded copy that still discloses will fail here, and should. */
+     * than the whole product. Door two adds a second network destination, so the notes must also
+     * name ohmail Cloud: a download that can sign in to a hosted service has to say so on first
+     * contact. Reworded copy that still discloses will fail here, and should. */
     const missing = [
       "self-contained",                       // it carries its own Node; nothing else to install
       "connects to your own IMAP mail server", // it is a mail client, not a preview
+      "ohmail Cloud",                          // door two — the hosted service it can sign in to
       "--args --demo",                         // the fixture door, still named
     ].filter((p) => !text.toLowerCase().includes(p.toLowerCase()));
     if (missing.length) {
@@ -1089,7 +1164,7 @@ if (problems.length) {
   die(`the bundle does not match what it claims — ${problems.length} problem(s):\n\n` +
       problems.map((c) => `    ✗ ${c.what}: ${c.why}`).join("\n"));
 }
-say(`  metadata, brand, icon, architectures, signature, the no-network claim and the`);
+say(`  metadata, brand, icon, architectures, signature, the host allow-list and the`);
 say(`  first-run disclosure all check out.`);
 
 /* ──────────────────────────────────────────────────────────── the output ──

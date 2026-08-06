@@ -52,13 +52,21 @@ the risk to them is high.
 Worth knowing before you go looking, because the two builds have very different
 threat surfaces right now.
 
-**macOS — the engine-bearing build — connects to your mailbox:**
+**macOS — the engine-bearing build — connects to your mailbox (and, if you ask it
+to, to ohmail Cloud):**
 
-- It opens **one IMAP connection over TLS** to the mail server you give it, and —
-  only if you enable it — one connection to your own Anthropic key or a local
-  Ollama. It makes **no other network connection**: no telemetry, no update check,
-  and no connection to any ohmail-hosted service (the Cloud sync client is aliased
-  out of the desktop build at compile time and is not in this repository).
+- In **local mode** it opens **one IMAP connection over TLS** to the mail server you
+  give it, and — only if you enable it — one connection to your own Anthropic key or a
+  local Ollama. Beyond that it makes only the signed update check; there is no telemetry
+  and no analytics.
+- In **Cloud mode** — an optional sign-in — it connects instead to `api.ohmail.app`, the
+  hosted ohmail service, over HTTPS, and acts as a viewer of a mailbox that service already
+  organises. It runs no local engine and opens no IMAP connection in this mode. The Cloud
+  session is held in memory only and re-established each launch; no mailbox credentials are
+  stored on the device.
+- The packaging step reads every host string in the shipped binary and **fails the build on
+  any host outside an explicit allow-list** — `api.ohmail.app`, the signed update feed, and
+  the local-engine pipe — so a telemetry or third-party endpoint cannot ship unremarked.
 - **Credentials**: your mail password is sealed under a per-install AES key held in
   your login **Keychain** and is never written to disk in the clear. Reports about
   the credential envelope, the Keychain use, or TLS/certificate handling are exactly

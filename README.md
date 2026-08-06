@@ -60,11 +60,13 @@ database on your Mac, and organises new mail into `ohmail/` folders on the serve
 itself — a Screener for first-time senders, Reads, Receipts, and the rest — so the
 filing is visible in every other mail app you own. It asks for your server and
 password on first launch; the password is sealed under a per-install key in your
-login Keychain. Nothing leaves your Mac but the IMAP connection to your provider
-(and, only if you turn it on, your own AI key or a local Ollama). No telemetry, no
-update check, no hosted service in the loop. It is `-preview` because there is no
-auto-updater yet — you update by downloading the next build. To look around
-**without** connecting a mailbox, launch the built-in fixture world instead:
+login Keychain. In this **local mode** nothing leaves your Mac but the IMAP
+connection to your provider, the signed update check, and — only if you turn it on
+— your own AI key or a local Ollama: no telemetry, no analytics. You can instead
+sign in to **ohmail Cloud** (the optional hosted service) and use the app as a
+viewer of a mailbox Cloud already organises; that mode connects to ohmail.app, and
+your session is held in memory only. To look around **without** connecting
+anything, launch the built-in fixture world instead:
 
     open -a ohmail --args --demo
 
@@ -96,12 +98,12 @@ app and connect to nothing.
 | | macOS | Windows / Linux |
 |---|---|---|
 | **Connects to your mailbox** | ✅ Yes. The bundled engine speaks IMAP over TLS, mirrors your mailbox to a local store, and files new mail into `ohmail/` folders on your server. | ❌ Not yet. The shell forbids connections at the webview level (`connect-src 'none'`) and replaces `fetch` / `XMLHttpRequest` / `WebSocket` with functions that throw. |
-| **What it talks to** | Your IMAP server, and — only if you turn it on — your own Anthropic key or a local Ollama. No telemetry, no update check, no hosted ohmail service. | Nothing. No network at all. |
+| **What it talks to** | Local mode: your IMAP server, the signed update feed, and — only if you turn it on — your own Anthropic key or a local Ollama. Cloud mode: ohmail.app, the hosted service you sign into, as a viewer. No telemetry, no analytics. | Nothing. No network at all. |
 | **Credentials** | Your mail password, sealed under a per-install key in your login Keychain, never written in the clear. | None — there is nothing to sign into. |
 | **Try it without a mailbox** | `open -a ohmail --args --demo` runs the built-in fixture world — no server, no network, no account. | The fixture world is what the app shows. |
 | **Runs, and is worth looking at** | Every surface is real: Ohbox, Screener, Reads, Receipts, triage piles, tags, search, compose, settings — light and dark, down to a 390 pt window, keyboard-first, native SwiftUI. | The same interface, in a locked-down webview. |
 | **Tested** | The interface model, the rules and design tokens, and the engine's sync, lease and organise logic are covered by the test suite; the packaging job boots the shipped bundle to prove it starts; and the release engine was verified connecting to and organising a real IMAP mailbox. | A 31-check render + offline audit over the built bundle, and 14 assertions on the security configuration. |
-| 🔜 Next | A signed, notarised build and an in-app updater — this one is ad-hoc-signed and you update it by downloading the next build. | The engine port, so the shell connects too — [issue #1](https://github.com/trafficflowhq/ohmail/issues/1). |
+| 🔜 Next | A signed, notarised build with a real Apple Developer ID — this one is ad-hoc-signed, so first launch needs the Gatekeeper approval in the install notes. It already updates itself over a signed feed. | The engine port, so the shell connects too — [issue #1](https://github.com/trafficflowhq/ohmail/issues/1). |
 
 If you came here from [ohmail.app](https://ohmail.app): the macOS build reads and
 organises your mail today. Watch the repository for the Windows and Linux engine, or

@@ -35,20 +35,29 @@ ohmail for macOS — first run
     menu bar, under ohmail > Check for Updates. Updates are cryptographically
     signed, and ohmail installs one only if that signature checks out.
 
-4.  WHAT IT DOES.
+4.  WHAT IT DOES — TWO WAYS TO CONNECT.
 
-    ohmail connects to your own IMAP mail server, mirrors your mailbox to a local
-    database on this Mac, and organizes new mail into ohmail/ folders (a Screener
-    for first-time senders, and the rest) on the server itself — so the filing is
-    visible in any mail client, not just this one. It asks for your mail server
-    and password on first launch; the password is sealed into a per-install key in
-    your login Keychain and is not written anywhere in the clear.
+    Local mode (the default). ohmail connects to your own IMAP mail server, mirrors
+    your mailbox to a local database on this Mac, and organizes new mail into ohmail/
+    folders (a Screener for first-time senders, and the rest) on the server itself —
+    so the filing is visible in any mail client, not just this one. It asks for your
+    mail server and password on first launch; the password is sealed into a
+    per-install key in your login Keychain and is not written anywhere in the clear.
+    In local mode nothing else leaves this Mac: the only connections are the one to
+    your mail server and the signed update check in step 3. No telemetry, no analytics.
 
     Your mail stays on your server. The local mirror is a cache: delete it (or the
     whole app) and nothing on the server is touched — it re-syncs from scratch next
     time. Exactly one copy of ohmail organizes a mailbox at a time.
 
-    To look around WITHOUT connecting a mailbox, launch the fixture preview:
+    ohmail Cloud (optional). Instead of the local engine you can sign in to an ohmail
+    Cloud account and read and triage the mailboxes it already holds. In this mode
+    ohmail is a viewer: it connects to ohmail.app, the hosted service you signed up
+    for, and shows what that service has already organized — it runs no mail engine
+    of its own and opens no IMAP connection. Your Cloud session is kept in memory only
+    and re-established each launch; no mailbox credentials are stored on this device.
+
+    To look around WITHOUT connecting anything, launch the fixture preview:
         open -a ohmail --args --demo
     That runs on a small fictional mailbox that ships inside the app — no server,
     no network, no account — so you can judge the interface on its own.

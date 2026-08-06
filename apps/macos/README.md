@@ -3,11 +3,14 @@
 The **free flagship native app** — Tier 1 of ohmail, built in SwiftUI on the Blanc
 design system. The macOS build now ships the mail engine: it connects to your IMAP
 mailbox and organises it, behind these same views, through
-[`MailSource`](Sources/OhMailKit/State/MailSource.swift). The SwiftUI shell binary opens
-no socket of its own — it renders the interface and talks to the mail engine over a local
-bridge; the engine (a separate embedded binary) and the Sparkle update framework are the
-two components that reach the network. Launched with `--demo` it runs on Mila's fixture
-world — no mailbox and no account — though it still checks for its own updates.
+[`MailSource`](Sources/OhMailKit/State/MailSource.swift). There are two ways to connect:
+the **local engine** — a separate embedded binary that speaks IMAP to your own server —
+or **ohmail Cloud**, [`CloudRequester`](Sources/OhMailKit/State/CloudRequester.swift), a
+`URLSession` transport in the shell that reads a hosted mailbox over HTTPS from
+`api.ohmail.app`. So the shell binary does open a socket now, but only to that one host;
+the local engine talks to your mail server; and the Sparkle update framework fetches the
+signed feed. Launched with `--demo` it runs on Mila's fixture world — no mailbox and no
+account — though it still checks for its own updates.
 
 **Mail reaches a view only through `AppState`.** No content, no fixture, no
 sender — the views know the model and nothing behind it. Chrome vocabulary is the
@@ -250,24 +253,29 @@ notary service. None of those exist yet. When they do, the build gains
 `xcrun stapler staple` — and the first-run notes get replaced rather than quietly
 left behind, because at that point they would be false.
 
-### The SwiftUI shell has no network of its own
+### The SwiftUI shell reaches two hosts, and no others
 
-The engine that reaches the network is a **separate binary** (Node), embedded beside
-the shell at packaging time; the shell talks to it over a local bridge. Updates are
-fetched by a second embedded component — the Sparkle framework — which is the only thing
-that contacts the release feed. The SwiftUI binary itself has no IMAP client and opens no
-socket of its own — it renders the interface, and with `--demo` it renders the small
-fictional mailbox compiled into it with no engine running.
+The shell talks to the local engine — a **separate binary** (Node), embedded beside it at
+packaging time — over a local bridge; that engine is what speaks IMAP to your own mail
+server. But the shell is not network-silent any more. Door two,
+[`CloudRequester`](Sources/OhMailKit/State/CloudRequester.swift), is a `URLSession`
+transport compiled into the shell: sign in to ohmail Cloud and it reads a hosted mailbox
+over HTTPS from `api.ohmail.app`. Updates are fetched by the Sparkle framework, which
+contacts the signed release feed. With `--demo` the shell renders the fictional mailbox
+compiled into it and starts no engine.
 
-That claim — about the SwiftUI binary, not the engine or the Sparkle updater beside it —
-is checked rather than believed, and it is checked on the SYMBOLS the binary imports
-rather than on the libraries it links. (Sparkle is linked, but it is its own framework:
-the audit reads the OhMail binary's imports, and its networking stays inside Sparkle.) Two libraries that could
-reach a network are linked and both are there for something else — CFNetwork for
-`HTTPURLResponse`, which is the shape the bridge to the local engine puts its
-replies in, and Security for the four `SecItem` calls the keystore makes. Neither
-import opens anything. `dyld_info -imports ohmail.app/Contents/MacOS/OhMail`
-lists every symbol taken from each of them, the packaging step holds those two to
-an explicit list, and Network.framework is refused outright.
+So the honest claim is not "no network" — it is that the shell reaches a **known, short
+list of hosts and nothing else**, and that is checked rather than believed. The packaging
+step (`scripts/package-macos.mjs`) reads every http(s) host string in the OhMail binary and
+fails the build on any host that is not on an explicit allow-list: `api.ohmail.app` (Cloud),
+the local-engine pipe pseudo-host, and the app-password help pages the setup screen shows as
+selectable text. The update feed is held to its own allow-list in `Info.plist`. On the symbol
+side, `dyld_info -imports ohmail.app/Contents/MacOS/OhMail` still holds CFNetwork and Security
+to an explicit list — the URL-loading classes door two uses (`NSURLSession` and friends), and
+the `SecItem` calls the keystore makes — so a raw `SSLHandshake` or an undisclosed capability
+fails; and Network.framework is refused outright, so a hand-rolled socket cannot slip in. A
+telemetry endpoint trips the host allow-list; a raw-socket client trips the framework refusal.
 
-Anyone who installs this is looking at the interface, not at their mail.
+Launch `--demo` without signing into Cloud or a mail server and the app makes no network
+connection but the update check. Otherwise it reaches your mail server, or ohmail Cloud, and
+the signed update feed — and the download says so.
