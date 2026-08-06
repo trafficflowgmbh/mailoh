@@ -31,30 +31,38 @@ struct SetupView: View {
     /// A refusal about what was typed, beside the field rather than instead of the screen.
     let problem: String?
     let submitting: Bool
+    /// Whether a cloud sign-in is in flight — door two's own submitting state, separate from the
+    /// password step's.
+    let cloudSubmitting: Bool
     let onChooseDoor: (OnboardingDoor) -> Void
     let onChooseProvider: (MailProvider) -> Void
     let onReconsider: () -> Void
     let onSaveMailbox: (EngineConfig) -> Void
     let onSubmitPassword: (String) -> Void
+    /// Door two: email, password, and the TOTP code, in that order.
+    let onSubmitCloudSignIn: (String, String, String) -> Void
     let onBack: () -> Void
 
     init(step: SetupStep, provider: MailProvider? = nil, problem: String? = nil,
-         submitting: Bool = false,
+         submitting: Bool = false, cloudSubmitting: Bool = false,
          onChooseDoor: @escaping (OnboardingDoor) -> Void = { _ in },
          onChooseProvider: @escaping (MailProvider) -> Void = { _ in },
          onReconsider: @escaping () -> Void = {},
          onSaveMailbox: @escaping (EngineConfig) -> Void = { _ in },
          onSubmitPassword: @escaping (String) -> Void = { _ in },
+         onSubmitCloudSignIn: @escaping (String, String, String) -> Void = { _, _, _ in },
          onBack: @escaping () -> Void = {}) {
         self.step = step
         self.provider = provider
         self.problem = problem
         self.submitting = submitting
+        self.cloudSubmitting = cloudSubmitting
         self.onChooseDoor = onChooseDoor
         self.onChooseProvider = onChooseProvider
         self.onReconsider = onReconsider
         self.onSaveMailbox = onSaveMailbox
         self.onSubmitPassword = onSubmitPassword
+        self.onSubmitCloudSignIn = onSubmitCloudSignIn
         self.onBack = onBack
     }
 
@@ -70,6 +78,11 @@ struct SetupView: View {
     @State private var smtpPort: Int?
     @State private var smtpSecure: Bool?
     @State private var password = ""
+    /// Door two's three fields. The password is NOT space-stripped — a cloud account password may
+    /// legitimately contain one, unlike the app-specific passwords door one strips.
+    @State private var cloudEmail = ""
+    @State private var cloudPassword = ""
+    @State private var cloudCode = ""
     /// Whether Continue has been pressed. Gates the one line of validation copy; see the form.
     @State private var attempted = false
     /// Whether Outlook's tile has been tapped, which reveals its one factual line in place rather
@@ -77,7 +90,10 @@ struct SetupView: View {
     @State private var outlookTapped = false
     @FocusState private var focus: FieldID?
 
-    private enum FieldID: Hashable { case host, port, user, address, password }
+    private enum FieldID: Hashable {
+        case host, port, user, address, password
+        case cloudEmail, cloudPassword, cloudCode
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -109,17 +125,39 @@ struct SetupView: View {
                 .padding(.top, 22)
             }
 
-        case .cloudUnavailable:
+        case .cloudSignIn(let problem):
             panel {
-                heading("ohmail Cloud isn't in this build yet.",
-                        "This build organizes your mail here, on this Mac. Cloud organizing — always-on, "
-                            + "on our servers — arrives in a later release.")
-                HStack(spacing: 10) {
-                    PillButton("Set up on this Mac", kind: .primary) { onChooseDoor(.local) }
-                    PillButton("Back", kind: .ghost, action: onReconsider)
+                heading("Sign in to ohmail Cloud.",
+                        "Cloud already holds your mailboxes. Sign in to read and triage them here. "
+                            + "Adding a mailbox to Cloud stays on ohmail.app.")
+                VStack(alignment: .leading, spacing: 12) {
+                    field("Email", text: $cloudEmail, id: .cloudEmail, hint: "you@example.org")
+                    field("Password", text: $cloudPassword, id: .cloudPassword, secure: true)
+                    field("Six-digit code", text: $cloudCode, id: .cloudCode,
+                          hint: "from your authenticator app")
                 }
                 .padding(.top, 22)
+                // A rejection about what was typed — a wrong password or code — beside the fields,
+                // never instead of the screen. An unreachable host is a different surface (a failed
+                // panel); neither is ever the sample world.
+                if let problem {
+                    Text(problem)
+                        .blanc(.meta).foregroundStyle(p.ink.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 12)
+                }
+                HStack(spacing: 10) {
+                    PillButton(cloudSubmitting ? "Signing in…" : "Sign in", kind: .primary) {
+                        onSubmitCloudSignIn(cloudEmail.trimmed, cloudPassword, cloudCode.trimmed)
+                    }
+                    .disabled(cloudSubmitting || cloudEmail.trimmed.isEmpty
+                              || cloudPassword.isEmpty || cloudCode.trimmed.isEmpty)
+                    PillButton("Back", kind: .ghost, action: onReconsider)
+                        .disabled(cloudSubmitting)
+                }
+                .padding(.top, 16)
             }
+            .onAppear { focus = .cloudEmail }
 
         case .pickProvider:
             panel {

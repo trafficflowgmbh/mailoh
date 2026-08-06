@@ -84,6 +84,18 @@ public final class EngineSource: MailSource {
     private let baseURL: URL
     private let clock: () -> Date
 
+    /// Whether a cycle RESUMES from where the last one stopped, or re-reads the world whole.
+    ///
+    /// False over the pipe (the default), where a full drain from `since=0` every cycle is what
+    /// `MailSource.swift` ruled and costs nothing — the engine is a memcpy away. True for door two,
+    /// where the same drain re-downloads the whole hosted mailbox on every poll over HTTPS. When true,
+    /// the projection is kept across cycles and each cycle asks only for the deltas past ``cursor``.
+    private let incremental: Bool
+    /// The high-water `/sync` cursor, retained across cycles when ``incremental``. In memory only: the
+    /// session is re-minted per launch (there is no persisted mirror to resume a disk cursor against,
+    /// and a cursor ahead of an empty projection would silently hide every message before it).
+    private var cursor = "0"
+
     private var projection = EngineProjection()
     private var index = EngineIndex()
     private var identity = EngineIdentity()
@@ -107,10 +119,12 @@ public final class EngineSource: MailSource {
     public init(requester: any EngineRequesting,
                 token: Secret,
                 baseURL: URL = URL(string: "http://sidecar")!,
+                incremental: Bool = false,
                 clock: @escaping () -> Date = Date.init) {
         self.requester = requester
         self.token = token
         self.baseURL = baseURL
+        self.incremental = incremental
         self.clock = clock
     }
 
@@ -224,20 +238,25 @@ public final class EngineSource: MailSource {
         identity = EngineIdentity.from(list)
     }
 
-    /// One cycle: drain `/sync` from the beginning, rebuild the mirror, re-project, push.
+    /// One cycle. Over the pipe: drain `/sync` from the beginning, rebuild the mirror, re-project. Over
+    /// HTTPS (``incremental``): resume from ``cursor`` and apply the deltas onto the mirror already in
+    /// hand, so a poll costs a page of changes rather than the whole mailbox again.
     ///
     /// - Parameter announcing: whether the reader is told a sync is running. False for the drain
     ///   that follows a write, where the status strip narrating a mark-as-read would be chrome.
     private func readWorld(announcing: Bool) async {
         if announcing { sink?.syncStateDidChange(.syncing(SyncActivity(what: "Reading your mailbox"))) }
 
-        var fresh = EngineProjection()
-        var cursor = "0"
+        // Incremental keeps the accumulated mirror and starts where the last cycle stopped; a full
+        // drain starts empty from `since=0`. `working` is a value copy either way, so a cycle that
+        // fails part-way is discarded whole and the previous world stands.
+        var working = incremental ? projection : EngineProjection()
+        var mark = incremental ? cursor : "0"
         var pages = 0
         while true {
             let response: (status: Int, data: Data)
             do {
-                response = try await get("/sync?since=\(cursor.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? cursor)")
+                response = try await get("/sync?since=\(mark.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? mark)")
             } catch {
                 sink?.syncStateDidChange(.failed(Self.transportFailure(error)))
                 return
@@ -249,26 +268,29 @@ public final class EngineSource: MailSource {
             guard let page = try? JSONDecoder().decode(WireSyncResponse.self, from: response.data) else {
                 sink?.syncStateDidChange(.failed(SourceFailure(
                     kind: .server,
-                    reason: "The local engine sent mail this version of ohmail could not read.",
+                    reason: "The mailbox sent mail this version of ohmail could not read.",
                     isRetryable: false)))
                 return
             }
-            fresh.apply(page)
+            working.apply(page)
             pages += 1
+            // Advance ON EVERY page, the last one included: `cursor` is the high-water mark the NEXT
+            // cycle resumes from, so dropping the final page's cursor would re-fetch it forever.
+            mark = page.cursor
             guard page.hasMore else { break }
             guard pages < Self.maxPagesPerCycle else {
                 // Said out loud rather than served as a partial mailbox that looks complete.
                 sink?.syncStateDidChange(.failed(SourceFailure(
                     kind: .server,
-                    reason: "The local engine kept sending mail without ever finishing. "
-                        + "Some of your mailbox is not shown.",
+                    reason: "The mailbox kept sending mail without ever finishing. "
+                        + "Some of it is not shown.",
                     isRetryable: true)))
                 return
             }
-            cursor = page.cursor
         }
 
-        projection = fresh
+        projection = working
+        if incremental { cursor = mark }
         reproject()
         sink?.syncStateDidChange(.idle(lastCompleted: clock()))
     }
@@ -324,9 +346,18 @@ public final class EngineSource: MailSource {
         } catch {
             outcome = .refused(Self.transportFailure(error))
         }
-        // The drain is the reconciliation, in BOTH directions: it replaces the optimistic world
-        // with the mailbox's on success, and it puts back what the mailbox still says on a refusal.
-        // One path, so a refused write cannot leave the screen claiming the write happened.
+        // ON A REFUSAL, PUT THE OPTIMISTIC EDIT BACK BEFORE RECONCILING.
+        //
+        // A full drain (the pipe) rebuilds the mirror from `since=0`, so a refused write self-heals —
+        // the reverted state is read back from source. An INCREMENTAL drain (HTTPS) keeps the mirror
+        // and applies only new deltas, and a refusal produces none, so the optimistic `setUnread` from
+        // `apply(.markSeen)` would otherwise stand. Restoring `before` here makes the reconciliation
+        // "a refused write reverts by the same path an accepted one lands by" true in both modes: the
+        // restore is discarded by the full drain (harmless) and is what the incremental drain keeps.
+        if case .refused = outcome, projection.setUnread(id, before) { reproject() }
+        // The drain is the reconciliation: it replaces the optimistic world with the mailbox's on
+        // success, and confirms the restored state on a refusal. One path, so a refused write cannot
+        // leave the screen claiming the write happened.
         await readWorld(announcing: false)
         return outcome
     }

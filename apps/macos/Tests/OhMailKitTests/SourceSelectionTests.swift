@@ -347,6 +347,81 @@ final class SourceSelectionTests: XCTestCase {
         XCTAssertEqual(composed["OHMAIL_IMAP_HOST"], "imap.example.org")
     }
 
+    // MARK: - Door two — the cloud viewer
+
+    /// **THE CLOUD BRANCH-WALK.** A cloud door never spawns the engine and never reaches the invented
+    /// world — signed in or not, at every engine status the supervisor could publish.
+    ///
+    /// This is the assertion the third branch exists for, the door-two counterpart of
+    /// `testAConfiguredLaunchNeverReachesTheInventedWorld`. Mutating `resolve` so the cloud branch
+    /// returns `spawnEngine: true` — the one-organizer violation (GOALS #2) — turns the first assertion
+    /// red; returning `.fixtures` or `.engine` there turns the others red.
+    func testACloudDoorNeverSpawnsAndNeverReachesTheEngineOrTheSampleWorld() {
+        for signedIn in [true, false] {
+            for status in Self.everyStatus {
+                let selection = SourceSelection.resolve(
+                    door: .cloud, cloudSignedIn: signedIn,
+                    configured: false, engine: Self.hasEngine, status: status, flags: Self.live)
+                XCTAssertFalse(selection.spawnEngine,
+                               "the cloud door spawned the engine (signedIn \(signedIn), \(describe(status)))")
+                XCTAssertNotEqual(selection.source, .engine, "the cloud door reached the local engine")
+                XCTAssertNotEqual(selection.source, .fixtures, "the cloud door reached the sample world")
+                if signedIn {
+                    XCTAssertEqual(selection.source, .cloud)
+                    XCTAssertEqual(selection.surface, .mail)
+                } else {
+                    XCTAssertNil(selection.source, "a cloud sign-in in progress named a source")
+                    XCTAssertEqual(selection.surface, .setup)
+                }
+            }
+        }
+    }
+
+    /// The cloud door outranks a serving engine — the door is the determination, not the engine's
+    /// readiness. Defensive: a cloud install has no `EngineConfig`, but the branch must not rely on it.
+    func testACloudDoorOutranksAConfiguredServingEngine() {
+        let selection = SourceSelection.resolve(
+            door: .cloud, cloudSignedIn: true,
+            configured: true, engine: Self.hasEngine, status: .serving(mailboxID: "m"), flags: Self.live)
+        XCTAssertEqual(selection.source, .cloud)
+        XCTAssertFalse(selection.spawnEngine)
+    }
+
+    /// **THE LOCAL DOOR NEVER NAMES THE CLOUD SOURCE**, and its decision is `decide` verbatim — door
+    /// one keeps every property its own tests pin, so the composition root never builds a
+    /// `CloudRequester` for it.
+    func testTheLocalDoorNeverNamesTheCloudSourceAndMatchesDecide() {
+        for door in [OnboardingDoor.local, nil] {
+            for status in Self.everyStatus {
+                let resolved = SourceSelection.resolve(
+                    door: door, cloudSignedIn: false,
+                    configured: true, engine: Self.hasEngine, status: status, flags: Self.live)
+                XCTAssertNotEqual(resolved.source, .cloud,
+                                  "the local door named the cloud source at \(describe(status))")
+                let decided = SourceSelection.decide(
+                    configured: true, engine: Self.hasEngine, status: status, flags: Self.live)
+                XCTAssertEqual(resolved, decided,
+                               "the local door diverged from the engine's own decision at \(describe(status))")
+            }
+        }
+    }
+
+    /// **`--demo` REACHES NEITHER DOOR.** The flag is asked before the door, so the sample world means
+    /// the same thing whichever door an install chose, and it starts nothing.
+    func testDemoReachesNeitherTheEngineNorTheCloud() {
+        for door in [OnboardingDoor.local, .cloud, nil] {
+            for signedIn in [true, false] {
+                let selection = SourceSelection.resolve(
+                    door: door, cloudSignedIn: signedIn,
+                    configured: true, engine: Self.hasEngine, status: nil, flags: LaunchFlags(demo: true))
+                XCTAssertEqual(selection.source, .fixtures,
+                               "the sample world was not reached under door \(String(describing: door))")
+                XCTAssertEqual(selection.surface, .demo)
+                XCTAssertFalse(selection.spawnEngine, "the sample world started an engine")
+            }
+        }
+    }
+
     private func describe(_ status: EngineStatus?) -> String {
         status.map { "\($0)" } ?? "nil (not started)"
     }

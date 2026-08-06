@@ -36,13 +36,33 @@ final class AppRootTests: XCTestCase {
     ///   still be green.
     private func model(demo: Bool = false,
                        install: EngineInstall = .installed,
-                       engineSource: @escaping AppRootModel.EngineSourceFactory = { _ in nil })
+                       engineSource: @escaping AppRootModel.EngineSourceFactory = { _ in nil },
+                       // A stub that never touches the network. The shipped default is the REAL
+                       // `CloudSignIn()`, which would dial `api.ohmail.app`; every test drives door two
+                       // through an injected outcome instead.
+                       cloudSignIn: CloudSignInService = StubCloudSignIn(outcome: .unavailable("no network in tests")),
+                       // The cloud source is a stub too, so a signed-in test builds a viewer without an
+                       // `EngineSource` over a live `URLSession`.
+                       cloudSource: @escaping AppRootModel.CloudSourceFactory = { _ in EmptySource() })
         -> AppRootModel {
         AppRootModel(flags: LaunchFlags(demo: demo), store: store,
                      // Empty, which is what a bundle opened from the Finder inherits. The stored
                      // mailbox is the only thing that can make a launch startable, which is the
                      // point of the composition.
-                     environment: [:], keys: NoKeys(), install: install, engineSource: engineSource)
+                     environment: [:], keys: NoKeys(), install: install, engineSource: engineSource,
+                     cloudSignIn: cloudSignIn, cloudSource: cloudSource)
+    }
+
+    /// A cloud sign-in that answers a preset outcome without a socket.
+    private struct StubCloudSignIn: CloudSignInService {
+        let outcome: CloudSignInOutcome
+        func signIn(email: String, password: String, code: String) async -> CloudSignInOutcome { outcome }
+    }
+
+    /// A throwaway hosted transport, for a `.connected` outcome whose requester the stub source
+    /// ignores. Constructing it dials nothing — the session only speaks when a source drains it.
+    private func stubCloudRequester() -> CloudRequester {
+        CloudRequester(urlSession: makeCloudURLSession())
     }
 
     private static let mailbox = EngineConfig(host: "imap.example.org", port: 993,
@@ -317,17 +337,87 @@ final class AppRootTests: XCTestCase {
         root.end()
     }
 
-    /// Door two is stated, not faked. Choosing Cloud lands on a named limit and never on a form or a
-    /// password field, and the person can step back out of it.
-    func testDoorTwoStatesItsLimitAndIsNotADeadEnd() {
+    /// Door two leads to a sign-in, not a stated limit, and it is not a dead end: the person can step
+    /// back out to the chooser.
+    func testDoorTwoLeadsToCloudSignInAndIsNotADeadEnd() {
         let root = model()
         root.chooseDoor(.cloud)
         XCTAssertEqual(root.door, .cloud)
-        XCTAssertEqual(root.setupStep, .cloudUnavailable)
+        XCTAssertEqual(root.setupStep, .cloudSignIn(problem: nil))
+        // A cloud door never spawns the engine — not even to draw its sign-in form.
+        XCTAssertFalse(root.selection.spawnEngine, "the cloud door spawned the engine")
+        XCTAssertNotEqual(root.selection.source, .fixtures)
 
         root.reconsiderDoor()
         XCTAssertNil(root.door, "the door was not released")
         XCTAssertEqual(root.setupStep, .chooseDoor)
+        root.end()
+    }
+
+    /// **A CLOUD SIGN-IN BUILDS A VIEWER AND SPAWNS NO ENGINE.**
+    ///
+    /// The one-organizer half of door two (GOALS #2): a signed-in cloud install draws the mailbox, its
+    /// source is `.cloud`, and no engine was ever started. `begin()` is called because the shape that
+    /// would undo this is a cloud install that spawns anyway.
+    func testACloudSignInBuildsAViewerAndStartsNoEngine() async {
+        let root = model(cloudSignIn: StubCloudSignIn(outcome: .connected(stubCloudRequester())))
+        root.chooseDoor(.cloud)
+        root.begin()
+        XCTAssertNil(root.engine.status, "a cloud install started the local engine")
+
+        await root.submitCloudSignIn(email: "a@b.c", password: "pw", code: "123456")
+
+        XCTAssertTrue(root.cloudSignedIn, "the session was not established")
+        XCTAssertEqual(root.selection.source, .cloud)
+        XCTAssertFalse(root.selection.spawnEngine, "the cloud viewer spawned an engine")
+        XCTAssertNotNil(root.mail, "the viewer was not built")
+        XCTAssertEqual(root.surface, .mail)
+        XCTAssertNil(root.engine.status, "signing in to cloud started the local engine")
+        XCTAssertNoFixtureMail(root)
+        root.end()
+    }
+
+    /// A rejection — a wrong password or code — is shown beside the fields, and the window builds
+    /// nothing and never falls back to the sample world.
+    func testACloudRejectionShowsAProblemNotTheSampleWorld() async {
+        let root = model(cloudSignIn: StubCloudSignIn(outcome: .rejected("That code wasn't accepted.")))
+        root.chooseDoor(.cloud)
+        await root.submitCloudSignIn(email: "a@b.c", password: "pw", code: "000000")
+
+        XCTAssertFalse(root.cloudSignedIn, "a rejected sign-in established a session")
+        XCTAssertNil(root.mail, "a rejected sign-in built a world")
+        XCTAssertNoFixtureMail(root)
+        XCTAssertEqual(root.setupStep, .cloudSignIn(problem: "That code wasn't accepted."))
+        XCTAssertEqual(root.surface, .setup, "a rejection took the person off the sign-in form")
+        root.end()
+    }
+
+    /// An unreachable host is a NAMED degraded panel, not the sample world and not a wrong-password
+    /// message: nothing the person typed was wrong.
+    func testACloudUnavailableHostIsNamedNotTheSampleWorld() async {
+        let root = model(cloudSignIn: StubCloudSignIn(outcome: .unavailable("Couldn't reach ohmail Cloud.")))
+        root.chooseDoor(.cloud)
+        await root.submitCloudSignIn(email: "a@b.c", password: "pw", code: "123456")
+
+        XCTAssertFalse(root.cloudSignedIn)
+        XCTAssertNil(root.mail)
+        XCTAssertNoFixtureMail(root)
+        guard case .failed(let notice) = root.setupStep else {
+            return XCTFail("an unreachable host produced \(root.setupStep), not a named failure")
+        }
+        XCTAssertTrue(notice.detail.contains("Couldn't reach"))
+        root.end()
+    }
+
+    /// **LOCAL NEVER CONSTRUCTS THE CLOUD REQUESTER.** The other half of the per-mode privacy
+    /// invariant (GOALS #5): a full door-one launch holds no hosted transport and never names `.cloud`.
+    func testALocalInstallNeverConstructsTheCloudRequester() throws {
+        try store.save(Self.mailbox)
+        let root = model()
+        root.chooseDoor(.local)
+        XCTAssertFalse(root.cloudSignedIn, "a local install has a cloud session")
+        XCTAssertNil(root.cloudRequester, "a local install constructed a cloud requester")
+        XCTAssertNotEqual(root.selection.source, .cloud, "a local install named the cloud source")
         root.end()
     }
 
@@ -602,7 +692,9 @@ final class AppRootTests: XCTestCase {
                 notice: AppRootModel.couldNotFinish("The local engine stopped."),
                 action: (label: "Back", run: {})))),
             ("setup · choose door", AnyView(setupView(step: .chooseDoor))),
-            ("setup · cloud unavailable", AnyView(setupView(step: .cloudUnavailable))),
+            ("setup · cloud sign-in", AnyView(setupView(step: .cloudSignIn(problem: nil)))),
+            ("setup · cloud sign-in rejected", AnyView(setupView(
+                step: .cloudSignIn(problem: "That code wasn't accepted.")))),
             ("setup · pick provider", AnyView(setupView(step: .pickProvider))),
             ("setup · mailbox", AnyView(setupView(step: .mailbox(nil)))),
             ("setup · mailbox prefilled", AnyView(setupView(

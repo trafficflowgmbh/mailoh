@@ -34,12 +34,16 @@ public struct AppRootView: View {
                           provider: root.chosenProvider,
                           problem: root.passwordProblem,
                           submitting: root.submittingPassword,
+                          cloudSubmitting: root.submittingCloud,
                           onChooseDoor: { root.chooseDoor($0) },
                           onChooseProvider: { root.chooseProvider($0) },
                           onReconsider: { root.reconsiderDoor() },
                           onSaveMailbox: { root.saveMailbox($0) },
                           onSubmitPassword: { password in
                               Task { await root.submitPassword(password) }
+                          },
+                          onSubmitCloudSignIn: { email, password, code in
+                              Task { await root.submitCloudSignIn(email: email, password: password, code: code) }
                           },
                           onBack: { root.dismissSetupFailure() })
                     .blancTheme()

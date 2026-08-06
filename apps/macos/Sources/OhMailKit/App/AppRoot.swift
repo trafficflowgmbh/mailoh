@@ -42,11 +42,21 @@ public final class AppRootModel {
     /// why this returns an optional rather than a source.
     public typealias EngineSourceFactory = @MainActor (EngineBridge) -> (any MailSource)?
 
+    /// How a cloud-backed mail source is built from a signed-in transport — door two's analogue of
+    /// ``EngineSourceFactory``. Injected for the same reason: the projection is separable work, and a
+    /// test substitutes a stub source without a network. The shipped default drives ``EngineSource``
+    /// over the ``CloudRequester`` in **incremental** mode (§cursor persistence over HTTPS).
+    public typealias CloudSourceFactory = @MainActor (CloudRequester) -> (any MailSource)?
+
     public let flags: LaunchFlags
     public let engine = EngineBridge()
 
     private let store: EngineConfigStore
     private let inheritedEnvironment: [String: String]
+    /// Door two's sign-in — password + TOTP against the hosted API. A dependency, so a test drives the
+    /// success and failure paths without a socket.
+    private let cloudSignIn: CloudSignInService
+    private let makeCloudSource: CloudSourceFactory
     /// Whether this build carries an engine — **read off the bundle once, at launch.**
     ///
     /// Read once for the same reason `configured` is: a SwiftUI body runs whenever anything it reads
@@ -89,6 +99,28 @@ public final class AppRootModel {
     /// relaunch mid-flow returns to the provider picker under the remembered door.
     private(set) var chosenProvider: MailProvider?
 
+    // MARK: Door two — the cloud viewer
+
+    /// The hosted transport, once door two has signed in. Held for the life of the window; it carries
+    /// the in-memory session and is the one thing the cloud viewer drives.
+    ///
+    /// **`nil` on every install except a signed-in cloud one, and constructed on exactly one path** —
+    /// ``submitCloudSignIn(email:password:code:)``. A local or demo install never reaches that path,
+    /// which is the "local never constructs the requester" half of the per-mode privacy invariant
+    /// (GOALS #5). The tokens inside live only in memory, re-minted per launch, so nothing is persisted
+    /// to the device.
+    private(set) var cloudRequester: CloudRequester?
+    /// Whether a sign-in is in flight, for the button's own state.
+    private(set) var submittingCloud = false
+    /// A cloud sign-in refusal the person can act on — a wrong password or code — shown beside the
+    /// fields. Distinct from ``setupFailure``, which is a degraded state that takes the whole panel
+    /// (the host was unreachable). Neither is ever the invented world.
+    private(set) var cloudProblem: String?
+
+    /// Whether door two has an established session this launch. Door two's mailbox is reachable only
+    /// once it has, the same way door one's password step sits ahead of the mailbox.
+    public var cloudSignedIn: Bool { cloudRequester != nil }
+
     private(set) var inSetup = false
     /// Whether ``saveMailbox(_:)`` has written a configuration during this run of setup. The step
     /// after it waits for the engine, which is why setup outlives the moment `configured` flips.
@@ -109,7 +141,12 @@ public final class AppRootModel {
                 environment: [String: String] = ProcessInfo.processInfo.environment,
                 keys: KeyProvider = KeyProviderDefault(),
                 install: EngineInstall? = nil,
-                engineSource: @escaping EngineSourceFactory = { _ in nil }) {
+                engineSource: @escaping EngineSourceFactory = { _ in nil },
+                cloudSignIn: CloudSignInService = CloudSignIn(),
+                cloudSource: @escaping CloudSourceFactory = { requester in
+                    EngineSource(requester: requester, token: Secret(""),
+                                 baseURL: cloudAPIBaseURL, incremental: true)
+                }) {
         self.flags = flags
         self.store = store
         self.inheritedEnvironment = environment
@@ -118,6 +155,8 @@ public final class AppRootModel {
             executableDirectory: EngineProcess.bundledEngineDirectory)
         self.keys = keys
         self.makeEngineSource = engineSource
+        self.cloudSignIn = cloudSignIn
+        self.makeCloudSource = cloudSource
         let stored = try? store.load()
         self.config = stored
         self.configured = stored != nil
@@ -127,6 +166,9 @@ public final class AppRootModel {
         self.mailKind = nil
         self.door = store.loadDoor()
         self.chosenProvider = nil
+        self.cloudRequester = nil
+        self.submittingCloud = false
+        self.cloudProblem = nil
         self.inSetup = false
         self.savedMailbox = false
         self.setupFailure = nil
@@ -140,9 +182,14 @@ public final class AppRootModel {
     // MARK: - What the window draws
 
     /// The decision, before this object's own sequencing is applied to it.
+    ///
+    /// ``SourceSelection/resolve(door:cloudSignedIn:configured:engine:status:flags:)`` layers the
+    /// chosen door over the local engine's truth table: `--demo` still outranks everything, a signed-in
+    /// cloud door is a viewer with no engine, and door one is the old `decide` unchanged.
     public var selection: SourceSelection {
-        SourceSelection.decide(configured: configured, engine: engineInstall,
-                               status: engine.status, flags: flags)
+        SourceSelection.resolve(door: door, cloudSignedIn: cloudSignedIn,
+                                configured: configured, engine: engineInstall,
+                                status: engine.status, flags: flags)
     }
 
     /// What the window draws right now.
@@ -211,6 +258,13 @@ public final class AppRootModel {
             // preview was the only thing there was. Handing it to a real account would put a
             // stranger's half-written message in somebody's compose window.
             mail = AppState(source: source, chrome: Self.noChrome)
+        case .cloud:
+            // Door two: the hosted mailbox, driven through the signed-in transport. The requester is
+            // only ever non-nil on a cloud install that has signed in, so this branch is unreachable
+            // for local and demo — which is the "local never constructs the requester" invariant read
+            // from the one place that could break it. Same real-account chrome as the engine branch.
+            guard let requester = cloudRequester, let source = makeCloudSource(requester) else { return }
+            mail = AppState(source: source, chrome: Self.noChrome)
         }
         mailKind = kind
     }
@@ -228,6 +282,7 @@ public final class AppRootModel {
         self.door = door
         self.chosenProvider = nil
         self.setupFailure = nil
+        self.cloudProblem = nil
     }
 
     /// Choose the provider whose preset fills in the form. Outlook is refused and never advances here
@@ -246,6 +301,41 @@ public final class AppRootModel {
         self.door = nil
         self.chosenProvider = nil
         self.setupFailure = nil
+        // A cloud sign-in in progress is abandoned with the door. The session is in-memory only, so
+        // dropping the requester is the whole of forgetting it — nothing on disk to clear.
+        self.cloudRequester = nil
+        self.cloudProblem = nil
+    }
+
+    /// Sign in to ohmail Cloud — password, then the TOTP code — and, on success, drive the mailbox
+    /// through the hosted transport.
+    ///
+    /// The three outcomes are the ruling's requirement that a failed door two is a NAMED state and
+    /// never `.fixtures`: a rejection (wrong password or code) shows beside the fields and the form
+    /// stands; an unreachable host is a degraded panel with a sentence; a success builds the viewer.
+    /// The requester is stored here and nowhere else, which is what keeps a local install from ever
+    /// holding one.
+    public func submitCloudSignIn(email: String, password: String, code: String) async {
+        cloudProblem = nil
+        guard !submittingCloud else { return }
+        submittingCloud = true
+        defer { submittingCloud = false }
+
+        switch await cloudSignIn.signIn(email: email, password: password, code: code) {
+        case .connected(let requester):
+            cloudRequester = requester
+            cloudProblem = nil
+            setupFailure = nil
+            // The decision now names `.cloud`; build the viewer inline rather than waiting on a
+            // surface change, exactly as `saveMailbox` starts the engine the moment it is configured.
+            materialize()
+        case .rejected(let why):
+            cloudProblem = why
+        case .unavailable(let why):
+            // A degraded state, taken by the panel. `couldNotFinish` is the same wrapper a failed
+            // local start uses, so the two doors fail in one voice.
+            setupFailure = Self.couldNotFinish(why)
+        }
     }
 
     /// What the form opens on for a chosen provider.
@@ -307,8 +397,10 @@ public final class AppRootModel {
             case .none:
                 return .chooseDoor
             case .cloud:
-                // Door two is a stated limit in this build, not a flow. See ``SetupStep/cloudUnavailable``.
-                return .cloudUnavailable
+                // Door two: sign in to the hosted mailbox. `cloudProblem` is a rejection to show
+                // beside the fields, or `nil` for the first draw. Once signed in the decision names
+                // `.mail`, so this step is left behind.
+                return .cloudSignIn(problem: cloudProblem)
             case .local:
                 guard let provider = chosenProvider else { return .pickProvider }
                 return .mailbox(prefill(for: provider))
@@ -478,9 +570,10 @@ public enum SetupStep: Equatable, Sendable {
     /// The two-door frame: organize this mailbox on this Mac, or on Cloud. The first thing a fresh
     /// install shows, before it has anything to collect.
     case chooseDoor
-    /// Door two, stated honestly. Cloud's transport is a later slice, so this build says so rather
-    /// than opening a flow that cannot finish.
-    case cloudUnavailable
+    /// Door two: sign in to ohmail Cloud — email, password, and a TOTP code. `problem` is a rejection
+    /// to show beside the fields (a wrong password or code), or `nil` for the first draw. Adding a
+    /// mailbox to Cloud stays on ohmail.app; this is sign-in and read/triage of mailboxes Cloud holds.
+    case cloudSignIn(problem: String?)
     /// Door one's first step: who hosts the mailbox. The answer fills in the server details.
     case pickProvider
     /// Collect the mailbox. Carries whatever is already stored — or a provider preset — so nobody
@@ -506,9 +599,9 @@ public enum EngineEnvironment {
     /// Implicit TLS. The engine reads this as "anything that is not the string `0`", so the false
     /// case has to be spelled exactly — an empty value would mean secure.
     public static let secureVar = "OHMAIL_IMAP_SECURE"
-    /// The SMTP server this mailbox sends through. The engine reads these three
-    /// (`apps/sidecar/src/main.ts`) and authenticates with the SAME login it opened IMAP with — one
-    /// credential per mailbox, so there is no SMTP password variable to carry and never is.
+    /// The SMTP server this mailbox sends through. The engine reads these three and authenticates with
+    /// the SAME login it opened IMAP with — one credential per mailbox, so there is no SMTP password
+    /// variable to carry and never is.
     public static let smtpHostVar = "OHMAIL_SMTP_HOST"
     public static let smtpPortVar = "OHMAIL_SMTP_PORT"
     public static let smtpSecureVar = "OHMAIL_SMTP_SECURE"
