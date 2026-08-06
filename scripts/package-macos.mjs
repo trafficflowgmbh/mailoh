@@ -89,6 +89,48 @@ function capture(cmd, args, opts = {}) {
 const plist = (file, key) => capture("/usr/libexec/PlistBuddy", ["-c", `Print :${key}`, file]);
 const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 
+/**
+ * Build the compressed DMG, with a bounded retry around the one step that flakes.
+ *
+ * hdiutil's UDZO compression is an intermittent failure on macOS CI runners: the
+ * `create` aborts transiently and an identical re-run succeeds. Retry it a bounded
+ * number of times, reading hdiutil's OWN exit status — execFileSync throws with the
+ * child's numeric `.status` on a non-zero exit, so no pipe is involved and a failure
+ * can never be misread as success — and clearing any half-written image or leftover
+ * scratch mount between tries so the retry starts clean. A failure that persists
+ * across every attempt still dies: the retry absorbs a transient flake, it must not
+ * swallow a real error. The format/flags are unchanged from the single call this
+ * replaced — only resilience is added around them.
+ */
+function hdiutilCreateDmg(volname, srcfolder, dmg) {
+  const attempts = Number(process.env.OHMAIL_DMG_ATTEMPTS) || 3;
+  const createArgs = ["create", "-volname", volname, "-srcfolder", srcfolder,
+                      "-fs", "HFS+", "-format", "UDZO", "-ov", "-quiet", dmg];
+  for (let attempt = 1; ; attempt++) {
+    try {
+      execFileSync("hdiutil", createArgs, { stdio: "inherit", maxBuffer: 1 << 28 });
+      return;
+    } catch (e) {
+      const status = e.status ?? e.signal ?? "?";
+      if (attempt >= attempts) {
+        die(`hdiutil ${createArgs.join(" ")}\n  exited ${status} after ${attempt} attempt(s)\n${e.stdout || ""}${e.stderr || ""}`);
+      }
+      say(`  hdiutil create failed (${status}); retrying (${attempt}/${attempts}) after cleanup`);
+      // Start the next try from nothing: a half-written .dmg, or the scratch image
+      // the create mounts under our volume name, can fail the retry for a different
+      // reason than the flake being absorbed. Only our own artifacts are touched.
+      fs.rmSync(dmg, { force: true });
+      const scratch = `/Volumes/${volname}`;
+      if (fs.existsSync(scratch)) {
+        run("hdiutil", ["detach", scratch, "-force", "-quiet"], { stdio: "ignore", tolerate: true });
+      }
+      // Backoff between tries. Synchronous by design: this is a straight-line sync
+      // build, and shelling out to `sleep` keeps it that way.
+      run("sleep", [String(attempt * 2)], { stdio: "ignore", tolerate: true });
+    }
+  }
+}
+
 const args = process.argv.slice(2);
 const flag = (name) => {
   const i = args.indexOf(name);
@@ -761,8 +803,7 @@ function rebuildAdHocDmg() {
   fs.copyFileSync(firstRun, path.join(dmgStage, "Read me first.txt"));
   fs.symlinkSync("/Applications", path.join(dmgStage, "Applications"));
   fs.rmSync(BUILT_DMG, { force: true });
-  run("hdiutil", ["create", "-volname", `ohmail ${short}`, "-srcfolder", dmgStage,
-                  "-fs", "HFS+", "-format", "UDZO", "-ov", "-quiet", BUILT_DMG], { stdio: "inherit" });
+  hdiutilCreateDmg(`ohmail ${short}`, dmgStage, BUILT_DMG);
   fs.rmSync(dmgStage, { recursive: true, force: true });
 }
 
@@ -830,8 +871,7 @@ function signAndNotarize() {
    * A signed-build variant of those notes is an edit to public/ohmail/Resources,
    * which is the mirror's copy and not this script's to make. */
   fs.rmSync(BUILT_DMG, { force: true });
-  run("hdiutil", ["create", "-volname", `ohmail ${short}`, "-srcfolder", dmgStage,
-                  "-fs", "HFS+", "-format", "UDZO", "-ov", "-quiet", BUILT_DMG], { stdio: "inherit" });
+  hdiutilCreateDmg(`ohmail ${short}`, dmgStage, BUILT_DMG);
   fs.rmSync(dmgStage, { recursive: true, force: true });
 
   step("signing, notarising and stapling the DMG");

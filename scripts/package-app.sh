@@ -111,13 +111,43 @@ cp -R "$APP" "$STAGE/ohmail.app"
 cp "$ROOT/Resources/FIRST-RUN.txt" "$STAGE/Read me first.txt"
 ln -s /Applications "$STAGE/Applications"
 
-hdiutil create \
-  -volname "ohmail $SHORT" \
-  -srcfolder "$STAGE" \
-  -fs HFS+ \
-  -format UDZO \
-  -ov -quiet \
-  "$DMG"
+# hdiutil's UDZO compression is an intermittent failure on CI runners: the
+# create step aborts transiently and an identical re-run succeeds. Retry it a
+# bounded number of times so one transient failure does not sink the build,
+# reading hdiutil's OWN exit status directly (never through a pipe, which could
+# report a failure as success) and clearing any half-written image or leftover
+# scratch mount between tries. A failure that persists across every attempt
+# still stops the build — the retry absorbs a transient flake, it does not hide
+# a real error.
+DMG_ATTEMPTS="${OHMAIL_DMG_ATTEMPTS:-3}"
+attempt=1
+while :; do
+  if hdiutil create \
+    -volname "ohmail $SHORT" \
+    -srcfolder "$STAGE" \
+    -fs HFS+ \
+    -format UDZO \
+    -ov -quiet \
+    "$DMG"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  [ "$rc" -eq 0 ] && break
+  if [ "$attempt" -ge "$DMG_ATTEMPTS" ]; then
+    echo "hdiutil create failed (exit $rc) after $attempt attempt(s); giving up" >&2
+    exit "$rc"
+  fi
+  echo "hdiutil create failed (exit $rc); retrying ($attempt/$DMG_ATTEMPTS) after cleanup" >&2
+  # Start the next try from nothing: drop the partial .dmg, and detach the
+  # scratch image the create mounts under our volume name if it was left
+  # behind. Only our own volume is ever touched — never a blind sweep of disks.
+  rm -f "$DMG"
+  SCRATCH="/Volumes/ohmail $SHORT"
+  [ -d "$SCRATCH" ] && hdiutil detach "$SCRATCH" -force >/dev/null 2>&1 || true
+  sleep $(( attempt * 2 ))
+  attempt=$(( attempt + 1 ))
+done
 hdiutil verify -quiet "$DMG"
 
 say "done"
