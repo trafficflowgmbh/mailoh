@@ -1,7 +1,8 @@
 import { hostname } from "node:os";
 import { and, eq } from "drizzle-orm";
 import {
-  StaticKeyProvider, kekRingFingerprint, type KekEnvIdentity, type KeyProvider,
+  StaticKeyProvider, kekRingFingerprint,
+  type KekEnvIdentity, type KeyProvider, type OpenSendAdapter, type SendAdapter,
 } from "@trafficflow/core/mail";
 import { ImapAdapter, type ImapConfig, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -15,7 +16,7 @@ import {
   kbService, tagsService,
   makeApprovalService, makeAuthConfig, makeMailboxService, makePrivacyService,
   makeScreenerService, messageService, notifyRulesService,
-  rulesService, searchService, snippetsService, syncService, threadService,
+  rulesService, searchService, sendService, snippetsService, syncService, threadService,
   triageService, workflowsService, ServiceError,
   type AuthConfig, type HostResolver, type MailboxAllowancePolicy, type PushService, type RemoteFetch,
 } from "@trafficflow/services/mail";
@@ -275,7 +276,13 @@ const REFUSING_RESOLVER: HostResolver = {
  *    an absent drafter, so "this install has no model" keeps ONE name in the vocabulary every
  *    host shares. Rules-only is the product's floor and a complete mail organizer on its own; a
  *    model adds to it and is never a prerequisite for it.
- *  · `sendAdapter` — send decrypts stored SMTP credentials, and none are stored here yet.
+ *  · `sends` / `sendAdapter` — PRESENT. `sends` is the shared `SendService` — the same gated,
+ *    crash-safe idempotent send Cloud runs, reused rather than reimplemented — and `sendAdapter`
+ *    is the local factory ({@link createSidecar}'s `openLocalSend`) that opens SMTP+IMAP for one
+ *    send. It differs from the hosted `makeSendAdapter` in exactly one place: the SMTP transport
+ *    COORDINATES (host/port/implicit-TLS) come from `config.imap.smtp` — the `OHMAIL_SMTP_*` the
+ *    shell set — while the AUTH is the SAME single sealed credential the IMAP side decrypts. One
+ *    secret per mailbox; the environment carries the server, never the password.
  *  · `alerts` / `admin` — an operator surface on a single user's laptop is nothing but attack
  *    surface. Absent ⇒ 404, which is the correct answer.
  *  · `proposals` — the proposer asks a model what workflow the user keeps doing by hand. No model
@@ -372,12 +379,21 @@ const LOCAL_IMAP_ADMISSION = {
 function localServices(
   authConfig: AuthConfig,
   keyProvider: KeyProvider,
+  openSendAdapter: OpenSendAdapter,
   ai?: LocalAi,
 ): ApiServices {
   const classifier = ai?.classifier();
   const drafter = ai?.drafter();
   return {
     sync: syncService,
+    // THE GATED IDEMPOTENT SEND, and the SAME `SendService` Cloud runs — the `outbound_sends`
+    // reservation, the pre-minted Message-ID, the verify-by-Sent recovery and `SEND_STALE_AFTER_MS`
+    // are all the shared implementation. Only the transport differs, and that difference is
+    // `sendAdapter` below: `openLocalSend` builds SMTP from `config.imap.smtp` and authenticates
+    // with the one sealed credential the IMAP side decrypts. Forking a second sender here is
+    // exactly the divergence the one-pipeline rule forbids on the receive side, for the same reason.
+    sends: sendService,
+    sendAdapter: openSendAdapter,
     push: LOCAL_PUSH,
     imapAdmission: LOCAL_IMAP_ADMISSION,
     mailbox: makeMailboxService({ keyProvider, allowance: UNMETERED_MAILBOX_ALLOWANCE }),
@@ -510,8 +526,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       authConfig,
       keyProvider,
       // Rebuilt per request so the AI slots reflect what this install can do NOW — see
-      // `localServices`.
-      services: localServices(authConfig, keyProvider, ai),
+      // `localServices`. `openLocalSend` (below) is the send transport, resolving the sealed
+      // credential fresh per send.
+      services: localServices(authConfig, keyProvider, openLocalSend, ai),
       // BEARER ONLY. There is no browser here, so there is no ambient cookie to abuse — and with
       // `via` structurally unable to be "cookie", `withCsrf` becomes a no-op by construction
       // rather than by a check. Same posture as `api.ohmail.app`.
@@ -607,6 +624,77 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // the one the branch already establishes: this key does not open that row.
         return { state: "unreadable", pass: envPass ?? null };
       }
+    };
+
+    /**
+     * THE LOCAL SEND ADAPTER — the desktop counterpart to the hosted `makeSendAdapter`.
+     *
+     * `POST /drafts/:id/send` resolves this (via `deps.services.sendAdapter`) to open one
+     * SMTP+IMAP connection for one send, and `SendService` closes it in its `finally`. It is a
+     * FRESH connection per send, exactly as the hosted adapter is, so a send never contends with
+     * the sync drain for the one long-lived IMAP login.
+     *
+     * ── ONE CREDENTIAL PER MAILBOX, AND THE SPLIT THAT ENFORCES IT ─────────────────────────────
+     *
+     * The SMTP transport COORDINATES — host, port, implicit-TLS — come from `config.imap.smtp`,
+     * which is the `OHMAIL_SMTP_*` the shell set (`main.ts`). The AUTH does NOT: it is the SAME
+     * single credential the IMAP side resolves, through the SAME `resolveLogin()` — store-wins-
+     * over-environment, decrypted under this install's key. So the password the transporter
+     * authenticates with is byte-for-byte the one the mailbox is synced with, and in steady state
+     * (no password in the environment) its only source is the sealed store. There is deliberately
+     * no second sealed SMTP secret: a mailbox has one password, and a second credential-at-rest
+     * would be a second thing to seal, rotate and lose.
+     *
+     * This is why the hosted `makeSendAdapter` cannot simply be reused here: it reads the SMTP
+     * host/port from a stored `smtp` credential row (or falls back to the IMAP host on 587), and a
+     * local install has neither — its SMTP server is an environment fact, not a stored one.
+     */
+    const openLocalSend: OpenSendAdapter = async (): Promise<SendAdapter> => {
+      const smtp = config.imap.smtp;
+      if (!smtp) {
+        throw new ServiceError(
+          "upstream_unavailable", 502,
+          "this mailbox has no SMTP server configured, so mail cannot be sent from this install",
+        );
+      }
+      // The sealed credential, resolved the way the IMAP side resolves it. A launch that has no
+      // password anywhere serves its mirror and refuses to send, rather than dialling SMTP with an
+      // empty secret — the same posture `start()` takes toward IMAP.
+      const { state, pass } = await resolveLogin();
+      if (state !== "ready" || !pass) {
+        throw new ServiceError(
+          "upstream_unavailable", 502,
+          "the mailbox password is not available on this install, so mail cannot be sent; " +
+            "re-enter it to reconnect",
+        );
+      }
+      const user = config.imap.auth.user;
+      const sendConfig: ImapConfig = {
+        ...config.imap,
+        auth: { user, pass },
+        smtp: { host: smtp.host, port: smtp.port, secure: smtp.secure, auth: { user, pass } },
+      };
+      // The one test seam this file already has. On the SEND path the factory is only ever a real
+      // `ImapAdapter` (or a wrapper of one), which is a full `SendAdapter` — the stub factories the
+      // other sidecar tests pass never reach send, so the widening cast is sound where it is used.
+      const built = config.adapterFactory ? config.adapterFactory(sendConfig) : new ImapAdapter(sendConfig);
+      const adapter = built as unknown as SendAdapter & { connect(): Promise<void> };
+      // Close-then-rethrow around the login window, the shape used everywhere this codebase holds
+      // an IMAP login across work that can fail (`send-adapter.ts`, `attachments-adapter.ts`, the
+      // sync worker): `connect()` logs in and LISTs, so a failure after login would otherwise leak
+      // an authenticated socket the caller has no handle to close — worst of all on the send path,
+      // where the retry that follows is a retry of a send.
+      try {
+        await adapter.connect();
+      } catch (err) {
+        await adapter.close().catch(() => { /* the connection is already broken */ });
+        throw err;
+      }
+      return {
+        send: async (msg) => ({ providerMessageId: (await adapter.send(msg)).providerMessageId }),
+        messageInSent: (messageId) => adapter.messageInSent(messageId),
+        close: () => adapter.close(),
+      };
     };
 
     /**
