@@ -211,6 +211,7 @@ export function SettingsView({
   securitySection,
   aboutSection,
   autoSuggestSection,
+  screeningSection,
 }: {
   /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
   notifications: NotificationsMeta | null;
@@ -329,6 +330,16 @@ export function SettingsView({
    * heading everything else about defaults already lives.
    */
   autoSuggestSection?: ReactNode;
+  /**
+   * THE EDITABLE OHBOX PREFERENCE, injected — "what deserves my Ohbox".
+   *
+   * The same seam as {@link autoSuggestSection}: it reads and writes `GET/PATCH /account/screening`
+   * through `app/api-client`, which `scripts/publish-desktop.mjs` DENYs from this shared file. A
+   * standalone Desktop install runs the SAME engine and posture, so it can carry its own writer, but
+   * this shared view must not name the client — so the live control is injected. Absent ⇒ the
+   * section does not render (the demo, or a surface with no account).
+   */
+  screeningSection?: ReactNode;
 }) {
   const t = useTranslations("settings");
   /** The `tag` namespace owns what a tag IS; `settings` owns this pane's chrome. */
@@ -415,6 +426,7 @@ export function SettingsView({
                   and theme are free and reversible, and a control with a cost belongs below the
                   ones without. Absent on Desktop and on the demo — see the prop. */}
               {autoSuggestSection}
+              {screeningSection}
             </SettingsSection>
           ) : null}
 
