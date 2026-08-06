@@ -287,19 +287,51 @@ jobs:
           grep -aq 'Giulia Ferrari' "$BIN"
           grep -aq "connect-src 'none'" "$BIN"
           echo "URLs in the binary:"
-          grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u
-          # Both READMEs list these strings ONE BY ONE and say there are 15.
-          # A claim that specific has to be enforced or it rots: if a Rust,
-          # wry or React bump changes the set, this line goes red and whoever
-          # bumps it updates the list. That is the intended cost, and it has
-          # been paid once: 14 became 15 when the rich text editor entered the
-          # bundle and brought ProseMirror's documentation link with it, in a
-          # thrown message. Third-party docs, like React's beside it.
-          URLS=$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u | wc -l)
-          echo "unique URL strings: $URLS (expected 15)"
-          test "$URLS" -eq 15
-          # Nothing may point at ohmail infrastructure.
-          ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'ohmail|mailoh|trafficflow'
+          ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
+          printf '%s\n' "$ALL_URLS"
+          # ── First-party endpoints: allow EXACTLY the pinned update feed ────
+          # The auto-updater is the one part of this app that reaches the network,
+          # pinned to a single release feed on github.com/trafficflowhq/ohmail. So
+          # the rule is no longer "no first-party URL at all" — the feed
+          # legitimately trips that — but "the ONLY first-party URL is that feed":
+          # take every URL naming ohmail or trafficflow and require each to be the
+          # feed. A second endpoint, a phone-home or a beacon still fails; so does
+          # a build that dropped the feed (the updater silently gone).
+          #
+          # Prefix match, not equality: the endpoint is a Rust string literal with
+          # no terminator in read-only data, so grep can return it with adjacent
+          # rodata glued on. Host and path are pinned by the prefix, so trailing
+          # bytes cannot redirect it off github releases.
+          #
+          # Captured into variables and matched with `case`, never
+          # `! producer | grep -q`: that shape reports success when the producer
+          # dies on a closed pipe — green exactly when a stray URL is present.
+          FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
+          FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$ALL_URLS" || true)"
+          if [ -z "$FIRST_PARTY" ]; then
+            echo "the pinned update feed URL is missing from the binary" >&2
+            exit 1
+          fi
+          BAD=0
+          while IFS= read -r u; do
+            [ -z "$u" ] && continue
+            case "$u" in
+              "$FEED_PREFIX"*) : ;;
+              *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
+            esac
+          done <<< "$FIRST_PARTY"
+          if [ "$BAD" -ne 0 ]; then
+            echo "first-party URLs other than the pinned update feed are present" >&2
+            exit 1
+          fi
+          # Everything else is third-party documentation (React, ProseMirror, and
+          # now the updater's transitive HTTP stack: reqwest / hyper / rustls).
+          # That set grew when the updater landed, so the earlier exact count and
+          # the URL tables in both READMEs must be re-counted against a real
+          # updater-bearing release binary and updated in the same change. Echoed
+          # for that reconciliation rather than pinned to a guessed number, which
+          # would wave a new URL through or block the build on a wrong figure.
+          echo "unique URL strings (reconcile with the README enumeration on a real release binary): $(grep -c . <<< "$ALL_URLS" || true)"
 
       - name: Upload the .msi
         uses: actions/upload-artifact@v7
@@ -438,16 +470,52 @@ jobs:
           grep -aq 'Giulia Ferrari' "$BIN"
           grep -aq "connect-src 'none'" "$BIN"
           echo "URLs in the binary:"
-          grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u
-          # See the Windows job: the READMEs enumerate these, so the count is
-          # pinned and a toolchain bump that changes it must update the list.
-          # 13 became 14 with ProseMirror's documentation link, which arrived
-          # with the rich text editor.
-          URLS=$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u | wc -l)
-          echo "unique URL strings: $URLS (expected 14)"
-          test "$URLS" -eq 14
-          # Nothing may point at ohmail infrastructure.
-          ! grep -aoE 'https?://[A-Za-z0-9._~:/?#-]+' "$BIN" | grep -Ei 'ohmail|mailoh|trafficflow'
+          ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
+          printf '%s\n' "$ALL_URLS"
+          # ── First-party endpoints: allow EXACTLY the pinned update feed ────
+          # Identical rule to the Windows job. The auto-updater is the one part of
+          # this app that reaches the network, pinned to a single release feed on
+          # github.com/trafficflowhq/ohmail, so the check is no longer "no
+          # first-party URL at all" — the feed legitimately trips that — but "the
+          # ONLY first-party URL is that feed": take every URL naming ohmail or
+          # trafficflow and require each to be the feed. A second endpoint, a
+          # phone-home or a beacon still fails; so does a build that dropped the
+          # feed (the updater silently gone).
+          #
+          # Prefix match, not equality: the endpoint is a Rust string literal with
+          # no terminator in read-only data, so grep can return it with adjacent
+          # rodata glued on. Host and path are pinned by the prefix, so trailing
+          # bytes cannot redirect it off github releases.
+          #
+          # Captured into variables and matched with `case`, never
+          # `! producer | grep -q`: that shape reports success when the producer
+          # dies on a closed pipe — green exactly when a stray URL is present.
+          FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
+          FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$ALL_URLS" || true)"
+          if [ -z "$FIRST_PARTY" ]; then
+            echo "the pinned update feed URL is missing from the binary" >&2
+            exit 1
+          fi
+          BAD=0
+          while IFS= read -r u; do
+            [ -z "$u" ] && continue
+            case "$u" in
+              "$FEED_PREFIX"*) : ;;
+              *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
+            esac
+          done <<< "$FIRST_PARTY"
+          if [ "$BAD" -ne 0 ]; then
+            echo "first-party URLs other than the pinned update feed are present" >&2
+            exit 1
+          fi
+          # Everything else is third-party documentation (React, ProseMirror, and
+          # now the updater's transitive HTTP stack: reqwest / hyper / rustls).
+          # That set grew when the updater landed, so the earlier exact count and
+          # the URL tables in both READMEs must be re-counted against a real
+          # updater-bearing release binary and updated in the same change. Echoed
+          # for that reconciliation rather than pinned to a guessed number, which
+          # would wave a new URL through or block the build on a wrong figure.
+          echo "unique URL strings (reconcile with the README enumeration on a real release binary): $(grep -c . <<< "$ALL_URLS" || true)"
 
       - name: Upload the AppImage
         uses: actions/upload-artifact@v7

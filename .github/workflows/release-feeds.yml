@@ -1,0 +1,222 @@
+name: release feeds
+
+# Generates the two auto-update feeds and attaches them to a published release,
+# so that
+#
+#   …/releases/latest/download/latest.json        (Windows + Linux, Tauri)
+#   …/releases/latest/download/appcast-macos.xml   (macOS, Sparkle)
+#
+# resolve to signed metadata the shipped clients are pinned to. The clients
+# only ever NOTIFY and then install on the user's word; this workflow serves the
+# metadata that lets them verify what they downloaded.
+#
+# Both feeds are signed with keypairs that are independent of any OS
+# code-signing certificate — the apps are unsigned, but an update payload an
+# updater fetches and runs must still be cryptographically verified or the
+# product ships remote code execution. The private keys are repo secrets:
+#
+#   TAURI_SIGNING_PRIVATE_KEY            minisign key for latest.json (Tauri)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD   its password, if the key has one
+#   OHMAIL_SPARKLE_ED_PRIVATE_KEY        Ed25519 key for the appcast (Sparkle)
+#
+# The matching public keys are committed: SUPublicEDKey in Resources/Info.plist
+# and plugins.updater.pubkey in apps/desktop/src-tauri/tauri.conf.json. If a
+# private key is rotated, the committed public half must be rotated with it or
+# the update can never verify.
+#
+# This runs on a released tag and works OFF the release's own binary assets, so
+# it must run AFTER the build artifacts (the .dmg/.app.zip, the -setup.exe and
+# the .AppImage) are attached to the release. It signs those exact bytes and
+# points the feed at their download URLs.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag to (re)generate feeds for, e.g. v0.5.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-feeds-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  feeds:
+    name: sign + publish latest.json and appcast-macos.xml
+    # macOS, because Sparkle's sign_update is a macOS binary; the Tauri minisign
+    # step runs here too, so both feeds are produced from one asset download.
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Sign the artifacts and write both feeds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Secrets are read into the environment rather than interpolated into
+          # the script text: a `${{ secrets.* }}` expanded inline would land in
+          # the run-command and could leak through logs or shell parsing.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          OHMAIL_SPARKLE_ED_PRIVATE_KEY: ${{ secrets.OHMAIL_SPARKLE_ED_PRIVATE_KEY }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
+        run: |
+          set -euo pipefail
+
+          test -n "$RELEASE_TAG" || { echo "no release tag to work on" >&2; exit 1; }
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}" || { echo "TAURI_SIGNING_PRIVATE_KEY is not set" >&2; exit 1; }
+          test -n "${OHMAIL_SPARKLE_ED_PRIVATE_KEY:-}" || { echo "OHMAIL_SPARKLE_ED_PRIVATE_KEY is not set" >&2; exit 1; }
+
+          REPO="$GITHUB_REPOSITORY"                       # trafficflowhq/ohmail on the mirror
+          BASE="https://github.com/$REPO/releases/download/$RELEASE_TAG"
+
+          # The version the installed clients report — bare, no pre-release
+          # identifier — taken from the tree the release was built from so it
+          # cannot drift from the binaries.
+          VERSION="$(node -e 'process.stdout.write(require("./apps/desktop/src-tauri/tauri.conf.json").version)')"
+          test -n "$VERSION" || { echo "could not read the version from tauri.conf.json" >&2; exit 1; }
+          echo "release $RELEASE_TAG · version $VERSION"
+
+          PUB_DATE_ISO="${RELEASE_PUBLISHED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+          NOTES="${RELEASE_BODY:-ohmail $VERSION}"
+
+          # ── Pull the release's binary assets ───────────────────────────────
+          rm -rf assets && mkdir assets
+          gh release download "$RELEASE_TAG" --repo "$REPO" --dir assets --clobber
+          echo "downloaded:"; ls -la assets
+
+          pick() { ls assets/$1 2>/dev/null | head -1 || true; }
+          WIN_EXE="$(pick '*-setup.exe')"
+          APPIMAGE="$(pick '*.AppImage')"
+          MAC_ZIP="$(pick '*.app.zip')"
+          test -n "$WIN_EXE"  || { echo "no NSIS -setup.exe attached to $RELEASE_TAG" >&2; exit 1; }
+          test -n "$APPIMAGE" || { echo "no .AppImage attached to $RELEASE_TAG" >&2; exit 1; }
+          test -n "$MAC_ZIP"  || { echo "no *.app.zip attached to $RELEASE_TAG" >&2; exit 1; }
+
+          # ════════════════════════════════════════════════════════════════════
+          # latest.json — the Tauri updater manifest (Windows + Linux).
+          # Each artifact is minisign-signed; the `signature` field is the exact
+          # contents of the .sig the signer emits, which is what the client
+          # verifies against the committed pubkey. macOS is served by Sparkle,
+          # not Tauri, so there are no darwin platforms here.
+          # ════════════════════════════════════════════════════════════════════
+          sign_tauri() {
+            # Reads TAURI_SIGNING_PRIVATE_KEY(+_PASSWORD) from the environment.
+            # </dev/null so a password-required key fails fast instead of
+            # blocking on a prompt; the signer's own chatter goes to stderr so
+            # this function's stdout is ONLY the .sig content the manifest needs.
+            npx --yes @tauri-apps/cli@2 signer sign "$1" < /dev/null 1>&2
+            cat "$1.sig"
+          }
+          WIN_SIG="$(sign_tauri "$WIN_EXE")"
+          LIN_SIG="$(sign_tauri "$APPIMAGE")"
+          test -n "$WIN_SIG" || { echo "empty Windows signature" >&2; exit 1; }
+          test -n "$LIN_SIG" || { echo "empty Linux signature" >&2; exit 1; }
+
+          jq -n \
+            --arg version  "$VERSION" \
+            --arg notes    "$NOTES" \
+            --arg pub_date "$PUB_DATE_ISO" \
+            --arg win_url  "$BASE/$(basename "$WIN_EXE")" \
+            --arg win_sig  "$WIN_SIG" \
+            --arg lin_url  "$BASE/$(basename "$APPIMAGE")" \
+            --arg lin_sig  "$LIN_SIG" \
+            '{
+               version: $version,
+               notes: $notes,
+               pub_date: $pub_date,
+               platforms: {
+                 "windows-x86_64": { signature: $win_sig, url: $win_url },
+                 "linux-x86_64":   { signature: $lin_sig, url: $lin_url }
+               }
+             }' > latest.json
+          jq . latest.json > /dev/null   # it is valid JSON or the step fails here
+          echo "--- latest.json ---"; cat latest.json
+
+          # ════════════════════════════════════════════════════════════════════
+          # appcast-macos.xml — the Sparkle appcast (macOS).
+          # The enclosure is the .app.zip (Sparkle swaps the bundle in place);
+          # sign_update produces the EdDSA signature AND the length as ready-made
+          # enclosure attributes. sparkle:version is the shipped app's
+          # CFBundleVersion, read out of the bundle so the client's own
+          # comparator sees the real build number.
+          # ════════════════════════════════════════════════════════════════════
+          SPARKLE_VER=2.9.4   # matches apps/macos/Package.resolved
+          curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VER/Sparkle-$SPARKLE_VER.tar.xz" -o sparkle.tar.xz
+          mkdir -p sparkle && tar -xJf sparkle.tar.xz -C sparkle
+          SIGN_UPDATE="$(find sparkle -type f -name sign_update | head -1)"
+          test -x "$SIGN_UPDATE" || { echo "sign_update not found in the Sparkle distribution" >&2; exit 1; }
+
+          rm -rf appdir && mkdir appdir && unzip -q "$MAC_ZIP" -d appdir
+          APP_PLIST="$(find appdir -name Info.plist -path '*/Contents/Info.plist' | head -1)"
+          test -f "$APP_PLIST" || { echo "no Contents/Info.plist inside $MAC_ZIP" >&2; exit 1; }
+          SHORT_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")"
+          BUNDLE_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")"
+          MIN_OS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PLIST" 2>/dev/null || echo 15.0)"
+          echo "app reports shortVersion=$SHORT_VER build=$BUNDLE_VER minOS=$MIN_OS"
+
+          # sign_update -s <base64 Ed25519 private key> <archive>
+          #   → sparkle:edSignature="…" length="…"
+          ENCLOSURE_ATTRS="$("$SIGN_UPDATE" -s "$OHMAIL_SPARKLE_ED_PRIVATE_KEY" "$MAC_ZIP")"
+          test -n "$ENCLOSURE_ATTRS" || { echo "sign_update produced no signature" >&2; exit 1; }
+          case "$ENCLOSURE_ATTRS" in
+            *edSignature=*length=*) : ;;
+            *) echo "unexpected sign_update output: $ENCLOSURE_ATTRS" >&2; exit 1 ;;
+          esac
+
+          PUB_DATE_RFC="$(date -u -jf %Y-%m-%dT%H:%M:%SZ "$PUB_DATE_ISO" +"%a, %d %b %Y %H:%M:%S +0000" 2>/dev/null || date -u +"%a, %d %b %Y %H:%M:%S +0000")"
+          MAC_URL="$BASE/$(basename "$MAC_ZIP")"
+
+          {
+            echo '<?xml version="1.0" encoding="utf-8"?>'
+            echo '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">'
+            echo '  <channel>'
+            echo '    <title>ohmail</title>'
+            echo '    <item>'
+            echo "      <title>$SHORT_VER</title>"
+            echo "      <pubDate>$PUB_DATE_RFC</pubDate>"
+            echo "      <sparkle:version>$BUNDLE_VER</sparkle:version>"
+            echo "      <sparkle:shortVersionString>$SHORT_VER</sparkle:shortVersionString>"
+            echo "      <sparkle:minimumSystemVersion>$MIN_OS</sparkle:minimumSystemVersion>"
+            echo "      <enclosure url=\"$MAC_URL\" $ENCLOSURE_ATTRS type=\"application/octet-stream\" />"
+            echo '    </item>'
+            echo '  </channel>'
+            echo '</rss>'
+          } > appcast-macos.xml
+          # Well-formedness gate: a malformed appcast is a silent no-update.
+          xmllint --noout appcast-macos.xml
+          echo "--- appcast-macos.xml ---"; cat appcast-macos.xml
+
+          # ── Attach both feeds to the release ───────────────────────────────
+          gh release upload "$RELEASE_TAG" --repo "$REPO" --clobber \
+            latest.json appcast-macos.xml
+          echo "uploaded latest.json and appcast-macos.xml to $RELEASE_TAG"
+
+      - name: Run summary
+        if: always()
+        run: |
+          {
+            echo '### update feeds'
+            echo
+            echo '| feed | for |'
+            echo '|---|---|'
+            echo '| `latest.json` | Windows + Linux (Tauri, minisign) |'
+            echo '| `appcast-macos.xml` | macOS (Sparkle, EdDSA) |'
+            echo
+            echo "Attached to \`$RELEASE_TAG\`; served from \`/releases/latest/download/\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
