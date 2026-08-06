@@ -36,14 +36,27 @@
 .rgroup .rgroup.rsub{margin:3px 0 0}
 .rsub .rlabel-toggle{padding:3px 8px}
 .rsub .ritem{font-size:12.5px;padding:5px 8px}
-/* An ACTION row in a tag group — "New tag". Quieter than a tag until hovered, so the
-   group still reads as a list of tags with one affordance at the end rather than as a
-   list with an odd member. The `+` sits exactly where the tag dot does, so the rows stay
-   aligned. See `RailTagItem.action`. */
+/* The "New tag" trigger in a tag group. Quieter than a tag until hovered, so the group still
+   reads as a list of tags with one affordance at the end rather than as a list with an odd
+   member. The `+` sits exactly where the tag dot does, so the rows stay aligned. Driven by the
+   tags group's `create` config — see `RailTagCreate`. */
 .ritem-action{color:var(--ink3)}
 .ritem-action:hover{color:var(--ink)}
 .ritem-plus{width:10px;height:10px;flex:0 0 auto;color:var(--ink3)}
 .ritem-action:hover .ritem-plus{color:var(--accent-ink)}
+/* The inline "New tag" input takes the trigger row's place — same padding and dot column, so
+   the field reads as the row it replaced. Borderless and transparent: it is a rail row that
+   happens to accept typing, not a form control dropped into the nav. */
+.ritem-new{cursor:text}
+.ritem-new .ritem-plus{color:var(--accent-ink)}
+.ritem-new-input{flex:1 1 auto;min-width:0;border:0;background:none;padding:0;margin:0;
+  font-family:inherit;font-size:12.5px;font-weight:450;color:var(--ink);line-height:1.5}
+.ritem-new-input::placeholder{color:var(--ink3)}
+.ritem-new-input:focus{outline:none}
+/* The empty-state invite, and the duplicate-name refusal — both quiet lines inside the group,
+   aligned to the tag labels above them (dot column + gap). */
+.rsub-empty{margin:2px 0;padding:5px 8px 5px 25px;font-size:12px;color:var(--ink3);line-height:1.45}
+.rsub-warn{margin:1px 0 3px;padding:2px 8px 2px 25px;font-size:11px;color:var(--danger-ink, var(--ink2));line-height:1.4}
 .rsub .ritem .cnt{font-size:11px}
 .ritem{
   display:flex;align-items:center;gap:9px;width:100%;padding:6px 8px;border-radius:10px;border:0;cursor:pointer;

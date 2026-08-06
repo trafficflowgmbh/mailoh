@@ -14,6 +14,19 @@ export interface RailItem {
   kbdHint?: string;
   /** Tooltip / accessible enrichment ("4 unread of 9"). */
   title?: string;
+  /**
+   * The row's own quick-nav key, revealed ONLY while the row is hovered or keyboard-focused —
+   * a shortcut you discover by pointing at the thing, not a badge charged to every row forever.
+   *
+   * It takes the count's slot for the moment of the reveal (like `kbdHint`, but transient), and
+   * is deliberately NOT rendered at rest: nothing is in the DOM until a pointer or Tab lands on
+   * the row, so the resting rail keeps its counts and no keycaps. A tap can fire a compatibility
+   * `mouseenter` (and some engines focus a button on tap), so the reveal is also cleared on
+   * click — otherwise a touch that navigated would leave the keycap standing in the count's
+   * place. `kbdHint` wins when both are set (the `?` sheet is a louder, deliberate "show me
+   * every key" and should not be undercut by a per-row reveal).
+   */
+  navKey?: string;
 }
 
 export interface RailTagItem {
@@ -21,15 +34,35 @@ export interface RailTagItem {
   label: string;
   hue: TagHueName;
   count?: number;
+}
+
+/**
+ * Make a tag from the rail itself, inline — no dialog.
+ *
+ * The group carries a `+ {label}` trigger at its end that opens an input IN PLACE, and when
+ * there are no tags yet an `emptyHint` line invites the first one instead of leaving the group
+ * blank. Everything semantic stays with the host: `onCreate` mints the tag, and the optional
+ * `duplicate` answers whether the typed name already exists (the server's unique index is on
+ * `lower(name)`, so a name that collides would 409) and phrases the refusal for it. `RailNav`
+ * owns only the open/close of the input and the keys that drive it.
+ */
+export interface RailTagCreate {
+  /** Verb on the trigger row and the input's accessible name — "New tag". */
+  label: string;
+  placeholder: string;
+  /** Shown when the group holds no tags — the invite to the first one. */
+  emptyHint?: string;
+  onCreate: (name: string) => void;
   /**
-   * This row DOES something instead of going somewhere — "New tag" at the end of the group.
-   *
-   * Without it such a row is indistinguishable from a tag: same coloured dot, same shape, so
-   * the group reads as containing a tag literally named "New tag". An action gets a `+` where
-   * the dot would be and no count, because a count is a property of a tag and this is not one.
-   * The host still owns what it does; this only says which of the two kinds of row it is.
+   * Reject a name that already exists (case-insensitive — the server's unique index is on
+   * `lower(name)`, so a collision would 409). The `taken` check and the `label` for the refusal
+   * travel together on purpose: a `taken` with no `label` is a submit that silently refuses,
+   * and the user typed the name and is owed the reason.
    */
-  action?: boolean;
+  duplicate?: {
+    taken: (name: string) => boolean;
+    label: (name: string) => string;
+  };
 }
 
 export interface RailGroup {
@@ -43,6 +76,8 @@ export interface RailGroup {
     /** Controlled collapse state. Provide with `onOpenChange` when the host persists it. */
     open?: boolean;
     onOpenChange?: (open: boolean) => void;
+    /** Inline "New tag" affordance. Omit and the group is read-only. */
+    create?: RailTagCreate;
   };
 }
 
@@ -114,6 +149,22 @@ export function RailNav({
   ariaLabel = "Main",
   className,
 }: RailNavProps) {
+  /**
+   * WHICH ROW IS SHOWING ITS QUICK-NAV KEY, and it is at most one.
+   *
+   * A row reveals its `navKey` while it is hovered or keyboard-focused and hides it otherwise,
+   * so the keycap is a thing you find by pointing at a row rather than a badge every row wears.
+   * One id, not a per-row flag: hover and Tab both land on a single row at a time, and blur of
+   * the row you leave fires before focus of the one you enter, so the last interaction wins
+   * cleanly. Clearing is guarded on identity so a stale leave cannot blank the row you just
+   * moved to.
+   */
+  const [revealId, setRevealId] = useState<string | null>(null);
+  const reveal = (item: RailItem): void => {
+    if (item.navKey) setRevealId(item.id);
+  };
+  const unreveal = (item: RailItem): void =>
+    setRevealId((cur) => (cur === item.id ? null : cur));
   return (
     <nav className={className ? `rail ${className}` : "rail"} aria-label={ariaLabel}>
       <div className="wordmark">
@@ -143,25 +194,42 @@ export function RailNav({
       {groups.map((group, gi) => (
         <div className="rgroup" key={group.label ?? gi}>
           {group.label ? <div className="rlabel">{group.label}</div> : null}
-          {group.items.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={item.id === activeId ? "ritem on" : "ritem"}
-              title={item.title}
-              aria-current={item.id === activeId ? "page" : undefined}
-              onClick={() => onNavigate?.(item.id)}
-            >
-              {item.label}
-              {item.kbdHint ? (
-                <span className="cnt">
-                  <Kbd>{item.kbdHint}</Kbd>
-                </span>
-              ) : (
-                <Count value={item.count} hot={item.hot} />
-              )}
-            </button>
-          ))}
+          {group.items.map((item) => {
+            // The `?` sheet's key (`kbdHint`) is deliberate and always shown; the per-row
+            // reveal (`navKey`) only while this row is pointed at. Either takes the count's
+            // slot — a hovered row is one you are about to reach, so its key is what you want
+            // there — and at rest neither is present, which is what keeps the resting rail quiet.
+            const cap = item.kbdHint ?? (revealId === item.id ? item.navKey : undefined);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={item.id === activeId ? "ritem on" : "ritem"}
+                title={item.title}
+                aria-current={item.id === activeId ? "page" : undefined}
+                onClick={() => {
+                  // Clear before navigating: a tap can both reveal (compatibility mouseenter /
+                  // focus-on-tap) and navigate, and without this the keycap would be left
+                  // standing in the count's place with no pointer-leave ever coming.
+                  unreveal(item);
+                  onNavigate?.(item.id);
+                }}
+                onMouseEnter={() => reveal(item)}
+                onMouseLeave={() => unreveal(item)}
+                onFocus={() => reveal(item)}
+                onBlur={() => unreveal(item)}
+              >
+                {item.label}
+                {cap ? (
+                  <span className="cnt">
+                    <Kbd>{cap}</Kbd>
+                  </span>
+                ) : (
+                  <Count value={item.count} hot={item.hot} />
+                )}
+              </button>
+            );
+          })}
           {group.tags ? (
             <TagsGroup
               label={group.tags.label ?? "Tags"}
@@ -169,6 +237,7 @@ export function RailNav({
               defaultOpen={group.tags.defaultOpen ?? true}
               open={group.tags.open}
               onOpenChange={group.tags.onOpenChange}
+              create={group.tags.create}
               activeTagId={activeTagId}
               onNavigateTag={onNavigateTag}
             />
@@ -212,6 +281,7 @@ function TagsGroup({
   defaultOpen,
   open: openProp,
   onOpenChange,
+  create,
   activeTagId,
   onNavigateTag,
 }: {
@@ -220,6 +290,7 @@ function TagsGroup({
   defaultOpen: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  create?: RailTagCreate;
   activeTagId?: string;
   onNavigateTag?: (id: string) => void;
 }) {
@@ -229,6 +300,39 @@ function TagsGroup({
     if (openProp === undefined) setUncontrolled(next);
     onOpenChange?.(next);
   };
+
+  /**
+   * MAKING A TAG HAPPENS IN THE GROUP, not in a dialog over it.
+   *
+   * The trigger row swaps itself for an input in place; the input owns Enter (submit) and
+   * Escape (cancel), and STOPS the Escape so the shell's overlay ladder does not also act on a
+   * key the innermost open thing already handled. A name that already exists cannot be
+   * submitted — the server's unique index is on `lower(name)` — and the reason is said rather
+   * than the button silently disabled, because the user typed it and is owed why. Focus moves
+   * to the input the moment it appears; a blur with nothing typed closes it, so clicking away
+   * from an empty field is not a half-open state.
+   */
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (creating) inputRef.current?.focus();
+  }, [creating]);
+
+  const typed = draft.trim();
+  const taken = typed.length > 0 && (create?.duplicate?.taken(typed) ?? false);
+  const canCreate = typed.length > 0 && !taken;
+  const submit = (): void => {
+    if (!canCreate || !create) return;
+    create.onCreate(typed);
+    setDraft("");
+    setCreating(false);
+  };
+  const cancel = (): void => {
+    setDraft("");
+    setCreating(false);
+  };
+
   return (
     <div className={open ? "rgroup rsub" : "rgroup rsub closed"}>
       {/*
@@ -257,18 +361,72 @@ function TagsGroup({
           <button
             key={t.id}
             type="button"
-            className={
-              t.action ? "ritem ritem-action" : t.id === activeTagId ? "ritem on" : "ritem"
-            }
+            className={t.id === activeTagId ? "ritem on" : "ritem"}
             onClick={() => onNavigateTag?.(t.id)}
           >
-            {/* A `+` where the dot would be. An action row is never `on`, and carries no
-                count — see `RailTagItem.action`. */}
-            {t.action ? <Icon name="plus" className="ritem-plus" /> : <TagDot hue={t.hue} />}
+            <TagDot hue={t.hue} />
             {t.label}
-            {t.action ? null : <span className="cnt num">{t.count ?? ""}</span>}
+            <span className="cnt num">{t.count ?? ""}</span>
           </button>
         ))}
+
+        {/* No tags yet: an invite to the first, not a blank group. Gated on the hint's presence
+            so a host that gives none does not paint an empty padded line. */}
+        {create?.emptyHint && items.length === 0 && !creating ? (
+          <p className="rsub-empty">{create.emptyHint}</p>
+        ) : null}
+
+        {create ? (
+          creating ? (
+            <div className="ritem ritem-new">
+              {/* The `+` sits exactly where a tag dot does, so the input reads as the row it
+                  replaced rather than as a control that dropped in. */}
+              <Icon name="plus" className="ritem-plus" />
+              <input
+                ref={inputRef}
+                className="ritem-new-input"
+                value={draft}
+                placeholder={create.placeholder}
+                aria-label={create.label}
+                aria-invalid={taken || undefined}
+                maxLength={40}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    submit();
+                  }
+                  // Handled and stopped here — this input is the innermost open thing, so the
+                  // shell's Escape ladder must not also fire on the same key.
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancel();
+                  }
+                }}
+                onBlur={() => {
+                  if (typed.length === 0) cancel();
+                }}
+              />
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="ritem ritem-action"
+              onClick={() => setCreating(true)}
+            >
+              {/* Quieter than a tag until hovered, and never `on` — it is a verb, not a place. */}
+              <Icon name="plus" className="ritem-plus" />
+              {create.label}
+            </button>
+          )
+        ) : null}
+
+        {taken && create?.duplicate ? (
+          <p className="rsub-warn" role="alert">
+            {create.duplicate.label(typed)}
+          </p>
+        ) : null}
       </div>
     </div>
   );
