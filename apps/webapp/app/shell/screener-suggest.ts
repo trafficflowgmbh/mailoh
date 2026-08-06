@@ -252,6 +252,24 @@ export function useScreenerSuggestions(opts: {
      * answer thrown away.
      */
     optInRun: 0,
+    /**
+     * THE AUTOMATIC BATCH'S OWN COUNTER — deliberately not `run`, for the reason `optInRun` is
+     * not either, and it was the SCR-SUGGEST-FLAKE bug when it was.
+     *
+     * The automatic batch fires ASYNCHRONOUSLY, gated on `hydrateSettled`, so the first time it
+     * runs is a network round trip after the Screener opens — and an owner who opens the Screener
+     * and presses Suggest is inside that window: the manual purchase is in flight when the batch
+     * fires. Sharing `run` meant the batch's own `++run` invalidated that in-flight manual
+     * purchase, whose `await` then returned, saw the counter had moved, and discarded itself
+     * WITHOUT clearing `running` — the button spun forever. On the next visit the batch's latch
+     * had already fired, so the counter stood still and the same press worked, which is exactly
+     * the "fails once, works on retry" the flake was reported as.
+     *
+     * The manual control's `run` and this are independent purchases with independent idempotency
+     * keys; neither result should ever discard the other. A manual press does not cancel the
+     * automatic batch and the automatic batch does not cancel a manual press.
+     */
+    autoRun: 0,
   });
 
   /**
@@ -380,11 +398,14 @@ export function useScreenerSuggestions(opts: {
     // LATCHED BEFORE THE AWAIT. Set after it, two effect passes racing each other both read
     // false and both buy — and the second batch is money nobody asked for.
     io.current.autoFired = true;
-    const run = ++io.current.run;
+    // The batch's OWN counter (`autoRun`), never the manual control's `run` — see the ref's
+    // comment. This effect fires mid-way through a manual purchase on the ordinary path, and a
+    // shared counter made it silently discard that purchase.
+    const run = ++io.current.autoRun;
     void (async () => {
       try {
         const res = await screenerApi.suggest(set, { idempotencyKey: newKey() });
-        if (io.current.run !== run) return;
+        if (io.current.autoRun !== run) return;
         merge(res.suggestions.map((s) => ({ address: s.sender, suggestion: toSuggestion(s) })));
         // SAID OUT LOUD, every time, even though nobody pressed anything. This is the "visible
         // after the fact" half of the opt-in: money moved, so the same sentence the manual
@@ -392,7 +413,7 @@ export function useScreenerSuggestions(opts: {
         // the failure mode the setting exists to avoid, not one it is licensed to create.
         notify.current.toast(summarize(res, notify.current.t));
       } catch (err) {
-        if (io.current.run !== run) return;
+        if (io.current.autoRun !== run) return;
         // DISARM, DO NOT RETRY. See the latch's own comment: every refusal on this path is a
         // standing condition (no credits, AI off, no classifier), not a blip, so retrying it
         // automatically is a flood against a wall.
