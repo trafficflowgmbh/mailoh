@@ -648,6 +648,17 @@ export const changeLog = pgTable("change_log", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   pk: primaryKey({ columns: [t.accountId, t.seq] }),    // covers the `WHERE account_id=$ AND seq>$ ORDER BY seq` scan
+  /**
+   * THE OHBOX-TIDY USER-WINS PROBE (mail 0043). The backlog re-route pass excludes any message the
+   * user has ever moved back INTO the Ohbox — an in-app drag writes exactly this row
+   * (`message-service.ts#move`), and it is the only durable record of that intent that survives
+   * every prune (the change log never is). Without this partial index that `NOT EXISTS` is a full
+   * scan of the account's whole change log PER CANDIDATE, per page, and the failure mode is a
+   * worker cycle that quietly stops finishing — the SILENT class `SCHEMA_INDEX_MARKERS` exists for.
+   * Partial on `op='move' AND meta->>'to'='INBOX'`, so it holds only the move-to-Ohbox rows.
+   */
+  ixMoveToInbox: index("change_log_move_to_inbox_idx").on(t.accountId, t.entityId)
+    .where(sql`${t.op} = 'move' and ${t.meta} ->> 'to' = 'INBOX'`),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1409,6 +1420,50 @@ export const accountSettings = pgTable("account_settings", {
    * and never as a deadline, so a skewed clock cannot make it mean anything else.
    */
   autoSuggestAt: timestamp("auto_suggest_at", { withTimezone: true }),
+  /**
+   * WHO REACHES THE OHBOX — the account's posture (mail 0042). NULL / `'people_and_replied'` =
+   * today's lenient behaviour; `'people_only'` = demote automated mail from inferred-admission
+   * senders out of the Ohbox. The CHECK (enum, closed) lives in the migration. **NULL reads
+   * LENIENT** at every layer — the engine resolves absent config to `DEFAULT_OHBOX_POLICY`, so
+   * shipping the column demotes nobody until they opt in. See `packages/core/src/rules.ts`.
+   */
+  ohboxPolicy: text("ohbox_policy"),
+  /**
+   * The plain-language Ohbox bar in the account owner's own words (mail 0042). NULL = show the product
+   * default; readers fall back to the default constant. It is threaded into the classifier's USER
+   * turn, never routing itself. Length-capped at 2 KiB by the migration's CHECK.
+   */
+  ohboxBar: text("ohbox_bar"),
+  /**
+   * THE OHBOX BACKLOG TIDY — the resumable, re-armable marker for the one worker pass that
+   * re-routes mail ALREADY misfiled into the Ohbox under `people_only` (mail 0043). New mail is
+   * demoted live by the engine; these three columns are the durable state for the retroactive
+   * clean-up of what was placed before the account opted in. The shape is `rules.retro_*` lifted
+   * from a per-RULE marker to a per-ACCOUNT one, because the pass pages `folder_state` by
+   * `account_id` and one cursor covers all of an account's mailboxes.
+   *
+   *   ohbox_tidy_requested_at  the account asked for the backlog to be re-routed. Stamped by
+   *                            `setScreeningPreference` ONLY on the transition INTO `people_only`
+   *                            (and by the future "tidy now" button), and the cursor is NULLed in
+   *                            the same UPDATE — re-arming without resetting the cursor would resume
+   *                            at the end and move nothing.
+   *   ohbox_tidy_done_at       the pass drained the backlog. Owed = `people_only` AND
+   *                            `requested_at IS NOT NULL` AND (`done_at IS NULL` OR
+   *                            `done_at < requested_at`). Written LAST (0030's rule): claiming it
+   *                            first makes a crash permanent. Re-armable — a later `requested_at`
+   *                            past `done_at` re-owes the work, which is what the button needs.
+   *   ohbox_tidy_cursor        resume point: the last `messages.id` of the last COMMITTED page. The
+   *                            live pass reads it to resume across worker cycles; a dry-run plan
+   *                            reads it as a start and advances only in memory (it commits nothing).
+   *
+   * NULL on every existing account, and that is correct: no account has asked for a tidy, so none
+   * is owed. An account already `people_only` before this migration has no `requested_at` and is
+   * never owed until it re-saves the posture or presses the button — deliberate, so shipping the
+   * columns moves no mail.
+   */
+  ohboxTidyRequestedAt: timestamp("ohbox_tidy_requested_at", { withTimezone: true }),
+  ohboxTidyDoneAt: timestamp("ohbox_tidy_done_at", { withTimezone: true }),
+  ohboxTidyCursor: uuid("ohbox_tidy_cursor"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

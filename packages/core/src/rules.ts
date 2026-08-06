@@ -82,8 +82,22 @@ export interface Rule {
   effect: RuleEffect;
   priority: number;
   /**
-   * Where the rule came from. `seeded-from-sent` is the onboarding seed: the user had written
-   * to this address, so the rule records consent they had already given by writing to them.
+   * Where the rule came from — and, since the `people_only` demotion, which HALF of consent it
+   * records. Consent has two axes: ADMISSION (this sender is past the Screener gate) and PLACEMENT
+   * (which allow-side pile their mail lands in).
+   *
+   *  · `seeded-from-sent` — the onboarding seed: the user wrote to this address, so the rule
+   *    records the ADMISSION they gave by writing to a *person*. Its `destination: "INBOX"` was a
+   *    bulk default WE chose (`consent-seed.ts#confirmSeed`), never a placement the user decided —
+   *    so under `people_only` an automated-shaped message from a seeded sender may be demoted to
+   *    Reads/Receipts. Admission is honoured; the placement we inferred is refined.
+   *  · `promoted` — a Screener decision the user pressed. Admission is explicit; the pile it named
+   *    is also demotable-past, because the button admits a *sender* and the same header refinement
+   *    applies (the ruling groups it with `seeded-from-sent`).
+   *  · `manual` and `migrated` — a rule the user AUTHORED (here, or elsewhere and imported). Both
+   *    axes are the user's own decision, so the demotion never touches them: a `manual`
+   *    sender→INBOX rule is absolute, and writing one is how the "keep in my Ohbox" affordance ends
+   *    the demotion for a sender for good.
    */
   provenance: "manual" | "migrated" | "promoted" | "seeded-from-sent";
   enabled: boolean;
@@ -95,6 +109,41 @@ export interface Rule {
  * Positional arguments were how `auth` could be added invisibly at some call sites and not
  * others; a named required field cannot be forgotten and cannot be defaulted.
  */
+/**
+ * HOW HARD TO KEEP THE OHBOX RELEVANT — the per-account posture that turns the bulk-mail demotion
+ * on. It is about RELEVANCE, not humans-versus-machines: the Ohbox is for real people AND for
+ * genuinely relevant service mail (a receipt belongs in Receipts, a security alert can stay in the
+ * Ohbox), and only the obvious irrelevant bulk is filed out. Two states, and the delicate one is
+ * what it does NOT touch:
+ *
+ *  · `people_and_replied` — today's behaviour, and the day-one/absent-config value. A sender the
+ *    account has ever admitted (a seeded/promoted allow rule) delivers ALL of their mail to the
+ *    Ohbox, promotional bulk included. NULL `account_settings.ohbox_policy` resolves here, so
+ *    shipping this demotes nobody until they choose otherwise. (The two literals are internal
+ *    identifiers; the user-facing name is framed around relevance, never "only real people".)
+ *  · `people_only` — the RELEVANCE-FOCUSED posture: obvious BULK mail (a newsletter/promotion, by
+ *    its List-* / Feedback-ID markers) from an INFERRED-admission sender (`seeded-from-sent` or
+ *    `promoted`) is filed to its right pile — Reads, or Receipts on a money subject — instead of
+ *    the Ohbox. A relevant service message with no bulk markers is LEFT in place (the AI and the
+ *    bar judge the ambiguous middle). It never touches a `manual`/`migrated` rule (a placement the
+ *    USER decided), never a deny, and never pulls a stranger through the gate. See
+ *    {@link evaluateRules} and {@link headerHeuristic}.
+ */
+export type OhboxPolicy = "people_only" | "people_and_replied";
+
+/** The migration-safe value: absent config, and byte-identical to the pre-slice router. */
+export const DEFAULT_OHBOX_POLICY: OhboxPolicy = "people_and_replied";
+
+/**
+ * Resolve a stored `account_settings.ohbox_policy` (or a failed/absent read) to the posture the
+ * engine runs on. NULL, `undefined`, and any value outside the union all resolve to
+ * {@link DEFAULT_OHBOX_POLICY} — absent-config-selects-safe, an allowlist and never a negation. In
+ * core rather than in a service so the worker's resolution and the API's read cannot drift.
+ */
+export function resolveOhboxPolicy(raw: string | null | undefined): OhboxPolicy {
+  return raw === "people_only" || raw === "people_and_replied" ? raw : DEFAULT_OHBOX_POLICY;
+}
+
 export interface EvaluateRulesInput {
   msg: NormalizedMessage;
   rules: readonly Rule[];
@@ -105,12 +154,36 @@ export interface EvaluateRulesInput {
    * See {@link AuthVerdict} before touching this, and never turn it into a precondition.
    */
   auth: AuthVerdict;
+  /**
+   * REQUIRED, on the same discipline as `auth`: no default here, so every call site NAMES the
+   * posture in its diff and none can be silently on the wrong side of the demotion branch. The
+   * OUTERMOST dep (worker config, `PlanDeps`) is where the optionality lives and where NULL is
+   * resolved to {@link DEFAULT_OHBOX_POLICY}. The risk this closes is `rule-retro.ts`: its backlog
+   * pass is the thing that actually empties the Ohbox, and a missing field there would run
+   * it under the lenient policy — the `dormancy_days`/`trustedAuthservIds` zero-writer trap.
+   */
+  ohboxPolicy: OhboxPolicy;
 }
 
 export interface RuleDecision {
   destination: Destination | null;               // null = unclear (hand to AI later)
   matchedRuleId: string | null;
-  source: "rule" | "header" | "screener" | "unclear";
+  /**
+   * `"policy"` is the automated-mail demotion of an INFERRED-admission allow rule under
+   * `people_only`: the placement was OURS to refine, not the user's, so it is NOT a `"rule"`
+   * decision and it does NOT carry the overridden rule as `matchedRuleId` (recording it would
+   * teach the learning path a placement consent the user never gave — the same reason the
+   * `auth === "fail"` demotion drops it). The overridden rule travels as {@link overriddenRuleId}
+   * instead, so the client can render the "keep in my Ohbox" affordance without the learning reads
+   * ever seeing it as consent.
+   */
+  source: "rule" | "header" | "screener" | "unclear" | "policy";
+  /**
+   * The allow rule a `source: "policy"` demotion moved this message past. `null` for every other
+   * source. Present so the affordance can name the sender and so a routing-decision row can record
+   * WHAT was overridden without recording it as the decision itself.
+   */
+  overriddenRuleId?: string | null;
 }
 
 /**
@@ -406,19 +479,132 @@ function isKnownAuthor(author: string | null, knownSenders: ReadonlySet<string>)
  *
  * `Auto-Submitted` is RFC 3834, and the RFC gives `no` an explicit meaning — "a human wrote
  * this" — so presence alone is the wrong test and `Auto-Submitted: no` must NOT count.
+ *
+ * The bulk half is now {@link isBulkSend} rather than `Precedence: bulk` alone, so a Feedback-ID /
+ * List-Id / one-click campaign that also carries a money subject files under Receipts before the
+ * Reads branch below can claim it — the same Receipts-before-Reads ordering the older signals had.
  */
 function machineSent(msg: NormalizedMessage): boolean {
-  const h = msg.headers;
-  if (h["precedence"]?.some((v) => /bulk/i.test(v)) ?? false) return true;
-  if (h["auto-submitted"]?.some((v) => !/^no$/i.test(v.trim())) ?? false) return true;
-  return isNoReplySender(msg.from.address);
+  if (isBulkSend(msg.headers)) return true;
+  if (headerValues(msg.headers, "auto-submitted")?.some((v) => !/^no$/i.test(v.trim())) ?? false) return true;
+  return isServiceSender(msg.from.address);
 }
 
-/** `no-reply@`, `noreply@`, `do_not_reply@` — punctuation stripped, so one rule covers the family. */
-function isNoReplySender(addr: string): boolean {
+/**
+ * The BULK-SEND half of the machine-sent test — a newsletter, a mailing list, or an ESP campaign,
+ * as opposed to one person writing to another. Every header here is set by a MACHINE and never by
+ * a client composing a personal message, and until this the router keyed only on the first two:
+ *
+ *  · `List-Unsubscribe` / `List-Unsubscribe-Post` — RFC 2369 / RFC 8058, a list offering a way out.
+ *  · `List-Id` — RFC 2919 list membership; a personal message never carries it.
+ *  · `Feedback-ID` — an ESP's per-campaign feedback-loop tag. The single most common bulk marker on
+ *    the measured Ohbox mail, and the one the heuristic did not look at.
+ *  · `Precedence: bulk` — the oldest of the family.
+ *
+ * Read through {@link headerValues} for the reason the whole file reads headers that way: a bare
+ * `h["list-id"]` is a truthy INHERITED value on a `JSON.parse`d map (see the accessor's note).
+ *
+ * Like everything in {@link headerHeuristic}, it REFINES placement and never establishes consent —
+ * it is reachable only for a sender already past the gate, and it only ever demotes to a visible,
+ * reversible pile. It can never pull an unknown sender through the Screener.
+ */
+function isBulkSend(headers: Readonly<Record<string, unknown>>): boolean {
+  if (headerValues(headers, LIST_UNSUBSCRIBE_HEADER) !== null) return true;
+  if (headerValues(headers, LIST_UNSUBSCRIBE_POST_HEADER) !== null) return true;
+  if (headerValues(headers, "list-id") !== null) return true;
+  if (headerValues(headers, "feedback-id") !== null) return true;
+  return headerValues(headers, "precedence")?.some((v) => /bulk/i.test(v)) ?? false;
+}
+
+/**
+ * THE STRONG-BULK FLOOR — a STRICTER conjunction than {@link isBulkSend}, for the migration
+ * backfill and for nothing else.
+ *
+ * `isBulkSend` fires on ANY one marker, and that is correct where it is used: {@link headerHeuristic}
+ * only ever consults it to refine the placement of a sender ALREADY past the consent gate (a contact,
+ * or an inferred-admission allow rule). {@link migrationBulkPlacement} reaches a THIRD population —
+ * mail the legacy migration filed into the Ohbox under a blanket default, whose sender is NEITHER a
+ * contact NOR carries a rule — and for that population one marker is too weak to demote on: a Google
+ * account/security notice carries a `Feedback-ID` and no `List-Unsubscribe`, and that is exactly the
+ * "genuinely relevant service alert" that must stay in the Ohbox.
+ *
+ * So the floor is a CONJUNCTION:
+ *  · `List-Unsubscribe` REQUIRED — the sender's own declaration that the mail is optional. A security
+ *    alert / OTP / account action does not carry it; a newsletter does.
+ *  · AND at least one corroborating list/ESP marker: `List-Id`, `List-Unsubscribe-Post`, `Feedback-ID`,
+ *    or `Precedence: bulk`.
+ *
+ * `Feedback-ID` ALONE is deliberately not enough — see above. This makes the backfill's plan count
+ * land BELOW the raw `List-Unsubscribe` population on purpose: the shortfall IS the safety margin, and
+ * it is the relevant-service-alert class. Do NOT "fix" the shortfall by loosening this to an OR.
+ */
+function hasStrongBulkFloor(headers: Readonly<Record<string, unknown>>): boolean {
+  if (headerValues(headers, LIST_UNSUBSCRIBE_HEADER) === null) return false;
+  if (headerValues(headers, "list-id") !== null) return true;
+  if (headerValues(headers, LIST_UNSUBSCRIBE_POST_HEADER) !== null) return true;
+  if (headerValues(headers, "feedback-id") !== null) return true;
+  return headerValues(headers, "precedence")?.some((v) => /bulk/i.test(v)) ?? false;
+}
+
+/**
+ * THE MIGRATION BACKFILL'S PLACEMENT for a strong-bulk message — Reads, or Receipts on a money
+ * subject — or `null` to KEEP the message where it is.
+ *
+ * ── ONE ROUTER, NOT TWO ─────────────────────────────────────────────────────────────────────
+ *
+ * It composes {@link headerHeuristic}'s Receipts-before-Reads ordering, but gated on
+ * {@link hasStrongBulkFloor} rather than the bare {@link isBulkSend}, and it reuses {@link isMoneySubject}
+ * for the split. The marker/ordering logic therefore lives in THIS file exactly once; the worker
+ * backfill (`ohbox-tidy.ts`) must never re-encode it. The floor guarantees `List-Unsubscribe` is
+ * present ⇒ {@link isBulkSend} ⇒ {@link machineSent}, so the Receipts branch of the heuristic reduces
+ * here to a money subject.
+ *
+ * ── WHY IT IS NOT REACHABLE FROM {@link evaluateRules} ──────────────────────────────────────
+ *
+ * The backfill applies this to a sender who is NOT a contact and carries NO rule — the population
+ * {@link headerHeuristic} must never see, because running the heuristic before the gate is the
+ * pre-gate consent bypass {@link evaluateRules} exists to forbid ("Never move this call above the
+ * gate"). This helper is a MIGRATION decision, not a live routing one: it only ever DEMOTES mail that
+ * the legacy migration ALREADY admitted to the Ohbox, moving it to a visible, reversible pile. It
+ * establishes no consent, writes no rule, and never pulls a stranger through the Screener. Sensitivity
+ * is the CALLER's exclusion (jurisdiction is `sensitive-rescreen.ts`); this helper does not read it.
+ */
+export function migrationBulkPlacement(msg: NormalizedMessage): Destination | null {
+  if (!hasStrongBulkFloor(msg.headers)) return null;
+  return isMoneySubject(msg.subject) ? "ohmail/Receipts" : "ohmail/Reads";
+}
+
+/**
+ * Is the CLAIMED author a service mailbox rather than a person? `no-reply@`, `notifications@`,
+ * `mailer@`, `newsletter@`, `bounce@`, `postmaster@`, and the auto-responder locals — punctuation
+ * stripped, so `no-reply`/`no_reply`/`noreply` are one entry, the same normalisation
+ * `consent-seed.ts#isRobotAddress` uses for the same family.
+ *
+ * ── IT IS A "MACHINE-GENERATED" SIGNAL, NOT A "DEMOTE THIS" SIGNAL. ──────────────────────────
+ *
+ * This feeds ONLY {@link machineSent}, whose sole consumer is the Receipts conjunction
+ * (machine-sent AND a money subject ⇒ Receipts). It does NOT route anything to Reads on its own —
+ * a `no-reply@`/`notifications@` sender delivers relevant transactional mail (a security alert, an
+ * account action) as often as marketing, and burying that out of the Ohbox is the failure this
+ * whole slice must avoid. Obvious bulk is caught by {@link isBulkSend}; the ambiguous middle is
+ * left `unclear` for the AI and the account's bar to judge for relevance.
+ *
+ * The list is still deliberately tight — human-ambiguous roles a small business answers itself
+ * (`info@`, `support@`, `contact@`, `sales@`, `hello@`, `team@`) are NOT here — because a false
+ * "machine" verdict on a personal `noreply-ish` address would file a real receipt for a person who
+ * wrote one by hand.
+ */
+const SERVICE_LOCAL_PREFIXES = [
+  "noreply", "donotreply", "notification", "mailer", "postmaster",
+  "newsletter", "bounce", "autoreply", "automailer",
+] as const;
+
+function isServiceSender(addr: string): boolean {
   const at = addr.indexOf("@");
-  const local = (at >= 0 ? addr.slice(0, at) : addr).replace(/[^a-z0-9]/gi, "").toLowerCase();
-  return local.startsWith("noreply") || local.startsWith("donotreply");
+  if (at <= 0) return false;
+  const local = addr.slice(0, at).replace(/[^a-z0-9]/gi, "").toLowerCase();
+  if (local.length === 0) return false;
+  return SERVICE_LOCAL_PREFIXES.some((p) => local.startsWith(p));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -813,13 +999,14 @@ function isMoneySubject(subject: string): boolean {
  *
  * ── IT REFINES PLACEMENT. IT NEVER ESTABLISHES CONSENT. ─────────────────────────────────────
  *
- * Every signal in here is chosen by the SENDER: `List-Unsubscribe`, `Precedence`,
- * `Auto-Submitted`, the subject line, and a no-reply-shaped local part. A review found
- * that this function ran BEFORE the Screener gate, so an unknown sender wrote `Precedence: bulk`
- * and landed in `ohmail/Reads` — a remote, unauthenticated, one-message defeat of the consent
- * boundary needing no knowledge of the user's contacts and no action by the user. It is now
- * reachable only for a sender the account already knows. **Never move this call above the gate
- * in {@link evaluateRules}.**
+ * Every signal in here is chosen by the SENDER: the bulk/list headers {@link isBulkSend} reads
+ * (`List-Unsubscribe`, `List-Unsubscribe-Post`, `List-Id`, `Feedback-ID`, `Precedence: bulk`),
+ * `Auto-Submitted`, the subject line, and a service-shaped local part ({@link isServiceSender}).
+ * A review found that this function ran BEFORE the Screener gate, so an unknown sender wrote
+ * `Precedence: bulk` and landed in `ohmail/Reads` — a remote, unauthenticated, one-message defeat
+ * of the consent boundary needing no knowledge of the user's contacts and no action by the user.
+ * It is now reachable only for a sender the account already knows. **Never move this call above the
+ * gate in {@link evaluateRules}.**
  *
  * ── THE ORDER INSIDE IT IS ALSO CORRECTNESS, AND IT IS THE OTHER THING TO NOT "TIDY" ────────
  *
@@ -840,15 +1027,65 @@ function isMoneySubject(subject: string): boolean {
  * stays `unclear` for the AI layer to propose on later (rules first, ~80%, not 100%).
  */
 function headerHeuristic(msg: NormalizedMessage): RuleDecision | null {
-  const h = msg.headers;
   if (machineSent(msg) && isMoneySubject(msg.subject)) {
     return { destination: "ohmail/Receipts", matchedRuleId: null, source: "header" };
   }
-  const bulk = h["precedence"]?.some((v) => /bulk/i.test(v)) ?? false;
-  if (h["list-unsubscribe"] || bulk) {
+  // BULK MARKERS ONLY route to Reads — the obvious promotional/newsletter shape. A service-shaped
+  // sender ({@link isServiceSender}) is NOT enough on its own: `no-reply@`/`notifications@` carries
+  // marketing AND genuinely relevant transactional mail (a security alert, an account action), and
+  // demoting the latter out of the Ohbox is exactly the "buries mail I need to see" failure. So
+  // service-sender feeds only the machine-sent test above (a receipt is machine-sent AND money);
+  // an automated message with no bulk marker and no money subject stays `unclear`, for the AI and
+  // the account's Ohbox bar to weigh for RELEVANCE — the judgement header shape cannot make.
+  if (isBulkSend(msg.headers)) {
     return { destination: "ohmail/Reads", matchedRuleId: null, source: "header" };
   }
   return null;
+}
+
+/**
+ * The rules whose PLACEMENT the `people_only` demotion is allowed to refine — an ALLOWLIST, and
+ * never `provenance !== "manual"`.
+ *
+ * `provenance` reaches us through an unvalidated `as` cast off a bare `text` column
+ * ({@link rank}'s note), so a value outside the union IS representable. A negation would make that
+ * garbage DEMOTABLE — exactly the wrong direction, because the failure it produces is a real
+ * person's rule being overridden. An allowlist makes garbage EXEMPT: an unknown provenance falls
+ * through to the rule's own destination, which is failing toward the user. `migrated` (a rule the
+ * user authored elsewhere) and `manual` are both absent, and that absence is the whole ruling.
+ */
+const DEMOTABLE_PROVENANCE: ReadonlySet<Rule["provenance"]> = new Set(["seeded-from-sent", "promoted"]);
+
+/**
+ * The `people_only` placement refinement, or `null` to leave the winning rule's destination alone.
+ *
+ * Reached ONLY from inside {@link evaluateRules}' winning-allow branch, after the deny and
+ * `auth === "fail"` checks, so it can never weaken a denial, screen a message, or run for a
+ * sender who is not already admitted. Five conditions, each a refusal to over-reach:
+ *
+ *  1. the posture is `people_only` (the switch — absent/`people_and_replied` demotes nobody);
+ *  2. the rule places into the Ohbox (`destination === "INBOX"`) — a rule that already names Reads
+ *     or Receipts is a placement we must not reshuffle;
+ *  3. the rule's provenance is INFERRED admission ({@link DEMOTABLE_PROVENANCE}) — never a rule the
+ *     user authored;
+ *  4. the message is automated-shaped — {@link headerHeuristic} answers Reads/Receipts. If it does
+ *     not, the sender is writing personally and the rule's Ohbox placement is exactly right;
+ *  5. the answer is that Reads/Receipts destination, carried as `source: "policy"` with the
+ *     overridden rule as {@link RuleDecision.overriddenRuleId}, NOT as `matchedRuleId`.
+ *
+ * {@link headerHeuristic} only ever returns Reads or Receipts, so a demotion output is always one
+ * of those two — never the Screener, never Quarantine, never a promotion. A test mutates this to
+ * return the Screener and must go red.
+ */
+function policyDemotion(
+  msg: NormalizedMessage, winner: Rule, policy: OhboxPolicy,
+): RuleDecision | null {
+  if (policy !== "people_only") return null;
+  if (winner.destination !== "INBOX") return null;
+  if (!DEMOTABLE_PROVENANCE.has(winner.provenance)) return null;
+  const heur = headerHeuristic(msg);
+  if (!heur) return null;
+  return { destination: heur.destination, matchedRuleId: null, source: "policy", overriddenRuleId: winner.id };
 }
 
 /**
@@ -887,9 +1124,21 @@ function headerHeuristic(msg: NormalizedMessage): RuleDecision | null {
  * `matchedRuleId` is `null` on the demotion even when a rule matched: that rule did not decide
  * where this message went, and recording it as though it had would teach the learning path a
  * consent signal the user never gave.
+ *
+ * ── AND ONE PLACEMENT REFINEMENT, WHICH IS THE ONLY THING `input.ohboxPolicy` DOES ───────────
+ *
+ * Under `people_only`, an automated-shaped message from an INFERRED-admission allow rule
+ * (`seeded-from-sent`/`promoted`) whose destination is the Ohbox is demoted to Reads/Receipts
+ * ({@link policyDemotion}). It runs AFTER the deny and auth-fail checks and only inside the
+ * winning-allow branch, so it never weakens a denial and never crosses the consent gate — it moves
+ * a *consented* sender's mail between allow-side piles and nothing else. A `manual`/`migrated` rule
+ * is exempt (the user authored the placement), and the demotion carries `source: "policy"` with
+ * `overriddenRuleId`, never `matchedRuleId`, for the learning-path reason above. Sensitivity
+ * promotion sits ABOVE this in `pipeline.ts` and is untouched — an OTP from a seeded sender still
+ * reaches the Ohbox.
  */
 export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
-  const { msg, rules, knownSenders, auth } = input;
+  const { msg, rules, knownSenders, auth, ohboxPolicy } = input;
 
   const author = authorAddress(msg);
   const screened: RuleDecision = { destination: "ohmail/Screener", matchedRuleId: null, source: "screener" };
@@ -899,6 +1148,8 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
     const denies = winner.effect === "deny" || effectForDestination(winner.destination) === "deny";
     if (denies) return { destination: winner.destination, matchedRuleId: winner.id, source: "rule" };
     if (auth === "fail") return screened;
+    const demoted = policyDemotion(msg, winner, ohboxPolicy);
+    if (demoted) return demoted;
     return { destination: winner.destination, matchedRuleId: winner.id, source: "rule" };
   }
 

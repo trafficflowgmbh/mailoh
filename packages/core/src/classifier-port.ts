@@ -38,6 +38,13 @@ export interface ClassifierInput {
   snippet: string;                                       // NEVER the full body of a sensitive message
   headersDigest: string;                                 // small, sensitivity-safe
   fewShot?: Array<{ from: string; destination: Destination }>;  // learned few-shot (spec §7, §11)
+  /**
+   * The account's plain-language "who belongs in my Ohbox" bar, in their own words. OPTIONAL,
+   * and it reaches the model's USER turn only — never the cached taxonomy prefix, which is shared
+   * across accounts. It refines the model's proposal for this one message; it is not routing
+   * itself. Absent ⇒ the model classifies on the taxonomy alone, exactly as before.
+   */
+  ohboxBar?: string;
 }
 
 export interface ClassifierResult {

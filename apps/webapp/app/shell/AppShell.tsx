@@ -70,6 +70,7 @@ import {
 } from "./engine";
 import { PLACE_LABEL, avatarHue, firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
 import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
+import { AttachmentPreview } from "../components/AttachmentPreview";
 import { useMessageAttachments } from "./attachments";
 import { useRemoteImages } from "./remote-images";
 import { useConsentState } from "./consent-state";
@@ -88,7 +89,6 @@ import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text
 import { useDraftReply, type DraftedReply } from "./draft-reply";
 import { RichEditor } from "./RichEditor";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
-import { TagCreate, TAG_CREATE_ROW_ID } from "./TagCreate";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
@@ -125,7 +125,7 @@ import { SettingsView, type MailboxEntity, type NotificationsMeta } from "../vie
 import { TagView } from "../views/TagView";
 import { TriageView } from "../views/TriageView";
 import { ComposeView } from "../views/ComposeView";
-import { usePersistedCount, usePersistedFlag, DISMISSED_FOREVER, UI_KEYS } from "./persisted-ui.js";
+import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
 
 interface ReadsAiChipEntity {
   afterId: string;
@@ -174,16 +174,6 @@ const RAIL_OF_TRIAGE_PILE: Record<TriagePileId, string> = {
  * cannot put `3` on the wrong row, only include or exclude a row from being numbered.
  */
 const PILE_IDS: string[] = ["ohbox", "reads", "receipts", "screener", ...Object.keys(TRIAGE_PILE_OF_RAIL)];
-
-/**
- * How many rail CLICKS before the number keys are mentioned once.
- *
- * Six, and the number is the argument: fewer reads as nagging somebody who has barely arrived,
- * and more means the hint lands after the habit has set. It counts clicks and not sessions
- * because clicking is the evidence — somebody who navigates by keyboard never reaches it, and
- * somebody who has clicked six times has told us what they are doing.
- */
-const NAV_HINT_AFTER = 6;
 
 /**
  * How long the located row stays marked, and how long we look for it.
@@ -604,8 +594,16 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    */
   const [readerPending, setReaderPending] = useState<string | null>(null);
   const [railOpen, setRailOpen] = useState(false);
-  /** The sidebar's "New tag" dialog. See `TagCreate` for why it is not an inline rail input. */
-  const [tagCreateOpen, setTagCreateOpen] = useState(false);
+  /**
+   * THE QUICK-LOOK PREVIEW — a message id and the attachment on screen, or `null`.
+   *
+   * It lives up here beside the reader for the same two reasons: the overlay is the shell's,
+   * not any one pile's, and it must DERIVE-CLOSE when the open message changes. The engine
+   * revokes an attachment's `blob:` URLs the moment `selectedOhbox` moves (see `attachments.ts`),
+   * so an overlay left open across that switch would render dead bytes — the effect below closes
+   * it in the same pass.
+   */
+  const [previewFor, setPreviewFor] = useState<{ messageId: string; attachmentId: string } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [senderMenu, setSenderMenu] = useState<SenderMenuState | null>(null);
   const [senderAudit, setSenderAudit] = useState<SenderAuditState | null>(null);
@@ -633,11 +631,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   }, []);
   // Survives a reload; see `persisted-ui.ts` for why it is local and read after mount.
   const [tagsOpen, setTagsOpen] = usePersistedFlag(UI_KEYS.tagsOpen, true);
-  /**
-   * HOW MANY TIMES THIS PERSON HAS REACHED A PILE BY CLICKING, and whether they have been
-   * told there is a faster way. See `NAV_HINT_AFTER` for the whole argument.
-   */
-  const navClicks = usePersistedCount(UI_KEYS.navClicks);
   const [picker, setPicker] = useState<TagPickerState | null>(null);
   /**
    * WHO THE OPEN TAG PICKER IS ACTUALLY FOR.
@@ -712,6 +705,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
   const selectedOhbox =
     allOhbox.find((m) => m.id === ohboxSel) ?? allOhbox[0] ?? null;
+
+  /**
+   * DERIVE-CLOSE the Quick-Look overlay when the message it belongs to stops being the open
+   * one — a different row selected, a view change, the reader closed. `attachments` are held
+   * for `selectedOhbox` only and their `blob:` URLs are revoked the moment it moves, so a
+   * preview left standing across the switch would render revoked bytes. Closing is derived from
+   * the selection rather than remembered at every call site that can change it.
+   */
+  useEffect(() => {
+    if (previewFor && previewFor.messageId !== selectedOhbox?.id) setPreviewFor(null);
+  }, [previewFor, selectedOhbox?.id]);
 
   /**
    * What the reader is showing, read from the mirror on every render.
@@ -868,7 +872,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       setPickerIds(null);
       setFr(null);
       setRailOpen(false);
-      setTagCreateOpen(false);
       setSenderMenu(null);
       setShortcutsOpen(false);
       setReplyTo(null);
@@ -1869,7 +1872,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     // the innermost thing on screen whenever it exists.
     [senderAudit != null, () => setSenderAudit(null)],
     [senderMenu != null, () => setSenderMenu(null)],
-    [tagCreateOpen, () => setTagCreateOpen(false)],
     [picker != null, () => setPicker(null)],
     [fr != null, () => setFr(null)],
     [replyTo != null, () => setReplyTo(null)],
@@ -2157,25 +2159,31 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           // desktop shell, which has no `localStorage`, keeps working untouched.
           open: tagsOpen,
           onOpenChange: setTagsOpen,
-          items: [
-            ...tagGroups.map((g) => ({
-              id: g.tag.id,
-              label: g.tag.name,
-              hue: hueOf(g.tag),
-              count: g.messages.length,
-            })),
-            /* "New tag" — the affordance the sidebar did not have. It is a row in this list
-               rather than a control inside the group because `RailNav` (packages/ui, shared
-               with the desktop shell) exposes no slot there, and growing the design system to
-               serve one host is what its own header argues against for the collapse state.
-               `onNavigateTag` intercepts the id; `TagCreate` owns the input. It sits LAST so
-               it does not move when tags are added. `action: true` is what makes it read as a
-               VERB rather than as a tag called "New tag": `RailNav` then draws a `+` where the
-               tag dot would be and withholds the count, because a count is a property of a tag
-               and this is not one. Without that flag it renders identically to a real tag —
-               which is how it shipped once. */
-            { id: TAG_CREATE_ROW_ID, label: t("rail.tagNew"), hue: "moss" as const, action: true },
-          ],
+          items: tagGroups.map((g) => ({
+            id: g.tag.id,
+            label: g.tag.name,
+            hue: hueOf(g.tag),
+            count: g.messages.length,
+          })),
+          /* "New tag" is a first-class inline affordance now, not a data row and not a dialog:
+             `RailNav` owns a `+ New tag` trigger that swaps for an input IN PLACE, plus an
+             empty-state invite when there are no tags yet. The duplicate check stays HERE
+             because the server's unique index is on `lower(name)` — offering a name that already
+             exists would promise a tag the server answers 409 for — and it runs against the
+             WHOLE tag set (`tags`), so a tag that sits on no message still blocks its own name.
+             `createTagAlone` is the standalone `tag_create` verb: no message, unlike the picker's
+             tag-or-create, which is exactly the thing the sidebar does not have to hand. */
+          create: {
+            label: t("rail.tagNew"),
+            placeholder: t("tag.newPlaceholder"),
+            emptyHint: t("rail.tagEmpty"),
+            onCreate: createTagAlone,
+            duplicate: {
+              taken: (name: string) =>
+                tags.some((tg) => tg.name.toLowerCase() === name.toLowerCase()),
+              label: (name: string) => t("tag.newTaken", { name }),
+            },
+          },
         },
       },
       {
@@ -2199,7 +2207,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         ],
       },
     ],
-    [t, ohbox.newForYou.length, allOhbox.length, readsUnread, receiptsUnread, screener.waitingCount, piles, tagGroups],
+    [t, ohbox.newForYou.length, allOhbox.length, readsUnread, receiptsUnread, screener.waitingCount, piles, tagGroups, tags, createTagAlone],
   );
 
   /**
@@ -2231,43 +2239,43 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   /**
-   * ── DISCOVERABILITY, IN THREE LAYERS, AND NONE OF THEM IS ALWAYS-ON ───────────────────
+   * ── DISCOVERABILITY, WITHOUT A BADGE ON EVERY ROW AND WITHOUT A MESSAGE ────────────────
    *
    * A shortcut nobody knows about is not a feature, and a badge on every row forever is
-   * clutter charged to every user so that a few learn something once. So:
+   * clutter charged to every user so that a few learn something once. Two layers, both quiet:
    *
    *   1. the `?` sheet lists them, free, because the bindings above declare their own labels
    *      and the sheet is generated from the registry;
-   *   2. the rail rows show their keycap WHILE THE SHEET IS OPEN — the moment somebody is
-   *      asking "what are the keys", the answer is on the thing itself as well as in the list;
-   *   3. once, after {@link NAV_HINT_AFTER} clicks, a dismissible line. Somebody who has
-   *      clicked the rail six times is demonstrably navigating and demonstrably not using the
-   *      keys, which is the only evidence available that the hint is worth their attention.
+   *   2. the row itself shows its keycap ON HOVER AND ON KEYBOARD FOCUS — you learn the key by
+   *      pointing at, or tabbing to, the row it belongs to. `navKey` rides on every numbered
+   *      row; `RailNav` reveals it only for the row under the pointer or focus and hides it
+   *      otherwise, so the resting rail carries counts and no keycaps. `RailNav` also clears the
+   *      reveal on click, so a tap that navigates does not leave a keycap standing where a touch
+   *      device has no pointer-leave to come.
    *
-   * Dismiss is forever (`stop()` pins the counter), and the hint stops on its own once the
-   * keys are used — pressing one navigates without going through `onNavigate`, so the counter
-   * never reaches the threshold for somebody who already knows.
+   * The `?` sheet ALSO paints every keycap at once while it is open (`kbdHint`), because the
+   * moment somebody is asking "what are the keys" the answer belongs on the things as well as
+   * in the list. `kbdHint` wins over the per-row reveal when both are set — see `RailItem`.
+   *
+   * There used to be a third layer: a one-time dismissible strip after a handful of rail
+   * clicks. It was removed — a line of chrome telling you a faster way exists is louder than
+   * the thing it points at, and the hover/focus keycap teaches the same fact without a message.
    */
   const railGroupsWithHints = useMemo(
     () =>
-      shortcutsOpen
-        ? railGroups.map((g) => ({
-            ...g,
-            items: g.items.map((item) => {
-              const n = numberNav.findIndex((x) => x.id === item.id);
-              // `kbdHint` REPLACES the count in `RailNav`, which is right here: while the
-              // sheet is open the question on screen is "what is the key", not "how many".
-              return n < 0 ? item : { ...item, kbdHint: String(n + 1) };
-            }),
-          }))
-        : railGroups,
+      railGroups.map((g) => ({
+        ...g,
+        items: g.items.map((item) => {
+          const n = numberNav.findIndex((x) => x.id === item.id);
+          if (n < 0) return item;
+          const key = String(n + 1);
+          // `navKey` is the always-attached hover/focus reveal; `kbdHint` is the louder
+          // all-at-once reveal the `?` sheet asks for. Both name the same key.
+          return shortcutsOpen ? { ...item, navKey: key, kbdHint: key } : { ...item, navKey: key };
+        }),
+      })),
     [railGroups, numberNav, shortcutsOpen],
   );
-
-  const showNavHint =
-    numberNav.length > 0 &&
-    navClicks.count >= NAV_HINT_AFTER &&
-    navClicks.count < DISMISSED_FOREVER;
 
   useKeyBindings(
     numberNav.map((item, i) => ({
@@ -2403,7 +2411,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       // held per-pane would be two offers, each able to spend an AI action the other one
       // knew nothing about.
       draftReply: draftReplyChrome,
-      openSenderMenu, conversationOf,
+      openSenderMenu,
+      openAttachmentPreview: (messageId: string, attachmentId: string) =>
+        setPreviewFor({ messageId, attachmentId }),
+      conversationOf,
       bodyOf: bodyOfMessage, hydrateBody,
       attachments, remoteImages,
     }),
@@ -2454,16 +2465,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             is not. */}
         <SyncBar />
 
-        {/* The one-time hint. Layer 3 — see `railGroupsWithHints`. It names the real range,
-            counted from the rail rather than typed, so it cannot claim a key that is not
-            bound. Dismiss is permanent. */}
-        {showNavHint ? (
-          <div className="nav-hint">
-            <span>{t("rail.numberHint", { last: numberNav.length })}</span>
-            <button type="button" onClick={navClicks.stop}>{t("rail.numberHintGot")}</button>
-          </div>
-        ) : null}
-
         <div className="topbar">
           <button
             type="button"
@@ -2492,7 +2493,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             activeId={activeRailId}
             onNavigate={(id) => {
               setRailOpen(false);
-              navClicks.bump();
               // THE FIX. This was `if (id.startsWith("triage")) go("triage")`, which threw
               // away which of the three rows had been pressed — so Park and Resurface both
               // opened Answer Later, and the rail lit Answer Later either way.
@@ -2503,9 +2503,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             activeTagId={route.tagId ?? undefined}
             onNavigateTag={(id) => {
               setRailOpen(false);
-              // The sentinel row, not a tag. See `railGroups` for why the affordance is a row.
-              if (id === TAG_CREATE_ROW_ID) setTagCreateOpen(true);
-              else goTag(id);
+              goTag(id);
             }}
             mailboxesLabel={t("rail.mailboxes")}
             mailboxes={mailboxes.map((m) => ({
@@ -2825,6 +2823,31 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         )}
       </Reader>
 
+      {/* QUICK LOOK — the attachment preview, above the reader. Mounted only while open, so its
+          overlay-scope key bindings (Esc/←/→/↑/↓) exist exactly when it does, and its pdf.js
+          document is torn down on close. Gated on a non-empty ready list so the derive-close
+          transition never flashes an empty panel. */}
+      {previewFor && attachments
+        ? (() => {
+            const view = attachments.itemsOf(previewFor.messageId);
+            const previewItems = view.state === "ready" ? view.items : [];
+            if (previewItems.length === 0) return null;
+            return (
+              <AttachmentPreview
+                items={previewItems}
+                activeId={previewFor.attachmentId}
+                onActiveIdChange={(id) =>
+                  setPreviewFor({ messageId: previewFor.messageId, attachmentId: id })
+                }
+                ensure={(aid, opts) => attachments.ensure(previewFor.messageId, aid, opts)}
+                blobOf={(aid) => attachments.blobOf(previewFor.messageId, aid)}
+                onDownload={(aid) => attachments.open(previewFor.messageId, aid)}
+                onClose={() => setPreviewFor(null)}
+              />
+            );
+          })()
+        : null}
+
       {/* Reply Run */}
       <FocusReplyOverlay
         open={fr != null}
@@ -2932,15 +2955,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           }
           onCreate={(name) => { createTag(picker.forId, name); setPicker(null); }}
           onClose={() => { setPicker(null); setPickerIds(null); }}
-        />
-      ) : null}
-
-      {/* New tag, from the sidebar — the standalone mint that did not exist. */}
-      {tagCreateOpen ? (
-        <TagCreate
-          tags={tags}
-          onCreate={(name) => { createTagAlone(name); setTagCreateOpen(false); }}
-          onClose={() => setTagCreateOpen(false)}
         />
       ) : null}
 

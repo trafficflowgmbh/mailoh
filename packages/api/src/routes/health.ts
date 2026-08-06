@@ -432,6 +432,24 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   //
   // It is the NEWEST entry in the mail journal.
   ["message_failures", "next_attempt_at"],
+  // mail 0042_screening_preference — the editable Ohbox preference. Two additive nullable columns on
+  // `account_settings`, and it earns a marker for the whole-row-select reason — the same shape as
+  // `account_settings.auto_suggest_at` (0040) one feature over.
+  //
+  // `ohbox_policy` is the column probed rather than `ohbox_bar`, on this list's usual rule: probe the
+  // column a QUERY reads to make a DECISION. The worker resolves this column per account and threads
+  // it into the routing engine, so a database missing it makes the screening-preference read
+  // 42703 — and `consentSettings`/`getScreeningPreference` do a bare `select().from(accountSettings)`,
+  // so drizzle enumerates every column this schema knows about and the CONSENT surface, not just this
+  // feature, is what fails. There is no worker half in the same sense as 0041: the worker READS the
+  // column but a read that 42703s degrades to the lenient default (absent-config-selects-safe), so a
+  // worker ahead of the migration organises mail under `people_and_replied` rather than crashing —
+  // the safe direction. The API is where the whole-row select bites, so the deploy order is the
+  // ordinary migration → API.
+  //
+  // No CHECK marker (0030's rule: an enum/length CHECK closes a set the column marker already implies)
+  // and no INDEX marker: the row is fetched by primary key and nothing filters on either column.
+  ["account_settings", "ohbox_policy"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -695,7 +713,7 @@ export const MAIL_EXPECTED_MARKERS =
  * `message_failures_code_closed` is created INSIDE the `CREATE TABLE` and could only ever fail
  * together with the column above.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0041_message_failures";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0042_screening_preference";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

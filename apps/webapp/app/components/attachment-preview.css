@@ -1,0 +1,185 @@
+/* ═══ QUICK LOOK — the attachment preview overlay ══════════════════════════════════════════
+   A floating sheet on lift-3 over the scrim, above the reader and the reply run. Pure Blanc
+   surfaces, terracotta only for focus; light + dark come free from the tokens. See
+   AttachmentPreview.tsx for the security rule this chrome wraps. */
+
+body.ap-lock { overflow: hidden; }
+
+.ap-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-fr) + 5);
+  display: grid;
+  place-items: center;
+  background: var(--scrim);
+  padding: 4vh 16px;
+  animation: ap-fade .18s var(--swift);
+}
+
+.ap-panel {
+  width: min(1040px, 96vw);
+  height: min(92vh, 900px);
+  display: flex;
+  flex-direction: column;
+  background: var(--float);
+  border-radius: 22px;
+  box-shadow: var(--lift-3);
+  overflow: hidden;
+  outline: none;
+  animation: ap-rise .26s var(--spring);
+}
+
+/* ── header ── */
+.ap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 14px 13px 18px;
+  border-bottom: 1px solid var(--hair);
+  flex: none;
+}
+.ap-id { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ap-name {
+  font-size: 13.5px; font-weight: 620; letter-spacing: -.01em; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ap-meta {
+  font-size: 11px; color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ap-tools { display: flex; align-items: center; gap: 7px; flex: none; }
+.ap-pager { display: inline-flex; gap: 2px; }
+
+.ap-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 12px;
+  border: 1px solid var(--hair); border-radius: 999px;
+  background: var(--tint); color: var(--ink);
+  font: inherit; font-size: 12.5px; font-weight: 520;
+  cursor: pointer; transition: background .16s var(--swift), border-color .16s var(--swift);
+}
+.ap-btn:hover { background: var(--tint2); border-color: var(--hair); }
+
+.ap-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0;
+  border: 0; border-radius: 9px; background: transparent; color: var(--ink2);
+  cursor: pointer; transition: background .16s var(--swift), color .16s var(--swift);
+}
+.ap-iconbtn:hover { background: var(--tint); color: var(--ink); }
+.ap-iconbtn[aria-disabled] { opacity: .4; cursor: default; }
+.ap-iconbtn[aria-disabled]:hover { background: transparent; color: var(--ink2); }
+
+.ap-btn:focus-visible, .ap-iconbtn:focus-visible, .ap-nav:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+/* ── stage: the byte, centred, with the two side arrows ── */
+.ap-stage {
+  position: relative;
+  flex: 1; min-height: 0;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.ap-content {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; min-height: 100%;
+}
+
+.ap-nav {
+  position: absolute; top: 50%; translate: 0 -50%;
+  width: 38px; height: 38px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--hair); border-radius: 999px;
+  background: var(--float); color: var(--ink2);
+  box-shadow: var(--lift-1, 0 1px 3px rgba(0,0,0,.08));
+  cursor: pointer; z-index: 2;
+  transition: background .16s var(--swift), color .16s var(--swift), transform .16s var(--swift);
+}
+.ap-nav:hover { color: var(--ink); background: var(--panel); transform: translateY(-50%) scale(1.04); }
+.ap-prev { left: 10px; }
+.ap-next { right: 10px; }
+
+/* ── the three inert render shapes ── */
+.ap-img {
+  max-width: 100%; max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 2px 14px oklch(0 0 0 / .12);
+}
+.ap-pdf { display: flex; justify-content: center; width: 100%; }
+.ap-canvas {
+  max-width: 100%; height: auto;
+  background: #fff;
+  border-radius: 4px;
+  box-shadow: 0 2px 16px oklch(0 0 0 / .18);
+}
+.ap-text {
+  width: 100%; max-width: 820px; max-height: 100%;
+  margin: 0; padding: 18px 20px;
+  overflow: auto;
+  background: var(--canvas);
+  border: 1px solid var(--hair); border-radius: 12px;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.62;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+/* ── waiting + fallback ── */
+.ap-busy, .ap-card {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  text-align: center; color: var(--ink2);
+  max-width: 340px;
+}
+.ap-busy { flex-direction: row; gap: 10px; font-size: 13px; color: var(--ink3); }
+.ap-card b { font-size: 15px; color: var(--ink); font-weight: 620; }
+.ap-card-glyph { color: var(--ink3); opacity: .8; margin-bottom: 2px; }
+.ap-card-detail { font-size: 12.5px; color: var(--ink3); line-height: 1.5; }
+.ap-card-action { margin-top: 6px; }
+
+.ap-spin {
+  width: 15px; height: 15px; flex: none;
+  border: 1.6px solid var(--hair);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: ap-spin .7s linear infinite;
+}
+
+/* ── footer hints ── */
+.ap-foot {
+  display: flex; flex-wrap: wrap; gap: 4px 16px; justify-content: center;
+  padding: 9px 14px;
+  border-top: 1px solid var(--hair);
+  font-size: 11px; color: var(--ink3);
+  flex: none;
+}
+
+/* ── glyphs ── */
+.ap-ic { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5;
+  stroke-linecap: round; stroke-linejoin: round; }
+.ap-ic-lg { width: 30px; height: 30px; stroke-width: 1.1; }
+.ap-btn .ap-ic { width: 14px; height: 14px; }
+
+@keyframes ap-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ap-rise { from { opacity: 0; transform: translateY(12px) scale(.99); } to { opacity: 1; transform: none; } }
+@keyframes ap-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 640px) {
+  .ap-scrim { padding: 0; }
+  .ap-panel { width: 100vw; height: 100vh; border-radius: 0; }
+  .ap-stage { padding: 12px; }
+  .ap-nav { width: 34px; height: 34px; }
+  .ap-prev { left: 6px; } .ap-next { right: 6px; }
+  .ap-btn span:not(.ap-ic) { /* keep the label — download is the point on mobile */ }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ap-scrim, .ap-panel { animation: none; }
+  .ap-spin { animation-duration: 1.4s; }
+  .ap-nav:hover { transform: translateY(-50%); }
+}

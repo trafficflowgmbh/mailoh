@@ -1,0 +1,56 @@
+-- THE EDITABLE OHBOX PREFERENCE — "who reaches your Ohbox", as two columns on the settings table
+-- `0035_account_settings.sql` was built to hold.
+--
+-- `0035`'s header named this exact pattern in advance: *"the second feature is `ALTER TABLE
+-- account_settings ADD COLUMN …` — additive, no data motion, no conflict with anything written
+-- here."* `0040_auto_suggest` was the first; this is the second, and it is deliberately nothing more.
+--
+-- ══ WHAT THE TWO COLUMNS HOLD, AND WHY NULL IS THE ONLY SAFE DEFAULT ══════════════════════════
+--
+--   ohbox_policy   The account's Ohbox posture. NULL / 'people_and_replied' = today's behaviour: a
+--                  sender the account has ever admitted (a seeded/promoted allow rule) delivers ALL
+--                  of their mail to the Ohbox. 'people_only' = the strict posture: automated-shaped
+--                  mail from an INFERRED-admission sender is demoted out of the Ohbox to
+--                  Reads/Receipts (never a manual/migrated rule, never a deny, never a stranger —
+--                  see `packages/core/src/rules.ts#evaluateRules`).
+--
+--                  NULL MUST READ AS LENIENT. The engine resolves absent config to
+--                  `DEFAULT_OHBOX_POLICY` = 'people_and_replied', so the day this ships NO existing
+--                  account's mail is demoted: the demotion arrives only when an account opts in. A
+--                  default of 'people_only' here would silently reorganise every mailbox on deploy —
+--                  the opposite of the ruling's "absent-config-selects-safe".
+--
+--                  CHECK constrains it to the two literals + NULL. The vocabulary is the code's
+--                  (`OhboxPolicy`); the CHECK is the one layer that can refuse a third value for
+--                  every writer at once.
+--
+--   ohbox_bar      The plain-language bar in the account owner's own words, shown in Settings and threaded
+--                  into the classifier's USER turn. NULL = show the product-default placeholder;
+--                  every reader falls back to the default constant, so an absent value is a legal,
+--                  expected state and never an error. Length-capped at 2 KiB so it cannot bloat the
+--                  cached prompt or a row — the database is the one place that cap holds for every
+--                  writer, exactly as `drafts_html_cap` (0037) holds the draft-HTML ceiling.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO LOCKDOWN TRIGGER ════════════════════════════════════════════════
+--
+-- `ADD COLUMN IF NOT EXISTS` with the CHECK INLINE on the same clause: on replay where the column
+-- already exists Postgres skips the whole action, constraint included, so the statement is
+-- idempotent and cannot raise 42701/42710 the second time (`setup-prod.ts` replays the journal;
+-- `mailbox-dedup.pg.test.ts` rewinds and re-migrates). This is the safe shape 0037's bare
+-- `ADD CONSTRAINT` learned the expensive way — an inline constraint on `ADD COLUMN IF NOT EXISTS`
+-- needs no `DO … duplicate_object` wrapper because it is never reached on a second run.
+--
+-- `ADD COLUMN` on an existing table inherits that table's grants, and `account_settings` was created
+-- by 0035 under the tightened defaults, so no privilege lockdown pass is owed and the content-blind
+-- operator role gains nothing — 0035's header states a column added here is NOT automatically
+-- visible to it, and a screening preference is not something an operator needs.
+--
+-- ══ RE-RUN AND ROLLBACK ══════════════════════════════════════════════════════════════════════
+--
+-- ROLLBACK is `ALTER TABLE account_settings DROP COLUMN ohbox_bar, DROP COLUMN ohbox_policy`. Every
+-- account returns to 'people_and_replied' (lenient) and the default bar — the safe direction, since
+-- the columns' only effect is to demote a consented sender's automated mail to a visible, reversible
+-- pile. No mail moves on rollback, and no consent is lost: consent lives in `rules`.
+
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "ohbox_policy" text CONSTRAINT "account_settings_ohbox_policy_valid" CHECK ("ohbox_policy" IS NULL OR "ohbox_policy" IN ('people_only', 'people_and_replied'));--> statement-breakpoint
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "ohbox_bar" text CONSTRAINT "account_settings_ohbox_bar_len" CHECK ("ohbox_bar" IS NULL OR octet_length("ohbox_bar") <= 2048);

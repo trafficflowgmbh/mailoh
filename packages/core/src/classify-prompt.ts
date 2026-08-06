@@ -57,6 +57,16 @@ export const TAXONOMY_PREFIX = [
   "- ohmail/Screened: senders the owner has previously declined.",
   "- ohmail/Quarantine: spam / unsafe mail.",
   "",
+  // A GENERIC, CONDITIONAL instruction about the optional per-account field — never the field's
+  // value, which is per-account and lives in the user turn (see `ClassifyUserPayload.ohboxBar`).
+  // It is inert for the accounts that set no bar (the field is simply absent), so it changes no
+  // routing for them, and it deliberately does NOT restate or sharpen the folder definitions
+  // above: a base-taxonomy change is its own decision with its own before/after evidence.
+  "If the user turn carries an \"ohboxBar\" field, it is the account owner's own statement,",
+  "in their words, of who belongs in their Ohbox (INBOX). Weigh it when choosing between INBOX",
+  "and the automated piles (Reads/Receipts). It never carries a first-contact sender past the",
+  "Screener gate and never changes how sensitive mail is handled.",
+  "",
   "Return confidence in [0,1], a one-line rationale (never echo secrets/OTP codes),",
   "and whether the message is spam. Respond ONLY with the structured JSON object.",
 ].join("\n");
@@ -106,6 +116,14 @@ export interface ClassifyUserPayload {
   snippet: string;
   headersDigest: string;
   fewShot: Array<{ from: string; destination: Destination }>;
+  /**
+   * The account's own "who belongs in my Ohbox" bar. Present only when the account set one, and it
+   * lives HERE — in the volatile user payload, after the cache breakpoint — never in
+   * {@link TAXONOMY_PREFIX}: the prefix is cached with `cache_control:{type:"ephemeral"}` and shared
+   * across accounts, so a per-account string in it would poison the cache and leak one account's
+   * words onto another's request. Absent ⇒ the field is omitted from the serialised turn entirely.
+   */
+  ohboxBar?: string;
 }
 
 /**
@@ -131,12 +149,16 @@ export interface ClassifyUserPayload {
 export function classifyUserPayload(input: ClassifierInput): ClassifyUserPayload {
   const screen = screenOutboundText(input.subject, input.snippet);
   if (!screen.safe) throw new SensitivePayloadRefusal(screen);
+  // A blank or whitespace-only bar carries no instruction, so it is dropped rather than serialised
+  // as an empty field the model would have to reason about. `undefined` ⇒ the key is omitted.
+  const bar = input.ohboxBar?.trim();
   return {
     from: input.from.address,
     subject: input.subject,
     snippet: input.snippet,
     headersDigest: input.headersDigest,
     fewShot: input.fewShot ?? [],
+    ...(bar ? { ohboxBar: bar } : {}),
   };
 }
 

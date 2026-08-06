@@ -5,8 +5,8 @@ import {
 } from "./identity.js";
 import { classifySensitivity, type SensitivityResult } from "./sensitive.js";
 import {
-  NO_TRUSTED_AUTHSERV_IDS, authVerdictFromHeaders, effectForDestination, evaluateRules,
-  type AuthVerdict,
+  NO_TRUSTED_AUTHSERV_IDS, DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, effectForDestination,
+  evaluateRules, type AuthVerdict, type OhboxPolicy,
 } from "./rules.js";
 import { classifyDedup, type DedupOutcome } from "./dedup.js";
 import { reconcile, type ReconcileAction } from "./reconciler.js";
@@ -268,6 +268,26 @@ export interface PlanDeps {
    * is the required day-one behaviour: see {@link AuthVerdict} on the large backlog.
    */
   trustedAuthservIds?: ReadonlySet<string>;
+  /**
+   * The account's Ohbox posture, resolved per-account from `account_settings.ohbox_policy` by the
+   * worker. Injected configuration, exactly like `trustedAuthservIds` above — it is a property of
+   * how THIS account has asked its mail to be organised, resolved once per cycle, and threaded here
+   * rather than read inside the engine.
+   *
+   * Absent ⇒ {@link DEFAULT_OHBOX_POLICY} (`people_and_replied`) ⇒ the demotion branch never fires
+   * ⇒ byte-identical routing to the pre-slice engine. NULL `ohbox_policy` resolves the same way, so
+   * shipping this demotes no existing account until it opts in. This is the required day-one
+   * behaviour, on the same discipline as `trustedAuthservIds`, and {@link evaluateRules} takes the
+   * resolved value as REQUIRED so no call site can forget it.
+   */
+  ohboxPolicy?: OhboxPolicy;
+  /**
+   * The account's plain-language Ohbox bar, resolved from `account_settings.ohbox_bar`. It reaches
+   * the classifier's USER turn only (never the cached taxonomy prefix — a per-account string in the
+   * shared prefix would poison the cache). It changes what the model PROPOSES on the unclear
+   * residue; it never itself moves a message. Absent ⇒ omitted from the payload.
+   */
+  ohboxBar?: string;
 }
 
 export interface CommitDeps {
@@ -366,6 +386,10 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
   }
   const { repo, accountId, mailboxId, classifier, routing, credits } = deps;
   const trustedAuthservIds = deps.trustedAuthservIds ?? NO_TRUSTED_AUTHSERV_IDS;
+  // Resolve the posture ONCE here, at the outermost dep, exactly like `trustedAuthservIds`: NULL /
+  // absent config ⇒ the lenient default ⇒ the demotion branch never fires. `evaluateRules` takes
+  // the resolved value as REQUIRED so no call site is silently on the wrong side of it.
+  const ohboxPolicy: OhboxPolicy = deps.ohboxPolicy ?? DEFAULT_OHBOX_POLICY;
 
   const normalized = await normalizeMime(change.raw);
   const { key, existing, upgrade } = await resolveExisting(repo, mailboxId, normalized);
@@ -504,7 +528,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
     const rules = await repo.listRules(accountId);
     const known = await repo.knownSenders(accountId);
     const decision = evaluateRules({
-      msg: normalized, rules, knownSenders: known, auth: authVerdict,
+      msg: normalized, rules, knownSenders: known, auth: authVerdict, ohboxPolicy,
     });
 
     // ── SENSITIVITY REFINES PLACEMENT. IT NEVER ESTABLISHES CONSENT. ────────────────────────
@@ -584,6 +608,9 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
           snippet: bodySnippet(normalized, sensitivity),
           headersDigest: headersDigest(normalized),
           fewShot: [],
+          // The account's own words, into the USER turn only. Absent ⇒ omitted. It sharpens what
+          // the model proposes on this unclear residue; it never itself moves the message.
+          ohboxBar: deps.ohboxBar,
         });
       } catch (err) {
         // RETHROW, deliberately, and do NOT refund. Two separate decisions, and the second one
