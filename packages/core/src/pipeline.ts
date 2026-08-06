@@ -351,7 +351,10 @@ async function resolveExisting(
 
 /** A short, sensitivity-safe preview for the DTO snippet + the classifier input. */
 function bodySnippet(normalized: NormalizedMessage, sensitivity: SensitivityResult): string {
-  const src = sensitivity.sensitive ? sensitivity.redactedTextBody : normalized.textBody;
+  // `storeRedactedBody`, not `sensitive`: the snippet is persisted (and, when AI is eligible, fed
+  // to the classifier), so an indeterminate CREDENTIAL — a German TAN, a bare magic-link URL — has
+  // to draw from the redacted text here too, or the code lands in the stored snippet.
+  const src = sensitivity.storeRedactedBody ? sensitivity.redactedTextBody : normalized.textBody;
   return src.replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
@@ -886,17 +889,24 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     // message — atomic ingest, no orphan attachment without its message.
     await repo.insertAttachments(stored.id, accountId, p.normalized.attachments);
 
-    // AI-GATE (persist): the stored body is the redacted text when sensitive, so the
-    // raw secret is never written server-side.
+    // AI-GATE (persist): the stored body is the redacted text whenever a credential is present —
+    // positively sensitive OR an indeterminate credential (`storeRedactedBody`) — so the raw secret
+    // is never written server-side. Earlier this keyed off `sensitive` alone, and a German TAN
+    // routed to the fail-closed bucket left its code in `message_bodies.text` in the clear.
     //
     // `prepareHtmlForStorage` is the ONLY route html takes into the database — this is the sole
     // writer of `message_bodies.html` (`privacy-service.ts` flips `loadedRemoteContent` and
     // nothing else; `message-service.ts` only reads). It strips oversized inline base64 payloads
     // and enforces the 256 KiB cap that the `message_bodies_html_cap` CHECK constraint asserts.
-    // Sensitive mail stores no html at all and never reaches it.
+    // Positively-sensitive mail stores no html at all; an indeterminate credential keeps its html
+    // but with the credential runs redacted (`redactedHtmlBody`).
     await repo.insertMessageBody(stored.id, {
-      text: p.sensitivity.sensitive ? p.sensitivity.redactedTextBody : p.normalized.textBody,
-      html: p.sensitivity.sensitive ? null : prepareHtmlForStorage(p.normalized.htmlBody),
+      text: p.sensitivity.storeRedactedBody ? p.sensitivity.redactedTextBody : p.normalized.textBody,
+      html: p.sensitivity.sensitive
+        ? null
+        : p.sensitivity.storeRedactedBody
+          ? prepareHtmlForStorage(p.sensitivity.redactedHtmlBody)
+          : prepareHtmlForStorage(p.normalized.htmlBody),
       headers: p.normalized.headers,
     });
 

@@ -196,7 +196,33 @@ export interface SensitivityResult {
    */
   reasons: IndeterminateReason[];
   flags: { no_ai: boolean; no_forward: boolean; no_kb: boolean; priority: boolean };
+  /**
+   * The body safe to STORE — redacted whenever a credential is present, and that is now BOTH
+   * halves of invariant #1's redaction clause, not just the positive half.
+   *
+   * Earlier this was redacted only when {@link sensitive}. But an INDETERMINATE credential —
+   * `indeterminate [credential_shape]` / `[auth_url_token]` / `[unsupported_script]` — is a message
+   * we positively decided carries a code (that is why we withheld it from the model), and the
+   * persist path stored its raw `textBody` all the same. So a German TAN mail routed to the
+   * fail-closed bucket left the code in `message_bodies.text` in the clear. {@link storeRedactedBody}
+   * is true for those cases too, and this field carries the redacted text for them.
+   */
   redactedTextBody: string;
+  /**
+   * The html safe to store for an indeterminate CREDENTIAL case (positively-sensitive mail stores
+   * no html at all — the pipeline drops it — so this stays `null` there and for ordinary mail).
+   */
+  redactedHtmlBody: string | null;
+  /**
+   * True when the stored body must be the redacted one: positively sensitive, OR an indeterminate
+   * case whose reason is that a credential is present. The persist path and the snippet reader both
+   * key off this instead of {@link sensitive}, which is what closes the stored-raw half for the
+   * fail-closed bucket. It deliberately EXCLUDES the indeterminate reasons that are not a credential
+   * (`unrecognised_language`, `alternatives_disagree`, `no_visible_text`, …): redacting ordinary
+   * foreign-language or structurally-odd mail would replace the digits of a receipt with `[REDACTED]`
+   * in the user's own storage, which the header note forbids.
+   */
+  storeRedactedBody: boolean;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -710,6 +736,9 @@ const ALERT = new RegExp(
     `\\b(nouvelle\\s+connexion|alerte\\s+de\\s+s[ée]curit[ée]|activit[ée]\\s+inhabituelle)\\b`,
     `\\b(nuovo\\s+accesso|avviso\\s+di\\s+sicurezza|attivit[àa]\\s+insolita)\\b`,
     `\\b(nuevo\\s+inicio\\s+de\\s+sesi[óo]n|alerta\\s+de\\s+seguridad|actividad\\s+inusual)\\b`,
+    // pt — a Portuguese sign-in alert carries no code for a numeric backstop to catch, so the
+    // NEGATIVE answer has to be denied by vocabulary or it reaches the model as ordinary mail.
+    `\\b(novo\\s+in[íi]cio\\s+de\\s+sess[ãa]o|novo\\s+(acesso|dispositivo|in[íi]cio\\s+de\\s+sess[ãa]o)|alerta\\s+de\\s+seguran[çc]a|atividade\\s+(incomum|suspeita)|foi\\s+voc[êe]\\b)\\b`,
   ].join("|"),
   "i",
 );
@@ -871,6 +900,132 @@ const UNFRAMED_CODE = new RegExp(
 const TOKEN_ONLY =
   /^[\s*]*([0-9]{4,8}|[0-9]{3,4}[-\s][0-9]{3,4}|(?=[A-Za-z0-9]*[0-9])(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{6,10})[\s*.]*$/;
 
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+ * 5b. THE LANGUAGE-INDEPENDENT NUMERIC BACKSTOP
+ *
+ * `UNFRAMED_CODE` and `TOKEN_ONLY` above only fire on English-recognised framing or a body that is
+ * NOTHING but a token. A German `Ihre TAN lautet 481920.`, a Polish `Twój kod jednorazowy to
+ * 559214`, a Dutch `Uw toegangscode is 220417` and a spaced `Ihr Code: 44 12 90` all carry a live
+ * code inside ordinary prose whose framing is in a language the vocabulary does not reach — and all
+ * of them were `ordinary`: sent to the classifier via `bodySnippet`, and stored raw. German is a
+ * primary market for this product.
+ *
+ * The signal that survives translation is SHAPE, not vocabulary: a credential-shaped digit run
+ * sitting next to a word that NAMES a secret. So the backstop is `<credential-noun cue> within a
+ * short window of <a bare 4–8-digit run>`, in any language, landing in the fail-closed
+ * `credential_shape` bucket (→ `no_ai`).
+ *
+ * ── Why a CUE, and not merely "a short message with a number in it" ─────────────────────────
+ *
+ * A verification pass named two candidate shapes: (a) a digit run next to any possessive /
+ * second-person / imperative context, and (b) a short message with an unframed digit run. Both are
+ * too broad to sit under the 5% indeterminate ceiling: "your order 482913", "your booking reference
+ * is 84213" and every receipt in the seeded world carry a possessive next to a 4–8-digit run, and a
+ * bare short message with a number is most of a mailbox. A possessive is not a discriminator; a
+ * CREDENTIAL NOUN is. No ordinary receipt says `Kennwort`, `TAN`, `Schlüssel`, `kod jednorazowy` or
+ * `toegangscode`. The one generic word that DOES cross into commerce — "code" — is admitted only
+ * when it is not commerce-qualified: `order code 4821` is out, `Ihr Code:` is in. This is the
+ * tightening the verification pass sanctioned when the broad shapes broke the ceiling.
+ *
+ * ── And the digit run itself excludes the shapes that collide ───────────────────────────────
+ *
+ * A #-prefixed order number, a price (currency-led or with a decimal tail), an ISO date, a 4-digit
+ * year, and any run that is part of a longer number or an alphanumeric token, are all NOT codes.
+ * Those exclusions are what keep `Invoice 100245 due 2026-08-30`, `Total: 129.99`, a tracking
+ * number and `See you in 2026` ordinary even where a cue happens to be nearby.
+ * ════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** How close (chars) a credential-noun cue must sit to a code-shaped run for the backstop to fire. */
+const CODE_PROXIMITY = 40;
+
+/**
+ * Commerce words that turn the generic noun "code" into an order reference rather than a
+ * credential. `order code 4821` is the seeded canary; `tracking code`, `promo code`, `area code`
+ * are the rest of the family.
+ */
+const COMMERCE_QUALIFIER =
+  "order|tracking|track|promo|promotional|promotion|discount|coupon|voucher|gift|referral|" +
+  "refer|area|zip|postal|dialling|dialing|country|bar|product|store|shop|redemption|redeem|" +
+  "reward|rewards|loyalty|membership|booking|reservation|reference|invoice|quote";
+const COMMERCE_BEFORE = new RegExp(`\\b(?:${COMMERCE_QUALIFIER})\\s+\\w*$`, "i");
+
+/**
+ * Credential nouns with NO commerce reading, matched as SUBSTRINGS because in the wild they arrive
+ * as compounds — einmalKENNWORT, sicherheitsSCHLÜSSEL, toegangsCODE — and a boundaried match would
+ * miss the very compound that carries them. Each is distinctive enough that appearing inside an
+ * ordinary word is not a real risk.
+ */
+const CRED_NOUN_SUBSTR =
+  /kennwort|passwort|passphrase|passcode|wachtwoord|schl[üu]ssel|geheimzahl|geheimnummer|geheimcode|toegangscode|inlogcode|zugangscode|anmeldecode|jednorazow|tek\s+seferlik|tek\s+kullan/iu;
+
+/**
+ * The generic code / password / OTP family across languages, matched with a word boundary (so
+ * "barcode", "unicode", "qr code" fragments do not) and then rejected when a commerce qualifier
+ * sits immediately before it.
+ */
+// `[oó]` and a trailing `\w*` because agglutinative and accented languages inflect the noun:
+// Hungarian `kódja`, Romanian `codul`, Turkish `kodunuz`, Finnish `salasanasi` all carry a
+// suffix, and `kód`/`código` carry an accented `o` that is not an ASCII `o`.
+const CRED_NOUN_GENERIC =
+  /\b(k[oó]d\w*|c[oó]d\w*|password\w*|senha\w*|contrase[ñn]a\w*|parola\w*|l[öo]senord\w*|salasana\w*|heslo\w*|has[łl]o\w*|[şs]ifre\w*|adgangskode\w*|otp|mfa|2fa)\b/giu;
+
+/** German banking acronym, read from RAW so the lowercased "tan" (suntan) cannot masquerade as it. */
+const TAN_ACRONYM = /\bTANs?\b/;
+
+/** A bare 4–8 digit run that is not part of a longer number, a price, a #-order-no, or a currency. */
+const BARE_LOOSE_RUN = /(?<![\p{L}\d#€$£])\d{4,8}(?![.,]?\d)/gu;
+/** A spaced/dashed group of 2–4-digit chunks — the `44 12 90` shape. */
+const GROUPED_LOOSE_RUN = /(?<![\p{L}\d#+])\d{2,4}(?:[ -]\d{2,4}){1,3}(?!\d)/gu;
+/** An ISO-ish date wearing the grouped-run shape (`2026-08-30`, `2026 08 30`): not a code. */
+const GROUPED_ISO_DATE = /^\d{4}[- ]\d{2}[- ]\d{2}$/;
+/** A four-digit year, the one bare-run shape that collides with a real code. */
+const FOUR_DIGIT_YEAR = /^(19|20)\d{2}$/;
+
+/** Is there a credential-noun cue in this (windowed) text? */
+function hasCredentialCue(numeric: string, raw: string): boolean {
+  if (CRED_NOUN_SUBSTR.test(numeric)) return true;
+  if (TAN_ACRONYM.test(raw)) return true;
+  CRED_NOUN_GENERIC.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = CRED_NOUN_GENERIC.exec(numeric)) !== null) {
+    const before = numeric.slice(Math.max(0, m.index - 24), m.index);
+    if (!COMMERCE_BEFORE.test(before)) return true;
+  }
+  return false;
+}
+
+/** The [start,end) of every code-shaped digit run in `numeric`, dates / years / prices excluded. */
+function codeRunSpans(numeric: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  let m: RegExpExecArray | null;
+  BARE_LOOSE_RUN.lastIndex = 0;
+  while ((m = BARE_LOOSE_RUN.exec(numeric)) !== null) {
+    if (m[0].length === 4 && FOUR_DIGIT_YEAR.test(m[0])) continue;
+    spans.push([m.index, m.index + m[0].length]);
+  }
+  GROUPED_LOOSE_RUN.lastIndex = 0;
+  while ((m = GROUPED_LOOSE_RUN.exec(numeric)) !== null) {
+    const digits = m[0].replace(/\D/g, "");
+    if (digits.length < 4 || digits.length > 8) continue;   // phone / tracking numbers are longer
+    if (GROUPED_ISO_DATE.test(m[0])) continue;
+    spans.push([m.index, m.index + m[0].length]);
+  }
+  return spans;
+}
+
+/**
+ * The language-independent backstop, read from `numeric` (so a non-ASCII code counts) with `raw` only for the
+ * case-sensitive `TAN` acronym. Fires when a credential-noun cue sits within {@link CODE_PROXIMITY}
+ * of a code-shaped run. Shared by both call sites through {@link credentialShapeIn}.
+ */
+function looseNumericCode(numeric: string, raw: string): boolean {
+  for (const [start, end] of codeRunSpans(numeric)) {
+    const window = numeric.slice(Math.max(0, start - CODE_PROXIMITY), end + CODE_PROXIMITY);
+    if (hasCredentialCue(window, raw)) return true;
+  }
+  return false;
+}
+
 /**
  * The two-clause credential-shape test, in ONE place because it has two call sites with
  * deliberately different semantics: `classifySensitivity` asks it per REPRESENTATION, and
@@ -889,7 +1044,20 @@ function credentialShapeIn(rep: Representation): boolean {
   // so that field keeps its consumer); the pattern's own `^[\s*]*` / `[\s*.]*$` absorb the missing
   // trim; and NFKC plus invisible-character stripping means a zero-width-spaced code, which evades
   // `raw` entirely, is now caught.
-  return UNFRAMED_CODE.test(rep.canonical.numeric) || TOKEN_ONLY.test(rep.canonical.numeric);
+  //
+  // The language-independent numeric backstop is added as a third term. Because this predicate is
+  // the ONE the two call sites share, `screenOutboundText` inherits it for free — a payload the
+  // upstream detector let through on unfamiliar framing is now refused at the sink too.
+  //
+  // The backstop reads the PROSE-MASKED form, exactly like {@link categoryOf}: a click-tracking
+  // token that happens to encode `-2Fa` carries the acronym `2fa`, and without the mask that
+  // accidental cue would pair with an unrelated digit run — an address ZIP, an order total — and
+  // withhold an ordinary newsletter. Masking machine tokens to spaces (same length, so proximity
+  // is preserved) removes the cue that was never a word. Pure digit codes are NOT machine tokens
+  // and survive the mask.
+  return UNFRAMED_CODE.test(rep.canonical.numeric)
+    || TOKEN_ONLY.test(rep.canonical.numeric)
+    || looseNumericCode(proseOnly(rep.canonical.numeric), proseOnly(rep.raw));
 }
 
 /**
@@ -1173,6 +1341,18 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
   // a licence to block user actions or mangle the priority signal.
   const withheldFromModel = verdict !== "ordinary";
 
+  // The STORED half of invariant #1 for the fail-closed bucket. A message we withheld
+  // because it carries a credential must not then be stored raw. `credential_shape` and
+  // `auth_url_token` are positive "a code is here" signals; `unsupported_script` is admitted too
+  // because a code in a script we cannot read is exactly the case that would otherwise sit in the
+  // clear. The OTHER indeterminate reasons are NOT admitted — redacting ordinary foreign-language
+  // or structurally-odd mail would strip the digits of a receipt in the user's own storage, which
+  // the header note (`redaction follows the positive match only`) forbids.
+  const credentialWithheld = !sensitive && withheldFromModel
+    && (reasons.has("credential_shape") || reasons.has("auth_url_token") || reasons.has("unsupported_script"));
+  const storeRedactedBody = sensitive || credentialWithheld;
+  const redactText = (t: string): string => redactAuthUrls(t).replace(CODE, "[REDACTED]");
+
   return {
     sensitive,
     verdict,
@@ -1184,9 +1364,11 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
       no_forward: sensitive,
       priority: sensitive,
     },
-    redactedTextBody: sensitive
-      ? redactAuthUrls(msg.textBody ?? "").replace(CODE, "[REDACTED]")
-      : (msg.textBody ?? ""),
+    redactedTextBody: storeRedactedBody ? redactText(msg.textBody ?? "") : (msg.textBody ?? ""),
+    // Positively-sensitive mail stores NO html (the pipeline drops it), so this only ever carries
+    // a value for an indeterminate credential — where the html is kept but redacted.
+    redactedHtmlBody: credentialWithheld && msg.htmlBody ? redactText(msg.htmlBody) : null,
+    storeRedactedBody,
   };
 }
 
