@@ -27,12 +27,21 @@ concurrency:
 
 jobs:
   macos:
-    name: macOS · build · test · smoke · dmg
+    name: macOS · build · test · smoke · engine · dmg
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # package-macos.mjs derives CFBundleVersion from `git rev-list --count HEAD`
+          # and stages the bundle from `git archive HEAD`; both need full history, not
+          # the shallow clone actions/checkout takes by default.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
 
       - name: Select the newest Xcode on the runner
         run: |
@@ -54,26 +63,50 @@ jobs:
       - name: OhMail --smoke
         run: swift run --package-path apps/macos -c release OhMail --smoke
 
-      - name: Package ohmail.app + ohmail.dmg
-        env:
-          OHMAIL_BUILD_VERSION: ${{ github.run_number }}
-        run: ./scripts/package-app.sh
+      # The mail engine the macOS app now carries — built from the published source
+      # with the same locked dependency tree and pinned esbuild the `engine` job uses,
+      # then a universal Node vendored beside it (downloaded and checksum-verified
+      # against nodejs.org's own SHASUMS256.txt). package-macos embeds engine + node +
+      # journal, runs the layout-agnostic third-party licence gate (refuses AGPL and
+      # refuses under-enumeration), and boots the ASSEMBLED bundle (verify-engine-boot)
+      # so a package that cannot start its engine is a red step, not a green one.
+      - name: Install the locked dependency tree
+        run: npm ci --no-audit --no-fund
 
-      # A DMG that does not mount is not an artifact. Mount it, look inside,
+      - name: Build the engine bundle
+        run: |
+          D="$(mktemp -d)" && (cd "$D" && npm install --no-save esbuild@0.24.0)
+          OHMAIL_ESBUILD_FROM="$D" node scripts/engine-bundle.mjs
+
+      - name: Vendor a universal Node beside the engine
+        run: node scripts/vendor-node-macos.mjs
+
+      - name: Package the engine-bearing ohmail.app + ohmail.dmg
+        run: node scripts/package-macos.mjs --skip-tests
+
+      # A DMG that does not mount is not an artifact — and an engine-bearing DMG that
+      # carries no engine is worse. Mount it, assert the shell AND the engine, its
+      # migration journal, the vendored universal Node and the third-party notices,
       # unmount. If this ever fails the upload below never happens.
-      - name: Verify the DMG mounts and contains the app
+      - name: Verify the DMG mounts and carries the engine
         run: |
           set -euo pipefail
           MNT="$(mktemp -d)"
           hdiutil attach build/ohmail.dmg -nobrowse -readonly -mountpoint "$MNT"
           ls -la "$MNT"
-          test -d "$MNT/ohmail.app"
-          test -x "$MNT/ohmail.app/Contents/MacOS/OhMail"
-          test -s "$MNT/ohmail.app/Contents/Resources/ohmail.icns"
+          APP="$MNT/ohmail.app"
+          test -d "$APP"
+          test -x "$APP/Contents/MacOS/OhMail"
+          test -x "$APP/Contents/MacOS/ohmail-engine"
+          test -d "$APP/Contents/drizzle"
+          test -x "$APP/Contents/Resources/node"
+          test -s "$APP/Contents/Resources/THIRD-PARTY-NOTICES.txt"
+          test -s "$APP/Contents/Resources/ohmail.icns"
           test -f "$MNT/Read me first.txt"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$MNT/ohmail.app/Contents/Info.plist"
-          codesign --verify --verbose=2 "$MNT/ohmail.app"
-          lipo -archs "$MNT/ohmail.app/Contents/MacOS/OhMail"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist"
+          codesign --verify --verbose=2 "$APP"
+          lipo -archs "$APP/Contents/MacOS/OhMail"
+          lipo -archs "$APP/Contents/Resources/node"
           hdiutil detach "$MNT"
 
       - name: Screenshots (every route, light + dark, both widths)
@@ -106,7 +139,7 @@ jobs:
         if: always()
         run: |
           {
-            echo '### ohmail — unsigned preview build'
+            echo '### ohmail — unsigned preview build (engine-bearing)'
             echo
             echo "| | |"
             echo "|---|---|"
@@ -115,11 +148,12 @@ jobs:
             echo "| runner | macOS $(sw_vers -productVersion) $(uname -m) |"
             [ -f build/ohmail.dmg ] && {
               echo "| architectures | $(lipo -archs build/ohmail.app/Contents/MacOS/OhMail) |"
+              echo "| engine sha256 | \`$(shasum -a 256 build/ohmail.app/Contents/MacOS/ohmail-engine | cut -d' ' -f1)\` |"
               echo "| DMG sha256 | \`$(shasum -a 256 build/ohmail.dmg | cut -d' ' -f1)\` |"
               echo "| DMG size | $(du -h build/ohmail.dmg | cut -f1) |"
             }
             echo
-            echo 'Ad-hoc signed, **not** notarized: first launch needs right-click → Open.'
+            echo 'Ad-hoc signed, **not** notarized. First launch: the double-click is blocked, then approve it under System Settings › Privacy & Security › "Open Anyway" (on macOS 15 the old Control-click → Open no longer works).'
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ==========================================================================

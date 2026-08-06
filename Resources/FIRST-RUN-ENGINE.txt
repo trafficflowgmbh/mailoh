@@ -3,19 +3,21 @@ ohmail for macOS — first run
 
 1.  Drag ohmail.app onto the Applications shortcut in this window.
 
-2.  THE FIRST LAUNCH NEEDS A RIGHT-CLICK.
+2.  THE FIRST LAUNCH IS BLOCKED — APPROVE IT IN SETTINGS.
 
-    In Applications, right-click (or Control-click) ohmail.app and choose
-    "Open", then "Open Anyway". A normal double-click is blocked.
+    Double-click ohmail.app. macOS holds it on the first launch and says it
+    cannot be verified (or that it is damaged). That is expected. Then open
+    System Settings › Privacy & Security, scroll down to Security, and click
+    "Open Anyway" next to the message about ohmail. Authenticate, confirm once
+    more, and it opens — and is remembered from then on.
 
     Why: this build is UNSIGNED and UN-NOTARIZED. It carries only an ad-hoc
-    signature, not an Apple Developer ID, so macOS Gatekeeper refuses it on a
-    plain double-click and says the app "is damaged" or "cannot be opened
-    because the developer cannot be verified". Nothing is damaged — the app has
-    simply not been through Apple's notary service. On macOS 15 (Sequoia) the
-    button may be under System Settings › Privacy & Security › "Open Anyway"
-    after the first blocked attempt. Signed, notarized builds ship once the
-    ohmail Apple Developer account is in place.
+    signature, not an Apple Developer ID, so macOS Gatekeeper holds it on first
+    launch. Nothing is damaged — the app has simply not been through Apple's
+    notary service. On macOS 15 (Sequoia) the old Control-click → "Open"
+    shortcut no longer clears an app that fails notarization; the "Open Anyway"
+    button is in System Settings › Privacy & Security instead. Signed, notarized
+    builds ship once the ohmail Apple Developer account is in place.
 
     If macOS still refuses after that:
         xattr -dr com.apple.quarantine /Applications/ohmail.app

@@ -600,39 +600,72 @@ function writeThirdPartyNotices() {
    * this did. So the spec dir is the unit: `+`→`/` restores a scope, the last `@` splits name from
    * version, and a `_<peers>` suffix is dropped. PGlite is `external` in the build (vendored, not
    * bundled), so it is added by hand from the copy that will ship. */
-  const specDirs = new Set();
+  /* ── ENUMERATE THE BUNDLED THIRD-PARTY PACKAGES — LAYOUT-AGNOSTIC ─────────────────────────────
+   *
+   * A package's identity is the segment after the LAST `node_modules/` in a metafile input, and its
+   * directory is the path up to and including that segment. This resolves BOTH pnpm's
+   * `node_modules/.pnpm/<spec>/node_modules/<name>/…` store and npm's flat `node_modules/<name>/…`,
+   * including npm's nested `…/parent/node_modules/<name>` for a conflicting version. It has to: this
+   * repository's CI installs the engine's dependencies with `npm ci` (a flat tree), while the
+   * workspace it is generated from installs the same closure with pnpm (a content-addressed store),
+   * and a matcher that understood only one layout would enumerate NOTHING on the other — the AGPL
+   * gate would then pass having inspected no licence at all, and THIRD-PARTY-NOTICES.txt would omit
+   * every bundled package. Version and licence are read from each resolved `package.json` rather than
+   * parsed out of a store-specific directory name, for the same reason. */
+  const pkgDirs = new Set();
   for (const input of Object.keys(meta.inputs)) {
-    const m = input.match(/node_modules\/\.pnpm\/([^/]+)\/node_modules\//);
-    if (m) specDirs.add(m[1]);
+    const at = input.lastIndexOf("node_modules/");
+    if (at < 0) continue;
+    const rest = input.slice(at + "node_modules/".length).split("/");
+    const nameLen = rest[0]?.startsWith("@") ? 2 : 1;   // a scoped name is `@scope/name`
+    if (rest.length < nameLen || !rest[nameLen - 1]) continue;
+    pkgDirs.add(input.slice(0, at) + "node_modules/" + rest.slice(0, nameLen).join("/"));
   }
   const pgliteDir = path.join(BUILT_APP, "Contents/node_modules/@electric-sql/pglite");
-  const pglitePkg = JSON.parse(fs.readFileSync(path.join(pgliteDir, "package.json"), "utf8"));
   const entries = [];
   const forbidden = [];
   const unresolved = [];
-  const add = (name, version, dir) => {
-    if (!dir || !fs.existsSync(path.join(dir, "package.json"))) { unresolved.push(`${name}@${version}`); return; }
-    const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  const seen = new Set();
+  /* Read name, version and licence from the package's OWN manifest — the directory is the only
+   * thing the caller supplies, so this is identical for every store layout. */
+  const add = (dir) => {
+    const manifest = path.join(dir, "package.json");
+    if (!fs.existsSync(manifest)) { unresolved.push(path.relative(REPO, dir)); return; }
+    const pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
+    const name = pkg.name ?? path.basename(dir);
+    const version = pkg.version ?? null;
+    const key = `${name}@${version ?? "?"}`;
+    if (seen.has(key)) return;
+    seen.add(key);
     const licence = typeof pkg.license === "string" ? pkg.license
       : (pkg.license?.type || (Array.isArray(pkg.licenses) ? pkg.licenses.map((l) => l.type).join(" OR ") : ""));
-    if (!licence) { unresolved.push(`${name}@${version}`); return; }
-    if (/\bAGPL/i.test(licence)) forbidden.push(`${name}@${version} (${licence})`);
+    if (!licence) { unresolved.push(key); return; }
+    if (/\bAGPL/i.test(licence)) forbidden.push(`${key} (${licence})`);
     const licFile = ["LICENSE", "LICENCE", "LICENSE.md", "license", "LICENSE.txt", "LICENSE-MIT"]
       .map((f) => path.join(dir, f)).find((f) => fs.existsSync(f));
     entries.push({ name, version, licence, text: licFile ? fs.readFileSync(licFile, "utf8").trim() : null });
   };
-  for (const spec of [...specDirs].sort()) {
-    // The name/version separator is the FIRST `@` after the name, not the last: a peer-decorated
-    // spec (`drizzle-orm@0.36.4_@electric-sql+pglite@…`) carries several `@`, and `lastIndexOf`
-    // would split inside the peer suffix. A scoped name has one `@` of its own at position 0.
-    const sep = spec.startsWith("@") ? spec.indexOf("@", 1) : spec.indexOf("@");
-    if (sep <= 0) continue;
-    const raw = spec.slice(0, sep);
-    const name = raw.startsWith("@") ? raw.replace("+", "/") : raw;
-    const version = spec.slice(sep + 1).split("_")[0];
-    add(name, version, path.join(REPO, "node_modules/.pnpm", spec, "node_modules", name));
+  for (const dir of [...pkgDirs].sort()) add(path.join(REPO, dir));
+  add(pgliteDir);   // external (vendored, not bundled), so it is never in the metafile inputs
+
+  /* ── NON-VACUITY: under-enumeration must fail RED, never pass green ───────────────────────────
+   *
+   * The failure this guards is the one a layout bug produces, and it is silent both ways: an
+   * enumeration that finds nothing runs the AGPL check over an empty set (passes) and writes notices
+   * that list nothing (also passes). So the metafile's own third-party file count is an independent
+   * floor — a bundle that draws in third-party code MUST resolve a plausible number of packages, or
+   * the gate refuses. Measured: this engine bundles ~74 packages via the metafile; the floor sits
+   * far above the vacuous case (2) and comfortably below 74, with margin for ordinary churn. Watched
+   * failing: force `pkgDirs` short and this dies. */
+  const thirdPartyInputs = Object.keys(meta.inputs).filter((i) => i.includes("node_modules/")).length;
+  const MIN_BUNDLED_PACKAGES = 40;
+  if (thirdPartyInputs > 0 && pkgDirs.size < MIN_BUNDLED_PACKAGES) {
+    die(`the licence enumeration resolved only ${pkgDirs.size} bundled package(s) from ` +
+        `${thirdPartyInputs} third-party file input(s) in the engine metafile.\n` +
+        `  It has under-counted — a store layout it does not understand is the usual cause — so the\n` +
+        `  AGPL gate would pass having inspected almost no licences, and the notices would omit most\n` +
+        `  of what this binary conveys. Refusing to ship an incomplete licence audit.`);
   }
-  add("@electric-sql/pglite", pglitePkg.version, pgliteDir);
 
   /* The vendored Node runtime itself. MIT, and its own LICENSE reproduces the licences of the
    * components Node bundles — OpenSSL, ICU, libuv, V8, zlib and the rest — so shipping that text is
