@@ -7,14 +7,51 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 Dates are the dates the work actually landed; every entry corresponds to commits
 you can read in `git log`.
 
-A note on what a version means here: **0.x is a preview of the interface.** It
-does not connect to a mailbox. See [Status](README.md#status--read-this-first).
+A note on what a version means here: **0.x is a preview.** From 0.4.0 the macOS build
+is a working mail client that connects to your mailbox; the Windows and Linux builds
+are still an interface preview. See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-Next is the engine slice — IMAP behind today's `AppState` seam, and the thing
-that makes these apps a mail client rather than a preview of one. See
+The engine port to the Windows and Linux shell, so they connect too. See
 [Roadmap](README.md#roadmap) and issue #1.
+
+## [0.4.0-preview] — 2026-08-06
+
+**macOS is now a working mail client.** The `.dmg` carries the local mail engine,
+built from this repository's source on the release runner and embedded in the app
+beside a vendored Node; the packaging job boots the assembled bundle before it is
+uploaded. Windows and Linux remain an interface preview until the engine is ported
+to their shell.
+
+### Added
+
+- **The local mail engine ships in the macOS build.** It connects to your own IMAP
+  server over TLS, mirrors the mailbox to a local store, and organises new mail into
+  `ohmail/` folders on the server — a Screener for first-time senders, Reads,
+  Receipts, and the rest — visible in every other mail client. The mail password is
+  sealed under a per-install key in your login Keychain.
+- **Optional on-device AI.** Bring your own Anthropic key, or run a local model such
+  as Ollama, so nothing leaves your machine for suggestions. It is off unless you
+  turn it on, and one-time codes and login links are structurally excluded from
+  anything AI sees.
+- **One organiser per mailbox.** A claim written into the mailbox itself keeps a
+  desktop install and the hosted service (or a second machine) from both organising
+  the same mailbox at once; ceasing to organise is automatic and becoming the
+  organiser is always an explicit choice.
+
+### Changed
+
+- **`open -a ohmail --args --demo`** now means "look around without connecting a
+  mailbox" — the fixture world every earlier build showed by default. Launched
+  without the flag, the macOS app asks for a mail server and connects.
+
+### Packaging
+
+- The release runner builds the engine from the published source with a pinned
+  esbuild, vendors the official universal Node (checksum-verified), embeds both in
+  the app, audits every bundled third-party licence for GPL compatibility, and boots
+  the assembled bundle to prove it starts before the `.dmg` is uploaded.
 
 ## [0.3.0-preview] — 2026-08-05
 
@@ -220,7 +257,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.3.0-preview...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.4.0-preview...HEAD
+[0.4.0-preview]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.4.0-preview
 [0.3.0-preview]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.3.0-preview
 [0.2.0-preview]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.2.0-preview
 [0.1.0-preview]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.1.0-preview

@@ -47,36 +47,48 @@ If personal data is ever breached we notify the competent
 authority within 72 hours of becoming aware, and affected people directly where
 the risk to them is high.
 
-## What this build does and does not do
+## What each build does and does not do
 
-Worth knowing before you go looking, because the current state rules out whole
-classes of issues:
+Worth knowing before you go looking, because the two builds have very different
+threat surfaces right now.
 
-- Both apps **make no network connections at all**. They run on a bundled
-  fixture mailbox; there is no IMAP client, no HTTP client, no telemetry, no
-  update check. The macOS app reads and writes nothing outside the process
-  except the PNGs that `--shot` is explicitly asked to write.
-- On Windows and Linux this is enforced three times over, and each is worth
-  attacking separately: the webview's CSP is `connect-src 'none'`; the page
+**macOS — the engine-bearing build — connects to your mailbox:**
+
+- It opens **one IMAP connection over TLS** to the mail server you give it, and —
+  only if you enable it — one connection to your own Anthropic key or a local
+  Ollama. It makes **no other network connection**: no telemetry, no update check,
+  and no connection to any ohmail-hosted service (the Cloud sync client is aliased
+  out of the desktop build at compile time and is not in this repository).
+- **Credentials**: your mail password is sealed under a per-install AES key held in
+  your login **Keychain** and is never written to disk in the clear. Reports about
+  the credential envelope, the Keychain use, or TLS/certificate handling are exactly
+  what we want.
+- It **renders mail as HTML** and blocks remote content, so the tracking pixels that
+  report when and where you opened a message do not load. HTML-rendering and
+  remote-content issues are in scope.
+- **Sensitive mail** — one-time codes and login links — is structurally excluded
+  from anything an AI provider sees: a protected message has no body field to leak,
+  and it is stored redacted.
+- The organiser is single-writer per mailbox by design: exactly one copy of ohmail
+  organises a given mailbox at a time, arbitrated through a claim in the mailbox
+  itself, not through any server.
+
+**Windows and Linux — the interface preview — connect to nothing:**
+
+- They **make no network connection at all**, enforced three times over and each
+  worth attacking separately: the webview's CSP is `connect-src 'none'`; the page
   replaces `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` and
   `navigator.sendBeacon` with functions that throw; and the Cloud sync client is
-  aliased out of the bundle at build time and is not in this repository at all.
-  The Tauri capability list is empty, so the interface can invoke no command,
-  read no file and spawn no process. A way around any of that is exactly the
-  kind of report we want.
+  aliased out of the bundle at build time. The Tauri capability list is empty, so
+  the interface can invoke no command, read no file and spawn no process.
 - Because the interface is embedded **uncompressed**, you can audit a downloaded
-  binary directly: `strings -a ohmail | grep -oE 'https?://[^ ]+' | sort -u`.
-- There are **no credentials**, no keychain use, and no account.
-- The CI-built artifacts are **unsigned**: ad-hoc signature only on macOS, no
-  Authenticode signature on Windows, nothing on Linux. That is a distribution
-  weakness we name openly in the README rather than a vulnerability to report:
-  verify the artifact came from the CI run you expect, or build from source.
+  binary directly: `strings -a <binary> | grep -oE 'https?://[^ ]+' | sort -u`.
+- There are **no credentials** and no account — there is nothing to sign into.
 
-When the IMAP engine lands, this section will change and the threat model will be
-published with it: credential storage, TLS/certificate handling, HTML rendering
-and remote-content blocking, and the structural handling of sensitive mail
-(one-time codes and login links are never sent to an AI provider, never
-forwarded, and stored redacted).
+**Both:** the CI-built artifacts are **unsigned** — ad-hoc signature only on macOS,
+no Authenticode on Windows, nothing on Linux. That is a distribution weakness we name
+openly in the README rather than a vulnerability to report: verify the artifact came
+from the CI run you expect, or build from source.
 
 ## Supported versions
 

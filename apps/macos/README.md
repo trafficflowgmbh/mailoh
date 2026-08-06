@@ -1,9 +1,11 @@
 # ohmail for macOS
 
 The **free flagship native app** — Tier 1 of ohmail, built in SwiftUI on the Blanc
-design system. This is the Tier-1 *preview*: it runs entirely on Mila's fixture
-world with no network at all. A real mail engine lands behind the same views
-later, through [`MailSource`](Sources/OhMailKit/State/MailSource.swift).
+design system. The macOS build now ships the mail engine: it connects to your IMAP
+mailbox and organises it, behind these same views, through
+[`MailSource`](Sources/OhMailKit/State/MailSource.swift). The SwiftUI shell itself has
+no network code — it renders the interface and talks to the engine over a local
+bridge. Launched with `--demo` it runs on Mila's fixture world with no network at all.
 
 **Mail reaches a view only through `AppState`.** No content, no fixture, no
 sender — the views know the model and nothing behind it. Chrome vocabulary is the
@@ -246,14 +248,17 @@ notary service. None of those exist yet. When they do, the build gains
 `xcrun stapler staple` — and the first-run notes get replaced rather than quietly
 left behind, because at that point they would be false.
 
-### The bundle runs on invented mail
+### The SwiftUI shell has no network of its own
 
-Packaging changes nothing about what the app contains. This build has no IMAP
-client, no network code and no account: it renders the whole interface on the
-small fictional mailbox compiled into it.
+The engine that reaches the network is a **separate binary** (Node), embedded beside
+the shell at packaging time; the shell talks to it over a local bridge. The SwiftUI
+binary itself has no IMAP client and no network code — it renders the interface, and
+with `--demo` it renders the small fictional mailbox compiled into it with no engine
+running at all.
 
-That claim is checked rather than believed, and it is checked on the SYMBOLS the
-binary imports rather than on the libraries it links. Two libraries that could
+That claim — about the SwiftUI binary, not the engine beside it — is checked rather
+than believed, and it is checked on the SYMBOLS the binary imports rather than on the
+libraries it links. Two libraries that could
 reach a network are linked and both are there for something else — CFNetwork for
 `HTTPURLResponse`, which is the shape the bridge to the local engine puts its
 replies in, and Security for the four `SecItem` calls the keystore makes. Neither

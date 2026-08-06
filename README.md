@@ -10,7 +10,7 @@ A native SwiftUI client for macOS and a Tauri shell for Windows and Linux.
 Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/badge/download-v0.3.0--preview-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.3.0-preview)
+[![latest release](https://img.shields.io/badge/download-v0.4.0--preview-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.4.0-preview)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -31,11 +31,11 @@ provider — and organises it **in place**, in real folders on your real server,
 leaving costs you nothing.
 
 **This repository is the free ohmail desktop apps** — macOS, Windows and Linux.
-All of them, all of their source, under GPL-3.0. The local mail engine is not
-here yet: it is being built, and it is
-[issue #1](https://github.com/trafficflowhq/ohmail/issues/1). There is no paid
-edition of the desktop app, no feature held back for one, and no telemetry
-reporting back on you.
+All of them, all of their source, under GPL-3.0. **The macOS build now carries the
+local mail engine and connects to a real mailbox**; the Windows and Linux builds
+are still an interface preview while the engine is ported to their shell — see
+[Status](#status--read-this-first). There is no paid edition of the desktop app,
+no feature held back for one, and no telemetry reporting back on you.
 
 **ohmail Cloud is the optional hosted half, and it is what pays for this one.**
 Your phone cannot hold a connection to your mailbox open all day; something has
@@ -45,32 +45,41 @@ push. It is a commercial service with a codebase of its own, built by the same
 people, and the desktop app neither asks for it nor needs it.
 [Desktop or Cloud](#desktop-or-cloud) is the full comparison, prices included.
 
-## The current release — v0.3.0-preview
+## The current release — v0.4.0-preview
 
-**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.3.0-preview)**
+**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.4.0-preview)**
 `ohmail.dmg` for macOS, an `.msi` and an NSIS `-setup.exe` for Windows, an
 `.AppImage` and a `.deb` for Linux. Every file was built by GitHub Actions from
 the tree this tag points at, and the run that made them prints the SHA-256 of
 each one. Nothing is signed on any platform — see the per-platform install notes
 under [Download a build](#download-a-build) before you double-click anything.
 
-**It is a preview of the interface. It does not connect to a mailbox.** There is
-no IMAP client and no HTTP client compiled into any of these builds. What you get
-is every screen of the product, working, on a small fictional mailbox that ships
-inside the app — so you can screen a sender, skim Reads, search, compose and
-decide whether you want the real thing. On macOS that world is asked for by name:
+**macOS is now a working mail client.** The `.dmg` carries the local mail engine:
+it connects to your own IMAP mail server over TLS, mirrors your mailbox to a local
+database on your Mac, and organises new mail into `ohmail/` folders on the server
+itself — a Screener for first-time senders, Reads, Receipts, and the rest — so the
+filing is visible in every other mail app you own. It asks for your server and
+password on first launch; the password is sealed under a per-install key in your
+login Keychain. Nothing leaves your Mac but the IMAP connection to your provider
+(and, only if you turn it on, your own AI key or a local Ollama). No telemetry, no
+update check, no hosted service in the loop. It is `-preview` because there is no
+auto-updater yet — you update by downloading the next build. To look around
+**without** connecting a mailbox, launch the built-in fixture world instead:
 
     open -a ohmail --args --demo
 
-Launched without the flag, the app does not open it. The local mail engine is
-what we are building now; it is
+**Windows and Linux are still an interface preview.** The Tauri shell renders every
+screen of the product on that same small fictional mailbox, but it does not connect
+to a mailbox: the engine is macOS-only for now, and the shell forbids network access
+at the webview level. The port is
 [issue #1](https://github.com/trafficflowhq/ohmail/issues/1).
 
-**What is new since v0.2.0-preview:** compose is a rich text editor now — bold,
-italic, lists, headings and links, in the reply box as well as in the compose
-view — where before it was plain text. A Screener decision names the folder it
-chose rather than implying one, and a partial first import stops presenting
-itself as a finished one. The rest is repair.
+**What is new since v0.3.0-preview:** the macOS build ships the mail engine and
+connects to a real mailbox, where every earlier build was an interface preview on a
+fixture. The engine is built from this repository's own source on the release runner,
+embedded in the app beside a vendored Node, and the packaging job boots the assembled
+bundle to prove it starts before the `.dmg` is uploaded. [CHANGELOG.md](CHANGELOG.md)
+has the detail.
 
 v0.1.0-preview shipped under the earlier name `mailoh` and its files are still
 named that way; they were not relabelled, because renaming a released file
@@ -79,24 +88,24 @@ the full list.
 
 ## Status — read this first
 
-**This is a preview of the interface, not a working mail client yet.** It runs on
-a small fictional mailbox that ships inside the app — on macOS, when it is
-launched with `--demo`.
+**macOS is a working mail client; Windows and Linux are still an interface preview.**
+The macOS `.dmg` connects to your IMAP mailbox and organises it in place; the Tauri
+builds render the whole interface on a small fictional mailbox that ships inside the
+app and connect to nothing.
 
-| | |
-|---|---|
-| ✅ Runs, and is worth looking at | Every surface is real: Ohbox, Screener, Reads, Receipts, triage piles, tags, search, compose, settings — light and dark, down to a 390 pt window, keyboard-first. Native SwiftUI on macOS; the same interface in a locked-down webview on Windows and Linux. |
-| ✅ Tested | 269 tests — the interface model, the rules and the design tokens, and the engine process handling that is not yet used here — plus a render check (`--smoke`) that hosts every route offscreen, rasterises it, and fails if anything draws nothing or quietly collapses a list. The Tauri shell has its own 31-check render + offline audit over the built bundle, and 14 assertions on its security configuration. |
-| ❌ Does not talk to your mailbox | There is **no IMAP client, no HTTP client, no telemetry and no update check** in either build. The IMAP client lives in the local engine, and **no engine ships in these artifacts** — the macOS app now contains the code to launch and supervise one, and it stays inert because it finds nothing to launch. `import` lines across the whole macOS app: AppKit, Dispatch, Foundation, Observation, Security, SwiftUI, and its own two modules. Nothing else. The Windows/Linux shell forbids connections at the webview level (`connect-src 'none'`) and replaces the page's network APIs with functions that throw. |
-| ❌ No accounts, no credentials | Nothing to sign into. The macOS app carries a Keychain-backed keystore for the engine that is coming, and it never runs here: the launch plan looks for the engine binary first and gives up before it reads a key, so an artifact with no engine in it writes nothing to your keychain. |
-| 🔜 Next | The local engine slice — IMAP with IDLE and delta fetch, an on-device store, the rules pipeline, then AI with your own key or a local Ollama. See [Roadmap](#roadmap). |
+| | macOS | Windows / Linux |
+|---|---|---|
+| **Connects to your mailbox** | ✅ Yes. The bundled engine speaks IMAP over TLS, mirrors your mailbox to a local store, and files new mail into `ohmail/` folders on your server. | ❌ Not yet. The shell forbids connections at the webview level (`connect-src 'none'`) and replaces `fetch` / `XMLHttpRequest` / `WebSocket` with functions that throw. |
+| **What it talks to** | Your IMAP server, and — only if you turn it on — your own Anthropic key or a local Ollama. No telemetry, no update check, no hosted ohmail service. | Nothing. No network at all. |
+| **Credentials** | Your mail password, sealed under a per-install key in your login Keychain, never written in the clear. | None — there is nothing to sign into. |
+| **Try it without a mailbox** | `open -a ohmail --args --demo` runs the built-in fixture world — no server, no network, no account. | The fixture world is what the app shows. |
+| **Runs, and is worth looking at** | Every surface is real: Ohbox, Screener, Reads, Receipts, triage piles, tags, search, compose, settings — light and dark, down to a 390 pt window, keyboard-first, native SwiftUI. | The same interface, in a locked-down webview. |
+| **Tested** | The interface model, the rules and design tokens, and the engine's sync, lease and organise logic are covered by the test suite; the packaging job boots the shipped bundle to prove it starts; and the release engine was verified connecting to and organising a real IMAP mailbox. | A 31-check render + offline audit over the built bundle, and 14 assertions on the security configuration. |
+| 🔜 Next | A signed, notarised build and an in-app updater — this one is ad-hoc-signed and you update it by downloading the next build. | The engine port, so the shell connects too — [issue #1](https://github.com/trafficflowhq/ohmail/issues/1). |
 
-Nothing in `Views/` reaches past `AppState` — not even for a string. That is the
-seam the engine lands behind, and the test suite enforces it today so the swap
-stays boring.
-
-If you came here from [ohmail.app](https://ohmail.app) expecting to read your mail:
-not yet. Watch the repository, or ask us at support@ohmail.app.
+If you came here from [ohmail.app](https://ohmail.app): the macOS build reads and
+organises your mail today. Watch the repository for the Windows and Linux engine, or
+ask us at support@ohmail.app.
 
 ## What ohmail is
 
@@ -172,9 +181,9 @@ what the run made.
 
 | Platform | Artifacts | Runner |
 |---|---|---|
-| **macOS** | `ohmail.dmg` (universal, arm64 + x86_64), `ohmail.app.zip`, the full screenshot set | `macos-15` |
-| **Windows** | `ohmail_0.3.0_x64_en-US.msi`, `ohmail_0.3.0_x64-setup.exe` (NSIS) | `windows-latest` |
-| **Linux** | `ohmail_0.3.0_amd64.AppImage`, `ohmail_0.3.0_amd64.deb` | `ubuntu-latest` |
+| **macOS** | `ohmail.dmg` (universal, arm64 + x86_64, **engine-bearing**), `ohmail.app.zip`, the full screenshot set | `macos-15` |
+| **Windows** | `ohmail_0.4.0_x64_en-US.msi`, `ohmail_0.4.0_x64-setup.exe` (NSIS) | `windows-latest` |
+| **Linux** | `ohmail_0.4.0_amd64.AppImage`, `ohmail_0.4.0_amd64.deb` | `ubuntu-latest` |
 
 **Nothing here is signed**, on any platform. Code-signing certificates cost money
 ohmail has not spent yet. We would rather say that plainly than have you discover
@@ -221,12 +230,12 @@ Requires Windows 10 or newer, plus the WebView2 runtime as described above.
 > **The AppImage needs the executable bit**, which GitHub's artifact zip does not
 > preserve:
 > ```bash
-> chmod +x ohmail_0.3.0_amd64.AppImage && ./ohmail_0.3.0_amd64.AppImage
+> chmod +x ohmail_0.4.0_amd64.AppImage && ./ohmail_0.4.0_amd64.AppImage
 > ```
 > If it exits immediately on a distribution that has not enabled unprivileged
 > user namespaces, run it with `--appimage-extract-and-run`.
 
-The `.deb` installs with `sudo apt install ./ohmail_0.3.0_amd64.deb` and pulls in
+The `.deb` installs with `sudo apt install ./ohmail_0.4.0_amd64.deb` and pulls in
 WebKitGTK. It is **not** in any repository, so it will never auto-update — and
 there is no update checker in this build at all.
 
@@ -348,18 +357,19 @@ yourself. See the Windows note above.
 ohmail comes in two halves, and **this repository is the whole of the first
 one**. Here is the honest comparison, including the parts where Desktop wins.
 
-The Desktop column describes the product the local engine will make possible.
-Per [Status](#status--read-this-first), that engine is not shipped: what you can
-run today is the interface on a fictional mailbox. Rows marked 🔜 are the ones
-waiting on it.
+The Desktop column describes what the local engine makes possible. On **macOS** that
+engine now ships and these rows are real; the **Windows and Linux** builds are still
+the interface on a fictional mailbox until the engine is ported to their shell (see
+[Status](#status--read-this-first)). Rows marked 🔜 are the ones the Windows and Linux
+builds are still waiting on.
 
 |  | **Desktop** — this repository | **Cloud** — optional |
 |---|---|---|
 | **Price** | **Free, forever.** Not a trial, not a freemium tier. | $9 / $15 / $29 per month |
-| **Mailboxes** | 🔜 As many as you like | 5 / 10 / 50 |
-| **Where your mail is processed** | 🔜 **Your machine. Only.** It never touches our servers — there is no server to touch. | EU-hosted: a full copy of your mail, encrypted at rest, **not** end-to-end — solely to serve you, deletable |
+| **Mailboxes** | As many as you like (🔜 on Windows/Linux) | 5 / 10 / 50 |
+| **Where your mail is processed** | **Your machine. Only.** It never touches our servers — there is no server to touch. (🔜 on Windows/Linux) | EU-hosted: a full copy of your mail, encrypted at rest, **not** end-to-end — solely to serve you, deletable |
 | **Account** | **None.** Nothing to sign up for, nothing to cancel. | Yes |
-| **AI** | 🔜 Bring your own API key, or run a local model such as [Ollama](https://ollama.com) so nothing leaves your machine at all. Not built yet — no model of any kind is wired into this repository. | A monthly allowance of managed AI actions (~2k / 6k / 20k). 🔜 No live model is connected in production yet either; the metering that governs it is. |
+| **AI** | Bring your own Anthropic key, or run a local model such as [Ollama](https://ollama.com) so nothing leaves your machine at all. Ships in the macOS build, off unless you turn it on (🔜 on Windows/Linux). | A monthly allowance of managed AI actions (~2k / 6k / 20k). 🔜 No live model is connected in production yet either; the metering that governs it is. |
 | **Web and mobile apps** | — | Yes |
 | **Push notifications** | — | Yes |
 | **Works while your laptop is shut** | — | Yes — mail is screened and filed as it arrives |
@@ -380,9 +390,9 @@ Cloud necessarily holds a copy of it to deliver push, mobile and search. Both ar
 honest positions; they are not the same position, and picking between them is the
 point.
 
-Desktop is not *planned* as a demo of Cloud — it is meant to be a complete product
-on its own. Today, before the local engine lands, it does run on fixtures, so
-"preview" is the fair word for what you can download right now.
+Desktop is not *planned* as a demo of Cloud — it is a complete product on its own. On
+macOS that is true today; the Windows and Linux builds still run on fixtures, so
+"preview" remains the fair word for those until the engine reaches them.
 
 ### If you do want Cloud
 
@@ -473,15 +483,17 @@ they came from; pull requests land in the monorepo and come back out here.
 
 ## Roadmap
 
-1. **The engine slice** — IMAP (IDLE, delta fetch, per-mailbox sequence), an
-   on-device store, and the rules pipeline behind today's `AppState`. Real
-   folders, moved in place, with the desired-state model that makes a half-moved
-   mailbox impossible.
+1. **The engine on Windows and Linux.** The mail engine — IMAP (IDLE, delta fetch,
+   per-mailbox sequence), an on-device store, and the rules pipeline behind
+   `AppState`, moving real folders in place with a desired-state model that makes a
+   half-moved mailbox impossible — shipped in the macOS build in 0.4.0. Next is
+   porting it to the Tauri shell so the Windows and Linux builds connect too.
 2. **Signed installers** — a notarized DMG with a real Apple Developer ID, an
    Authenticode-signed .msi and .exe, and automatic updates.
-3. **AI, locally or with your key** — Screener suggestions and draft replies via
-   your own API key or a local Ollama. Proposed, never applied; sensitive mail
-   structurally excluded.
+3. **AI, on by default** — Screener suggestions and draft replies via your own API
+   key or a local Ollama ship off-by-default on macOS today; making them a
+   first-class part of the flow is the remaining work. Proposed, never applied;
+   sensitive mail structurally excluded.
 
 Dates are not promised. The order is. Each of these is an open issue with the
 detail in it, and [CHANGELOG.md](CHANGELOG.md) records what has actually shipped.

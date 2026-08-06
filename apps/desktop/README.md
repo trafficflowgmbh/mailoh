@@ -243,8 +243,9 @@ apps/desktop/
 
 ## What is not here yet
 
-The same list as the macOS client: no IMAP, no accounts, no AI, no updater. The
-engine slice lands behind `AppState`/`OhmailEngine` on both platforms at once —
-that is the point of sharing the shell. Signed builds need a certificate
-(Authenticode for Windows) that does not exist yet; until then the installers
-are unsigned and the README says so on every platform.
+The engine. This Tauri build has no IMAP client, no accounts, no AI and no updater:
+it renders the interface on Mila's fixture world and connects to nothing. The mail
+engine shipped in the macOS build first (0.4.0) and is being ported to this shell
+next — it lands behind `AppState`/`OhmailEngine`, the seam both platforms share.
+Signed builds need a certificate (Authenticode for Windows) that does not exist yet;
+until then the installers are unsigned and the README says so on every platform.
