@@ -294,6 +294,20 @@ export const aiSettings: {
     }>;
 } = absent;
 
+export interface ScreeningPreferenceWire {
+    ohboxPolicy: "people_only" | "people_and_replied" | null;
+    ohboxBar: string | null;
+    defaultBar: string;
+}
+
+export const screeningSettings: {
+    get: () => Promise<ScreeningPreferenceWire>;
+    set: (body: {
+        ohboxPolicy?: ScreeningPreferenceWire["ohboxPolicy"];
+        ohboxBar?: string | null;
+    }) => Promise<ScreeningPreferenceWire>;
+} = absent;
+
 export interface ConsentStateWire {
     seedConfirmedAt: string | null;
     screeningResetAt: string | null;
@@ -328,6 +342,9 @@ export const consent: {
     state: () => Promise<ConsentStateWire>;
     setAutoSuggest: (enabled: boolean) => Promise<{
         autoSuggestAt: string | null;
+    }>;
+    setDormancyDays: (days: number | null) => Promise<{
+        dormancyDays: number;
     }>;
     seedReview: () => Promise<SeedReviewWire>;
     confirmSeed: (addresses: string[], opts?: {
