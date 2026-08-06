@@ -37,6 +37,7 @@
          module resolution when a `paths` target does not exist, which is what happens in a
          workspace install where the copy lives next to the web client instead. */
       "dompurify": ["./node_modules/dompurify"],
+      "pdfjs-dist": ["./node_modules/pdfjs-dist"],
       "@tiptap/react": ["./node_modules/@tiptap/react"],
       "@tiptap/starter-kit": ["./node_modules/@tiptap/starter-kit"],
       "@tiptap/extension-link": ["./node_modules/@tiptap/extension-link"],

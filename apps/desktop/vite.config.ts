@@ -177,6 +177,7 @@ export default defineConfig({
       { find: "@tiptap/starter-kit", replacement: r("./node_modules/@tiptap/starter-kit") },
       { find: "@tiptap/extension-link", replacement: r("./node_modules/@tiptap/extension-link") },
       { find: "dompurify", replacement: r("./node_modules/dompurify") },
+      { find: "pdfjs-dist", replacement: r("./node_modules/pdfjs-dist") },
 
       /* Anchored at both ends: a RegExp `find` replaces only the matched span,
          so a pattern that leaves the leading "./" behind yields a broken path. */
