@@ -447,3 +447,74 @@ jobs:
             echo
             echo 'Unsigned and without a repository: `chmod +x` the AppImage before running it.'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ==========================================================================
+  # The engine — packages/{core,api,db,services,db-mail} and apps/{sidecar,worker}.
+  # Every job above PACKAGES the app; none of them reads the engine source the
+  # app now carries. This one does. It installs the locked dependency tree,
+  # TYPECHECKS the engine against a generated tsconfig, then BUILDS the one-file
+  # bundle from the published source. A green here is evidence the published
+  # engine compiles and bundles on a clean machine — not merely that a packager
+  # ran over source no job ever read.
+  # ==========================================================================
+  engine:
+    name: engine · typecheck · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # From the committed package-lock.json, so the dependency tree is the same
+      # on every machine — the reproducibility the exact-pinned manifests promise.
+      - name: Install the locked dependency tree
+        run: npm ci --no-audit --no-fund
+
+      # typescript AND every @types package in ONE install: a second `npm install
+      # --no-save` prunes what an earlier one added, after which `npx tsc` fetches
+      # the unrelated `tsc` package. The @types back the engine's `node:` and
+      # untyped-dependency imports; the runtime deps ship their own declarations.
+      - name: Typecheck the engine source
+        run: |
+          npm install --no-save \
+            typescript@5.6 \
+            @types/node@^22.10.0 \
+            @types/nodemailer@^6.4.16 \
+            @types/mailparser@^3.4.0 \
+            @types/sanitize-html@^2.16.1
+          ./node_modules/.bin/tsc --noEmit -p tsconfig.engine.json
+
+      # Build the one-file engine from the published source. esbuild is pinned —
+      # the bundler asserts its own version — and installed off to one side so it
+      # is never a project dependency.
+      - name: Build the engine bundle
+        run: |
+          D="$(mktemp -d)" && (cd "$D" && npm install --no-save esbuild@0.24.0)
+          OHMAIL_ESBUILD_FROM="$D" node scripts/engine-bundle.mjs
+
+      - name: Confirm the bundle and its runtime layout
+        run: |
+          set -euo pipefail
+          test -x build/engine/MacOS/ohmail-engine
+          test -f build/engine/MacOS/ohmail-engine.meta.json
+          test -d build/engine/drizzle
+          test -d build/engine/MacOS/node_modules/@electric-sql/pglite
+          echo "engine bundle sha256: $(sha256sum build/engine/MacOS/ohmail-engine | cut -d' ' -f1)"
+
+      - name: Run summary
+        if: always()
+        run: |
+          {
+            echo '### ohmail engine — typecheck + build'
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`${GITHUB_SHA:0:9}\` |"
+            echo "| node | $(node --version) |"
+            [ -x build/engine/MacOS/ohmail-engine ] \
+              && echo "| engine bundle sha256 | \`$(sha256sum build/engine/MacOS/ohmail-engine | cut -d' ' -f1)\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
