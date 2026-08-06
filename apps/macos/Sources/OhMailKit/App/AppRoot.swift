@@ -80,6 +80,15 @@ public final class AppRootModel {
 
     // MARK: Onboarding, which is a sequence and not a state
 
+    /// Which door this install chose — organize on this Mac, or on Cloud. Loaded once at launch and
+    /// remembered per install: a fresh launch resumes at the chosen door rather than re-asking.
+    /// `nil` until the chooser has been answered.
+    private(set) var door: OnboardingDoor?
+    /// The provider tile chosen behind door one, which drives the form's prefill. In memory only —
+    /// what gets written down is the mailbox the form produces, not the tile that seeded it — so a
+    /// relaunch mid-flow returns to the provider picker under the remembered door.
+    private(set) var chosenProvider: MailProvider?
+
     private(set) var inSetup = false
     /// Whether ``saveMailbox(_:)`` has written a configuration during this run of setup. The step
     /// after it waits for the engine, which is why setup outlives the moment `configured` flips.
@@ -116,6 +125,8 @@ public final class AppRootModel {
         // and the observation machinery will not let it until they all exist.
         self.mail = nil
         self.mailKind = nil
+        self.door = store.loadDoor()
+        self.chosenProvider = nil
         self.inSetup = false
         self.savedMailbox = false
         self.setupFailure = nil
@@ -204,6 +215,50 @@ public final class AppRootModel {
         mailKind = kind
     }
 
+    // MARK: - Onboarding: the two doors
+
+    /// Choose a door, and remember it per install.
+    ///
+    /// Persisted before it is acted on, so the choice survives a quit taken half-way through the flow
+    /// behind it — the property this makes true is "chosen once". Door one leads on to the provider
+    /// picker; door two is a stated limit in this build (``SetupStep/cloudUnavailable``), reachable
+    /// and honest rather than hidden.
+    public func chooseDoor(_ door: OnboardingDoor) {
+        try? store.saveDoor(door)
+        self.door = door
+        self.chosenProvider = nil
+        self.setupFailure = nil
+    }
+
+    /// Choose the provider whose preset fills in the form. Outlook is refused and never advances here
+    /// — the picker states its limit in place rather than opening fields the build cannot use.
+    public func chooseProvider(_ provider: MailProvider) {
+        guard provider.authKind != .refused else { return }
+        self.chosenProvider = provider
+    }
+
+    /// Return to the chooser and forget the door, so neither an unfinished door one nor door two's
+    /// stated limit is a place a person can be stuck. Clearing the stored choice is deliberate: the
+    /// only thing that changes which way this install organizes is an explicit human action, and this
+    /// is that action for "actually, the other way".
+    public func reconsiderDoor() {
+        try? store.removeDoor()
+        self.door = nil
+        self.chosenProvider = nil
+        self.setupFailure = nil
+    }
+
+    /// What the form opens on for a chosen provider.
+    ///
+    /// A mailbox already entered wins over the preset, so returning to the form after a failure shows
+    /// what was typed rather than wiping it back to the preset's blank login. Otherwise the provider's
+    /// preset seeds server, port, TLS and the send server together — and generic has no preset, which
+    /// is today's empty form, entered by hand.
+    private func prefill(for provider: MailProvider) -> EngineConfig? {
+        if let config { return config }
+        return provider.preset?.draft()
+    }
+
     // MARK: - Onboarding
 
     /// Write the mailbox down and start the engine against it.
@@ -245,7 +300,20 @@ public final class AppRootModel {
     /// Where onboarding stands. Derived, so it cannot disagree with the engine.
     public var setupStep: SetupStep {
         if let setupFailure { return .failed(setupFailure) }
-        guard savedMailbox else { return .mailbox(config) }
+        // Front matter: the two-door frame, then — behind door one — the provider picker, then the
+        // form. All of it lives before the mailbox is written down, so `savedMailbox` gates it.
+        if !savedMailbox {
+            switch door {
+            case .none:
+                return .chooseDoor
+            case .cloud:
+                // Door two is a stated limit in this build, not a flow. See ``SetupStep/cloudUnavailable``.
+                return .cloudUnavailable
+            case .local:
+                guard let provider = chosenProvider else { return .pickProvider }
+                return .mailbox(prefill(for: provider))
+            }
+        }
         switch engine.status {
         case .serving:
             return .password
@@ -407,8 +475,16 @@ public final class AppRootModel {
 
 /// Where onboarding stands.
 public enum SetupStep: Equatable, Sendable {
-    /// Collect the mailbox. Carries whatever is already stored, so re-running setup does not ask
-    /// somebody to retype a server name that is already right.
+    /// The two-door frame: organize this mailbox on this Mac, or on Cloud. The first thing a fresh
+    /// install shows, before it has anything to collect.
+    case chooseDoor
+    /// Door two, stated honestly. Cloud's transport is a later slice, so this build says so rather
+    /// than opening a flow that cannot finish.
+    case cloudUnavailable
+    /// Door one's first step: who hosts the mailbox. The answer fills in the server details.
+    case pickProvider
+    /// Collect the mailbox. Carries whatever is already stored — or a provider preset — so nobody
+    /// retypes a server name that is already right.
     case mailbox(EngineConfig?)
     /// Written down; waiting for the engine to say it is serving.
     case starting
@@ -430,14 +506,29 @@ public enum EngineEnvironment {
     /// Implicit TLS. The engine reads this as "anything that is not the string `0`", so the false
     /// case has to be spelled exactly — an empty value would mean secure.
     public static let secureVar = "OHMAIL_IMAP_SECURE"
+    /// The SMTP server this mailbox sends through. The engine reads these three
+    /// (`apps/sidecar/src/main.ts`) and authenticates with the SAME login it opened IMAP with — one
+    /// credential per mailbox, so there is no SMTP password variable to carry and never is.
+    public static let smtpHostVar = "OHMAIL_SMTP_HOST"
+    public static let smtpPortVar = "OHMAIL_SMTP_PORT"
+    public static let smtpSecureVar = "OHMAIL_SMTP_SECURE"
 
     public static func overlay(for config: EngineConfig) -> [(name: String, value: String)] {
-        [
+        var pairs: [(name: String, value: String)] = [
             (hostVar, config.host),
             (portVar, String(config.port)),
             (userVar, config.user),
             (addressVar, config.address),
             (secureVar, config.tls ? "1" : "0"),
         ]
+        // Only when a send server was configured. Absent, the engine sends nothing rather than
+        // guessing a server — and an empty host would read as "no SMTP" downstream anyway, so a blank
+        // is never emitted.
+        if let smtpHost = config.smtpHost, !smtpHost.isEmpty {
+            pairs.append((smtpHostVar, smtpHost))
+            pairs.append((smtpPortVar, String(config.smtpPort ?? 587)))
+            pairs.append((smtpSecureVar, (config.smtpSecure ?? true) ? "1" : "0"))
+        }
+        return pairs
     }
 }

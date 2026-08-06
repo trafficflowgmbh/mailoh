@@ -21,16 +21,38 @@ public struct EngineConfig: Codable, Equatable, Sendable {
     /// Implicit TLS. `false` means STARTTLS or plaintext on `port`, which the engine decides.
     public var tls: Bool
 
-    public init(host: String, port: Int = 993, user: String, address: String, tls: Bool = true) {
+    /// The SMTP server this mailbox sends through — settings, never a credential.
+    ///
+    /// **Send goes out through the SAME login the engine reads mail with**: one credential per
+    /// mailbox, typed once and sealed by the engine under the per-install key. So there is a host,
+    /// a port and a TLS choice here, and there is deliberately no password — the same reason the
+    /// IMAP password is not a field either. Absent for a generic install that supplied no SMTP
+    /// server; a preset fills all three at once.
+    public var smtpHost: String?
+    public var smtpPort: Int?
+    /// Implicit TLS on the SMTP port. `nil` tracks `smtpHost`; the engine reads it as "not `0`".
+    public var smtpSecure: Bool?
+
+    public init(host: String, port: Int = 993, user: String, address: String, tls: Bool = true,
+                smtpHost: String? = nil, smtpPort: Int? = nil, smtpSecure: Bool? = nil) {
         self.host = host
         self.port = port
         self.user = user
         self.address = address
         self.tls = tls
+        self.smtpHost = smtpHost
+        self.smtpPort = smtpPort
+        self.smtpSecure = smtpSecure
     }
 
-    /// The keys this file is allowed to contain. A test compares the encoded object against it.
-    public static let encodedKeys: Set<String> = ["host", "port", "user", "address", "tls"]
+    /// The keys this file is ALLOWED to contain — the whole set, IMAP and SMTP. A test asserts the
+    /// encoded object is a subset of this and that none of its keys looks like a credential, so a
+    /// later slice that adds a password field to either half turns a test red rather than shipping a
+    /// plaintext secret beside the mailbox. The optional SMTP keys are omitted when unset, which is
+    /// why the check is a subset and not an equality.
+    public static let encodedKeys: Set<String> = [
+        "host", "port", "user", "address", "tls", "smtpHost", "smtpPort", "smtpSecure",
+    ]
 }
 
 /// `~/Library/Application Support/io.ohmail.desktop/config.json`.
@@ -78,6 +100,43 @@ public struct EngineConfigStore: Sendable {
     public func remove() throws {
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    // MARK: - The onboarding door
+
+    /// `onboarding.json`, beside the mailbox configuration.
+    ///
+    /// The chosen door is a property of the install, made once: which of the two ways this Mac
+    /// organizes its mailbox. It lives here rather than in `UserDefaults` for the same reason the
+    /// mailbox does — "quit ohmail and remove that folder" has to remove the choice too, so the next
+    /// launch opens on the chooser again rather than resuming a door the person thought they had left.
+    public var doorURL: URL { directory.appendingPathComponent("onboarding.json") }
+
+    private struct DoorRecord: Codable { var door: OnboardingDoor }
+
+    /// The chosen door, or `nil` if none has been chosen — a corrupt or hand-edited file reads as
+    /// `nil`, which shows the chooser rather than throwing on a launch.
+    public func loadDoor() -> OnboardingDoor? {
+        guard let data = FileManager.default.contents(atPath: doorURL.path),
+              let record = try? JSONDecoder().decode(DoorRecord.self, from: data) else { return nil }
+        return record.door
+    }
+
+    public func saveDoor(_ door: OnboardingDoor) throws {
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        let data = try JSONEncoder().encode(DoorRecord(door: door))
+        let temporary = directory.appendingPathComponent("onboarding.json.\(UUID().uuidString)")
+        try data.write(to: temporary, options: [.atomic])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
+        _ = try FileManager.default.replaceItemAt(doorURL, withItemAt: temporary)
+    }
+
+    public func removeDoor() throws {
+        if FileManager.default.fileExists(atPath: doorURL.path) {
+            try FileManager.default.removeItem(at: doorURL)
         }
     }
 }

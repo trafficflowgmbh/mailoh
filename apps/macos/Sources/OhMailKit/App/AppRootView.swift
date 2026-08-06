@@ -31,8 +31,12 @@ public struct AppRootView: View {
 
             case .setup:
                 SetupView(step: root.setupStep,
+                          provider: root.chosenProvider,
                           problem: root.passwordProblem,
                           submitting: root.submittingPassword,
+                          onChooseDoor: { root.chooseDoor($0) },
+                          onChooseProvider: { root.chooseProvider($0) },
+                          onReconsider: { root.reconsiderDoor() },
                           onSaveMailbox: { root.saveMailbox($0) },
                           onSubmitPassword: { password in
                               Task { await root.submitPassword(password) }

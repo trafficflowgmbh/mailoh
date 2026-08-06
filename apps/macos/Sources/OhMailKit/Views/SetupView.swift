@@ -25,21 +25,56 @@ struct SetupView: View {
     @Environment(\.compactLayout) private var compact
 
     let step: SetupStep
+    /// The provider chosen behind door one, or `nil` for the generic path. Drives the form's
+    /// prefill guidance and whether a pasted app password has its spaces stripped.
+    let provider: MailProvider?
     /// A refusal about what was typed, beside the field rather than instead of the screen.
     let problem: String?
     let submitting: Bool
+    let onChooseDoor: (OnboardingDoor) -> Void
+    let onChooseProvider: (MailProvider) -> Void
+    let onReconsider: () -> Void
     let onSaveMailbox: (EngineConfig) -> Void
     let onSubmitPassword: (String) -> Void
     let onBack: () -> Void
+
+    init(step: SetupStep, provider: MailProvider? = nil, problem: String? = nil,
+         submitting: Bool = false,
+         onChooseDoor: @escaping (OnboardingDoor) -> Void = { _ in },
+         onChooseProvider: @escaping (MailProvider) -> Void = { _ in },
+         onReconsider: @escaping () -> Void = {},
+         onSaveMailbox: @escaping (EngineConfig) -> Void = { _ in },
+         onSubmitPassword: @escaping (String) -> Void = { _ in },
+         onBack: @escaping () -> Void = {}) {
+        self.step = step
+        self.provider = provider
+        self.problem = problem
+        self.submitting = submitting
+        self.onChooseDoor = onChooseDoor
+        self.onChooseProvider = onChooseProvider
+        self.onReconsider = onReconsider
+        self.onSaveMailbox = onSaveMailbox
+        self.onSubmitPassword = onSubmitPassword
+        self.onBack = onBack
+    }
 
     @State private var host = ""
     @State private var port = "993"
     @State private var user = ""
     @State private var address = ""
     @State private var tls = true
+    /// The send server, carried invisibly through the form from the preset. It is not edited here —
+    /// no field asks for it — and it rides out on the ``EngineConfig`` the form emits so that a
+    /// preset's SMTP is not dropped between the prefill and the save. `nil` for the generic path.
+    @State private var smtpHost: String?
+    @State private var smtpPort: Int?
+    @State private var smtpSecure: Bool?
     @State private var password = ""
     /// Whether Continue has been pressed. Gates the one line of validation copy; see the form.
     @State private var attempted = false
+    /// Whether Outlook's tile has been tapped, which reveals its one factual line in place rather
+    /// than advancing to fields the build cannot use.
+    @State private var outlookTapped = false
     @FocusState private var focus: FieldID?
 
     private enum FieldID: Hashable { case host, port, user, address, password }
@@ -57,11 +92,65 @@ struct SetupView: View {
 
     @ViewBuilder private var content: some View {
         switch step {
+        case .chooseDoor:
+            panel {
+                heading("Where should ohmail organize this mailbox?",
+                        "Pick once. You can change this later.")
+                VStack(spacing: 12) {
+                    doorCard(title: "On this Mac",
+                             detail: "ohmail runs here and connects straight to your mailbox over IMAP. "
+                                 + "Nothing goes to our servers.",
+                             note: nil) { onChooseDoor(.local) }
+                    doorCard(title: "On ohmail Cloud",
+                             detail: "Always-on organizing on our servers, so it keeps working while this "
+                                 + "Mac is asleep.",
+                             note: "Not in this build yet") { onChooseDoor(.cloud) }
+                }
+                .padding(.top, 22)
+            }
+
+        case .cloudUnavailable:
+            panel {
+                heading("ohmail Cloud isn't in this build yet.",
+                        "This build organizes your mail here, on this Mac. Cloud organizing — always-on, "
+                            + "on our servers — arrives in a later release.")
+                HStack(spacing: 10) {
+                    PillButton("Set up on this Mac", kind: .primary) { onChooseDoor(.local) }
+                    PillButton("Back", kind: .ghost, action: onReconsider)
+                }
+                .padding(.top, 22)
+            }
+
+        case .pickProvider:
+            panel {
+                heading("Who hosts this mailbox?",
+                        "This fills in the server details. You still enter your own login.")
+                VStack(spacing: 10) {
+                    ForEach(MailProvider.allCases, id: \.self) { provider in
+                        providerTile(provider)
+                    }
+                }
+                .padding(.top, 20)
+                PillButton("Back", kind: .ghost, action: onReconsider)
+                    .padding(.top, 16)
+            }
+
         case .mailbox(let stored):
             panel {
                 heading("Open your mailbox.",
                         "ohmail reads it over IMAP from this machine. Nothing is sent anywhere else.")
+                if let guidance = provider?.appPasswordGuidance {
+                    guidanceBlock(guidance)
+                }
                 mailboxFields
+                // The send server, stated where a person can see it. It is not editable — it came
+                // from the preset with the IMAP details — and it is only here at all so that "opening
+                // a mailbox" does not quietly also configure sending without saying so.
+                if let smtpHost, !smtpHost.isEmpty {
+                    Text("Sends through \(smtpHost).")
+                        .blanc(.meta).foregroundStyle(p.ink3.color)
+                        .padding(.top, 12)
+                }
                 // Shown only after somebody has pressed Continue. A form that opens already telling
                 // you a server is required is scolding you for not having typed yet, and it makes
                 // the one case that matters — you typed something and it is wrong — look identical
@@ -98,7 +187,7 @@ struct SetupView: View {
                 }
                 HStack(spacing: 10) {
                     PillButton(submitting ? "Storing…" : "Store password", kind: .primary) {
-                        onSubmitPassword(password)
+                        onSubmitPassword(submittedPassword)
                     }
                     .disabled(submitting || password.isEmpty)
                     PillButton("Change the mailbox", kind: .ghost, action: onBack)
@@ -161,7 +250,11 @@ struct SetupView: View {
             // the address as the login. Blank means "they are the same", which is the common case
             // and the one nobody should have to type twice.
             address: address.trimmed.isEmpty ? login : address.trimmed,
-            tls: tls))
+            tls: tls,
+            // Carried straight through from the preset. The send server is a setting, not something
+            // this form collects; passing it here is what keeps a preset's SMTP from being dropped
+            // between the prefill and the save.
+            smtpHost: smtpHost, smtpPort: smtpPort, smtpSecure: smtpSecure))
     }
 
     private func prefill(_ stored: EngineConfig?) {
@@ -171,7 +264,21 @@ struct SetupView: View {
         user = stored.user
         address = stored.address == stored.user ? "" : stored.address
         tls = stored.tls
-        focus = .host
+        smtpHost = stored.smtpHost
+        smtpPort = stored.smtpPort
+        smtpSecure = stored.smtpSecure
+        // When a preset has already filled the server, the one thing left to type is the login, so
+        // start there. A blank server (the generic path) starts at the top.
+        focus = stored.host.isEmpty ? .host : .user
+    }
+
+    /// The password as it is sent: an app-specific password pasted with its spaces is accepted
+    /// without them, so they are stripped for exactly the providers that issue them and left alone
+    /// for a generic mailbox, whose password may legitimately contain a space.
+    private var submittedPassword: String {
+        (provider?.stripsPasswordSpaces ?? false)
+            ? password.replacingOccurrences(of: " ", with: "")
+            : password
     }
 
     // MARK: - Parts
@@ -204,6 +311,94 @@ struct SetupView: View {
     @ViewBuilder
     private func label(_ text: String) -> some View {
         Text(text).blanc(.chip).foregroundStyle(p.ink3.color)
+    }
+
+    // MARK: - The two doors
+
+    /// One of the two doors: a title, a line of what it means, and — for a door this build cannot
+    /// open — a quiet note so the choice is not a bait. Tapping it is the whole surface.
+    @ViewBuilder
+    private func doorCard(title: String, detail: String, note: String?,
+                          action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(title)
+                        .blanc(BlancText(size: Typography.Size.cardTitle, weight: Typography.Weight.bold,
+                                         trackingEm: Typography.Tracking.title))
+                        .foregroundStyle(p.ink.color)
+                    if let note {
+                        Text(note).blanc(.caption).foregroundStyle(p.ink3.color)
+                    }
+                    Spacer(minLength: 0)
+                    Icon(.chevron, 13).foregroundStyle(p.ink3.color)
+                }
+                Text(detail)
+                    .blanc(BlancText(size: Typography.Size.bodyS, weight: Typography.Weight.regular,
+                                     leading: 1.5))
+                    .foregroundStyle(p.ink2.color)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .surface(Radius.item, p.panel.color, .l0)
+            .hairline(p, radius: Radius.item, soft: true)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - The provider tiles
+
+    /// A provider row. The three shipping presets and the generic path advance; Outlook states its
+    /// one factual line in place and does not — a tile that is present and honest, not missing.
+    @ViewBuilder
+    private func providerTile(_ provider: MailProvider) -> some View {
+        let refused = provider.authKind == .refused
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                if refused { outlookTapped = true } else { onChooseProvider(provider) }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(provider.displayName)
+                        .blanc(.button).foregroundStyle(p.ink.color)
+                    if provider.authKind == .appPassword {
+                        Text("app password").blanc(.caption).foregroundStyle(p.ink3.color)
+                    }
+                    Spacer(minLength: 0)
+                    Icon(refused ? .info : .chevron, 13).foregroundStyle(p.ink3.color)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .surface(Radius.item, p.panel.color, .l0)
+                .hairline(p, radius: Radius.item, soft: true)
+            }
+            .buttonStyle(.plain)
+            if refused, outlookTapped, let line = provider.refusal {
+                Text(line)
+                    .blanc(.meta).foregroundStyle(p.ink2.color)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 2)
+            }
+        }
+    }
+
+    /// The app-password note for a preset provider: what is needed and where to make it. The URL is
+    /// selectable text, not a link this shell opens — it links no network of its own.
+    @ViewBuilder
+    private func guidanceBlock(_ guidance: (line: String, url: String)) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(guidance.line)
+                .blanc(BlancText(size: Typography.Size.bodyS, weight: Typography.Weight.regular,
+                                 leading: 1.5))
+                .foregroundStyle(p.ink2.color)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(guidance.url)
+                .blanc(.meta).foregroundStyle(p.ink3.color)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 14)
     }
 
     @ViewBuilder

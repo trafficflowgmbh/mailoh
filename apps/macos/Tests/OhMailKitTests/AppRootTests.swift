@@ -244,6 +244,122 @@ final class AppRootTests: XCTestCase {
         }
     }
 
+    // MARK: - The two doors
+
+    /// A fresh install opens on the chooser, not the form. The mailbox comes AFTER a door and a
+    /// provider, so the first thing on screen is the one decision that outranks all of them.
+    func testAFreshInstallOpensOnTheChooser() {
+        let root = model()
+        XCTAssertEqual(root.surface, .setup)
+        XCTAssertEqual(root.setupStep, .chooseDoor)
+        XCTAssertNil(root.door, "nothing has been chosen yet")
+        root.end()
+    }
+
+    /// Door one is the local engine: pick it, pick a provider, and the form opens PREFILLED — server,
+    /// port, TLS and the send server all from the preset — with only the login left to type.
+    func testDoorOneLeadsThroughTheProviderPickerToThePrefilledForm() {
+        let root = model()
+        root.chooseDoor(.local)
+        XCTAssertEqual(root.door, .local)
+        XCTAssertEqual(root.setupStep, .pickProvider)
+
+        root.chooseProvider(.gmail)
+        XCTAssertEqual(root.chosenProvider, .gmail)
+        guard case .mailbox(let prefill) = root.setupStep, let prefill else {
+            return XCTFail("choosing Gmail did not prefill the form")
+        }
+        XCTAssertEqual(prefill.host, "imap.gmail.com")
+        XCTAssertEqual(prefill.port, 993)
+        XCTAssertTrue(prefill.tls)
+        XCTAssertEqual(prefill.smtpHost, "smtp.gmail.com")
+        XCTAssertEqual(prefill.smtpPort, 465)
+        XCTAssertEqual(prefill.smtpSecure, true)
+        XCTAssertEqual(prefill.user, "", "the login is the one thing the person still supplies")
+        root.end()
+    }
+
+    /// A completed door-one mailbox carries the preset's send server all the way into the sealed
+    /// config AND the engine's environment — one credential, IMAP and SMTP on the same login.
+    func testAPresetSendServerReachesTheStoredConfigAndTheEngineEnvironment() throws {
+        let root = model()
+        root.chooseDoor(.local)
+        root.chooseProvider(.fastmail)
+        // The form fills in the login and emits the config; the preset's SMTP rides through unchanged.
+        var completed = MailProvider.fastmail.preset!.draft()
+        completed.user = "someone@fastmail.com"
+        completed.address = "someone@fastmail.com"
+        root.saveMailbox(completed)
+        root.end()
+
+        let stored = try XCTUnwrap(try store.load())
+        XCTAssertEqual(stored.smtpHost, "smtp.fastmail.com")
+        XCTAssertEqual(stored.smtpSecure, true)
+
+        let env = Dictionary(uniqueKeysWithValues:
+            EngineEnvironment.overlay(for: stored).map { ($0.name, $0.value) })
+        XCTAssertEqual(env["OHMAIL_SMTP_HOST"], "smtp.fastmail.com")
+        XCTAssertEqual(env["OHMAIL_SMTP_PORT"], "465")
+        XCTAssertEqual(env["OHMAIL_SMTP_SECURE"], "1")
+        // The send login is never a second secret: nothing in the environment carries an SMTP password.
+        XCTAssertNil(env["OHMAIL_SMTP_PASS"])
+        XCTAssertNil(env["OHMAIL_SMTP_USER"])
+    }
+
+    /// Outlook is present and refused: choosing it advances nothing, because the build cannot open it.
+    func testOutlookIsRefusedAndNeverAdvances() {
+        let root = model()
+        root.chooseDoor(.local)
+        root.chooseProvider(.outlook)
+        XCTAssertNil(root.chosenProvider, "a refused provider was accepted")
+        XCTAssertEqual(root.setupStep, .pickProvider, "Outlook opened a form the build cannot use")
+        XCTAssertNotNil(MailProvider.outlook.refusal, "the refused tile has no line to show")
+        root.end()
+    }
+
+    /// Door two is stated, not faked. Choosing Cloud lands on a named limit and never on a form or a
+    /// password field, and the person can step back out of it.
+    func testDoorTwoStatesItsLimitAndIsNotADeadEnd() {
+        let root = model()
+        root.chooseDoor(.cloud)
+        XCTAssertEqual(root.door, .cloud)
+        XCTAssertEqual(root.setupStep, .cloudUnavailable)
+
+        root.reconsiderDoor()
+        XCTAssertNil(root.door, "the door was not released")
+        XCTAssertEqual(root.setupStep, .chooseDoor)
+        root.end()
+    }
+
+    /// The chosen door is sticky per install: a later launch resumes at it rather than re-asking.
+    /// Reconsidering clears it, so neither an unfinished door one nor door two is a trap.
+    func testTheChosenDoorIsStickyAcrossLaunches() {
+        model().chooseDoor(.local)
+        // A second launch reading the SAME store.
+        let relaunch = model()
+        XCTAssertEqual(relaunch.door, .local, "the door was not remembered")
+        XCTAssertEqual(relaunch.setupStep, .pickProvider,
+                       "a remembered local door should resume at the provider picker, not the chooser")
+
+        relaunch.reconsiderDoor()
+        let afterReconsider = model()
+        XCTAssertNil(afterReconsider.door, "reconsidering did not clear the stored door")
+        XCTAssertEqual(afterReconsider.setupStep, .chooseDoor)
+    }
+
+    /// **The frame renders nothing for the sample world.** `--demo` is answered before the install is
+    /// looked at, so a door is never chosen and never shown — structural, like the rest of the demo
+    /// gate, not a check inside the frame.
+    func testTheDemoWorldNeverReachesTheDoorFrame() {
+        let root = model(demo: true)
+        XCTAssertEqual(root.surface, .demo)
+        XCTAssertNotEqual(root.surface, .setup, "the sample world reached the onboarding frame")
+        // And even asked to, it does not switch surfaces — the demo answer outranks the sequence.
+        root.chooseDoor(.local)
+        XCTAssertEqual(root.surface, .demo)
+        root.end()
+    }
+
     // MARK: - Setup is a sequence
 
     /// **A BUILD WITH NO ENGINE NEVER OPENS THE FORM.**
@@ -338,10 +454,16 @@ final class AppRootTests: XCTestCase {
     func testSetupCollectsTheMailboxBeforeTheEngineExistsAndThenWaits() {
         let root = model()
         XCTAssertEqual(root.surface, .setup)
+        // The chooser is the first thing now, then — behind door one — the provider picker, then the
+        // form. Walk to the form the generic way, which is today's blank one.
+        XCTAssertEqual(root.setupStep, .chooseDoor)
+        root.chooseDoor(.local)
+        XCTAssertEqual(root.setupStep, .pickProvider)
+        root.chooseProvider(.generic)
         guard case .mailbox(let prefill) = root.setupStep else {
-            return XCTFail("setup did not open on the mailbox form")
+            return XCTFail("door one did not lead to the mailbox form")
         }
-        XCTAssertNil(prefill, "nothing is stored yet, so there is nothing to prefill")
+        XCTAssertNil(prefill, "the generic path has no preset, so there is nothing to prefill")
 
         root.saveMailbox(Self.mailbox)
         XCTAssertTrue(root.configured, "the mailbox was not written down")
@@ -479,7 +601,12 @@ final class AppRootTests: XCTestCase {
             ("engine state with an action", AnyView(EngineStateView(
                 notice: AppRootModel.couldNotFinish("The local engine stopped."),
                 action: (label: "Back", run: {})))),
+            ("setup · choose door", AnyView(setupView(step: .chooseDoor))),
+            ("setup · cloud unavailable", AnyView(setupView(step: .cloudUnavailable))),
+            ("setup · pick provider", AnyView(setupView(step: .pickProvider))),
             ("setup · mailbox", AnyView(setupView(step: .mailbox(nil)))),
+            ("setup · mailbox prefilled", AnyView(setupView(
+                step: .mailbox(MailProvider.gmail.preset?.draft()), provider: .gmail))),
             ("setup · waiting", AnyView(setupView(step: .starting))),
             ("setup · password", AnyView(setupView(step: .password))),
             ("setup · password refused", AnyView(setupView(
@@ -532,9 +659,9 @@ final class AppRootTests: XCTestCase {
         return Smoke.PixelStats(rep)
     }
 
-    private func setupView(step: SetupStep, problem: String? = nil) -> some View {
-        SetupView(step: step, problem: problem, submitting: false,
-                  onSaveMailbox: { _ in }, onSubmitPassword: { _ in }, onBack: {})
+    private func setupView(step: SetupStep, provider: MailProvider? = nil,
+                           problem: String? = nil) -> some View {
+        SetupView(step: step, provider: provider, problem: problem)
     }
 
     // MARK: -

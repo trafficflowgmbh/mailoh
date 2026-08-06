@@ -167,6 +167,17 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
       port: Number(env.OHMAIL_IMAP_PORT ?? 993),
       secure: env.OHMAIL_IMAP_SECURE !== "0",
       auth: { user, ...(pass ? { pass } : {}) },
+      // THE SEND SERVER — host, port and TLS from the shell, authenticated with the SAME login.
+      //
+      // One credential per mailbox: `user` and `pass` here are the IMAP login's, not a second SMTP
+      // secret. There is deliberately no `OHMAIL_SMTP_USER`/`OHMAIL_SMTP_PASS`, because a mailbox has
+      // one password and it is sealed once (see the KEK ring above and the stored-login block in
+      // `engine.ts`). `pass` is only present on the launch the user types it; after that the sealed
+      // credential is the source, and the send adapter reads it back from the store rather than from
+      // the environment — the same precedence the IMAP side follows.
+      //
+      // `secure` is implicit TLS: `true` for 465 (Gmail, Fastmail), `false` for 587 STARTTLS
+      // (iCloud). The shell spells the false case as "0" exactly, so an unset value means secure.
       ...(env.OHMAIL_SMTP_HOST
         ? {
             smtp: {

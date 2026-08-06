@@ -293,6 +293,33 @@ final class SourceSelectionTests: XCTestCase {
         XCTAssertEqual(secure["OHMAIL_IMAP_PORT"], "993", "993 is the default the engine assumes")
     }
 
+    /// **A mailbox with a send server maps its SMTP too — and never a send password.**
+    ///
+    /// The three shipping providers all send through the same login they read with, so the overlay
+    /// carries host, port and the TLS choice and NOTHING that looks like a second credential. iCloud
+    /// is the one whose send port is STARTTLS, so its secure flag is the string `0` the engine reads
+    /// as "not implicit TLS" — spelled exactly, because an empty value would mean secure.
+    func testASendServerMapsOntoTheEnginesSmtpVariablesAndNoSendPassword() {
+        let icloud = MailProvider.icloud.preset!.draft()
+        let overlay = Dictionary(uniqueKeysWithValues:
+            EngineEnvironment.overlay(for: icloud).map { ($0.name, $0.value) })
+
+        XCTAssertEqual(overlay["OHMAIL_SMTP_HOST"], "smtp.mail.me.com")
+        XCTAssertEqual(overlay["OHMAIL_SMTP_PORT"], "587")
+        XCTAssertEqual(overlay["OHMAIL_SMTP_SECURE"], "0", "587 is STARTTLS, so secure is spelled 0")
+        XCTAssertEqual(overlay.count, 8, "IMAP's five plus SMTP's three, and nothing else")
+        for name in overlay.keys {
+            XCTAssertFalse(name.lowercased().contains("pass"),
+                           "the send server carried a credential variable: \(name)")
+        }
+
+        // Gmail sends on 465, which IS implicit TLS — so the same table produces secure = 1 there.
+        let gmail = Dictionary(uniqueKeysWithValues: EngineEnvironment
+            .overlay(for: MailProvider.gmail.preset!.draft()).map { ($0.name, $0.value) })
+        XCTAssertEqual(gmail["OHMAIL_SMTP_SECURE"], "1")
+        XCTAssertEqual(gmail["OHMAIL_SMTP_PORT"], "465")
+    }
+
     /// **The stored mailbox may not set the three things it must never set.**
     ///
     /// `config.json` is a plaintext file. One that could set the data directory could point the
