@@ -1,6 +1,6 @@
 [package]
 name = "ohmail"
-version = "0.4.0"
+version = "0.5.0"
 description = "ohmail — consent-first email. Windows/Linux preview shell."
 authors = ["TrafficFlow GmbH <support@ohmail.app>"]
 license = "GPL-3.0-or-later"
@@ -30,34 +30,49 @@ path = "src/main.rs"
 # It is not dead code: `cargo test --features local-engine` is what proves the
 # lifecycle, and those tests start real processes.
 default = []
-local-engine = ["dep:serde_json", "dep:keyring", "dep:getrandom"]
+local-engine = ["dep:keyring", "dep:getrandom"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# Tauri 2's default feature set MINUS `compression`, and nothing added.
+# Tauri 2's default feature set MINUS `compression`, plus exactly two plugins:
+# the auto-updater and the native dialog it prompts through. Nothing else.
 #
 # Dropping brotli costs about a quarter of a megabyte in the installer and buys
 # the thing this product is actually selling: a binary anyone can audit without
 # running it. With compression on, the embedded UI is an opaque blob — you
 # cannot grep a downloaded .msi for the URLs it contains, so "it talks to
-# nobody" would be a claim rather than a check. Uncompressed, it is a check:
+# nobody but its own update feed" would be a claim rather than a check.
+# Uncompressed, it is a check:
 #
 #     strings ohmail.exe | grep -E 'https?://'
 #
-# returns thirteen strings on Linux and fourteen on Windows, every one of them a
-# W3C namespace constant, a documentation link in a panic message, or the `http`
-# crate's "http://" literal glued to the next string in rodata. The READMEs list
-# all of them, and CI fails the build if one of them ever names ohmail or
-# TrafficFlow infrastructure. See the README's "Verify it yourself".
+# returns a short, enumerable set of strings — W3C namespace constants, a
+# documentation link in a panic message, the `http` crate's "http://" literal
+# glued to the next string in rodata, and now the ONE update endpoint this build
+# is allowed to reach:
 #
-# Nothing here opens a socket or reads the filesystem, and capabilities/main.json
-# grants the webview nothing at all. In the DEFAULT build nothing spawns a process
-# either — the shell's ownership of the local engine's lifetime is behind the
-# `local-engine` feature above, which is off, so `src/engine.rs` is not compiled
-# into the published binary. When that feature is on, the app starts exactly one
-# child, the engine that came with it, over a pipe it alone holds.
+#     https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json
+#
+# The READMEs enumerate them, and CI fails the build if any string that is NOT
+# that one endpoint names ohmail or TrafficFlow infrastructure. See the README's
+# "Verify it yourself".
+#
+# WHAT CHANGED WITH THE UPDATER, stated plainly rather than softened. This build
+# now makes ONE deliberate network request — to the pinned HTTPS endpoint above,
+# scheduled or triggered from the native "Check for Updates…" menu item — and
+# `tauri-plugin-updater` pulls in `reqwest`/`hyper` TRANSITIVELY to make it. That
+# HTTP client is real and is named here so the audit story stays honest: it is
+# reached only from `src/updater.rs`, only for that one endpoint, and the webview
+# still cannot touch it (capabilities/main.json grants the window nothing, and
+# the updater is Rust-side with no IPC permission granted). Every downloaded
+# update is minisign-verified against `plugins.updater.pubkey` before it is
+# allowed to install; a tampered payload or a downgrade is refused. The
+# filesystem is still untouched by this crate's own code, and in the DEFAULT
+# build nothing spawns a process — the shell's ownership of the local engine's
+# lifetime is behind the `local-engine` feature above, which is off, so
+# `src/engine.rs` is not compiled into the published binary.
 tauri = { version = "2", default-features = false, features = [
     "wry",
     "common-controls-v6",
@@ -66,15 +81,40 @@ tauri = { version = "2", default-features = false, features = [
     "dbus",
 ] }
 
-# The frame headers the engine sends are JSON, and hand-rolling a parser for
-# bytes that arrive over a pipe is how a shell acquires its first memory bug.
-# Optional, so the default build's dependency graph is unchanged — and even when
-# it is on, nothing new is compiled: `tauri` already depends on this exact crate,
-# which is why enabling the feature adds no third-party code to audit.
+# The auto-updater. Fetches the pinned `latest.json` feed, compares versions,
+# downloads the platform artifact and verifies its minisign signature against
+# `plugins.updater.pubkey` before installing. Notify-and-install: the Rust side
+# asks the user first (see `src/updater.rs`) and installs only on consent — never
+# silently. Brings `reqwest` in transitively; that is the only HTTP client in the
+# binary and it is reached from nowhere but the updater. MIT OR Apache-2.0 — no
+# copyleft, and in particular no AGPL, which would force publishing the hosted
+# service alongside this GPL-3.0 client.
+tauri-plugin-updater = "2"
+
+# The native dialog the updater notifies through — "an update is available,
+# install it?" and the up-to-date / error notices. A native window, symmetric
+# with the macOS client's Sparkle prompt; it opens no socket and no file. Kept
+# Rust-side and ungranted to the webview, same as the updater. MIT OR Apache-2.0.
+tauri-plugin-dialog = "2"
+
+# Version arithmetic for the updater's own downgrade guard. `tauri-plugin-updater`
+# already refuses anything that is not strictly newer; `src/updater.rs` re-checks
+# it with this crate before installing, because the updater is a remote-code path
+# and one version comparison we own and test is cheap insurance. Already in the
+# graph (the plugin uses it); MIT OR Apache-2.0.
+semver = "1"
+
+# A DIRECT dependency, not an optional one, since the updater's config lives in
+# tauri.conf.json: `tauri::generate_context!` embeds every `plugins` entry as a
+# `serde_json::Value`, so the macro references `::serde_json` at the crate root
+# in EVERY build now, not only the local-engine one. Nothing new is compiled for
+# it — `tauri` already depends on this exact crate — so the binary's dependency
+# graph and the `strings` audit are unchanged; only the manifest names it
+# directly. The engine's JSON frame parser (behind `local-engine`) uses it too.
 # MIT OR Apache-2.0. Nothing here is under a copyleft licence, and nothing may
 # be: this binary is conveyed to users under GPL-3.0, and an AGPL dependency
 # anywhere in the shared half would force publishing the hosted service too.
-serde_json = { version = "1", optional = true }
+serde_json = "1"
 
 # THE ONE PER-INSTALL KEY, AND WHY IT NEEDS A CRATE AT ALL.
 #
@@ -100,6 +140,17 @@ keyring = { version = "4", optional = true }
 # shell ever mints. Already in the dependency graph — `tauri` depends on it —
 # so the feature adds no third-party code to audit here either.
 getrandom = { version = "0.3", optional = true }
+
+[dev-dependencies]
+# The signature-verification biting test signs nothing at test time — it verifies
+# a committed fixture (`test/fixtures/updater/payload.bin{,.sig}`) against the
+# SAME public key shipped in `tauri.conf.json`, using the SAME primitive
+# `tauri-plugin-updater` verifies with. Flip one byte of the payload and the
+# verification refuses; that is the test. `base64` unwraps tauri's key/signature
+# envelope exactly as the plugin does before handing the inner minisign bytes to
+# `minisign-verify`. Both are dev-only — neither ships in the binary.
+minisign-verify = "0.2"
+base64 = "0.22"
 
 [profile.release]
 codegen-units = 1

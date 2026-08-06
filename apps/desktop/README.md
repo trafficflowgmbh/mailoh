@@ -2,11 +2,14 @@
 
 The **Tauri v2 shell** — Tier 1 on the two platforms SwiftUI does not reach. Same
 tier as `apps/macos`, same honest maturity: it renders the complete ohmail
-interface on Mila's fixture world, with **no network at all**.
+interface on Mila's fixture world. The **webview reaches nothing**; the only
+network this app makes is the auto-updater's one HTTPS request to its own release
+feed, Rust-side and only when the user asks (see "The auto-updater" below).
 
 A native Rust window, a locked-down webview, and a static bundle of the *same*
-client the web app renders. Eleven lines of Rust, zero Tauri commands, zero
-capabilities.
+client the web app renders. The frontend calls zero Tauri commands and is granted
+zero capabilities; the Rust side adds exactly two plugins, both for the updater
+and neither reachable from the webview.
 
 ```bash
 npm install                 # in apps/desktop (pnpm install at the monorepo root works too)
@@ -49,9 +52,17 @@ The Vite config aliases exactly three seams, and nothing else:
    for a bare `react` to resolve into. An absolute alias resolves identically in
    the monorepo and in the mirror, and guarantees a single React instance.
 
-## Zero network, four locks
+## The webview reaches nothing, four locks
 
-Three of them are about the running app. The fourth is about the installer,
+These four locks are about the **webview** and the installer — the surfaces a
+stranger downloads and runs. The auto-updater is the one deliberate exception,
+and it does not touch any of them: it runs in the Rust process, not the page, so
+`connect-src 'none'` and the sealed `fetch` still hold literally, and the webview
+is granted no updater permission. What changed is that the *process* now makes
+one request, to one pinned endpoint, when the user picks "Check for Updates…".
+That is stated plainly in "The auto-updater" below rather than softened here.
+
+Three of the four are about the running app. The fourth is about the installer,
 because an installer that phones home makes the other three beside the point.
 
 **1 · The Cloud sync client is not in the module graph.**
@@ -128,20 +139,35 @@ that restores the default is red in the monorepo suite too.
 The permission list is **empty**. Not `core:default`, not a trimmed subset —
 empty. The frontend calls no `invoke`, `withGlobalTauri` is `false`, so the
 webview has no Tauri API to reach for and would be refused if it tried. On the
-Rust side there is no `invoke_handler`, no plugin, no `std::fs`, no `std::net`.
-`assetProtocol` is disabled, `freezePrototype` is on, and
+Rust side there is no `invoke_handler` and no `std::fs`/`std::net` hand-rolled
+anywhere. There *are* two plugins — `tauri-plugin-updater` and
+`tauri-plugin-dialog`, both for the auto-updater — but they are registered
+Rust-side and no capability grants the webview access to either, so the page
+still cannot call them. `assetProtocol` is disabled, `freezePrototype` is on, and
 `dangerousDisableAssetCspModification` is off.
 
-`src-tauri/Cargo.toml` takes Tauri's default features **minus `compression`**.
-That costs about a quarter of a megabyte and buys the audit:
+`src-tauri/Cargo.toml` takes Tauri's default features **minus `compression`**,
+plus those two plugins and nothing more. Dropping brotli costs about a quarter of
+a megabyte and buys the audit:
 
 ```bash
 strings -a src-tauri/target/release/ohmail \
   | grep -oE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' | sort -u
 ```
 
-That is the exact command CI runs, and on Linux it returns **fourteen** strings.
-Here are all fourteen, with nothing withheld:
+That is the exact command CI runs. Before the updater it returned fourteen
+strings on Linux and fifteen on Windows, every one of them a namespace constant,
+a documentation link in a panic message, or a rodata join — enumerated in full
+below. **The auto-updater changes that set:** it deliberately adds the one
+endpoint this build is allowed to reach —
+`https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json` —
+and the transitive HTTP client it fetches through (`reqwest`/`hyper`/`rustls`)
+brings its own rodata strings. The exact enumeration and the count assertions are
+re-established against the updater release binary in CI; the audit rule is
+unchanged in spirit and sharpened in one place — the check no longer fails on
+*any* `ohmail`/`trafficflow` URL but allows exactly that one pinned feed and
+still fails on any other infrastructure string. The pre-updater table, unchanged
+and still every bit of it real, is below:
 
 | string | what it is |
 |---|---|
@@ -162,15 +188,64 @@ domain is in the binary and which exists precisely because the installer does
 not fetch the runtime for you.
 
 Drop the `| sort -u` and read the whole lines if you want to check the three
-adjacency claims yourself — that is the point of shipping uncompressed. CI
-prints the list on every run, **asserts the count** (14 and 15; a toolchain bump
-that changes it turns the job red, which is the only way a number in a README
-stays true — it did exactly that when the editor arrived and brought ProseMirror's
-link, which is why these read 14 and 15 rather than 13 and 14), and **fails** if
-any URL in the binary matches `ohmail` or
-`trafficflow`. And `strings … | grep Ohbox` finds the interface, so you can see
-that the binary contains the app you were promised without running it. With
-brotli on, all of that is an opaque blob.
+adjacency claims yourself — that is the point of shipping uncompressed. CI prints
+the list on every run and **asserts the count** — a toolchain bump that changes
+it turns the job red, which is the only way a number in a README stays true (it
+did exactly that when the editor arrived and brought ProseMirror's link, and
+again when the updater arrived and brought its feed URL and HTTP client). The
+allow-list **fails** on any binary URL that names `ohmail` or `trafficflow`
+**except** the single pinned update feed above — so a second piece of
+infrastructure sneaking into the binary is still red. And `strings … | grep Ohbox`
+finds the interface, so you can see that the binary contains the app you were
+promised without running it. With brotli on, all of that is an opaque blob.
+
+## The auto-updater
+
+The app can update itself, and it does it the way an app that fetches and runs
+new code has to: every payload is cryptographically verified before it is allowed
+to install, and the user consents before anything happens.
+
+**Rust-side, triggered from a native menu.** "Check for Updates…" is a native
+menu item, not a button in the web UI — putting it in the page would mean granting
+the webview an updater permission and breaking the locks above. Instead the whole
+updater lives in `src-tauri/src/updater.rs`, and the webview gains nothing. It is
+symmetric with the macOS client, where the same command is a menu item too.
+
+**One pinned HTTPS feed.** `plugins.updater.endpoints` in `tauri.conf.json` is a
+single URL — the project's own GitHub Releases `latest.json`:
+
+```
+https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json
+```
+
+Nothing else is reachable. The feed's schema is Tauri's own: a `version`, notes,
+a date, and a `platforms` map from `<target>-<arch>` to a signed artifact URL and
+its signature. The feed and the signed artifacts are produced by the release
+pipeline; this app is only the client side of that contract.
+
+**Every payload is minisign-verified.** `plugins.updater.pubkey` holds the public
+half of a minisign keypair. `tauri-plugin-updater` verifies the downloaded
+artifact against it before installing; a payload whose signature does not match —
+a tampered download, a MITM, a compromised feed — is refused. The private half is
+never in the repository: it is supplied at packaging time through the standard
+`TAURI_SIGNING_PRIVATE_KEY` environment variable (with
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` empty). Because verification is the whole
+security of an unsigned-installer updater, `src-tauri/build.rs` **fails the build
+if the pubkey is missing or empty** — you cannot accidentally ship a build that
+would trust an unsigned feed.
+
+**Notify-and-install, never silent, and no downgrades.** On finding a newer
+release the app asks — a native dialog — before it downloads, and asks again
+before the restart that finishes the install. A version that is not strictly
+newer than the installed one (a downgrade, or a reinstall of the same release) is
+refused; the version is bare semver everywhere, so the comparison is plain.
+
+The two failures that matter for an updater — a tampered payload being installed,
+and a downgrade being installed — are proven, not asserted, in
+`src-tauri/src/updater_tests.rs`: a one-byte-flipped payload is watched refused
+against the shipped public key, and the downgrade gate is exercised across the
+boundary cases. The missing-pubkey packaging gate has its negative control in
+`test/desktop-shell.test.ts`.
 
 ## Identifiers, names and version
 
@@ -181,13 +256,15 @@ cannot cross-compile Windows or Linux installers. Two apps sharing a
 `CFBundleIdentifier` are indistinguishable to LaunchServices, which is exactly
 the collision the fallback exists for.
 
-The bundle version is **`0.3.0`**, and the release is called **0.3.0-preview**
-in `package.json`, the README and the run summaries. Not a slip: the MSI
-bundler rejects a semver pre-release identifier, and a red Windows job to carry
-a suffix already stated in three other places is a bad trade. The bare number is
-what reaches the installer filenames — `ohmail_0.3.0_amd64.deb`,
-`ohmail_0.3.0_x64_en-US.msi` — so the two spellings differ by a suffix and never
-by a number.
+The version is **`0.5.0`**, bare, in every place it is written: `tauri.conf.json`,
+`Cargo.toml`, `Cargo.lock`, `package.json`, and the macOS `Info.plist`. The
+`-preview` suffix earlier builds carried is retired — it marked "this build
+cannot update itself yet", and this build ships the auto-updater, so the claim is
+no longer true. "Beta" is the channel name, not a semver suffix; the MSI bundler
+rejects a pre-release identifier anyway, and the bare number is what reaches the
+installer filenames — `ohmail_0.5.0_amd64.deb`, `ohmail_0.5.0_x64_en-US.msi`.
+`desktop-shell.test.ts` asserts all five places carry the one number, so bumping
+four of five is red in the monorepo suite.
 
 **One word on Linux, everywhere.** The bundler derives the `.deb`'s `Package:`
 field by kebab-casing `productName`, and `productName` is `ohmail`, so the
@@ -208,14 +285,18 @@ slug this paragraph goes red instead of quietly going stale.
 npm run ui:typecheck                       # tsc over the shell, the views and the shim
 npm run ui:build && npm run smoke          # the render + offline audit, on the built bundle
 cd ../.. && CI=true npx vitest run apps/desktop/test   # the config assertions
+cd apps/desktop/src-tauri && cargo test    # the signature + downgrade proofs
 ```
 
 `test/desktop-shell.test.ts` is the drift guard: it asserts the identifier, the
-CSP directive by directive, the empty capability list, the absent
-`invoke_handler`, the absent `compression` feature, the http-adapter alias, and
-that `index.html`'s CSP still matches the webview's. Those four files are read
-by nothing else in the repository, so without it an edit to any of them would
-keep every other test green.
+one bare version across five files, the CSP directive by directive, the empty
+capability list, the absent `invoke_handler`, the absent `compression` feature,
+the exact two-plugin allow-list, the pinned update feed, a valid updater pubkey
+(with a negative control for the packaging gate), the http-adapter alias, and
+that `index.html`'s CSP still matches the webview's. Those files are read by
+nothing else in the repository, so without it an edit to any of them would keep
+every other test green. The Rust-side signature and downgrade proofs run under
+`cargo test` (`src-tauri/src/updater_tests.rs`).
 
 `scripts/smoke.mjs` is mutation-tested by hand the way the Swift harness is:
 deleting the `installOfflineGuard()` call fails 5 of its 31 checks, and replacing
@@ -234,18 +315,25 @@ apps/desktop/
 ├── scripts/smoke.mjs     the render + offline audit over dist/
 ├── test/                 the config drift guard (runs in the monorepo suite)
 └── src-tauri/
-    ├── Cargo.toml        tauri, defaults minus compression, nothing else
-    ├── tauri.conf.json   window, CSP, bundle targets, icons
+    ├── Cargo.toml        tauri (defaults minus compression) + updater + dialog
+    ├── tauri.conf.json   window, CSP, bundle targets, icons, updater feed + pubkey
+    ├── build.rs          command manifest + the missing-pubkey packaging gate
     ├── capabilities/     one file, zero permissions
     ├── icons/            the "oh." family (.ico, .icns, .png ladder)
-    └── src/main.rs       eleven lines
+    └── src/
+        ├── main.rs           the window, and the updater hook-up
+        ├── updater.rs        the menu item, the feed check, notify-and-install
+        └── updater_tests.rs  tampered-payload and downgrade proofs (cargo test)
 ```
 
 ## What is not here yet
 
-The engine. This Tauri build has no IMAP client, no accounts, no AI and no updater:
-it renders the interface on Mila's fixture world and connects to nothing. The mail
-engine shipped in the macOS build first (0.4.0) and is being ported to this shell
-next — it lands behind `AppState`/`OhmailEngine`, the seam both platforms share.
-Signed builds need a certificate (Authenticode for Windows) that does not exist yet;
-until then the installers are unsigned and the README says so on every platform.
+The engine. This Tauri build has no IMAP client, no accounts and no AI: it renders
+the interface on Mila's fixture world. The auto-updater is now in (see above); what
+is still absent is the mail engine, which shipped in the macOS build first and is
+being ported to this shell next — it lands behind `AppState`/`OhmailEngine`, the
+seam both platforms share. Signed *installers* still need a certificate
+(Authenticode for Windows) that does not exist yet; until then the installers are
+unsigned — which is exactly why the update payloads are minisign-verified
+independently of any OS code-signing certificate. The README says so on every
+platform.

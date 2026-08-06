@@ -1,11 +1,21 @@
 // No console window behind the app on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// The whole Rust side. ohmail Desktop is a window around a static bundle:
-// there are no commands to register, so the webview has nothing to call and
-// capabilities/main.json grants it nothing. Window geometry, title, CSP and
-// icons are declarative in tauri.conf.json — code here would only be a second
-// place for them to disagree.
+// The whole Rust side. ohmail Desktop is a window around a static bundle: there
+// are no commands for the webview to call, and capabilities/main.json grants it
+// nothing. Window geometry, title, CSP and icons are declarative in
+// tauri.conf.json — code here would only be a second place for them to disagree.
+//
+// ── THE ONE THING THE WEBVIEW STILL CANNOT DO, AND THIS PROCESS NOW CAN ────────
+//
+// The app carries an auto-updater (`updater.rs`), and that is the single place
+// this binary reaches the network: one pinned HTTPS request to its own GitHub
+// Releases feed, made only when the user picks the native "Check for Updates…"
+// menu item, and every payload minisign-verified before it may install. It is
+// Rust-side on purpose — the webview is granted no updater permission, so the
+// four locks that assert "the page reaches nothing" stay literally true while
+// the PROCESS gains exactly one deliberate, consented request. `updater.rs`
+// carries the reasoning; `attach` here is the only place it is hooked up.
 //
 // ── THE ONE THING THIS FILE DOES BEYOND OPENING A WINDOW ──────────────────────
 //
@@ -26,9 +36,9 @@
 
 #[cfg(feature = "local-engine")]
 mod engine;
+mod updater;
 
 fn main() {
-    #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
     // The two commands the window may call, registered in `engine.rs` so that this file names none
     // of them. With the feature off the line is not compiled and the builder is untouched.
@@ -36,6 +46,9 @@ fn main() {
     {
         builder = engine::attach(builder);
     }
+    // The auto-updater: the two plugins, the native "Check for Updates…" menu and
+    // its event handler. Always compiled — it ships in the published binary.
+    builder = updater::attach(builder);
 
     let app = builder
         .build(tauri::generate_context!())

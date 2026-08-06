@@ -57,25 +57,29 @@ describe("tauri.conf.json", () => {
 
   it("is ohmail, at the release version, under its own identifier", () => {
     expect(conf.productName).toBe("ohmail");
-    // Bare, with no `-preview` suffix: the MSI bundler rejects a semver
-    // pre-release identifier, and this number reaches the installer filenames
-    // (`ohmail_0.4.0_amd64.deb`).
+    // Bare — and now bare EVERYWHERE, not only here. The `-preview` suffix used
+    // to hang off package.json and Info.plist to mark "this build cannot update
+    // itself yet"; this build ships the auto-updater, so the suffix is retired
+    // and the whole product is `0.5.0`. "Beta" is the channel name, never a
+    // semver suffix. The MSI bundler rejects a pre-release identifier anyway,
+    // and this number reaches the installer filenames (`ohmail_0.5.0_amd64.deb`).
     //
-    // 0.4.0 rather than another 0.3.0: 0.3.0 is already published as an
-    // interface-only preview, and reusing the number would leave the two sets
-    // of checksums ambiguous about which artifact they describe. A version is
-    // how a downloader names what they have.
-    expect(conf.version).toBe("0.4.0");
+    // 0.5.0 rather than another 0.4.0: 0.4.0 shipped as an interface-only
+    // preview, and reusing the number would leave the two sets of checksums
+    // ambiguous about which artifact they describe. A version is how a
+    // downloader names what they have.
+    expect(conf.version).toBe("0.5.0");
     expect(conf.identifier).toBe("io.ohmail.desktop.tauri");
   });
 
-  // The version is written in four places in two spellings — bare here and in
-  // Cargo.toml, `-preview`-suffixed in package.json and Info.plist — and a
-  // release bumps all four by hand. Bumping three of them is the easy mistake,
-  // and it ships an installer whose filename disagrees with the tag it was cut
-  // from. So the NUMBER is asserted to be one number, whatever it is: this test
-  // does not care which version it is, only that nothing was left behind.
-  it("carries one version number, in both of its spellings", () => {
+  // The version is written in five places and, now that `-preview` is retired,
+  // in ONE spelling: bare in tauri.conf.json, Cargo.toml, Cargo.lock,
+  // package.json, and Info.plist's CFBundleShortVersionString. A release bumps
+  // them together by hand; bumping four of five is the easy mistake, and it
+  // ships an installer whose filename disagrees with the tag it was cut from. So
+  // the NUMBER is asserted to be one number, whatever it is — this test does not
+  // care which version, only that nothing was left behind.
+  it("carries one version number, one spelling, everywhere", () => {
     const pkg = JSON.parse(fs.readFileSync(path.resolve(APP, "package.json"), "utf8")) as {
       version: string;
     };
@@ -89,14 +93,15 @@ describe("tauri.conf.json", () => {
       plist,
     )?.[1];
 
-    /* THE `-preview` SUFFIX IS A CLAIM, NOT DECORATION, so it is asserted rather
-     * than tolerated. "Beta" was defined here to require an auto-updater, and
-     * this artifact does not have one: a build that cannot update itself is a
-     * preview whatever else it can do. So the suffix stays until that ships,
-     * and a bump that drops it has to fail here and be argued rather than
-     * slipped in with a version number. */
-    expect(pkg.version).toBe(`${conf.version}-preview`);
-    expect(shortVersion).toBe(`${conf.version}-preview`);
+    /* THE RETIRED `-preview` SUFFIX IS A CLAIM, NOT DECORATION. It used to mark
+     * "this build cannot update itself"; the auto-updater now ships, so the
+     * suffix is gone and every place carries the bare number. Re-adding
+     * `-preview` to any of these — or dropping the bare number out of step —
+     * has to fail here and be argued, exactly as dropping the suffix did. */
+    expect(pkg.version).toBe(conf.version);
+    // Info.plist belongs to the macOS packaging, but the two apps ship one
+    // release: its short-version string must be the same bare number.
+    expect(shortVersion).toBe(conf.version);
     // The crate the installers are built from, and the lockfile the mirror
     // publishes so a stranger can reproduce them.
     expect(cargo).toContain(`\nversion = "${conf.version}"\n`);
@@ -202,19 +207,36 @@ describe("the Rust side", () => {
   const main = read("src-tauri/src/main.rs");
   const cargo = read("src-tauri/Cargo.toml");
 
-  it("registers no commands and opens nothing", () => {
+  it("hand-rolls no command, no socket, no process in the always-compiled file", () => {
+    // main.rs is compiled into every build, so what it does NOT contain is a
+    // property of the shipped binary. It registers no webview command, and it
+    // opens no socket and no process itself — the updater's one network request
+    // goes through `tauri-plugin-updater` (see "the auto-updater" below), not
+    // through a client hand-rolled here.
     expect(main).not.toMatch(/invoke_handler/);
     expect(main).not.toMatch(/std::(fs|net|process)/);
     expect(main).not.toMatch(/reqwest|hyper|tokio::net/);
   });
 
-  it("depends on tauri alone, with the defaults minus compression", () => {
+  it("depends on tauri plus exactly the two updater plugins, defaults minus compression", () => {
     expect(cargo).toMatch(/^tauri = \{ version = "2", default-features = false, features = \[$/m);
     // Uncompressed embedding is what makes `strings <installer> | grep http`
     // a real audit rather than a look at a brotli blob.
     expect(cargo).not.toMatch(/"compression"/);
-    expect(cargo).not.toMatch(/tauri-plugin-/);
-    expect(cargo).not.toMatch(/reqwest|hyper|ureq|curl/);
+    // The plugins are an ALLOW-LIST, not "none": the auto-updater added exactly
+    // two, and a THIRD `tauri-plugin-` appearing must fail this until someone
+    // decides it belongs. Scanned over the runtime `[dependencies]` only —
+    // `[dev-dependencies]` never ship in the binary.
+    const depsStart = cargo.indexOf("[dependencies]");
+    const devStart = cargo.indexOf("[dev-dependencies]");
+    const runtime = cargo.slice(depsStart, devStart >= 0 ? devStart : undefined);
+    const plugins = [...runtime.matchAll(/^(tauri-plugin-[a-z-]+)\b/gm)].map((m) => m[1]).sort();
+    expect(plugins).toEqual(["tauri-plugin-dialog", "tauri-plugin-updater"]);
+    // No HAND-ROLLED HTTP client is declared. `tauri-plugin-updater` pulls
+    // `reqwest` in transitively — that is the one HTTP client in the binary, and
+    // it is reached only from `updater.rs` — but nothing here declares one.
+    // Line-anchored so the header comment naming reqwest/hyper does not trip it.
+    expect(cargo).not.toMatch(/^(reqwest|hyper|ureq|curl)\b/m);
   });
 
   /**
@@ -225,9 +247,15 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these three files and no others", () => {
+  it("is these five files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
-    expect(files).toEqual(["engine.rs", "engine_tests.rs", "main.rs"]);
+    expect(files).toEqual([
+      "engine.rs",
+      "engine_tests.rs",
+      "main.rs",
+      "updater.rs",
+      "updater_tests.rs",
+    ]);
   });
 
   /**
@@ -243,12 +271,15 @@ describe("the Rust side", () => {
     // `default` exists and is empty. A missing `[features]` block would also match "not
     // enabled", and would be a different fact.
     expect(cargo).toMatch(/^default = \[\]$/m);
-    expect(cargo).toMatch(/^local-engine = \["dep:serde_json", "dep:keyring", "dep:getrandom"\]$/m);
-    // EVERY dependency the feature adds is optional, so the default build's graph is unchanged.
-    // Not optional would mean the preview compiles all three in for nothing — and two of them are
-    // the operating system's keystore, which the preview has no business being linked against at
-    // all: it stores nothing, so it needs nowhere to store it.
-    expect(cargo).toMatch(/^serde_json = \{ version = "1", optional = true \}$/m);
+    // serde_json dropped OUT of the feature: `tauri::generate_context!` embeds the
+    // updater's `plugins` config as a `serde_json::Value`, so the crate references
+    // serde_json in every build now and it is a direct, non-optional dependency.
+    // It compiles nothing new — tauri already pulls it — so the graph is unchanged.
+    expect(cargo).toMatch(/^local-engine = \["dep:keyring", "dep:getrandom"\]$/m);
+    expect(cargo).toMatch(/^serde_json = "1"$/m);
+    // The keystore dependencies stay optional: the preview has no business being
+    // linked against the OS keystore at all — it stores nothing, so it needs
+    // nowhere to store it. Enabled only by `local-engine`, which is off.
     expect(cargo).toMatch(/^keyring = \{ version = "4", optional = true \}$/m);
     expect(cargo).toMatch(/^getrandom = \{ version = "0.3", optional = true \}$/m);
   });
@@ -319,6 +350,96 @@ describe("the Rust side", () => {
     expect(engine).toMatch(/\.stdin\(Stdio::piped\(\)\)/);
     expect(engine).toMatch(/\.stdout\(Stdio::piped\(\)\)/);
     expect(engine).toMatch(/\.stderr\(Stdio::piped\(\)\)/);
+  });
+});
+
+describe("the auto-updater", () => {
+  const conf = readJson("src-tauri/tauri.conf.json") as never as {
+    version: string;
+    plugins?: {
+      updater?: { endpoints?: string[]; pubkey?: string; windows?: { installMode?: string } };
+    };
+  };
+  const updater = read("src-tauri/src/updater.rs");
+
+  it("points at exactly one pinned HTTPS feed — the project's own releases", () => {
+    const endpoints = conf.plugins?.updater?.endpoints ?? [];
+    expect(endpoints).toHaveLength(1);
+    const url = endpoints[0]!;
+    expect(url.startsWith("https://")).toBe(true);
+    expect(url).toBe(
+      "https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json",
+    );
+    // One literal endpoint — no template host, no wildcard.
+    expect(url).not.toMatch(/\{\{|\*/);
+  });
+
+  /**
+   * THE PUBKEY IS THE WHOLE SECURITY OF THE UPDATER, so its presence is asserted
+   * two ways: here (a valid, decodable minisign public key ships in the config)
+   * and in build.rs (an empty pubkey fails the build — the packaging gate). The
+   * negative control below drives the SAME predicate over an emptied and an
+   * absent pubkey, so "a build that trusts an unsigned feed" cannot pass.
+   */
+  const pubkeyIsValid = (c: typeof conf): boolean => {
+    const key = c.plugins?.updater?.pubkey;
+    if (typeof key !== "string" || key.length < 40) return false;
+    let text: string;
+    try {
+      text = Buffer.from(key, "base64").toString("utf8");
+    } catch {
+      return false;
+    }
+    // tauri wraps the minisign public-key FILE as base64; the inner text names
+    // it and carries the `RW…` key line.
+    return /minisign public key/.test(text) && /\nRW/.test(text);
+  };
+
+  it("ships a valid minisign public key to verify every payload against", () => {
+    expect(pubkeyIsValid(conf)).toBe(true);
+  });
+
+  it("rejects a missing or empty pubkey — the negative control for the packaging gate", () => {
+    const emptied = {
+      ...conf,
+      plugins: { updater: { ...conf.plugins!.updater!, pubkey: "" } },
+    };
+    expect(pubkeyIsValid(emptied)).toBe(false);
+
+    const absent = { ...conf, plugins: { updater: { ...conf.plugins!.updater! } } };
+    delete (absent.plugins.updater as { pubkey?: string }).pubkey;
+    expect(pubkeyIsValid(absent)).toBe(false);
+  });
+
+  it("installs on consent, never silently — notify-and-install", () => {
+    // Consent is asked before a byte installs, and the install is gated behind
+    // that answer; a second prompt gates the restart.
+    expect(updater).toMatch(/\.blocking_show\(\)/);
+    expect(updater).toMatch(/if !consented \{\s*return;/);
+    expect(updater).toMatch(/download_and_install/);
+  });
+
+  it("triggers only from the native menu, never the webview", () => {
+    expect(updater).toMatch(/CHECK_FOR_UPDATES_ID/);
+    expect(updater).toMatch(/Check for Updates/);
+    expect(updater).toMatch(/on_menu_event/);
+    // The capability grant to the window stays empty — asserted in "capabilities"
+    // above; the updater is Rust-side and the webview gains no updater permission.
+  });
+
+  it("reaches the network only through the plugin — no hand-rolled socket", () => {
+    // updater.rs is ALLOWED to reach the network (that is its job), but only via
+    // tauri-plugin-updater; it must not open a raw socket or a second HTTP client.
+    expect(updater).toMatch(/tauri_plugin_updater/);
+    expect(updater).not.toMatch(/reqwest|hyper|ureq|curl|TcpStream|TcpListener|UnixStream/);
+    expect(updater).not.toMatch(/std::(fs|net|process)/);
+  });
+
+  it("refuses a downgrade in the version gate the install path calls", () => {
+    // should_offer is strictly-newer; prompt_and_install returns early when it is
+    // false. The exhaustive boundary table lives in updater_tests.rs (Rust).
+    expect(updater).toMatch(/pub fn should_offer\(/);
+    expect(updater).toMatch(/candidate > installed/);
   });
 });
 
