@@ -77,6 +77,7 @@ export {
   DECISION_LABEL,
   DECISION_DONE_LABEL,
   DECISION_KEY,
+  DECISION_QUIET,
 } from "./composites/DecisionBar.js";
 export type {
   DecisionBarProps,

@@ -30,7 +30,16 @@ export const DECISION_KEY: Record<DecisionDestination, string> = {
   spam: "x",
 };
 const DESTINATIONS: DecisionDestination[] = ["ohbox", "reads", "receipts", "screened", "spam"];
-const QUIET = new Set<DecisionDestination>(["screened", "spam"]);
+/**
+ * The DEMOTING destinations — the two piles you triage mail OUT to, not admit it into.
+ *
+ * Exported so the one truth "a demoting destination has no read verb" lives beside `DECISION_KEY`
+ * and is read rather than re-listed: the ✓ half is dropped here, the ⇧-twin key binding is dropped
+ * in `ScreenerView`, and the mark-read is clamped at the decision funnel in `screener-state.ts`,
+ * all from this same set. A consumer that hand-listed "screened, spam" in three places would grow
+ * the ✓ back the day someone edited two of them.
+ */
+export const DECISION_QUIET = new Set<DecisionDestination>(["screened", "spam"]);
 
 export interface DecisionBarProps {
   /** The AI-preselected destination: ringed, warm, accepts on "y". */
@@ -43,7 +52,8 @@ export interface DecisionBarProps {
   onDecide: (dest: DecisionDestination, opts: { markRead: boolean }) => void;
   /**
    * Bind the keyboard map on document: y accepts the AI suggestion,
-   * o/r/c/n/x file, ⇧+key files + marks read.
+   * o/r/c/n/x file, ⇧+key files + marks read — except for the demoting destinations
+   * (Screen out, Spam), which have no read verb, so ⇧ there just files.
    */
   keyboard?: boolean;
   /** Mobile back affordance. */
@@ -111,14 +121,15 @@ export function DecisionBar({
       if (lower === "y") {
         if (aiDest) {
           e.preventDefault();
-          onDecide(aiDest, { markRead: e.shiftKey });
+          // ⇧ marks read only where reading is meaningful — never for a demoting destination.
+          onDecide(aiDest, { markRead: e.shiftKey && !DECISION_QUIET.has(aiDest) });
         }
         return;
       }
       const dest = plain[lower];
       if (dest) {
         e.preventDefault();
-        onDecide(dest, { markRead: e.shiftKey });
+        onDecide(dest, { markRead: e.shiftKey && !DECISION_QUIET.has(dest) });
       }
     };
     document.addEventListener("keydown", onKey);
@@ -136,6 +147,7 @@ export function DecisionBar({
         {DESTINATIONS.map((d) => {
           const ai = aiDest === d;
           const k = DECISION_KEY[d];
+          const quiet = DECISION_QUIET.has(d);
           return (
             <SplitButton
               key={d}
@@ -144,14 +156,22 @@ export function DecisionBar({
                  else the capsule shows the letter that files it, which is live in both
                  modes: the registry declares o/r/c/n/x from this same `DECISION_KEY`. */
               kbdHint={keyboard && ai ? "y" : k}
-              checkKbdHint={`⇧${k.toUpperCase()}`}
               ai={ai}
-              quiet={QUIET.has(d)}
+              quiet={quiet}
               title={`${DECISION_DONE_LABEL[d]} (${k})`}
-              checkTitle={`${DECISION_DONE_LABEL[d]}, mark read (${k.toUpperCase()})`}
-              checkLabel={`${DECISION_DONE_LABEL[d]}, mark read`}
               onPress={() => onDecide(d, { markRead: false })}
-              onCheckPress={() => onDecide(d, { markRead: true })}
+              /* No "& mark read" ✓ for the demoting destinations — you don't read what you
+                 screen out or mark spam. The mail destinations keep both halves. */
+              {...(quiet
+                ? {}
+                : {
+                    check: {
+                      onPress: () => onDecide(d, { markRead: true }),
+                      label: `${DECISION_DONE_LABEL[d]}, mark read`,
+                      kbdHint: `⇧${k.toUpperCase()}`,
+                      title: `${DECISION_DONE_LABEL[d]}, mark read (${k.toUpperCase()})`,
+                    },
+                  })}
             />
           );
         })}

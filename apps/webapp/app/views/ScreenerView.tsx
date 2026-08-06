@@ -16,6 +16,7 @@ import {
   DecisionBar,
   DECISION_DONE_LABEL,
   DECISION_KEY,
+  DECISION_QUIET,
   Icon,
   Kbd,
   ListPane,
@@ -365,24 +366,32 @@ export function ScreenerView({
       disabled: !waiting || state.waitingCount === 0,
       run: () => state.markAllSpam(scopeOf),
     },
-    // The five destinations, and their ⇧ twins that also mark the held mail read.
+    // The five destinations, each with the letter that files it. The mail destinations also
+    // carry a ⇧ twin that marks the held mail read; the demoting ones (Screen out, Spam) do
+    // NOT — you don't read what you triage out, so the twin is dropped rather than made a
+    // silent no-op, which would print the same destination twice in the `?` sheet. The
+    // decision funnel in `screener-state.ts` clamps read for these regardless. SCR-READBOX.
     ...(["ohbox", "reads", "receipts", "screened", "spam"] as DecisionDestination[]).flatMap(
-      (dest): KeyBinding[] => [
-        {
+      (dest): KeyBinding[] => {
+        const file: KeyBinding = {
           chord: DECISION_KEY[dest],
           group: "screener",
           label: t("keyFile", { dest: DECISION_DONE_LABEL[dest] }),
           disabled: !decidable,
           run: () => decideCurrent(dest as never, false),
-        },
-        {
-          chord: `shift+${DECISION_KEY[dest]}`,
-          group: "screener",
-          label: t("keyFileRead", { dest: DECISION_DONE_LABEL[dest] }),
-          disabled: !decidable,
-          run: () => decideCurrent(dest as never, true),
-        },
-      ],
+        };
+        if (DECISION_QUIET.has(dest)) return [file];
+        return [
+          file,
+          {
+            chord: `shift+${DECISION_KEY[dest]}`,
+            group: "screener",
+            label: t("keyFileRead", { dest: DECISION_DONE_LABEL[dest] }),
+            disabled: !decidable,
+            run: () => decideCurrent(dest as never, true),
+          },
+        ];
+      },
     ),
   ];
   useKeyBindings(keys);

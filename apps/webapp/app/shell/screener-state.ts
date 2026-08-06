@@ -47,6 +47,7 @@ import {
 import type { SuggestionOverlay } from "./screener-suggest";
 import {
   DECISION_DONE_LABEL,
+  DECISION_QUIET,
   type DecisionDestination,
   type DecisionScope,
   type ToastFn,
@@ -350,10 +351,20 @@ export function useScreenerState(
   ) => {
     const id = sender.id;
     if (s.pending.has(id)) return;
+    // ── THE ONE PLACE "MARK READ" IS CLAMPED FOR THE DEMOTING PILES ─────────────────────────
+    //
+    // You do not read what you triage out: filing to Screen out or Spam carries no read verb.
+    // The ✓ is gone from those capsules and their ⇧-twin keys are unbound — but this is the
+    // funnel every decision path converges on (the ✓, o/r/c/n/x, ⇧Enter accepting an AI
+    // suggestion of a demoting destination), so clamping HERE is what makes the guarantee
+    // structural rather than three UI branches that each have to remember. `commit` reads
+    // `entry.read` for both the wire `read` flag and the derived-row `mark_seen` batch, so a
+    // false here stops both. SCR-READBOX.
+    const read = opts.read && !DECISION_QUIET.has(dest);
     const entry: PendingEntry = {
       sender,
       dest,
-      read: opts.read,
+      read,
       scope: opts.scope,
       outTimer: setTimeout(() => {
         s.out.delete(id);
@@ -368,12 +379,12 @@ export function useScreenerState(
     const target = scopeText(sender, opts.scope);
     const message =
       dest === "screened"
-        ? t("toastScreened", { target, read: opts.read ? "true" : "false" })
+        ? t("toastScreened", { target, read: read ? "true" : "false" })
         : dest === "spam"
           ? t("toastSpam", { target: sender.from.address })
           : t("toastFiled", {
               dest: DECISION_DONE_LABEL[dest],
-              read: opts.read ? "true" : "false",
+              read: read ? "true" : "false",
               target,
             });
     toast(message, {
