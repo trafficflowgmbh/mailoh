@@ -1,14 +1,20 @@
 "use client";
 
 /**
- * ═══ THE LAST TEN CENTIMETRES: A PRESS BECOMES A FILE ═════════════════════════════════════
+ * ═══ THE LAST TEN CENTIMETRES: A PRESS BECOMES A PREVIEW, OR A FILE ═══════════════════════
  *
- * The engine holds every attachment's state and mints the Blob URL; `AttachmentStrip` draws
- * it. Neither of them puts a file on somebody's disk, and neither of them can: saving is a
- * DOM act, and the strip is a pure component that takes `onOpen` and asks no questions. This
- * module is that seam, and it exists as its own file for two reasons — `AppShell` is 1 900
- * lines and does not need four more callbacks in it, and every decision below is testable in
- * jsdom without mounting a shell.
+ * A press USED to be one thing — a download. It is now two, and which one is decided one
+ * layer up, in `MessagePane`, from the attachment's declared type: a type this app can render
+ * (image, PDF, text) opens the Quick-Look overlay through `openAttachmentPreview`; everything
+ * else still becomes a file through {@link AttachmentsChrome.open} below. The overlay carries a
+ * Download of its own, so the file is never more than one further press away.
+ *
+ * The engine holds every attachment's state, mints the Blob URL and RETAINS the typed bytes;
+ * `AttachmentStrip` draws it. Neither of them puts a file on somebody's disk, and neither of
+ * them can: saving is a DOM act, and the strip is a pure component that takes `onOpen` and asks
+ * no questions. This module is that seam, and it exists as its own file for two reasons —
+ * `AppShell` is 1 900 lines and does not need more callbacks in it, and every decision below is
+ * testable in jsdom without mounting a shell.
  *
  * ── WHY `<a download>` AND NEVER `window.open` ────────────────────────────────────────────
  *
@@ -66,8 +72,30 @@ export interface AttachmentsChrome {
    * type, so the wire `MessagePane` already passes carries the state without that file changing.
    */
   itemsOf(messageId: string): AttachmentsView;
-  /** Fetch (if needed) and SAVE one attachment. The press is the whole intent. */
+  /**
+   * Fetch (if needed) and SAVE one attachment — the DOWNLOAD path. It backs the overlay's own
+   * Download button and the tile press for a type this app will not render (a docx, a zip, an
+   * SVG — SVG deliberately, it is a document that executes script). The preview path does not
+   * go through here; it goes through {@link ensure}.
+   */
   open(messageId: string, attachmentId: string): void;
+  /**
+   * FETCH the bytes and hold them — NO save. This is what the preview overlay presses to bring
+   * an `idle` item to `ready` so it can render the image, PDF or text it already declared.
+   *
+   * `retry` is passed ONLY on a human press of the overlay's own retry over a `failed` item:
+   * the engine refuses an automatic re-ask (a re-render must not loop a `cost:"connection"`
+   * fetch against a server that already refused — `openAttachment`), so an `ensure` without the
+   * flag returns without patching a failed item, and the overlay reads that held `failed` state
+   * rather than spinning on it.
+   */
+  ensure(messageId: string, attachmentId: string, opts?: { retry?: boolean }): void;
+  /**
+   * The FETCHED BYTES of one ready item, or `undefined` — the typed Blob the engine retained.
+   * The preview parses it directly (`arrayBuffer()` for a PDF, `text()` for a text part); it
+   * never `fetch`es the object URL, which `connect-src 'self'` refuses on the live host.
+   */
+  blobOf(messageId: string, attachmentId: string): Blob | undefined;
   /** Fetch the whole set as one server-assembled zip and save it. */
   downloadAll(messageId: string): void;
   downloadingAll(messageId: string): boolean;
@@ -241,6 +269,22 @@ export function useMessageAttachments(
     [engine],
   );
 
+  const ensure = useCallback(
+    (id: string, attachmentId: string, opts: { retry?: boolean } = {}): void => {
+      // FETCH, NEVER SAVE. `openAttachment` is single-flight and returns early when the item is
+      // already `ready`, so calling this from the overlay's render effect cannot issue a second
+      // `cost:"connection"` fetch — and it refuses to re-ask a `failed` item unless `retry` is
+      // set, which the overlay passes only from a human press of its own retry.
+      void engine.openAttachment(id, attachmentId, opts.retry ? { retry: true } : {});
+    },
+    [engine],
+  );
+
+  const blobOf = useCallback(
+    (id: string, attachmentId: string): Blob | undefined => engine.attachmentBlobOf(id, attachmentId),
+    [engine],
+  );
+
   const downloadAll = useCallback(
     (id: string): void => {
       void (async () => {
@@ -281,8 +325,8 @@ export function useMessageAttachments(
    * consumer can see changes: the engine, or whether a zip is in flight.
    */
   const chrome = useMemo(
-    (): AttachmentsChrome => ({ itemsOf, open, downloadAll, downloadingAll: downloadingAllOf }),
-    [itemsOf, open, downloadAll, downloadingAllOf],
+    (): AttachmentsChrome => ({ itemsOf, open, ensure, blobOf, downloadAll, downloadingAll: downloadingAllOf }),
+    [itemsOf, open, ensure, blobOf, downloadAll, downloadingAllOf],
   );
 
   return available ? chrome : undefined;

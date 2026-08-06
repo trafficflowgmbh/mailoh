@@ -48,6 +48,18 @@ export interface MessageChrome {
   /** Open the screening popover for `messageId`, anchored on `anchor`. */
   openSenderMenu: (messageId: string, anchor: HTMLElement | null) => void;
   /**
+   * OPEN THE QUICK-LOOK PREVIEW for one attachment on `messageId`. The pane dispatches a tile
+   * press here for a type this app can render (image, PDF, text) and to `attachments.open`
+   * (download) for everything else.
+   *
+   * The overlay's state lives in `AppShell` — beside the reader and the reply run — so it can
+   * derive-close when the selected message changes and the engine revokes the object URLs the
+   * overlay was rendering. It travels through the chrome, and not as a prop, for the reason the
+   * rest of this context does: `MessagePane` is mounted twice while the reader is open. Inert in
+   * the default chrome, so a pane with no shell behind it simply does nothing on a preview press.
+   */
+  openAttachmentPreview: (messageId: string, attachmentId: string) => void;
+  /**
    * The conversation this message belongs to, oldest first — `threadOf`, wired to the live
    * engine. Empty when there is no conversation; see the selector.
    *
@@ -151,6 +163,7 @@ const MessageChromeContext = createContext<MessageChrome>({
   sendReply: noop,
   replySendState: () => ({ phase: "idle" }),
   openSenderMenu: noop,
+  openAttachmentPreview: noop,
   conversationOf: () => [],
   /**
    * The inert default is the PRE-HYDRATION expression, `body ?? snippet`, reported honestly:

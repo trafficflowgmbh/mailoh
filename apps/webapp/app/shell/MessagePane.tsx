@@ -10,6 +10,7 @@ import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, Icon, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
 import { AttachmentStrip } from "../components/AttachmentStrip";
+import { isPreviewable } from "../components/AttachmentPreview";
 import { MessageBody } from "../components/MessageBody";
 import { ConversationEntries, ConversationHead } from "./Conversation";
 import { PLACE_LABEL, avatarHue, displayTime, hueOf, initialsOf, metaLine, rowAddress, senderName, tagsOfMessage } from "./format";
@@ -529,7 +530,21 @@ export function MessagePane({
       {attachments ? (
         <AttachmentStrip
           items={attachments.itemsOf(message.id)}
-          onOpen={(attachmentId) => attachments.open(message.id, attachmentId)}
+          /* THE PRESS IS DISPATCHED BY TYPE, HERE and not in the strip — the strip stays a pure
+             component that asks no questions. A type this app can render inline (image, PDF,
+             text) opens the Quick-Look overlay; everything else — a docx, a zip, and an SVG,
+             which is a document that executes script — takes the download path unchanged. The
+             metadata carries the type whatever the item's byte state, so the decision needs no
+             fetch. */
+          onOpen={(attachmentId) => {
+            const view = attachments.itemsOf(message.id);
+            const item = view.state === "ready" ? view.items.find((i) => i.id === attachmentId) : undefined;
+            if (item && isPreviewable(item.mimeType)) {
+              chrome.openAttachmentPreview(message.id, attachmentId);
+            } else {
+              attachments.open(message.id, attachmentId);
+            }
+          }}
           onDownloadAll={() => attachments.downloadAll(message.id)}
           downloadingAll={attachments.downloadingAll(message.id)}
         />

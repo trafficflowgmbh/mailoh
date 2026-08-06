@@ -124,6 +124,20 @@ export interface AttachmentItem {
    * site to remember.
    */
   objectUrl?: string;
+  /**
+   * The fetched bytes, as the type-DOWNGRADED Blob the {@link objectUrl} was minted from.
+   * Present exactly when `objectUrl` is, held only in memory, and dropped with the list.
+   *
+   * A preview surface reads this to parse a PDF or a text part rather than re-fetching the
+   * object URL: `fetch(blob:…)` is governed by `connect-src`, and `'self'` does NOT match the
+   * `blob:` scheme, so a re-fetch that passes every jsdom test dies on the deployed host. The
+   * Blob already pins these bytes for the URL's lifetime, so carrying it costs nothing new.
+   *
+   * It is the POST-DOWNGRADE blob (see {@link RENDERABLE_MIME}): an `image/svg+xml` part is
+   * `application/octet-stream` here, so a consumer that minted its own URL from it could not
+   * reopen the document-execution hole the downgrade closes.
+   */
+  blob?: Blob;
   /** The server's own sentence when `state` is `failed` or `too_large`. */
   error?: string;
 }
@@ -1016,6 +1030,18 @@ export class OhmailEngine {
   }
 
   /**
+   * The FETCHED BYTES of one ready attachment — the type-downgraded Blob the object URL was
+   * minted from — or `undefined` when it has not been fetched yet.
+   *
+   * A preview surface reads this to parse a PDF (`blob.arrayBuffer()`) or a text part
+   * (`blob.text()`) WITHOUT re-fetching the object URL. See {@link AttachmentItem.blob} for why
+   * a re-fetch is not an option and why this is the post-downgrade blob, not the wire one.
+   */
+  attachmentBlobOf(messageId: string, attachmentId: string): Blob | undefined {
+    return this.itemOf(messageId, attachmentId)?.blob;
+  }
+
+  /**
    * Read one message's attachment METADATA — filenames, types, sizes. No bytes, no IMAP.
    *
    * `cost: "read"` on the route: this is an indexed row read against the caller's own account and
@@ -1134,10 +1160,13 @@ export class OhmailEngine {
         // REVOKE BEFORE RE-MINTING. A retry over a `failed` item that had somehow minted a URL,
         // or any second pass, would otherwise leak the old one for the life of the document.
         this.revokeItem(messageId, attachmentId);
-        const objectUrl = this.mintObjectUrl(blob, current.mimeType);
+        const minted = this.mintObjectUrl(blob, current.mimeType);
+        // The URL and the typed Blob are stored together: a preview parses the Blob (no
+        // `fetch(blob:)`, which `connect-src 'self'` refuses on the live host), the strip and
+        // `<a download>` use the URL, and both are dropped by `releaseAttachments` at once.
         this.patchAttachment(messageId, attachmentId, {
           state: "ready",
-          ...(objectUrl ? { objectUrl } : {}),
+          ...(minted ? { objectUrl: minted.url, blob: minted.blob } : {}),
         });
       })
       .catch((err: unknown) => {
@@ -1258,14 +1287,18 @@ export class OhmailEngine {
    * Returns `undefined` where there is no `URL.createObjectURL` — SSR and the node test
    * environment — so a `ready` item there simply carries no URL rather than throwing inside a
    * render.
+   *
+   * It returns the typed Blob ALONGSIDE the URL, not just the URL, so the two cannot diverge:
+   * the bytes a preview parses are byte-for-byte the ones the browser would render or save, at
+   * the same downgraded type. Minting and retention are one act for exactly that reason.
    */
-  private mintObjectUrl(blob: Blob, declaredMime: string): string | undefined {
+  private mintObjectUrl(blob: Blob, declaredMime: string): { url: string; blob: Blob } | undefined {
     const U = (globalThis as {
       URL?: { createObjectURL?: (b: Blob) => string };
     }).URL;
     if (typeof U?.createObjectURL !== "function") return undefined;
     const safeType = RENDERABLE_MIME.has(declaredMime.toLowerCase()) ? declaredMime : "application/octet-stream";
     const typed = blob.type === safeType ? blob : new Blob([blob], { type: safeType });
-    return U.createObjectURL(typed);
+    return { url: U.createObjectURL(typed), blob: typed };
   }
 }
