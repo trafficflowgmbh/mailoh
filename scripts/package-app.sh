@@ -65,6 +65,15 @@ codesign --verify --verbose=2 "$APP"
 [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = "io.ohmail.desktop" ]
 [ -s "$APP/Contents/Resources/ohmail.icns" ]
 
+# Dark Mode must follow the system. NSRequiresAquaSystemAppearance pins an app to the light
+# (Aqua) appearance no matter what the user has chosen, which is exactly the "always light in
+# Dark Mode" failure. It must never be present in the bundled Info.plist. PlistBuddy exits
+# non-zero when a key is absent, so a zero exit here means the lock is present — refuse it.
+if /usr/libexec/PlistBuddy -c 'Print :NSRequiresAquaSystemAppearance' "$APP/Contents/Info.plist" >/dev/null 2>&1; then
+  echo "Info.plist sets NSRequiresAquaSystemAppearance, which locks the app out of Dark Mode" >&2
+  exit 1
+fi
+
 # ---------------------------------------------------------------- dmg
 say "building ohmail.dmg"
 STAGE="$(mktemp -d)"
