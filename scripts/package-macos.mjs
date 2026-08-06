@@ -115,6 +115,27 @@ if (process.platform !== "darwin") {
   die("this builds a macOS .app and needs macOS: hdiutil, codesign and PlistBuddy are Apple's.");
 }
 
+/* ── MONOREPO vs PUBLISHED MIRROR ──────────────────────────────────────────────
+ * This script reconstructs the mirror's SHAPE in the MONOREPO, where the payload lives under
+ * `public/ohmail/` and the icon mapping is read out of `publish-desktop.mjs`. On the PUBLIC MIRROR
+ * that shape already exists at the repo root — `Resources/` and `scripts/package-app.sh` are there,
+ * the icon is `Resources/ohmail.icns`, and neither `public/ohmail/` nor `publish-desktop.mjs` is
+ * published at all. So on the mirror there is nothing to stage: it packages in place, running the
+ * mirror's own `package-app.sh` and embedding into its output. The two signals are required to
+ * DISAGREE, so a half-populated or unexpected tree is a hard stop rather than a wrong guess — a
+ * packaging validation that ran in the wrong layout is exactly how a green build hid a real break. */
+const MONOREPO_LAYOUT = fs.existsSync(path.join(REPO, "public/ohmail/Resources"));
+const MIRROR_LAYOUT = fs.existsSync(path.join(REPO, "Resources/Info.plist"))
+  && fs.existsSync(path.join(REPO, "scripts/package-app.sh"));
+if (MONOREPO_LAYOUT === MIRROR_LAYOUT) {
+  die(`cannot tell whether this is the monorepo or the published mirror:\n` +
+      `  public/ohmail/Resources ${MONOREPO_LAYOUT ? "exists" : "is absent"}; ` +
+      `Resources/Info.plist + scripts/package-app.sh ${MIRROR_LAYOUT ? "exist" : "are absent"}.\n` +
+      `  Exactly one must hold — a tree where both or neither do is not a layout this can package.`);
+}
+const MIRROR_MODE = MIRROR_LAYOUT;
+say(MIRROR_MODE ? "  layout: published mirror (packaging in place)" : "  layout: monorepo (staging from git archive)");
+
 /* ─────────────────────────────────────────────────── the payload it needs ──
  * Everything the staged tree is built from. This list is also the HARD scope of
  * the dirty refusal below: dirt in any of these changes what the bundle
@@ -241,8 +262,10 @@ if (SIGN) {
   say(`  signing       ad-hoc (NOT a Developer ID, NOT notarised) — pass --sign to change`);
 }
 
-for (const root of STAGE_ROOTS) {
-  if (!fs.existsSync(path.join(REPO, root))) die(`missing bundle input: ${root}`);
+for (const root of MIRROR_MODE
+  ? ["apps/macos", "packages/tokens/src", "Resources/Info.plist", "Resources/ohmail.icns", "scripts/package-app.sh"]
+  : STAGE_ROOTS) {
+  if (!fs.existsSync(path.join(REPO, root))) die(`missing bundle input${MIRROR_MODE ? " (mirror)" : ""}: ${root}`);
 }
 
 /* ────────────────────────────────────────────────────────────── staging ──
@@ -252,37 +275,18 @@ for (const root of STAGE_ROOTS) {
  * checkout — a working tree can hold untracked files a fresh clone will not, and
  * a build that quietly depends on one is not reproducible.
  */
-step("staging the mirror layout from git archive HEAD");
-
-const STAGE = fs.mkdtempSync(path.join(os.tmpdir(), "ohmail-pkg-"));
-const RAW = path.join(STAGE, "raw");
-const TREE = path.join(STAGE, "tree");
-fs.mkdirSync(RAW);
-fs.mkdirSync(TREE);
-
-const tarball = path.join(STAGE, "payload.tar");
-execFileSync("git", ["archive", "--format=tar", "-o", tarball, SHA, "--", ...STAGE_ROOTS], { cwd: REPO });
-execFileSync("tar", ["-xf", tarball, "-C", RAW]);
-fs.rmSync(tarball);
-
-/* ── the mirror mapping, read rather than restated ────────────────────────
+/* ── the mirror mapping, read rather than restated (MONOREPO only) ─────────
  * The icon is the one asset this script needs that publish-desktop.mjs also
  * maps, and a second copy of that mapping is a second thing to keep in step. It
  * is therefore READ OUT of publish-desktop.mjs — and out of the ARCHIVED copy,
- * so the recipe comes from the same commit as everything else.
- *
- * That script has no main guard: it does its work at the top level, so an
- * `import` from here would attempt a real publish. `PAYLOAD` is extracted as
- * source text and evaluated in a `node:vm` context with no globals instead; the
- * entries are plain objects and strings, so nothing else runs. Same technique,
- * for the same reason, as `test/desktop-mirror-excludes-the-engine.test.ts`.
- *
- * Extraction failing is a hard stop, never a fallback to a guessed path: an
- * extractor that has silently stopped matching would otherwise hand back an
- * empty list and every lookup below would quietly find nothing.
- */
-function iconSource() {
-  const src = fs.readFileSync(path.join(RAW, "scripts/publish-desktop.mjs"), "utf8");
+ * so the recipe comes from the same commit as everything else. That script has
+ * no main guard, so PAYLOAD is extracted as text and evaluated in a `node:vm`
+ * context with no globals rather than imported. Extraction failing is a hard
+ * stop, never a fallback to a guessed path. On the mirror this is never called:
+ * publish-desktop.mjs is not published there and the icon already sits at
+ * Resources/ohmail.icns. */
+function iconSource(rawDir) {
+  const src = fs.readFileSync(path.join(rawDir, "scripts/publish-desktop.mjs"), "utf8");
   const m = src.match(/const PAYLOAD = \[([\s\S]*?)\n\];/);
   if (!m) die("could not extract PAYLOAD from scripts/publish-desktop.mjs — has its shape changed?");
   const entries = vm.runInNewContext(`[${m[1]}]`);
@@ -303,31 +307,61 @@ function iconSource() {
   return hit.from;
 }
 
-/* `public/ohmail/*` loses its prefix exactly as publish-desktop.mjs's template
- * copy does; apps/macos and packages/tokens are identity mappings. */
-const STAGE_MAP = [
-  { from: "apps/macos", to: "apps/macos" },
-  { from: "packages/tokens/src", to: "packages/tokens/src" },
-  { from: "public/ohmail/Resources", to: "Resources" },
-  { from: "public/ohmail/scripts", to: "scripts" },
-  { from: iconSource(), to: "Resources/ohmail.icns" },
-];
+/* ── STAGE, OR PACKAGE IN PLACE ────────────────────────────────────────────────
+ * MONOREPO: reconstruct the mirror shape from `git archive HEAD` — the build then comes from the
+ * commit it claims by construction, and it proves the script works from a clean checkout. MIRROR:
+ * the shape already exists at the repo root, so `TREE` is the repo itself, `PACKAGE_APP` is the
+ * mirror's own script, and there is nothing to stage. The embed/licence/boot/DMG half below is
+ * identical in both. */
+let STAGE = null;
+let TREE;
+let PACKAGE_APP;
 
-for (const { from, to } of STAGE_MAP) {
-  const src = path.join(RAW, from);
-  if (!fs.existsSync(src)) {
-    die(`${from} is not in commit ${SHORT} — it is untracked, so a clean checkout\n` +
-        `  would not have it and this build is not reproducible.`);
+if (MIRROR_MODE) {
+  step("packaging in place (mirror layout — no staging)");
+  TREE = REPO;
+  PACKAGE_APP = path.join(REPO, "scripts/package-app.sh");
+  fs.chmodSync(PACKAGE_APP, 0o755);
+  say(`  the mirror carries Resources/ and scripts/package-app.sh at its root; nothing to stage`);
+} else {
+  step("staging the mirror layout from git archive HEAD");
+  STAGE = fs.mkdtempSync(path.join(os.tmpdir(), "ohmail-pkg-"));
+  const RAW = path.join(STAGE, "raw");
+  TREE = path.join(STAGE, "tree");
+  fs.mkdirSync(RAW);
+  fs.mkdirSync(TREE);
+
+  const tarball = path.join(STAGE, "payload.tar");
+  execFileSync("git", ["archive", "--format=tar", "-o", tarball, SHA, "--", ...STAGE_ROOTS], { cwd: REPO });
+  execFileSync("tar", ["-xf", tarball, "-C", RAW]);
+  fs.rmSync(tarball);
+
+  /* `public/ohmail/*` loses its prefix exactly as publish-desktop.mjs's template
+   * copy does; apps/macos and packages/tokens are identity mappings. */
+  const STAGE_MAP = [
+    { from: "apps/macos", to: "apps/macos" },
+    { from: "packages/tokens/src", to: "packages/tokens/src" },
+    { from: "public/ohmail/Resources", to: "Resources" },
+    { from: "public/ohmail/scripts", to: "scripts" },
+    { from: iconSource(RAW), to: "Resources/ohmail.icns" },
+  ];
+
+  for (const { from, to } of STAGE_MAP) {
+    const src = path.join(RAW, from);
+    if (!fs.existsSync(src)) {
+      die(`${from} is not in commit ${SHORT} — it is untracked, so a clean checkout\n` +
+          `  would not have it and this build is not reproducible.`);
+    }
+    const dst = path.join(TREE, to);
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.cpSync(src, dst, { recursive: true });
+    say(`  ${from}  →  ${to}`);
   }
-  const dst = path.join(TREE, to);
-  fs.mkdirSync(path.dirname(dst), { recursive: true });
-  fs.cpSync(src, dst, { recursive: true });
-  say(`  ${from}  →  ${to}`);
-}
 
-const PACKAGE_APP = path.join(TREE, "scripts/package-app.sh");
-if (!fs.existsSync(PACKAGE_APP)) die("public/ohmail/scripts/package-app.sh did not land in the staging tree");
-fs.chmodSync(PACKAGE_APP, 0o755);
+  PACKAGE_APP = path.join(TREE, "scripts/package-app.sh");
+  if (!fs.existsSync(PACKAGE_APP)) die("public/ohmail/scripts/package-app.sh did not land in the staging tree");
+  fs.chmodSync(PACKAGE_APP, 0o755);
+}
 
 /* ───────────────────────────────────────────── the licence/inventory gate ──
  * Everything vendored is published, and this app is GPL-3.0-or-later. An AGPL
@@ -386,7 +420,13 @@ function walk(dir, into = []) {
   }
   return into;
 }
-const staged = walk(TREE);
+/* MONOREPO only: this inventory gate proves the STAGED tree is a clean mirror checkout with no
+ * undeclared file kind and no vendored third-party code. On the mirror, TREE is the repo root — it
+ * legitimately holds node_modules/ and build/ from the CI steps that ran before this — and the
+ * payload it would police was already gated by publish-desktop when it was published. So it does not
+ * run here; the embed-side licence gate (THIRD-PARTY-NOTICES) still audits everything the binary
+ * actually conveys, in both modes. */
+const staged = MIRROR_MODE ? [] : walk(TREE);
 
 const undeclared = staged.filter((rel) =>
   !ALLOWED_BASENAMES.has(path.basename(rel)) && !ALLOWED_EXT.has(path.extname(rel)));
@@ -405,9 +445,11 @@ if (vendored.length) {
       vendored.slice(0, 30).map((f) => `    ${f}`).join("\n") +
       `\n\n  Declare every licence, in this file, before allowing it through.`);
 }
-say(`  ${staged.length} files staged · no vendored third-party code · no undeclared file kinds`);
-say(`  apps/macos declares no external package dependencies: the bundle conveys only`);
-say(`  ohmail's own GPL-3.0 sources and Apple's system frameworks.`);
+if (!MIRROR_MODE) {
+  say(`  ${staged.length} files staged · no vendored third-party code · no undeclared file kinds`);
+  say(`  apps/macos declares no external package dependencies: the bundle conveys only`);
+  say(`  ohmail's own GPL-3.0 sources and Apple's system frameworks.`);
+}
 
 /* ───────────────────────────────────────────────────────── build and prove ──
  * The public CI job's order, in the public CI job's shape: test, then package.
@@ -536,7 +578,7 @@ for (const a of ARCHS.split(/\s+/).filter(Boolean)) {
 const nodeDst = path.join(BUILT_APP, "Contents/Resources/node");
 fs.copyFileSync(VENDOR_NODE, nodeDst);
 fs.chmodSync(nodeDst, 0o755);
-const nodeEntitlements = path.join(STAGE, "node.entitlements.plist");
+const nodeEntitlements = path.join(STAGE ?? os.tmpdir(), "node.entitlements.plist");
 fs.writeFileSync(nodeEntitlements,
   `<?xml version="1.0" encoding="UTF-8"?>\n` +
   `<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n` +
@@ -1043,18 +1085,24 @@ step("writing build/ — and publishing nothing");
 
 const OUT = path.join(REPO, "build");
 fs.mkdirSync(OUT, { recursive: true });
-for (const name of ["ohmail.app", "ohmail.dmg"]) {
-  const dst = path.join(OUT, name);
-  fs.rmSync(dst, { recursive: true, force: true });
-  /* ditto, not cp: it preserves the signature and extended attributes. */
-  run("ditto", [path.join(TREE, "build", name), dst]);
+/* In mirror mode TREE IS the repo, so build/ohmail.{app,dmg} were assembled directly in OUT — a
+ * copy would be from a path onto itself (and the `rmSync` would delete the source first). */
+if (!MIRROR_MODE) {
+  for (const name of ["ohmail.app", "ohmail.dmg"]) {
+    const dst = path.join(OUT, name);
+    fs.rmSync(dst, { recursive: true, force: true });
+    /* ditto, not cp: it preserves the signature and extended attributes. */
+    run("ditto", [path.join(TREE, "build", name), dst]);
+  }
+} else {
+  say(`  build/ohmail.app and build/ohmail.dmg were assembled in place`);
 }
 
 const outApp = path.join(OUT, "ohmail.app");
 const manifest = {
   artifact: "ohmail for macOS",
   commit: SHA,
-  builtFrom: "git archive HEAD",
+  builtFrom: MIRROR_MODE ? "mirror tree (in place)" : "git archive HEAD",
   unrelatedDirtAllowed: ALLOW_DIRT && dirty.length > 0,
   packagerModified: dirty.includes(PACKAGER),
   testsRun: !SKIP_TESTS,
@@ -1082,8 +1130,8 @@ const manifest = {
 const manifestPath = path.join(OUT, `ohmail-${SHORT}.build.json`);
 fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
-if (KEEP_STAGING) say(`\n  staging kept at ${TREE}`);
-else fs.rmSync(STAGE, { recursive: true, force: true });
+if (STAGE && KEEP_STAGING) say(`\n  staging kept at ${TREE}`);
+else if (STAGE) fs.rmSync(STAGE, { recursive: true, force: true });
 
 say("");
 say(`  app       build/ohmail.app`);
