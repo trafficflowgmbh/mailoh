@@ -83,6 +83,15 @@ export {
   DEFAULT_DORMANCY_DAYS, cutlineCounts, hasUndecidedActiveSenders,
   type CutlineCounts, type CutlineOptions,
 } from "./consent-cutline.js";
+// The editable Ohbox preference (SCR-SPAM/SCR-PROMPT): posture + free-text bar on account_settings.
+// Mail-half clean — it reads/writes `account_settings` (schema-mail) and resolves the policy through
+// `@trafficflow/core/mail`; no auth, billing or admin dependency, so it belongs in the engine barrel
+// exactly as it does in the default one. The hosted `/account/screening` route imports it from here.
+export {
+  getScreeningPreference, setScreeningPreference, resolveOhboxPolicy,
+  DEFAULT_OHBOX_BAR, OHBOX_BAR_MAX_BYTES, OHBOX_POLICIES,
+  type ScreeningPreference, type ScreeningPreferenceUpdate,
+} from "./screening-preference.js";
 
 
 export {
