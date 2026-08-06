@@ -10,12 +10,15 @@ build/
 shots/
 
 # Tauri shell (apps/desktop): npm deps, the UI bundle, Rust output, and the ACL
-# schemas tauri-build regenerates on every compile.
+# schemas tauri-build regenerates on every compile. The Tauri lockfile is the
+# one npm regenerates in apps/desktop; the ROOT package-lock.json is published
+# on purpose — `npm ci` in the engine and macOS jobs installs from it — so it
+# must NOT be ignored.
 node_modules/
 apps/desktop/dist/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
-package-lock.json
+apps/desktop/package-lock.json
 
 # Xcode
 *.xcuserdata
