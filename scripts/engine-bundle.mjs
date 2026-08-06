@@ -63,6 +63,19 @@ import { createRequire } from "node:module";
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
+ * THE ONE esbuild THIS ENGINE IS BUILT WITH, asserted rather than assumed.
+ *
+ * esbuild's output is deterministic for a GIVEN version, but it is NOT stable across versions — a
+ * later esbuild can lay the same module graph out differently. The engine bundle is meant to be
+ * reproducible from the published source: a public runner and a local build must produce byte-equal
+ * output, which they can only do if both run the same esbuild. Nothing else pins it — the pin used
+ * to live in a comment — so it is checked here. Bump it deliberately, in ONE place, when the engine
+ * is meant to move; a silent drift is the "absent config picks a version" hazard the whole
+ * lockfile-and-pin story exists to close.
+ */
+export const EXPECTED_ESBUILD = "0.24.0";
+
+/**
  * esbuild, WITHOUT adding it to the workspace.
  *
  * A bundler is a build-time tool rather than something the product ships, and in a monorepo every
@@ -77,14 +90,27 @@ export async function loadEsbuild(root = ROOT) {
   const from = process.env.OHMAIL_ESBUILD_FROM;
   const paths = [root, ...(from ? [from] : [])];
   for (const base of paths.reverse()) {
+    let mod;
     try {
-      return await import(pathToFileURL(createRequire(join(base, "noop.js")).resolve("esbuild")).href);
-    } catch { /* try the next one, and fail with the message below if none works */ }
+      mod = await import(pathToFileURL(createRequire(join(base, "noop.js")).resolve("esbuild")).href);
+    } catch { continue; /* try the next one, and fail with the message below if none works */ }
+    /* Found one — it MUST be the pinned version, or the bundle it produces is not the reproducible
+     * one. A wrong version is a hard stop, not a fallback to the next path: continuing would build a
+     * silently different artifact from a tool that is present and working. */
+    if (mod.version !== EXPECTED_ESBUILD) {
+      throw new Error(
+        `esbuild ${mod.version} is installed, but the engine is pinned to ${EXPECTED_ESBUILD}.\n` +
+        `  The bundle is only reproducible for a fixed esbuild version, so this is refused rather\n` +
+        `  than built. Install the pinned version:\n\n` +
+        `    D=$(mktemp -d) && (cd $D && npm install --no-save esbuild@${EXPECTED_ESBUILD})\n` +
+        `    OHMAIL_ESBUILD_FROM=$D node scripts/engine-bundle.mjs\n`);
+    }
+    return mod;
   }
   throw new Error(
     "esbuild was not found. It is not a workspace dependency on purpose — install it somewhere " +
     "harmless and point at it:\n\n" +
-    "    D=$(mktemp -d) && (cd $D && npm install --no-save esbuild@0.24.0)\n" +
+    `    D=$(mktemp -d) && (cd $D && npm install --no-save esbuild@${EXPECTED_ESBUILD})\n` +
     "    OHMAIL_ESBUILD_FROM=$D node scripts/engine-bundle.mjs\n",
   );
 }
