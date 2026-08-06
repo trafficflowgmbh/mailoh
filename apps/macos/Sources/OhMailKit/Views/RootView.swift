@@ -124,6 +124,11 @@ public struct RootView: View {
             }
             deck(compact: compact)
         }
+        // Clear the traffic-light controls under the transparent unified titlebar. The desktop
+        // deck already floats its panels `Space.deck` below the window edge and the rail adds its
+        // own header padding, so a smaller band finishes the job there; the compact top bar sits
+        // flush to the edge, right under the controls, so it needs the full titlebar height.
+        .padding(.top, compact ? Space.titlebar : Space.titlebar - Space.deck)
     }
 
     @ViewBuilder

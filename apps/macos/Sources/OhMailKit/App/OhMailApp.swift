@@ -33,8 +33,14 @@ public struct OhMailApp: App {
             // the shell has a real compact layout below `Space.mobileMax`.
             AppRootView(root)
                 .frame(minWidth: Space.minWidth, minHeight: Space.minHeight)
+                // One continuous surface: the content runs up under a transparent,
+                // dividerless titlebar with the traffic lights floating over the canvas.
+                .background(UnifiedTitlebar())
         }
-        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
+        // Transparent, full-size-content titlebar with no title and no bottom divider.
+        // The traffic-light controls stay; `UnifiedTitlebar` finishes the job SwiftUI's
+        // style leaves undone (the titlebar separator).
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1440, height: 900)
         .commands { OhMailCommands(state: root.mail) }
     }

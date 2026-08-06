@@ -22,6 +22,11 @@ public enum Radius {
 public enum Space {
     public static let deck: CGFloat = 16       // shell padding + column gap
     public static let deckCompact: CGFloat = 10 // `.deck{padding:0 10px 10px}` below the breakpoint
+    /// Standard macOS titlebar height. The window runs a transparent, full-size-content
+    /// titlebar (no divider), so the traffic-light controls float over the top of the
+    /// canvas — this is the band the top of the content is inset below so nothing is
+    /// drawn behind the close/minimize/zoom buttons.
+    public static let titlebar: CGFloat = 28
     public static let paneX: CGFloat = 30      // list-column horizontal padding
     public static let paneXCompact: CGFloat = 20
     public static let messageX: CGFloat = 34   // message column padding
