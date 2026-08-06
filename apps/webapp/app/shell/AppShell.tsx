@@ -77,6 +77,7 @@ import { useConsentState } from "./consent-state";
 import { useScreenerState } from "./screener-state";
 import { useScreenerSuggestions } from "./screener-suggest";
 import { AutoSuggestRow } from "./AutoSuggestRow";
+import { ScreeningSection } from "./ScreeningSection";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
   composePlan,
@@ -2771,6 +2772,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                     />
                   )
                 }
+                screeningSection={demo ? undefined : <ScreeningSection />}
                 billingSection={demo ? undefined : billingSection}
                 /* ABOUT — the one injected pane the demo also gets, because the demo has
                    something true to say here and no API to say it with. The live body comes

@@ -538,6 +538,18 @@
     "themeSystem": "System",
     "themeDark": "Dark",
     "themeAria": "Theme",
+    "screening": {
+      "title": "What reaches your Ohbox",
+      "postureTitle": "Keep my Ohbox for what's relevant",
+      "postureOn": "Real people and the service mail you act on stay in the Ohbox. Newsletters and promotions go to Reads, receipts to Receipts.",
+      "postureOff": "Everything from a sender you've written to reaches your Ohbox, promotions included.",
+      "barLabel": "In your words, what belongs in your Ohbox",
+      "save": "Save",
+      "reset": "Use the default",
+      "microcopy": "This changes how new mail is filed. It doesn't move mail already in your Ohbox.",
+      "saved": "Saved.",
+      "failed": "Couldn't save that — try again."
+    },
     "channel": {
       "people": {
         "label": "People in Ohbox",
@@ -1380,5 +1392,35 @@
     "listTimeout": "ohmail didn't answer in time.",
     "listRetry": "Try again",
     "listRetrying": "Looking again…"
+  },
+  "attachmentPreview": {
+    "ariaLabel": "Attachment preview",
+    "fetching": "Fetching from your mailbox…",
+    "rendering": "Preparing preview…",
+    "download": "Download",
+    "close": "Close",
+    "retry": "Try again",
+    "noPreviewTitle": "No preview",
+    "noPreviewDetail": "This kind of file can't be shown here — download it to open.",
+    "tooLargeTitle": "Too large to preview",
+    "tooLargeDetail": "This file is over the fetch limit for on-demand open.",
+    "failedTitle": "Couldn't fetch this file",
+    "pdfErrorTitle": "Couldn't render this PDF",
+    "pdfErrorDetail": "The file may be damaged. Download it to open in another app.",
+    "textTruncated": "— preview truncated. Download to read the rest.",
+    "count": "{index} of {total}",
+    "page": "{page} / {total}",
+    "prevAttachment": "Previous attachment",
+    "nextAttachment": "Next attachment",
+    "prevPage": "Previous page",
+    "nextPage": "Next page",
+    "hintClose": "Space or Esc to close",
+    "hintMove": "← → to move",
+    "hintPage": "↑ ↓ to page",
+    "kClose": "close preview",
+    "kPrev": "previous attachment",
+    "kNext": "next attachment",
+    "kPrevPage": "previous page",
+    "kNextPage": "next page"
   }
 }
