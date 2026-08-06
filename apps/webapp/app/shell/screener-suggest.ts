@@ -141,14 +141,20 @@ export interface ScreenerSuggestions {
  *
  * `GET /screener` answers `suggestable.maxPerRequest` and that number is preferred the moment
  * it arrives; this is what the control offers if that read has not landed (offline, or a
- * press faster than the fetch). It is deliberately BELOW the server's real cap of 50 rather
+ * press faster than the fetch). It is deliberately BELOW the server's real cap of 400 rather
  * than equal to it: guessing low costs the user a second press, guessing high costs them a
  * 413 on a button that had already quoted a price.
  */
 const ASSUMED_MAX_PER_REQUEST = 25;
 
-/** The sizes offered, before clamping. Small enough to watch, large enough to be worth it. */
-const OFFERED_SIZES = [10, 25, 50];
+/**
+ * The sizes offered, before clamping. The small end is watchable, the large end drains a
+ * backlog: 10/25/50 to try a handful and see, 100/200/400 to clear a real first-contact pile
+ * in one authorised purchase. Every one of these is still priced by a server dry run before it
+ * can be pressed, and clamped by {@link batchSizes} to what one request may carry, so a size
+ * above the account's queue or the endpoint's cap is never shown.
+ */
+const OFFERED_SIZES = [10, 25, 50, 100, 200, 400];
 
 /** How much of the queue one hydration reads. A `cost: read` page; it spends nothing. */
 const HYDRATE_LIMIT = 200;

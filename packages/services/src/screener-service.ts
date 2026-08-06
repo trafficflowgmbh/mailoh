@@ -184,13 +184,30 @@ const SUGGESTION_STATUS = "suggestion";
 /**
  * The most senders one purchase may cover.
  *
- * A cap and not a truncation: over it the request is REFUSED, because a control that says
- * "60 senders — 60 credits" and silently buys 50 has priced something the user did not do.
- * 50 keeps a single confirmation a number a person can hold — a large real queue runs to many
- * hundreds of senders, so "suggest everything" is a decision to make several times over, out
- * loud, rather than once by accident.
+ * A cap and not a truncation: over it the request is REFUSED (413), because a control that quotes
+ * a price for the whole request and silently buys up to the cap has priced something the user did not do.
+ * The client offers a ladder up to this number (`apps/webapp/.../screener-suggest.ts`,
+ * `OFFERED_SIZES`), and every sender is spend-gated INDIVIDUALLY inside {@link ScreenerService.suggest}
+ * — so a larger N costs proportionally more and never bypasses the credit check. The quote and
+ * the charge both scale with N; neither is a per-batch shortcut.
+ *
+ * ── THIS IS LARGER THAN ONE SERVERLESS INVOCATION CAN CLASSIFY, AND THAT IS THE TRADE ────────
+ *
+ * A real (non-dry) purchase of N senders makes N SERIAL model calls in the loop below, and the
+ * Vercel host runs under `maxDuration = 60` (`apps/api-vercel/app/[[...path]]/route.ts`). At the
+ * previous value of 50 a whole batch fit inside one invocation; 400 does not. It is bounded
+ * anyway because the run is RESUMABLE by construction — spend and the stored suggestion are
+ * written per message, before the next model call — so an invocation cut short bills only for
+ * the senders it finished and leaves their answers on record. That request surfaces to the
+ * client as a failure, and a later press (or the free `duplicate` retry, which re-asks nothing
+ * already stored) continues from where it stopped rather than re-buying. A DRY RUN makes no
+ * model call at all, so pricing a set of 400 is a single fast request whatever the cap is.
+ *
+ * NOTE: the serverless deployment's dependency wiring still carries a comment describing the batch
+ * as fitting inside a single invocation — true at the previous cap, stale at this one — and wants
+ * the same correction.
  */
-export const MAX_SUGGEST_SENDERS = 50;
+export const MAX_SUGGEST_SENDERS = 400;
 
 export interface ScreenerSuggestBody {
   /** The explicit sender set. Absent, empty or unparseable ⇒ 400; never "all". */
@@ -279,13 +296,15 @@ export interface ScreenerPage extends Page<ScreenerItem> {
     /** `senders.length × AI_ACTION_COST`. Stated, not implied. */
     credits: number;
     /**
-     * How many of them one `POST /screener/suggest` will accept —
+     * How many senders one `POST /screener/suggest` will accept —
      * {@link MAX_SUGGEST_SENDERS}.
      *
-     * It is published because `MAX_PAGE_LIMIT` (200) is larger than the cap (50), so a client
-     * that posts a whole large page back gets a 413. Publishing the number means the client
-     * batches by reading it rather than by hardcoding a constant that can drift, and it means
-     * the failure is designed for instead of discovered.
+     * It is published so the control's size ladder is bounded by READING this number rather than
+     * by hardcoding a constant that can drift. The webapp does not batch by the page at all — it
+     * derives its Screener queue from the `/sync` mirror, which can hold far more than one page —
+     * so this cap is the only thing that tells it how large a single purchase may be. The cap now
+     * sits ABOVE `MAX_PAGE_LIMIT` (200), so a client that DID post a whole page back is under it
+     * rather than 413'd; the number remains the client's source of truth for the ladder's top.
      */
     maxPerRequest: number;
   };
@@ -1287,7 +1306,7 @@ function parseSenderSet(body: ScreenerSuggestBody): string[] {
     throw new ServiceError("validation_failed", 400, "senders must be an array of sender addresses");
   }
   if (raw.length > MAX_SUGGEST_SENDERS) {
-    // Refused, not truncated: a control that priced 60 must not silently buy 50.
+    // Refused, not truncated: a control that priced 401 must not silently buy 400.
     throw new ServiceError(
       "payload_too_large", 413,
       `senders must contain at most ${MAX_SUGGEST_SENDERS} addresses`,
