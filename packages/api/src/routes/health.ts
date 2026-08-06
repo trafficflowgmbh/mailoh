@@ -450,6 +450,22 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // No CHECK marker (0030's rule: an enum/length CHECK closes a set the column marker already implies)
   // and no INDEX marker: the row is fetched by primary key and nothing filters on either column.
   ["account_settings", "ohbox_policy"],
+  // mail 0043_ohbox_tidy — the resumable, re-armable marker for the Ohbox backlog re-route pass.
+  // Three additive nullable columns on `account_settings`, and it earns a marker for the same
+  // whole-row-select reason as 0040/0042 one and two features over.
+  //
+  // `ohbox_tidy_requested_at` is the column probed rather than the other two, on this list's usual
+  // rule: probe the column a QUERY reads to make a DECISION. `requested_at IS NOT NULL` is half the
+  // owed predicate the worker evaluates every cycle. The API reaches all three through the bare
+  // `select().from(account_settings)` that `getScreeningPreference` issues, so a database missing
+  // them 42703s the SCREENING surface, not just this feature. The worker half is the safe kind: a
+  // worker ahead of the migration fails its owed probe on the missing column, so no mail moves and
+  // nothing is marked — visible, not silent. Deploy order: migration → worker (and API).
+  //
+  // No CHECK marker (0030's rule); the INDEX this migration also creates is on `change_log`, not
+  // here, and joins `SCHEMA_INDEX_MARKERS` below because its absence is SILENT. It is the NEWEST
+  // entry in the mail journal.
+  ["account_settings", "ohbox_tidy_requested_at"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -494,6 +510,13 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<string> = [
   // per page, once per worker cycle, per owed rule, until the cycle stops finishing. There was
   // no index on `messages.from_address` of any kind before this migration.
   "messages_account_from_addr_idx",
+  // mail 0043_ohbox_tidy. Listed for the same property as the two above: its absence is SILENT. The
+  // Ohbox backlog re-route pass excludes any message the user has dragged back into the Ohbox with a
+  // `NOT EXISTS (move-to-INBOX change row)`, and `change_log`'s only index is its PK `(account_id,
+  // seq)`. Without this partial index that `NOT EXISTS` is a full scan of the account's whole change
+  // log per candidate, per page, per cycle — no query is wrong, every test stays green, and the only
+  // symptom is a worker cycle that stops finishing, which is exactly what this list exists for.
+  "change_log_move_to_inbox_idx",
 ];
 
 /**
@@ -713,7 +736,7 @@ export const MAIL_EXPECTED_MARKERS =
  * `message_failures_code_closed` is created INSIDE the `CREATE TABLE` and could only ever fail
  * together with the column above.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0042_screening_preference";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0043_ohbox_tidy";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

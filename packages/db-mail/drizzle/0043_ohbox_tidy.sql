@@ -1,0 +1,87 @@
+-- RE-ROUTING THE OHBOX BACKLOG — the durable, re-armable marker for the one worker pass that files
+-- ALREADY-MISFILED automated mail out of the Ohbox under `people_only`, and the partial index its
+-- "user always wins" guard rests on.
+--
+-- ══ WHAT IS MISSING, AND IT IS MOST OF A TYPICAL OHBOX ══════════════════════════════════════
+--
+-- 0042 gave the account a posture (`ohbox_policy`) and the engine demotes NEW mail live under it.
+-- Nothing re-evaluates mail already on disk — a rule is consulted at arrival and never again — so
+-- the automated mail the old lenient default admitted (the majority of a typical Ohbox) sits
+-- there for ever. This migration is the durable half of the retroactive clean-up, exactly as
+-- 0034 was for retroactive RULES and 0030 for the sensitivity re-screen.
+--
+-- ══ THREE COLUMNS ON `account_settings`, AND WHY PER-ACCOUNT ═════════════════════════════════
+--
+--   ohbox_tidy_requested_at  the account asked for the backlog to be re-routed. Written by
+--                            `setScreeningPreference` ONLY on the transition INTO `people_only`
+--                            (and, later, by the "tidy now" button), and it NULLs the cursor in the
+--                            SAME update — re-arming without resetting the cursor resumes at the end
+--                            and moves nothing.
+--   ohbox_tidy_done_at       the pass drained the backlog. `requested_at` set with `done_at` NULL,
+--                            OR `done_at < requested_at`, IS the definition of owed work; there is
+--                            no queue and no second source of truth. Written LAST, on 0030's rule:
+--                            claiming it first makes a crash permanent — a backlog marked done with
+--                            most of it unmoved and nothing that would ever look again.
+--   ohbox_tidy_cursor        the last `messages.id` of the last COMMITTED page. The live pass reads
+--                            it to resume across worker cycles; a dry-run plan reads it as a start
+--                            and advances only in memory, committing nothing.
+--
+-- ACCOUNT-SCOPED, and that is why these are columns on `account_settings` and not a marker on
+-- `mailboxes` (0030/0025's home). The pass pages `folder_state` by `account_id`, and one cursor
+-- covers all of an account's mailboxes; a per-mailbox marker structurally cannot. It is 0034's
+-- reasoning, one table over.
+--
+-- ══ THE PARTIAL INDEX IS "USER ALWAYS WINS", MADE AFFORDABLE ════════════════════════════════
+--
+-- The pass must skip any message the user has moved back into the Ohbox. An in-app drag writes
+-- `change_log (op='move', meta->>'to'='INBOX')` (`message-service.ts#move`) and NOTHING ELSE
+-- distinguishes it from a system placement — `folder_state.last_set_by` is 'us' for both, and the
+-- change log is the one record of the intent that survives every prune. So the candidate query
+-- carries `NOT EXISTS (a move-to-INBOX change row for this message)`.
+--
+-- `change_log`'s only index is its PK `(account_id, seq)`, so that `NOT EXISTS` is a full scan of
+-- the account's whole log PER CANDIDATE, per page, per cycle. Its absence is SILENT — no query is
+-- wrong, every test stays green, and the only symptom is a worker cycle that stops finishing — which
+-- is precisely the class `SCHEMA_INDEX_MARKERS` reserves itself for. Hence
+-- `change_log_move_to_inbox_idx`, partial on the predicate itself so it holds only the move-to-Ohbox
+-- rows (a few per account) and costs nothing to keep. NON-CONCURRENT because at `change_log`'s
+-- current per-account scale the brief lock is cheaper than the operational cost of a CONCURRENTLY
+-- build that cannot run inside the migration transaction; revisit if a `change_log` grows large
+-- enough to matter.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO BACKFILL, NO CHECK ═════════════════════════════════════════════
+--
+-- `ADD COLUMN IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`, so a replay is a no-op (setup-prod
+-- replays the journal; the pg tests rewind and re-migrate). NULL on every existing account is
+-- correct: no account has asked for a tidy, so none is owed and no mail moves the day this ships —
+-- the same day-one safety `ohbox_policy` NULL-reads-lenient gives 0042. An account already
+-- `people_only` before this deploys has no `requested_at` and is never owed until it re-saves the
+-- posture or presses the button; that is deliberate, not a gap.
+--
+-- No CHECK, on 0034's rule: these are two timestamps and a uuid, all written by named callers, and a
+-- CHECK is for a column whose value could be chosen by something outside our code.
+--
+-- `ADD COLUMN` inherits `account_settings`'s grants (0035, tightened), so no lockdown pass is owed
+-- and the content-blind operator role gains nothing — a tidy marker is not something an operator
+-- needs.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ══════════════════════════════════════════════════════════
+--
+-- Migration → worker. The worker probes these columns every cycle (the owed check), so a worker
+-- deployed ahead of this migration answers Postgres 42703 per account per cycle and its owed probe
+-- fails — no mail moves and nothing is marked, the safe direction, but visible. The API also reads
+-- them through the bare `select().from(account_settings)` that `getScreeningPreference` issues, so
+-- `["account_settings","ohbox_tidy_requested_at"]` joins `MAIL_SCHEMA_MARKERS` and the mail marker
+-- tag moves to this migration; `change_log_move_to_inbox_idx` joins `SCHEMA_INDEX_MARKERS` on that
+-- list's silent-absence rule. That is what makes a deploy-order mistake say `503 schema_incomplete`
+-- and name this file.
+--
+-- ROLLBACK is three `ALTER TABLE account_settings DROP COLUMN` and one `DROP INDEX`. The cost is
+-- that any owed-but-undrained tidy is forgotten — mail already moved stays moved (correct), and the
+-- live engine keeps demoting new mail under the posture (also correct). No consent is lost: consent
+-- lives in `rules`.
+
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "ohbox_tidy_requested_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "ohbox_tidy_done_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "ohbox_tidy_cursor" uuid;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "change_log_move_to_inbox_idx" ON "change_log" USING btree ("account_id","entity_id") WHERE "op" = 'move' and "meta" ->> 'to' = 'INBOX';
