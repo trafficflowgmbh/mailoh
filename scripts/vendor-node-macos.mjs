@@ -121,12 +121,17 @@ fs.chmodSync(OUT, 0o755);
 if (!fs.existsSync(licenseFrom)) die("the archive did not contain a LICENSE — refusing to vendor it unlicensed");
 fs.copyFileSync(licenseFrom, OUT_LICENSE);
 
-const archs = execFileSync("lipo", ["-archs", OUT], { encoding: "utf8" }).trim();
+/* nodejs.org names the Intel tarball `x64`; `lipo -archs` names that same slice `x86_64`. Verify
+ * against the Mach-O name, not the download name — a genuinely universal arm64 + x64 binary reports
+ * `x86_64 arm64` here, so checking for the literal `x64` fails on a bundle that is in fact correct. */
+const MACHO_ARCH = { arm64: "arm64", x64: "x86_64" };
+const archs = execFileSync("lipo", ["-archs", OUT], { encoding: "utf8" }).trim().split(/\s+/);
 for (const arch of ARCHES) {
-  if (!archs.split(/\s+/).includes(arch)) die(`the vendored binary is missing the ${arch} slice (has: ${archs})`);
+  const want = MACHO_ARCH[arch] ?? arch;
+  if (!archs.includes(want)) die(`the vendored binary is missing the ${want} slice (has: ${archs.join(" ") || "none"})`);
 }
 
 fs.rmSync(work, { recursive: true, force: true });
 
-say(`\nvendor-node: ${path.relative(ROOT, OUT)}  [${archs}]  ${(fs.statSync(OUT).size / 1024 / 1024).toFixed(1)} MiB`);
+say(`\nvendor-node: ${path.relative(ROOT, OUT)}  [${archs.join(" ")}]  ${(fs.statSync(OUT).size / 1024 / 1024).toFixed(1)} MiB`);
 say(`vendor-node: ${path.relative(ROOT, OUT_LICENSE)}`);
