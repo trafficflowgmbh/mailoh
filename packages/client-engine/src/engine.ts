@@ -13,6 +13,7 @@ import {
   type EngineMutation,
   type MessageBodyRecord,
   type MessageStateDTO,
+  type OhmailView,
   type SyncSnapshotPage,
   type UnsubscribeResult,
 } from "./types.js";
@@ -82,6 +83,51 @@ export type ServerSearchFn = (
  */
 interface ServerSearchCapableAdapter {
   searchServer?: ServerSearchFn;
+}
+
+/**
+ * WHAT `GET /messages` ANSWERS for ONE view's page, as much of it as this client reads.
+ *
+ * The route returns `{ items, nextCursor }`, keyset-paged `date desc, id desc`. `items` are
+ * canonical `MessageDTO`s, and an {@link EngineMessage} is exactly a `MessageDTO` plus optional
+ * fixture extras — so a DTO IS one, with no conversion and no second shape (the same reasoning as
+ * {@link ServerSearchWire}). `nextCursor` is the server's own opaque paging token: it is echoed
+ * back untouched on the following call and is `null` on the last page.
+ */
+export interface ListOlderWire {
+  items: EngineMessage[];
+  nextCursor: string | null;
+}
+
+/**
+ * The transport {@link OhmailEngine.listOlder} runs on. Optional everywhere, exactly as
+ * {@link ServerSearchFn} is: a client whose whole mailbox is already on the device has nothing
+ * behind the end of the list, and must be able to say so rather than spin.
+ */
+export type ListOlderFn = (
+  view: OhmailView,
+  opts: { cursor?: string; limit?: number },
+) => Promise<ListOlderWire | null>;
+
+/**
+ * The adapter capability the out-of-window read reaches for.
+ *
+ * Declared STRUCTURALLY here, exactly as {@link ServerSearchCapableAdapter} and
+ * {@link SnapshotCapableAdapter} are, and for the same reason: absence is a real answer. A
+ * fixtures client has no server, and a client keeping the WHOLE mailbox has nothing older to
+ * fetch — both must read as "there is nothing beyond this list", not as a broken adapter.
+ *
+ * It carries the same wiring risk the other two do, and the risk has been paid for three times
+ * already: a wrapper that rebuilds the adapter surface as an object literal drops a structural
+ * capability silently and still satisfies `EngineAdapter`. `apps/webapp/app/shell/sync-scheduler.ts`
+ * has exactly such a wrapper, so it must spread this the way it spreads the others:
+ *
+ *     ...(adapter.listMessages ? { listMessages: adapter.listMessages.bind(adapter) } : {})
+ *
+ * conditionally, never unconditionally.
+ */
+interface ListMessagesCapableAdapter {
+  listMessages?: ListOlderFn;
 }
 
 /**
@@ -180,6 +226,24 @@ function messageTime(m: EngineMessage): number {
 export type ServerSearchOutcome =
   | { state: "unavailable" }
   | { state: "ready"; items: EngineMessage[]; total: number }
+  | { state: "failed"; error: string };
+
+/**
+ * The outcome of one page of out-of-window mail. It NEVER rejects — see
+ * {@link OhmailEngine.listOlder}.
+ *
+ * Deliberately shaped like {@link ServerSearchOutcome}, `unavailable` first-class and for the
+ * same reason: "this client holds the whole mailbox, there is nothing further back" and "the
+ * server refused" are two true sentences, and a list that renders them identically is lying about
+ * one of them. `ready` with an EMPTY `items` is a third: the server answered and this view has
+ * nothing older.
+ *
+ * `nextCursor` is `null` on the last page, which is what lets a surface stop asking rather than
+ * poll the end of the mailbox forever.
+ */
+export type ListOlderOutcome =
+  | { state: "unavailable" }
+  | { state: "ready"; items: EngineMessage[]; nextCursor: string | null }
   | { state: "failed"; error: string };
 
 // ── attachments ────────────────────────────────────────────────────────────
@@ -428,6 +492,10 @@ export class OhmailEngine {
   private readonly storePolicy: StorePolicy;
   /** In-flight archive passes by query key — see {@link OhmailEngine.searchServer}. */
   private readonly serverSearches = new Map<string, Promise<ServerSearchOutcome>>();
+  /** `GET /messages`, or `null` when this adapter has none — see {@link ListMessagesCapableAdapter}. */
+  private readonly listOlderFn: ListOlderFn | null;
+  /** In-flight out-of-window pages by view+cursor — see {@link OhmailEngine.listOlder}. */
+  private readonly olderPages = new Map<string, Promise<ListOlderOutcome>>();
 
   /**
    * Attachment metadata + byte state by message id.
@@ -457,6 +525,10 @@ export class OhmailEngine {
     // Same resolution rule as `serverSearchFn`: the adapter's own capability, bound ONCE, so
     // nothing can answer "there is a snapshot route" differently from what `drain` will do.
     this.snapshotFn = (opts.adapter as SnapshotCapableAdapter).snapshot?.bind(opts.adapter) ?? null;
+    // And again for the out-of-window read. No `opts` override beside it, unlike `serverSearch`:
+    // one source means `listOlderAvailable()` and `listOlder` cannot disagree, and there is no
+    // second way for a host to arm a capability the gate did not forward.
+    this.listOlderFn = (opts.adapter as ListMessagesCapableAdapter).listMessages?.bind(opts.adapter) ?? null;
     // THE ABSENT BRANCH IS `full`. See {@link StorePolicy} — a host that configures nothing gets
     // today's behaviour, and no mirror is ever pruned by omission.
     this.storePolicy = opts.storePolicy ?? { mode: "full" };
@@ -1380,6 +1452,94 @@ export class OhmailEngine {
       });
 
     this.serverSearches.set(key, request);
+    return request;
+  }
+
+  // ── reading past the end of the window ───────────────────────────────────
+
+  /**
+   * Is there anything BEHIND the end of this client's lists?
+   *
+   * `false` for the demo (`?demo=1` is fixtures and zero network, invariants #6/#8) and for the
+   * desktop tier, whose master is the IMAP mailbox and which keeps the whole of it on the device.
+   * Both are states a list must be able to STATE: "you have reached the end of your mail" and "you
+   * have reached the end of what this device keeps" are different sentences, and only one of them
+   * has a control under it.
+   */
+  listOlderAvailable(): boolean {
+    return this.listOlderFn !== null;
+  }
+
+  /**
+   * ONE PAGE OF MAIL OLDER THAN THIS DEVICE KEPT — `GET /messages?view=&cursor=`.
+   *
+   * The companion to {@link StorePolicy}'s `windowed` mode. A windowed client deliberately holds
+   * only the newest slice of the mailbox; the rest is not lost, it is on the Cloud that still holds
+   * everything. This is how a surface reaches it when somebody scrolls to the bottom of a pile —
+   * a keyset page at a time, on an explicit act, never speculatively.
+   *
+   * ── THE RESULT DOES NOT GO IN THE MIRROR ────────────────────────────────────────────────
+   *
+   * Exactly {@link OhmailEngine.searchServer}'s rule, and here it is sharper still. `/sync` owns
+   * the mirror: rows arrive at a seq, deletes arrive at a seq, and `applyToRecords` reconciles by
+   * seq. A row from this route has NO seq. Writing one in would create a record no delta can ever
+   * update or remove, in a store whose whole contract is that it converges — and it would go
+   * straight back out again on the next prune pass, which is the only thing keeping the window a
+   * window. So the items are RETURNED, the caller renders them below its own list, and they are
+   * gone when the view changes.
+   *
+   * The caller should PREFER ITS OWN MIRROR ROW by id where it has one — that row carries the
+   * optimistic overlay and this device's triage state, while the wire item is a snapshot from
+   * before whatever the user just did.
+   *
+   * ── SINGLE-FLIGHT PER VIEW+CURSOR, AND WHY IT NEVER REJECTS ─────────────────────────────
+   *
+   * Keyed on the page being asked for, so a list that fires its "I have reached the bottom" effect
+   * twice — a scroll container settling, an observer firing on a re-render — issues one request,
+   * not two. And the caller is a React effect: a rejection there is an unhandled promise over
+   * somebody's mailbox, so the outcome is a VALUE the UI can render. A 402 from the spend gate
+   * arrives as its sentence, not as an error boundary.
+   *
+   * `GET /messages` is `cost: "read"` on the server, so wiring this caller changes no cost class
+   * and no line of the route-cost census: it reads rows already stored for the caller's own
+   * account, writes nothing, opens no socket and calls no metered third party.
+   */
+  async listOlder(
+    view: OhmailView,
+    opts: { cursor?: string; limit?: number } = {},
+  ): Promise<ListOlderOutcome> {
+    const fn = this.listOlderFn;
+    if (fn === null) return { state: "unavailable" };
+
+    // JSON rather than a joined string: the three parts have no shared alphabet to separate them
+    // with, and a hand-picked delimiter is how two different pages come to share one key. It also
+    // keeps the separator out of the SOURCE. A single invisible control character here is a
+    // file-wide hazard: it makes tooling classify this whole file as binary and skip it.
+    const key = JSON.stringify([view, opts.cursor ?? null, opts.limit ?? null]);
+    const inFlight = this.olderPages.get(key);
+    if (inFlight) return inFlight;
+
+    const request = fn(view, opts)
+      .then((wire): ListOlderOutcome => {
+        // `null` ⇒ this transport serves no older mail. Same shape as `fetchBody`'s and
+        // `searchServer`'s `null`, and it must not become an empty `ready`: "the server answered
+        // and there is nothing older" is a claim, and this is the case where nothing was asked.
+        if (wire === null) return { state: "unavailable" };
+        return {
+          state: "ready",
+          items: Array.isArray(wire.items) ? wire.items : [],
+          nextCursor: typeof wire.nextCursor === "string" && wire.nextCursor !== "" ? wire.nextCursor : null,
+        };
+      })
+      .catch((err: unknown): ListOlderOutcome => ({
+        state: "failed",
+        error: err instanceof Error ? err.message : String(err),
+      }))
+      .finally(() => {
+        this.olderPages.delete(key);
+      });
+
+    this.olderPages.set(key, request);
     return request;
   }
 

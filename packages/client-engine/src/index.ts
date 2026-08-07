@@ -141,8 +141,13 @@ export {
   type EngineOptions,
   type MutationResult,
   type MutationStatus,
-  // The cold-start capability an adapter WRAPPER has to forward by hand. Exported so a wrapper can
-  // name the type rather than re-derive it — see `SnapshotCapableAdapter` in engine.ts.
+  // The two structural capabilities an adapter WRAPPER has to forward by hand. Exported so a
+  // wrapper can name the types rather than re-derive them — see `SnapshotCapableAdapter` and
+  // `ListMessagesCapableAdapter` in engine.ts.
+  type ListOlderFn,
+  type ListOlderOutcome,
+  type ListOlderWire,
+  type ServerSearchOutcome,
   type SnapshotFn,
   type StorePolicy,
   type WakeSignalSource,
