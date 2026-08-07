@@ -102,7 +102,17 @@ export function useOlderMail(engine: OhmailEngine, view: OhmailView, version: nu
   const cursor = useRef<string | null>(null);
   const inFlight = useRef(false);
   const done = useRef(false);
+  /**
+   * WHICH LIST A RESPONSE BELONGS TO.
+   *
+   * The reset below cannot cancel a request that is already out. Without a token, a page asked
+   * for in one view lands after the reset and is appended to a DIFFERENT view's list — mail from
+   * one pile rendered at the bottom of another, which is the one mistake this whole surface
+   * exists to avoid making. Bumped on every reset; a response carrying a stale token is dropped.
+   */
+  const generation = useRef(0);
   useEffect(() => {
+    generation.current += 1;
     cursor.current = null;
     inFlight.current = false;
     done.current = false;
@@ -111,11 +121,13 @@ export function useOlderMail(engine: OhmailEngine, view: OhmailView, version: nu
   const loadMore = useCallback(() => {
     if (!available || inFlight.current || done.current) return;
     inFlight.current = true;
+    const mine = generation.current;
     setPage((p) => ({ ...p, loading: true, error: null }));
 
     void engine
       .listOlder(view, cursor.current ? { cursor: cursor.current } : {})
       .then((outcome) => {
+        if (mine !== generation.current) return; // answered a list that is no longer on screen
         inFlight.current = false;
         if (outcome.state === "unavailable") {
           done.current = true;
