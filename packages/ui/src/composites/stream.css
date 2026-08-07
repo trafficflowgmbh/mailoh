@@ -47,6 +47,16 @@
    gradient are otherwise the prototype's. */
 .scast.short.pend .sc-x{display:flex}
 .scast.short.pend .sc-fade{display:none}
+/* ── the rendered-message viewer ──────────────────────────────────────────────────────
+   An OPEN card whose caller supplied a `bodySlot` swaps its clamped text preview for the
+   sanitized html viewer (the one the reading pane uses). The clamp, the fade and the
+   short-card pill-hiding all lift here: the viewer is an iframe that sizes itself, so the
+   card must neither measure nor clip it, and an open card must always stay closable. Placed
+   after the `.short` rules above so equal-specificity `.sc-x`/`.sc-fade` overrides win. */
+.scast.viewer .sc-clip{max-height:none;overflow:visible}
+.scast.viewer .sc-fade{display:none}
+.scast.viewer .sc-x{display:flex}
+.sc-viewer{padding:6px 22px 18px}
 .stream .waterline{max-width:620px;margin:0 auto;padding:4px 12px 22px}
 .stream .tail-row{max-width:620px;margin:0 auto}
 @media (prefers-reduced-motion: reduce){

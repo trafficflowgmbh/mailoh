@@ -14,6 +14,8 @@ import { Kbd, ListGroupLabel, ListPane, ListRows, MessageRow, StreamCard } from 
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { StreamShell, type StreamHandle } from "../shell/StreamShell";
+// Aliased: `MessageBody` is already imported above as the engine's body DTO type.
+import { MessageBody as MessageBodyView } from "../components/MessageBody";
 
 export function ReceiptsView({
   groups,
@@ -219,6 +221,14 @@ export function ReceiptsView({
               bodyState={body.state}
               loadingLabel={tb("loading")}
               failedLabel={tb("failed")}
+              /* The opened receipt renders through the same html viewer as everywhere else,
+                 once its body has been hydrated and only when there is an html part. See
+                 `ReadsView` for the reasoning; remote content stays blocked here too. */
+              bodySlot={
+                body.state === "full" && body.html ? (
+                  <MessageBodyView text={body.text} html={body.html} remoteLoaded={body.loadedRemoteContent} />
+                ) : undefined
+              }
               unread={isUnread(m) || justSeen.has(m.id)}
               justSeen={justSeen.has(m.id)}
               current={current === m.id}

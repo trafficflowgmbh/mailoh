@@ -933,6 +933,23 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     if (selectedOhbox) hydrateBody(selectedOhbox.id);
   }, [selectedOhbox?.id, hydrateBody]);
 
+  /**
+   * THE READER'S OWN MESSAGE IS HYDRATED TOO — the gap that made History snippet-only.
+   *
+   * The effect above covers the split-pane selection (`selectedOhbox`). A message opened
+   * STRAIGHT into the reader sheet was never reached by it: History's `onOpen` sets
+   * `readerFor` directly, and every width whose reading column is hidden opens the sheet
+   * rather than a selection. So the pane rendered `bodyOf` over an un-hydrated mirror — a
+   * `snippet`, with no html for `MessageBody` to render — which is exactly the inconsistency
+   * routing every surface through one viewer is meant to close. Keyed on `readerFor` for the
+   * same reason the selection effect is keyed on `selectedOhbox.id`; `hydrateBody` is
+   * single-flight and idempotent, so the overlap when the reader shows an Ohbox message costs
+   * nothing.
+   */
+  useEffect(() => {
+    if (readerFor) hydrateBody(readerFor);
+  }, [readerFor, hydrateBody]);
+
   // The engine's `unread` IS the answer now — the client-side overlay that used to sit on top of
   // it is gone. The optimistic overlay already makes the flip instant, and unlike the `Set` it
   // survives a reload, because it is backed by a row.

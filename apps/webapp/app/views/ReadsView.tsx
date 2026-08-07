@@ -27,6 +27,8 @@ import {
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { FoldTableArt, StreamShell, type StreamHandle } from "../shell/StreamShell";
+// Aliased: `MessageBody` is already imported above as the engine's body DTO type.
+import { MessageBody as MessageBodyView } from "../components/MessageBody";
 
 export type ReadsChipState = null | "approved" | "corrected";
 
@@ -220,6 +222,16 @@ export function ReadsView({
       bodyState={body.state}
       loadingLabel={tb("loading")}
       failedLabel={tb("failed")}
+      /* Once hydrated, an opened card renders the sanitized html viewer — the same
+         `MessageBody` the Ohbox pane and the reader use — instead of dumping `body.text`.
+         Only when there is an html part; a plain-text mail keeps the text clamp unchanged.
+         No image proxy is threaded here, so remote content stays blocked, which is the
+         privacy-preserving default the viewer already ships. */
+      bodySlot={
+        body.state === "full" && body.html ? (
+          <MessageBodyView text={body.text} html={body.html} remoteLoaded={body.loadedRemoteContent} />
+        ) : undefined
+      }
       unread={m.unread || justSeen.has(m.id)}
       justSeen={justSeen.has(m.id)}
       current={current === m.id}
