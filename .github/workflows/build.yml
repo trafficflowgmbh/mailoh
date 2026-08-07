@@ -786,10 +786,13 @@ jobs:
 
       # Build the one-file engine from the published source. esbuild is pinned —
       # the bundler asserts its own version — and installed off to one side so it
-      # is never a project dependency.
+      # is never a project dependency. The directory it lands in is carried into
+      # the following steps, which build the engine again.
       - name: Build the engine bundle
         run: |
+          set -euo pipefail
           D="$(mktemp -d)" && (cd "$D" && npm install --no-save esbuild@0.24.0)
+          echo "OHMAIL_ESBUILD_FROM=$D" >> "$GITHUB_ENV"
           OHMAIL_ESBUILD_FROM="$D" node scripts/engine-bundle.mjs
 
       - name: Confirm the bundle and its runtime layout
@@ -800,6 +803,36 @@ jobs:
           test -d build/engine/drizzle
           test -d build/engine/bin/node_modules/@electric-sql/pglite
           echo "engine bundle sha256: $(sha256sum build/engine/bin/ohmail-engine.mjs | cut -d' ' -f1)"
+
+      # ======================================================================
+      # THE REPRODUCIBILITY GATE.
+      #
+      # This repository offers a claim anyone is invited to check: the engine
+      # inside the download was built from the source in front of them. That
+      # invitation is only worth taking up if building the same source twice
+      # gives the same bytes — otherwise a rebuild that does not match says
+      # nothing, because it never would have.
+      #
+      # So the engine is built twice more, into two scratch directories, and
+      # the whole shipped layout is compared file by file. The manifest hash it
+      # prints goes into the run summary: two runs of this job on one commit
+      # printing one hash is reproducibility across MACHINES, which is stronger
+      # than anything a single job can assert on its own.
+      #
+      # The check runs in the environment this repository's own install
+      # produces — `npm ci` against the committed lock — which is the
+      # environment someone rebuilding a download rebuilds in.
+      # ======================================================================
+      - name: The engine builds byte-identically twice
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          # The status of the CHECK, captured directly. Piping it into something
+          # that prints it would report the printer's exit code instead, and a
+          # failed gate would read as a clean run.
+          node scripts/verify-engine-repro.mjs > build/engine-repro.log 2>&1 && rc=0 || rc=$?
+          cat build/engine-repro.log
+          exit "$rc"
 
       - name: Run summary
         if: always()
@@ -813,4 +846,11 @@ jobs:
             echo "| node | $(node --version) |"
             [ -f build/engine/bin/ohmail-engine.mjs ] \
               && echo "| engine bundle sha256 | \`$(sha256sum build/engine/bin/ohmail-engine.mjs | cut -d' ' -f1)\` |"
+            if [ -f build/engine-repro.log ]; then
+              # The layout manifest — every file in the shipped tree, its hash
+              # and its mode — reduced to one line. Compare it against another
+              # run of this job on the same commit.
+              m="$(grep -m1 '^engine layout manifest sha256: ' build/engine-repro.log | cut -d' ' -f5 || true)"
+              [ -n "$m" ] && echo "| engine layout manifest sha256 | \`$m\` |"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

@@ -135,6 +135,23 @@ export function buildOptionsFor(root = ROOT) {
     platform: "node",
     format: "esm",
     target: "node20",
+    /* PINNED TO THE WORKSPACE ROOT, so the artifact does not depend on where the build was
+     * STARTED from — and this was measured, not assumed.
+     *
+     * The bundle is not minified, so esbuild writes each module's path as a comment above it:
+     * 831 of them in the current artifact. Those paths are relative to esbuild's working
+     * directory, which defaults to `process.cwd()`. Building the same commit from the workspace
+     * root and from anywhere else therefore produces two DIFFERENT files — and the second one
+     * embeds the checkout's absolute location in every one of those comments, which is both a
+     * reproducibility break and a detail of the builder's machine that has no business in a
+     * published download.
+     *
+     * Setting it makes the paths a function of the tree alone. Verified byte-for-byte: with this
+     * option the bundle built from the workspace root, from a scratch directory and from `/` are
+     * the same file, and that file is identical to what the previous behaviour produced from the
+     * root — so nothing about the shipped artifact changes, one way it could vary just stops
+     * existing. `scripts/verify-engine-repro.mjs` is what watches this hold. */
+    absWorkingDir: root,
     // Vendored rather than inlined: the storage layer reads its own `.wasm`/`.data` off disk
     // relative to the module, so inlining it would produce a bundle that cannot find its database.
     external: ["@electric-sql/pglite"],

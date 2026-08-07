@@ -296,10 +296,43 @@ jobs:
           xmllint --noout appcast-macos.xml
           echo "--- appcast-macos.xml ---"; cat appcast-macos.xml
 
+          # ══════════════════════════════════════════════════════════════════
+          # VERIFY BOTH FEEDS BEFORE EITHER IS ATTACHED.
+          #
+          # Everything above SIGNS. Nothing above checks that what it signed
+          # with still matches what the shipped clients verify against — and
+          # those are two different halves of two different keypairs, one in
+          # repository secrets and one committed in this tree. The moment they
+          # stop being pairs, every installed client rejects every update, and
+          # it fails in the way nobody reports: the client says it is up to
+          # date and never asks again.
+          #
+          # It runs BEFORE the upload because the upload uses --clobber. A feed
+          # attached and then found to be bad has already replaced the last
+          # good one; a feed that fails here leaves the release exactly as it
+          # was, with the binaries untouched.
+          #
+          # The verifier is offline and reads only this tree and these files —
+          # the same command anyone can run against a download.
+          # ══════════════════════════════════════════════════════════════════
+          node scripts/verify-feeds.mjs . assets latest.json appcast-macos.xml
+
           # ── Attach both feeds to the release ───────────────────────────────
           gh release upload "$RELEASE_TAG" --repo "$REPO" --clobber \
             latest.json appcast-macos.xml
           echo "uploaded latest.json and appcast-macos.xml to $RELEASE_TAG"
+
+          # ── …and what was attached is what was verified ────────────────────
+          # Fetched back and compared byte for byte rather than verified again:
+          # identical bytes carry the signatures already checked above, and an
+          # upload that silently served something else is the failure this
+          # catches. A release is served for years; this costs two requests.
+          rm -rf uploaded && mkdir uploaded
+          gh release download "$RELEASE_TAG" --repo "$REPO" --dir uploaded --clobber \
+            --pattern latest.json --pattern appcast-macos.xml
+          cmp latest.json uploaded/latest.json
+          cmp appcast-macos.xml uploaded/appcast-macos.xml
+          echo "the attached feeds are byte-identical to the verified ones"
 
       - name: Run summary
         if: always()
@@ -313,6 +346,15 @@ jobs:
             echo '| `appcast-macos.xml` | the handover for installed SwiftUI clients (Sparkle, EdDSA) |'
             echo
             echo "Attached to \`$RELEASE_TAG\`; served from \`/releases/latest/download/\`."
+            echo
+            echo 'Both were verified against the public keys committed in this repository'
+            echo 'before being attached, and the attached bytes were compared back against'
+            echo 'the verified ones. To check them yourself, from a clone of this repository:'
+            echo
+            echo '```'
+            echo 'gh release download <tag> --dir assets'
+            echo 'node scripts/verify-feeds.mjs . assets assets/latest.json assets/appcast-macos.xml'
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
