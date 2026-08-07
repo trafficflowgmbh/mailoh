@@ -146,6 +146,9 @@ export {
 // The engine.
 export {
   OhmailEngine,
+  // How many on-screen messages the windowed prune holds. Exported so the guard reads the
+  // shipped number rather than a hand-copied one — see `RENDERED_PINS` in engine.ts.
+  RENDERED_PINS,
   type EngineOptions,
   type MutationResult,
   type MutationStatus,

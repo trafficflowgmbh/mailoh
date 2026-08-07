@@ -475,6 +475,20 @@ class OverlayReader implements EntityReader {
  */
 const MAX_CONCURRENT_BODIES = 4;
 
+/**
+ * HOW MANY OF THE MESSAGES A SURFACE LAST ASKED TO RENDER THE WINDOWED PRUNE HOLDS ON TO.
+ *
+ * Exported because it is a policy number a guard depends on, and a guard that hand-copies the
+ * number it is checking goes green against a shipped value it has never seen.
+ *
+ * Sized so that everything one screen can hold fits several times over — the widest caller is the
+ * Screener preview, which hydrates one sender's whole held list in a single effect, and forty is
+ * the largest such list this codebase has had a defect about ({@link MAX_CONCURRENT_BODIES}).
+ * It is a HOLD, not a cache: it never touches the store, it dies with the tab, and its only
+ * effect is to keep the windowed prune off rows a reader is looking at.
+ */
+export const RENDERED_PINS = 64;
+
 export class OhmailEngine {
   readonly store: MirrorStore;
   private readonly adapter: EngineAdapter;
@@ -494,6 +508,12 @@ export class OhmailEngine {
   private hydrating: Promise<void> | null = null;
   /** In-flight body fetches by message id — see {@link OhmailEngine.hydrateBody}. */
   private readonly bodyRequests = new Map<string, Promise<void>>();
+  /**
+   * The messages a surface has most recently asked to render, oldest first, capped at
+   * {@link RENDERED_PINS}. Read by {@link OhmailEngine.pinnedMessageIds}; written by
+   * {@link OhmailEngine.hydrateBody}, which is the call every reading surface already makes.
+   */
+  private readonly renderedIds = new Set<string>();
   /** In-flight body fetches, and the ones waiting for a slot. See {@link bodySlot}. */
   private bodyActive = 0;
   private readonly bodyQueue: Array<() => void> = [];
@@ -832,7 +852,13 @@ export class OhmailEngine {
    * ── MINUS THE PIN SET, WHICH IS THE PART THAT MATTERS ───────────────────────────────────
    *
    * A message the product is still USING must never be evicted for being old, because the thing
-   * referencing it renders from the mirror and would render a hole. Four references pin:
+   * referencing it renders from the mirror and would render a hole. Five references pin, and the
+   * FIRST of them is not a row in the mirror at all:
+   *
+   *  · a surface currently RENDERING it — the message the reader has open. Nothing in the mirror
+   *    points at it (reading is not a mutation), so the four record clauses below could all be
+   *    satisfied while the prune deleted the mail on screen mid-read. See
+   *    {@link OhmailEngine.pinnedMessageIds} for why `hydrateBody` is the signal;
    *
    *  · a `draft` replying to it (`inReplyToMessageId`) — the compose view shows what is being
    *    replied to, and a reply-later draft can easily outlive the window;
@@ -872,9 +898,48 @@ export class OhmailEngine {
     return true;
   }
 
+  /**
+   * Note that a surface has asked to render this message. Newest last; the oldest fall off at
+   * {@link RENDERED_PINS}. Re-asking moves an id back to the newest end, so a message that is
+   * re-opened is held again rather than ageing out mid-read.
+   */
+  private noteRendered(messageId: string): void {
+    this.renderedIds.delete(messageId);
+    this.renderedIds.add(messageId);
+    while (this.renderedIds.size > RENDERED_PINS) {
+      const oldest = this.renderedIds.values().next();
+      if (oldest.done) break;
+      this.renderedIds.delete(oldest.value);
+    }
+  }
+
   /** The pin set — every message id the mirror is still referencing. See {@link pruneToPolicy}. */
   private pinnedMessageIds(): Set<string> {
     const pinned = new Set<string>();
+
+    /**
+     * ── THE MESSAGE ON SCREEN, WHICH NOTHING IN THE MIRROR REFERENCES ───────────────────────
+     *
+     * Every other clause below reads a ROW that points at a message. An open message is pointed
+     * at by nothing: reading is not a mutation, the Screener's preview is deliberately
+     * side-effect-free, and a message the reader has merely opened has no draft, no triage
+     * state and no pending question. So the four record clauses could all be satisfied and the
+     * windowed prune would still hard-delete, with its `message_body` cascade, the mail
+     * currently under the reader's eyes — mid-read, on the drain that follows.
+     *
+     * WHY `hydrateBody` IS THE SIGNAL AND NOT A NEW REGISTRATION CALL. The engine holds no view
+     * state and should not start. But every reading surface ALREADY tells it which message it is
+     * rendering, from an effect keyed on the open id: the Ohbox selection and the reader sheet
+     * (`AppShell`), the Screener's selected sender, the Reads/Receipts/History cards. That call
+     * is the statement "I am rendering this message's body" — not a proxy for it — so honouring
+     * it needs no second seam that a surface could forget to call, and no shell knows about the
+     * prune at all.
+     *
+     * WHAT IT IS NOT: a promise that everything ever opened survives. The hold is capped
+     * ({@link RENDERED_PINS}) and lives only in this tab, so it is "what the surfaces are
+     * showing", not a second retention policy competing with the window.
+     */
+    for (const id of this.renderedIds) pinned.add(id);
 
     for (const d of this.store.list<EngineDraft>("draft")) {
       if (d.inReplyToMessageId) pinned.add(d.inReplyToMessageId);
@@ -1057,6 +1122,15 @@ export class OhmailEngine {
    * reported on screen, not thrown at the DOM.
    */
   async hydrateBody(messageId: string, opts: { retry?: boolean } = {}): Promise<void> {
+    /**
+     * ── AND IT DOUBLES AS "A SURFACE IS RENDERING THIS MESSAGE" ─────────────────────────────
+     *
+     * Recorded FIRST, above every early return, because the statement is true whatever the
+     * answer turns out to be — a protected message and a body already `ready` are both on
+     * screen. {@link OhmailEngine.pinnedMessageIds} reads it so the windowed prune cannot evict
+     * the message a reader is looking at; see there for why this call is the signal.
+     */
+    this.noteRendered(messageId);
     const inFlight = this.bodyRequests.get(messageId);
     if (inFlight) return inFlight;
 
