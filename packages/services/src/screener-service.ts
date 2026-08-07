@@ -191,22 +191,21 @@ const SUGGESTION_STATUS = "suggestion";
  * costs proportionally more and never bypasses the credit check. The quote and the charge both
  * scale with N; neither is a per-batch shortcut.
  *
- * ── SIZED TO FIT ONE SERVERLESS INVOCATION, ON PURPOSE ───────────────────────────────────────
+ * ── A HARD 413 CEILING, NOT A SIZE CHOSEN TO FIT ONE INVOCATION ──────────────────────────────
  *
  * A real (non-dry) purchase of N senders makes N SERIAL model calls in the loop below, and the
- * Vercel host runs under `maxDuration = 60` (`apps/api-vercel/app/[[...path]]/route.ts`). 50 is
- * the largest batch that classifies inside one invocation; a request larger than that is cut short
- * with no progress the client can show. So this is the size of ONE request, not the size of one
- * PURCHASE: the client's ladder offers batches well above it (up to its own `MAX_SUGGEST_BATCH`)
- * and splits a purchase into several CAP-SIZED requests, pricing and buying each on its own
- * (`apps/webapp/.../screener-suggest.ts`). Each request still fits the invocation, and the run
- * is RESUMABLE per message anyway — spend and the stored suggestion are written before the next
- * model call — so even a request cut short bills only what it finished and a re-press resumes for
- * free (the `duplicate` retry re-asks nothing already stored). A DRY RUN makes no model call at
- * all, so a cap-sized price is a single fast request.
- *
- * The client chunks a large selection into batches of this size, so a single request stays small
- * enough to finish inside one invocation — a larger cap would risk a request that could not.
+ * Vercel host runs under `maxDuration = 60` (`apps/api-vercel/app/[[...path]]/route.ts`). At the
+ * measured per-sender model latency a batch this large does NOT finish inside one invocation, so
+ * 50 is the point past which a request is REFUSED (413) — a guard against an absurd request, not a
+ * size picked to fit the deadline. The size that fits the deadline is the CLIENT's, and it is
+ * smaller: the webapp splits a purchase into requests of `SUGGEST_CHUNK_SIZE` senders (well below
+ * this cap), pricing and buying each on its own (`apps/webapp/.../screener-suggest.ts`), so each
+ * request completes and the run ticks forward one chunk at a time rather than freezing on a single
+ * oversized request. This cap only bounds the worst a single request may be; the run is RESUMABLE
+ * per message anyway — spend and the stored suggestion are written before the next model call — so
+ * even a request cut short bills only what it finished and a re-press resumes for free (the
+ * `duplicate` retry re-asks nothing already stored). A DRY RUN makes no model call at all, so a
+ * price for any size is a single fast request.
  */
 export const MAX_SUGGEST_SENDERS = 50;
 
@@ -304,8 +303,9 @@ export interface ScreenerPage extends Page<ScreenerItem> {
      * derives its Screener queue from the `/sync` mirror, which can hold far more than one page —
      * and it may offer a purchase LARGER than this cap; it then splits that purchase into requests
      * of at most this many, pricing and buying each on its own (`screener-suggest.ts`). So this
-     * number is not the ladder's top — it is the size of one chunk of it, and the only thing that
-     * keeps a chunk under the 413.
+     * number is not the ladder's top — it is the CEILING on one chunk of it (the client's own
+     * latency budget makes a chunk smaller still), and the only thing that keeps a chunk under
+     * the 413.
      */
     maxPerRequest: number;
   };

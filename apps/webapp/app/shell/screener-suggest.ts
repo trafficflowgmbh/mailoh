@@ -62,9 +62,9 @@ export interface SuggestBatchControl {
   available: number;
   /**
    * Batch sizes offered, clamped to {@link available} and to {@link MAX_SUGGEST_BATCH} — the most
-   * one authorised purchase may buy. This is NOT the endpoint's per-request cap: a chosen size
-   * larger than that cap is priced and bought as several cap-sized requests (chunks), so the
-   * ladder can offer more than one request's worth.
+   * one authorised purchase may buy. This is NOT one request's size: a chosen size larger than a
+   * single request is priced and bought as several request-sized chunks, so the ladder can offer
+   * more than one request's worth.
    */
   sizes: number[];
   /** The size currently chosen. */
@@ -142,39 +142,60 @@ export interface ScreenerSuggestions {
 }
 
 /**
- * The per-request cap (chunk size) to assume before the server has published its own.
+ * The per-request CAP — the 413 boundary — to assume before the server has published its own.
  *
  * `GET /screener` answers `suggestable.maxPerRequest` and that number is preferred the moment
- * it arrives; this is the chunk size the control uses if that read has not landed (offline, or a
- * press faster than the fetch). It is deliberately AT OR BELOW the server's real cap of
+ * it arrives; this is the ceiling the control assumes if that read has not landed (offline, or a
+ * press faster than the fetch). It is the most a single request may carry before the server
+ * REFUSES it, and it is deliberately AT OR BELOW the server's real cap of
  * {@link ../../../packages/services/src/screener-service MAX_SUGGEST_SENDERS} (50) rather than
- * above it: guessing low makes a purchase into a few more chunks than strictly needed — each one
- * still cheap and idempotent — while guessing high costs a 413 on a chunk that had already quoted
- * a price.
+ * above it: guessing high costs a 413 on a chunk that had already quoted a price.
+ *
+ * It is NOT the size a request actually carries — that is the smaller {@link SUGGEST_CHUNK_SIZE},
+ * and a request is bounded by whichever of the two is lower.
  */
 const ASSUMED_MAX_PER_REQUEST = 25;
+
+/**
+ * HOW MANY SENDERS ONE REQUEST ACTUALLY CARRIES — the latency budget, distinct from the 413 cap.
+ *
+ * The server classifies the senders in a request SERIALLY through the model, and the whole request
+ * has to finish inside one serverless invocation (its host runs under a 60-second ceiling). A
+ * sender costs roughly two seconds of model time, so a request of about fifteen finishes in well
+ * under half that budget — leaving room for a cold start or an occasional slow sender — while a
+ * request the size of the per-request cap ({@link ASSUMED_MAX_PER_REQUEST} / the server's
+ * `maxPerRequest`, up to 50) would run PAST the invocation and return nothing the control could
+ * show: no ticking progress, no chips, just a timeout.
+ *
+ * So the offered ladder (up to {@link MAX_SUGGEST_BATCH}) is split into requests of at most this
+ * many, each of which reliably completes: a large purchase ticks forward one chunk at a time and
+ * its chips land as it goes, instead of freezing on a single request that cannot finish. The cap
+ * and this budget are two different bounds, and a request is never larger than the lower of them.
+ */
+export const SUGGEST_CHUNK_SIZE = 15;
 
 /**
  * The sizes offered, before clamping. The small end is watchable, the large end drains a
  * backlog: 10/25/50 to try a handful and see, 100/200/400 to clear a real first-contact pile
  * in one authorised purchase. Every one of these is still priced by a server dry run before it
  * can be pressed, and clamped by {@link batchSizes} to {@link MAX_SUGGEST_BATCH} and the queue —
- * a size above the account's queue is never shown. A size above the per-request cap is NOT
- * dropped: it is bought as several cap-sized requests (see {@link SuggestBatchControl.confirm}).
+ * a size above the account's queue is never shown. A size above one request is NOT dropped: it is
+ * bought as several request-sized chunks (see {@link SuggestBatchControl.confirm}).
  */
 const OFFERED_SIZES = [10, 25, 50, 100, 200, 400];
 
 /**
- * THE MOST ONE AUTHORISED PURCHASE MAY BUY — the ladder's ceiling, and where it stops being the
- * per-request cap.
+ * THE MOST ONE AUTHORISED PURCHASE MAY BUY — the ladder's ceiling, above the per-request cap.
  *
- * The endpoint's `maxPerRequest` is how many senders ONE request carries; before #90 the ladder
- * was clamped to it, so a purchase could never exceed one request — and raising that cap to fit a
- * larger ladder put a single oversized request past the serverless invocation's 60 s. This
- * decouples the two: the ladder is bounded here, by a number a person can picture spending in one
- * press, and a chosen size larger than one request is SPLIT into cap-sized chunks. The full set is
- * still priced first (the sum of the chunk quotes), so consent is to the whole, and spend never
- * exceeds that sum.
+ * A purchase and a request are different sizes. One request is bounded by {@link SUGGEST_CHUNK_SIZE}
+ * (what reliably classifies inside one serverless invocation) and by the server's per-request cap;
+ * a purchase can be much larger, and is delivered as a sequence of those requests. Clamping the
+ * ladder to a single request's worth is what an earlier control did — a purchase could then never
+ * exceed one request, and stretching the request to fit a bigger ladder pushed it past the
+ * invocation's deadline. This ceiling decouples the two: it is a number a person can picture
+ * spending in one press, and a chosen size larger than one request is SPLIT into chunks that each
+ * fit one request. The full set is still priced first (the sum of the chunk quotes), so consent is
+ * to the whole, and spend never exceeds that sum.
  *
  * It is the top of {@link OFFERED_SIZES}: the ladder offers up to here and no higher.
  */
@@ -493,13 +514,17 @@ export function useScreenerSuggestions(opts: {
     const cap = sizes[sizes.length - 1] ?? 0;
 
     /**
-     * ONE request carries at most this many senders — the server's published per-request cap
-     * ({@link ASSUMED_MAX_PER_REQUEST} until that read lands). A price or a purchase larger than
-     * this is split into chunks of exactly this size; `chunksOf` is that split, always in the
-     * queue's own order so a chunk is a contiguous prefix-slice and the same press twice covers
-     * the same senders.
+     * ONE request carries at most this many senders — the LOWER of the latency budget
+     * ({@link SUGGEST_CHUNK_SIZE}) and the server's per-request cap ({@link maxPerRequest},
+     * {@link ASSUMED_MAX_PER_REQUEST} until that read lands). The cap is only the 413 boundary; the
+     * budget is what actually fits one serverless invocation, and it is the smaller of the two in
+     * production — a request the size of the cap would classify past the invocation's deadline and
+     * return nothing (the frozen "0 of N" this split exists to prevent). A price or a purchase
+     * larger than this is split into chunks of at most this size; `chunksOf` is that split, always
+     * in the queue's own order so a chunk is a contiguous prefix-slice and the same press twice
+     * covers the same senders.
      */
-    const chunkSize = Math.max(1, maxPerRequest);
+    const chunkSize = Math.max(1, Math.min(maxPerRequest, SUGGEST_CHUNK_SIZE));
     const chunksOf = (set: string[]): string[][] => {
       const out: string[][] = [];
       for (let i = 0; i < set.length; i += chunkSize) out.push(set.slice(i, i + chunkSize));
@@ -509,7 +534,7 @@ export function useScreenerSuggestions(opts: {
     /**
      * Price `n` senders on the SERVER. No model, no debit, nothing stored.
      *
-     * The set is priced in CAP-SIZED chunks and the quotes are SUMMED — the same chunks the
+     * The set is priced in REQUEST-SIZED chunks and the quotes are SUMMED — the same chunks the
      * purchase will use, so the number on screen is the exact ceiling the purchase honours.
      * Consent is to the sum, not to a first chunk that happened to fit one request. Every chunk
      * checks the press counter on arrival, so a size changed mid-flight discards the whole
@@ -591,7 +616,7 @@ export function useScreenerSuggestions(opts: {
         setNotice(null);
       },
       /**
-       * Buy the chosen set — in CAP-SIZED chunks, halting on the first that stops or fails.
+       * Buy the chosen set — in REQUEST-SIZED chunks, halting on the first that stops or fails.
        *
        * The whole set was priced above (the sum of the chunk quotes), so consent is to the whole
        * and the money rules are these, in order:
