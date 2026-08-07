@@ -3,12 +3,28 @@ name: release feeds
 # Generates the two auto-update feeds and attaches them to a published release,
 # so that
 #
-#   …/releases/latest/download/latest.json        (Windows + Linux, Tauri)
-#   …/releases/latest/download/appcast-macos.xml   (macOS, Sparkle)
+#   …/releases/latest/download/latest.json        (all three platforms, Tauri)
+#   …/releases/latest/download/appcast-macos.xml   (the macOS HANDOVER, Sparkle)
 #
 # resolve to signed metadata the shipped clients are pinned to. The clients
 # only ever NOTIFY and then install on the user's word; this workflow serves the
 # metadata that lets them verify what they downloaded.
+#
+# ── WHY macOS IS IN BOTH ───────────────────────────────────────────────────
+#
+# macOS used to ship a different application: a SwiftUI client with the same
+# bundle identifier and Sparkle as its updater. It now ships the same Tauri app
+# as Windows and Linux, which reads latest.json — so the appcast is no longer
+# how macOS updates, it is how an already-installed Swift client is handed over
+# to the app that replaces it. Both feeds point at ONE archive, with two
+# independent detached signatures over the same bytes.
+#
+# The appcast keeps being published on EVERY release, indefinitely. A Swift
+# client that has not been opened in a year still asks for
+# /releases/latest/download/appcast-macos.xml, and if the newest release has no
+# appcast attached it gets a 404 and stays where it is for ever. Publishing one
+# costs nothing; a bounded window strands exactly the installs least likely to
+# be noticed.
 #
 # Both feeds are signed with keypairs that are independent of any OS
 # code-signing certificate — the apps are unsigned, but an update payload an
@@ -19,15 +35,20 @@ name: release feeds
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD   its password, if the key has one
 #   OHMAIL_SPARKLE_ED_PRIVATE_KEY        Ed25519 key for the appcast (Sparkle)
 #
+# The macOS archive is signed with BOTH: minisign for the clients reading
+# latest.json, EdDSA for the installed Swift clients reading the appcast. Two
+# detached signatures over one file, neither of which the other can substitute
+# for.
+#
 # The matching public keys are committed: SUPublicEDKey in Resources/Info.plist
 # and plugins.updater.pubkey in apps/desktop/src-tauri/tauri.conf.json. If a
 # private key is rotated, the committed public half must be rotated with it or
 # the update can never verify.
 #
 # This runs on a released tag and works OFF the release's own binary assets, so
-# it must run AFTER the build artifacts (the .dmg/.app.zip, the -setup.exe and
-# the .AppImage) are attached to the release. It signs those exact bytes and
-# points the feed at their download URLs.
+# it must run AFTER the build artifacts (the .dmg and .app.tar.gz, the
+# -setup.exe and the .AppImage) are attached to the release. It signs those
+# exact bytes and points the feeds at their download URLs.
 
 on:
   release:
@@ -101,17 +122,28 @@ jobs:
           pick() { ls assets/$1 2>/dev/null | head -1 || true; }
           WIN_EXE="$(pick '*-setup.exe')"
           APPIMAGE="$(pick '*.AppImage')"
-          MAC_ZIP="$(pick '*.app.zip')"
+          # A GZIPPED TAR AND NOT A ZIP, and this is not a preference. Tauri's
+          # macOS updater unpacks its payload with GzDecoder + tar and has no
+          # zip path at all (tauri-plugin-updater `install_inner`, macOS). The
+          # previous `ohmail.app.zip` was for Sparkle, which reads both — so one
+          # tar.gz serves both feeds and the zip is retired.
+          MAC_TGZ="$(pick '*.app.tar.gz')"
           test -n "$WIN_EXE"  || { echo "no NSIS -setup.exe attached to $RELEASE_TAG" >&2; exit 1; }
           test -n "$APPIMAGE" || { echo "no .AppImage attached to $RELEASE_TAG" >&2; exit 1; }
-          test -n "$MAC_ZIP"  || { echo "no *.app.zip attached to $RELEASE_TAG" >&2; exit 1; }
+          test -n "$MAC_TGZ"  || { echo "no *.app.tar.gz attached to $RELEASE_TAG" >&2; exit 1; }
 
           # ════════════════════════════════════════════════════════════════════
-          # latest.json — the Tauri updater manifest (Windows + Linux).
+          # latest.json — the Tauri updater manifest, all three platforms.
           # Each artifact is minisign-signed; the `signature` field is the exact
           # contents of the .sig the signer emits, which is what the client
-          # verifies against the committed pubkey. macOS is served by Sparkle,
-          # not Tauri, so there are no darwin platforms here.
+          # verifies against the committed pubkey.
+          #
+          # TWO darwin KEYS FOR ONE UNIVERSAL ARCHIVE. The updater composes its
+          # lookup key as `{os}-{arch}` from the RUNNING binary — `darwin-aarch64`
+          # or `darwin-x86_64` — and does an exact map lookup with no fallback.
+          # There is no `darwin-universal` key it would ever ask for, so a single
+          # entry under that name is a manifest every Mac misses. Both keys point
+          # at the one universal archive and carry the one signature over it.
           # ════════════════════════════════════════════════════════════════════
           sign_tauri() {
             # Reads TAURI_SIGNING_PRIVATE_KEY(+_PASSWORD) from the environment.
@@ -123,8 +155,10 @@ jobs:
           }
           WIN_SIG="$(sign_tauri "$WIN_EXE")"
           LIN_SIG="$(sign_tauri "$APPIMAGE")"
+          MAC_SIG="$(sign_tauri "$MAC_TGZ")"
           test -n "$WIN_SIG" || { echo "empty Windows signature" >&2; exit 1; }
           test -n "$LIN_SIG" || { echo "empty Linux signature" >&2; exit 1; }
+          test -n "$MAC_SIG" || { echo "empty macOS signature" >&2; exit 1; }
 
           jq -n \
             --arg version  "$VERSION" \
@@ -134,25 +168,55 @@ jobs:
             --arg win_sig  "$WIN_SIG" \
             --arg lin_url  "$BASE/$(basename "$APPIMAGE")" \
             --arg lin_sig  "$LIN_SIG" \
+            --arg mac_url  "$BASE/$(basename "$MAC_TGZ")" \
+            --arg mac_sig  "$MAC_SIG" \
             '{
                version: $version,
                notes: $notes,
                pub_date: $pub_date,
                platforms: {
                  "windows-x86_64": { signature: $win_sig, url: $win_url },
-                 "linux-x86_64":   { signature: $lin_sig, url: $lin_url }
+                 "linux-x86_64":   { signature: $lin_sig, url: $lin_url },
+                 "darwin-aarch64": { signature: $mac_sig, url: $mac_url },
+                 "darwin-x86_64":  { signature: $mac_sig, url: $mac_url }
                }
              }' > latest.json
           jq . latest.json > /dev/null   # it is valid JSON or the step fails here
+          # EVERY PLATFORM THE PRODUCT SHIPS, ASSERTED. A manifest missing a key
+          # is not an error to any client — it is a client that quietly never
+          # updates again, which is exactly the failure this file exists to
+          # prevent and the one nobody reports.
+          jq -e '.platforms
+                  | has("windows-x86_64") and has("linux-x86_64")
+                    and has("darwin-aarch64") and has("darwin-x86_64")' \
+            latest.json > /dev/null \
+            || { echo "latest.json is missing a platform entry" >&2; exit 1; }
           echo "--- latest.json ---"; cat latest.json
 
           # ════════════════════════════════════════════════════════════════════
-          # appcast-macos.xml — the Sparkle appcast (macOS).
-          # The enclosure is the .app.zip (Sparkle swaps the bundle in place);
-          # sign_update produces the EdDSA signature AND the length as ready-made
-          # enclosure attributes. sparkle:version is the shipped app's
-          # CFBundleVersion, read out of the bundle so the client's own
-          # comparator sees the real build number.
+          # appcast-macos.xml — the HANDOVER feed for installed Swift clients.
+          # The enclosure is the same .app.tar.gz latest.json points at (Sparkle
+          # swaps the bundle in place, and reads gzipped tars); sign_update
+          # produces the EdDSA signature AND the length as ready-made enclosure
+          # attributes. sparkle:version is the shipped app's CFBundleVersion,
+          # read out of the bundle so the feed cannot claim a version the
+          # artifact does not carry — Sparkle validates the two against each
+          # other before installing.
+          #
+          # ── THE COMPARISON THIS WHOLE BLOCK EXISTS TO GET RIGHT ────────────
+          #
+          # Sparkle decides "is this newer" by comparing sparkle:version against
+          # the INSTALLED app's CFBundleVersion. The Swift client stamped that
+          # with a monotonic build number — `git rev-list --count HEAD`, 251 at
+          # v0.5.0 and 291 at v0.6.1. Tauri writes CFBundleVersion from the
+          # config version, so an unpinned bundle announces `0.7.0`, which
+          # Sparkle reads as a DOWNGRADE from 291 and refuses. Silently, and for
+          # ever: every installed Mac would keep reporting itself up to date.
+          #
+          # apps/desktop/src-tauri/Info.plist pins CFBundleVersion to a constant
+          # far above any published build number. The floor below is what makes
+          # that pin load-bearing rather than decorative — a plist that loses the
+          # key fails the release instead of stranding the people it protects.
           # ════════════════════════════════════════════════════════════════════
           SPARKLE_VER=2.9.4   # matches apps/macos/Package.resolved
           curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VER/Sparkle-$SPARKLE_VER.tar.xz" -o sparkle.tar.xz
@@ -160,7 +224,7 @@ jobs:
           SIGN_UPDATE="$(find sparkle -type f -name sign_update | head -1)"
           test -x "$SIGN_UPDATE" || { echo "sign_update not found in the Sparkle distribution" >&2; exit 1; }
 
-          rm -rf appdir && mkdir appdir && unzip -q "$MAC_ZIP" -d appdir
+          rm -rf appdir && mkdir appdir && tar -xzf "$MAC_TGZ" -C appdir
           # The app's OWN Info.plist, not a nested helper's: Sparkle.framework ships Updater.app and
           # XPC services that each carry a `*/Contents/Info.plist`, and a bare `-name` match would pick
           # one of those (reporting Sparkle's version, e.g. 2.9.4). Anchor on the app bundle.
@@ -171,12 +235,35 @@ jobs:
           MIN_OS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PLIST" 2>/dev/null || echo 15.0)"
           echo "app reports shortVersion=$SHORT_VER build=$BUNDLE_VER minOS=$MIN_OS"
 
+          # ── THE FLOOR, AND WHY IT IS A HARD REFUSAL ───────────────────────
+          # 291 is the CFBundleVersion of the last SwiftUI release (v0.6.1); 251
+          # was v0.5.0. Sparkle offers an update only when sparkle:version is
+          # strictly greater than what is installed, so anything at or below 291
+          # is an appcast that no existing Mac will ever act on — and it fails
+          # the way that is impossible to notice, by the client simply saying it
+          # is up to date. Refusing the release is the only signal available.
+          LAST_SWIFT_BUILD=291
+          case "$BUNDLE_VER" in
+            ''|*[!0-9]*)
+              echo "CFBundleVersion is \"$BUNDLE_VER\", which is not an integer build number." >&2
+              echo "Sparkle compares it against installed builds numbered up to $LAST_SWIFT_BUILD;" >&2
+              echo "a non-integer cannot order above them. See apps/desktop/src-tauri/Info.plist." >&2
+              exit 1 ;;
+          esac
+          if [ "$BUNDLE_VER" -le "$LAST_SWIFT_BUILD" ]; then
+            echo "CFBundleVersion $BUNDLE_VER is not above the last SwiftUI build ($LAST_SWIFT_BUILD)." >&2
+            echo "Every installed macOS client would read this release as a downgrade and refuse it," >&2
+            echo "silently and permanently. See apps/desktop/src-tauri/Info.plist." >&2
+            exit 1
+          fi
+          echo "handover floor ok: $BUNDLE_VER > $LAST_SWIFT_BUILD"
+
           # sign_update --ed-key-file <file> <archive>  → sparkle:edSignature="…" length="…"
           # Sparkle 2.9.4 REMOVED the inline `-s <key>` form ("Specifying private key as an argument
           # is no longer supported" — it exits non-zero). The key is written to a private temp file
           # and read with --ed-key-file, which also keeps it off the process argument list.
           EDKEY_FILE="$(mktemp)"; printf '%s' "$OHMAIL_SPARKLE_ED_PRIVATE_KEY" > "$EDKEY_FILE"
-          ENCLOSURE_ATTRS="$("$SIGN_UPDATE" --ed-key-file "$EDKEY_FILE" "$MAC_ZIP")"
+          ENCLOSURE_ATTRS="$("$SIGN_UPDATE" --ed-key-file "$EDKEY_FILE" "$MAC_TGZ")"
           rm -f "$EDKEY_FILE"
           test -n "$ENCLOSURE_ATTRS" || { echo "sign_update produced no signature" >&2; exit 1; }
           case "$ENCLOSURE_ATTRS" in
@@ -185,7 +272,7 @@ jobs:
           esac
 
           PUB_DATE_RFC="$(date -u -jf %Y-%m-%dT%H:%M:%SZ "$PUB_DATE_ISO" +"%a, %d %b %Y %H:%M:%S +0000" 2>/dev/null || date -u +"%a, %d %b %Y %H:%M:%S +0000")"
-          MAC_URL="$BASE/$(basename "$MAC_ZIP")"
+          MAC_URL="$BASE/$(basename "$MAC_TGZ")"
 
           {
             echo '<?xml version="1.0" encoding="utf-8"?>'
@@ -220,8 +307,8 @@ jobs:
             echo
             echo '| feed | for |'
             echo '|---|---|'
-            echo '| `latest.json` | Windows + Linux (Tauri, minisign) |'
-            echo '| `appcast-macos.xml` | macOS (Sparkle, EdDSA) |'
+            echo '| `latest.json` | Windows, Linux and macOS (Tauri, minisign) |'
+            echo '| `appcast-macos.xml` | the handover for installed SwiftUI clients (Sparkle, EdDSA) |'
             echo
             echo "Attached to \`$RELEASE_TAG\`; served from \`/releases/latest/download/\`."
           } >> "$GITHUB_STEP_SUMMARY"

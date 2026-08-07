@@ -1,16 +1,43 @@
 name: build
 
-# Everything the two clients can honestly prove on a public runner.
+# Everything the desktop app can honestly prove on a public runner.
 #
-#   macOS   — the SwiftUI app: compiles in release, tests pass, it actually
-#             renders (--smoke), and it packages into an installable DMG.
-#   windows — the Tauri shell: the UI bundle builds, the embedded-bundle smoke
-#             passes, and it packages into an .msi and an NSIS .exe.
-#   linux   — the same shell into an .AppImage and a .deb.
+# ONE APPLICATION, THREE PLATFORMS. macOS used to build a separate SwiftUI
+# client here; it now builds the same Tauri app as Windows and Linux, carrying
+# the same mail engine. Each job does the same five things in the same order:
+#
+#   1. render check   — build the PREVIEW bundle and smoke it. This is the only
+#                       artifact the offline audit can be run against, because
+#                       the engine-bearing bundle is supposed to talk to its
+#                       engine; keeping it means the interface is still proven
+#                       to draw rather than merely to compile.
+#   2. engine         — build the one-file mail engine from this source, with
+#                       the pinned esbuild.
+#   3. runtime        — download the official Node build for this platform and
+#                       verify it against nodejs.org's own SHASUMS256.txt.
+#   4. package        — stage engine + runtime, rebuild the UI with the bridge,
+#                       and bundle. One script sets all three, because the three
+#                       have to agree and a workflow that spells them out by
+#                       hand is a workflow where a later edit fixes two of them.
+#   5. inspect        — open the artifact and assert the engine and the runtime
+#                       are inside it, executable, and that the binary reaches
+#                       nothing but its own update feed.
 #
 # Nothing here is signed: no Apple Developer ID, no Authenticode certificate.
 # See the per-platform "unsigned" notes in the README; the macOS artifact is
 # ad-hoc signed only, the Windows and Linux ones are not signed at all.
+#
+# ── THE ARTIFACT NAMES ARE A CONTRACT ─────────────────────────────────────
+#
+# The download page links published assets directly, so each artifact is
+# RENAMED IN PLACE to its stable name here — never copied, because two files
+# matching one glob makes the update feed's payload pick arbitrary:
+#
+#   ohmail.dmg · ohmail.app.tar.gz · ohmail-windows-setup.exe
+#   ohmail-linux-x86_64.AppImage · ohmail-linux-amd64.deb
+#
+# `latest.json` and `appcast-macos.xml` are the update feeds and belong to the
+# release-feeds workflow; nothing here may produce a file by either name.
 
 on:
   push:
@@ -27,90 +54,187 @@ concurrency:
 
 jobs:
   macos:
-    name: macOS · build · test · smoke · engine · dmg
+    name: macOS · smoke · engine · universal app · dmg
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          # package-macos.mjs derives CFBundleVersion from `git rev-list --count HEAD`
-          # and stages the bundle from `git archive HEAD`; both need full history, not
-          # the shallow clone actions/checkout takes by default.
-          fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:
           node-version: 22
 
-      - name: Select the newest Xcode on the runner
+      - name: Toolchain
         run: |
-          ls -d /Applications/Xcode*.app
-          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
-          xcodebuild -version
-          swift --version
-          sw_vers
+          rustup update stable
+          rustup default stable
+          # BOTH SLICES, because the macOS artifact is universal. `tauri build
+          # --target universal-apple-darwin` compiles the binary twice and lipos
+          # the result, and a missing target is a build that fails late.
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          rustc --version
+          node --version
 
-      - name: swift build -c release
-        run: swift build --package-path apps/macos -c release
+      - name: npm install
+        working-directory: apps/desktop
+        run: npm install --no-audit --no-fund
 
-      - name: swift test
-        run: swift test --package-path apps/macos
+      - name: tsc --noEmit
+        working-directory: apps/desktop
+        run: npm run ui:typecheck
 
-      # The render check: every route × both colour schemes × both verified
-      # widths, hosted offscreen, rasterised, and audited for collapsed rows.
-      # It is the step that catches "compiles, lays out, draws nothing".
-      - name: OhMail --smoke
-        run: swift run --package-path apps/macos -c release OhMail --smoke
+      # ── 1 · the render check, over the PREVIEW bundle ──────────────────────
+      # The preview is the only artifact "it opens no connection" can be
+      # asserted against. It is built first and smoked first; step 4 rebuilds
+      # dist/ with the bridge in it.
+      - name: Build the preview bundle
+        working-directory: apps/desktop
+        run: npm run ui:build
 
-      # The mail engine the macOS app now carries — built from the published source
-      # with the same locked dependency tree and pinned esbuild the `engine` job uses,
-      # then a universal Node vendored beside it (downloaded and checksum-verified
-      # against nodejs.org's own SHASUMS256.txt). package-macos embeds engine + node +
-      # journal, runs the layout-agnostic third-party licence gate (refuses AGPL and
-      # refuses under-enumeration), and boots the ASSEMBLED bundle (verify-engine-boot)
-      # so a package that cannot start its engine is a red step, not a green one.
+      - name: Smoke the preview bundle
+        working-directory: apps/desktop
+        run: npm run smoke
+
+      - name: cargo test (both configurations)
+        working-directory: apps/desktop/src-tauri
+        run: |
+          set -euo pipefail
+          cargo test
+          cargo test --features local-engine
+
+      # ── 2 + 3 · the engine and the runtime it is spawned with ──────────────
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
 
       - name: Build the engine bundle
         run: |
+          set -euo pipefail
           D="$(mktemp -d)" && (cd "$D" && npm install --no-save esbuild@0.24.0)
           OHMAIL_ESBUILD_FROM="$D" node scripts/engine-bundle.mjs
 
-      - name: Vendor a universal Node beside the engine
-        run: node scripts/vendor-node-macos.mjs
+      # The engine boots from the layout it ships in, and — the half that makes
+      # the first half worth anything — refuses to when the migration journal is
+      # moved away. A bundle that resolved its journal from a build-time
+      # absolute path would pass the first check while shipping broken.
+      - name: The engine boots from the shipped layout, and only from it
+        run: node scripts/verify-engine-boot.mjs
 
-      - name: Package the engine-bearing ohmail.app + ohmail.dmg
-        run: node scripts/package-macos.mjs --skip-tests
+      # nodejs.org's own build, checksum-verified against the release manifest,
+      # cached because it is a fifth of a gigabyte and never changes for a
+      # pinned version. The cache key carries the version, so a bump in
+      # scripts/vendor-node.mjs misses the cache rather than serving the old one.
+      - uses: actions/cache@v4
+        with:
+          path: build/vendor
+          # The pinned version is in the key, spelled here rather than read out
+          # of the script: `scripts/vendor-node.mjs` runs its whole download on
+          # import, so there is no way to ask it for its version without doing
+          # the thing the cache exists to avoid. The cost of the duplication is
+          # that a bump has to be made in both places — and the failure mode of
+          # forgetting is a cache MISS, which downloads and verifies afresh. The
+          # opposite arrangement, deriving the key from something that could go
+          # stale, would serve the old runtime under the new version's name.
+          key: vendor-node-darwin-v22.23.2
 
-      # A DMG that does not mount is not an artifact — and an engine-bearing DMG that
-      # carries no engine is worse. Mount it, assert the shell AND the engine, its
-      # migration journal, the vendored universal Node and the third-party notices,
-      # unmount. If this ever fails the upload below never happens.
-      - name: Verify the DMG mounts and carries the engine
+      - name: Vendor the Node runtime
+        run: node scripts/vendor-node.mjs --platform darwin
+
+      # ── 4 · the app ───────────────────────────────────────────────────────
+      - name: Build the engine-bearing app (universal)
+        working-directory: apps/desktop
+        run: npm run app:build:engine -- --bundles app,dmg -- --target universal-apple-darwin
+
+      - name: Name the artifacts what the download page links
+        run: |
+          set -euo pipefail
+          B=apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle
+          ls -la "$B/macos" "$B/dmg"
+          DMG="$(ls "$B"/dmg/*.dmg | head -1)"
+          test -s "$DMG"
+          mv "$DMG" build/ohmail.dmg
+          # The updater payload. A GZIPPED TAR and not a zip: Tauri's macOS
+          # updater unpacks with GzDecoder + tar and has no zip path at all, and
+          # Sparkle — which the handover feed serves to installed SwiftUI
+          # clients — reads gzipped tars too. One archive, two detached
+          # signatures, both applied by the release-feeds workflow.
+          # `--keepParent` equivalent: the archive must contain `ohmail.app/…`
+          # at its root, because the updater strips exactly one leading
+          # component when it extracts.
+          tar -czf build/ohmail.app.tar.gz -C "$B/macos" ohmail.app
+          ls -la build/ohmail.dmg build/ohmail.app.tar.gz
+
+      # ── 5 · open it and look ──────────────────────────────────────────────
+      # A DMG that does not mount is not an artifact, and an engine-bearing DMG
+      # that carries no engine is worse. Mount it, assert every piece the app
+      # resolves at runtime, unmount. If this fails the upload never happens.
+      - name: The DMG mounts and carries the engine and its runtime
         run: |
           set -euo pipefail
           MNT="$(mktemp -d)"
           hdiutil attach build/ohmail.dmg -nobrowse -readonly -mountpoint "$MNT"
-          ls -la "$MNT"
           APP="$MNT/ohmail.app"
+          RES="$APP/Contents/Resources"
           test -d "$APP"
-          test -x "$APP/Contents/MacOS/OhMail"
-          test -x "$APP/Contents/MacOS/ohmail-engine"
-          test -d "$APP/Contents/drizzle"
-          test -x "$APP/Contents/Resources/node"
-          test -s "$APP/Contents/Resources/THIRD-PARTY-NOTICES.txt"
-          test -s "$APP/Contents/Resources/ohmail.icns"
-          test -f "$MNT/Read me first.txt"
+          test -x "$APP/Contents/MacOS/ohmail"
+          # The layout `engine.rs` composes from `resource_dir()`. Every path
+          # here is one the app resolves at launch; a rename on either side
+          # produces an app that packages cleanly and reports "no engine".
+          test -f "$RES/engine/bin/ohmail-engine.mjs"
+          test -d "$RES/engine/bin/node_modules/@electric-sql/pglite"
+          test -d "$RES/engine/drizzle"
+          test -x "$RES/runtime/node"
+          test -s "$RES/runtime/node.LICENSE"
+          # The vendored runtime RUNS, from inside the mounted image.
+          "$RES/runtime/node" --version
+          lipo -archs "$APP/Contents/MacOS/ohmail"
+          lipo -archs "$RES/runtime/node"
+          # THE HANDOVER FLOOR. CFBundleVersion has to order above the last
+          # SwiftUI build (291) or Sparkle reads this release as a downgrade and
+          # every installed Mac stays where it is, silently and permanently.
+          BUILD_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
+          echo "CFBundleVersion=$BUILD_VER"
+          case "$BUILD_VER" in ''|*[!0-9]*) echo "CFBundleVersion is not an integer" >&2; exit 1 ;; esac
+          test "$BUILD_VER" -gt 291
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist"
           codesign --verify --verbose=2 "$APP"
-          lipo -archs "$APP/Contents/MacOS/OhMail"
-          lipo -archs "$APP/Contents/Resources/node"
           hdiutil detach "$MNT"
 
-      - name: Screenshots (every route, light + dark, both widths)
-        run: swift run --package-path apps/macos -c release OhMail --shot shots
+      # THE PACKAGED APP'S OWN ENGINE, STARTED FROM THE PACKAGED LAYOUT, with a
+      # PATH that has no node on it — which is what a Finder launch actually
+      # gets. This is the check that the whole runtime-resolution slice exists
+      # for: it fails if the vendored node is missing, not executable, or in the
+      # wrong place, none of which the file assertions above can distinguish
+      # from a working app.
+      - name: The packaged engine starts with no node on PATH
+        run: |
+          set -euo pipefail
+          B=apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle
+          RES="$B/macos/ohmail.app/Contents/Resources"
+          D="$(mktemp -d)"
+          set +e
+          env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$HOME" \
+            OHMAIL_KEK="$(printf 'a%.0s' $(seq 64))" \
+            OHMAIL_IMAP_HOST=127.0.0.1 OHMAIL_IMAP_PORT=59999 \
+            OHMAIL_IMAP_USER=boot@local OHMAIL_MAILBOX_ADDRESS=boot@local \
+            OHMAIL_IMAP_SECURE=0 OHMAIL_DATA_DIR="$D" \
+            "$RES/runtime/node" "$RES/engine/bin/ohmail-engine.mjs" > "$D/out" 2> "$D/err" &
+          ENGINE_PID=$!
+          set -e
+          # It serves and then waits on stdin. Read what it said, then stop it.
+          for _ in $(seq 60); do grep -q '"event":"serving"' "$D/err" && break; sleep 0.5; done
+          SERVED="$(grep -c '"event":"serving"' "$D/err" || true)"
+          kill "$ENGINE_PID" 2>/dev/null || true
+          wait "$ENGINE_PID" 2>/dev/null || true
+          echo "--- engine stderr (last 20) ---"; tail -20 "$D/err"
+          if [ "$SERVED" -lt 1 ]; then
+            echo "the packaged engine did not reach 'serving' from the bundle layout" >&2
+            exit 1
+          fi
+          echo "the packaged engine served, using only the runtime inside the app"
 
       - name: Upload ohmail.dmg
         uses: actions/upload-artifact@v7
@@ -119,59 +243,44 @@ jobs:
           path: build/ohmail.dmg
           if-no-files-found: error
 
-      - name: Upload ohmail.app (zipped, ad-hoc signature preserved)
-        run: ditto -c -k --keepParent build/ohmail.app build/ohmail.app.zip
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ohmail-app-${{ github.run_number }}
-          path: build/ohmail.app.zip
-          if-no-files-found: error
-
-      - name: Upload screenshots
+      - name: Upload the updater payload
         uses: actions/upload-artifact@v7
         with:
-          name: screenshots-${{ github.run_number }}
-          path: shots
+          name: ohmail-app-tgz-${{ github.run_number }}
+          path: build/ohmail.app.tar.gz
           if-no-files-found: error
 
-      # So a downloader can check what they got against what this run made.
       - name: Run summary
         if: always()
         run: |
           {
-            echo '### ohmail — unsigned preview build (engine-bearing)'
+            echo '### ohmail for macOS — unsigned build (engine-bearing, universal)'
             echo
             echo "| | |"
             echo "|---|---|"
             echo "| commit | \`${GITHUB_SHA:0:9}\` |"
-            echo "| toolchain | $(xcodebuild -version | tr '\n' ' ') · $(swift --version 2>&1 | head -1) |"
+            echo "| toolchain | $(rustc --version) · node $(node --version) |"
             echo "| runner | macOS $(sw_vers -productVersion) $(uname -m) |"
-            [ -f build/ohmail.dmg ] && {
-              echo "| architectures | $(lipo -archs build/ohmail.app/Contents/MacOS/OhMail) |"
-              echo "| engine sha256 | \`$(shasum -a 256 build/ohmail.app/Contents/MacOS/ohmail-engine | cut -d' ' -f1)\` |"
-              echo "| DMG sha256 | \`$(shasum -a 256 build/ohmail.dmg | cut -d' ' -f1)\` |"
-              echo "| DMG size | $(du -h build/ohmail.dmg | cut -f1) |"
-            }
+            for f in build/ohmail.dmg build/ohmail.app.tar.gz; do
+              [ -f "$f" ] || continue
+              echo "| $(basename "$f") | \`$(shasum -a 256 "$f" | cut -d' ' -f1)\` · $(du -h "$f" | cut -f1) |"
+            done
             echo
-            echo 'Ad-hoc signed, **not** notarized. First launch: the double-click is blocked, then approve it under System Settings › Privacy & Security › "Open Anyway" (on macOS 15 the old Control-click → Open no longer works).'
+            echo 'Ad-hoc signed, **not** notarized. First launch: the double-click is blocked, then approve it under System Settings › Privacy & Security › "Open Anyway".'
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ==========================================================================
-  # The Tauri shell (apps/desktop). Windows and Linux run the same five steps
-  # in the same order — install, typecheck, build the UI bundle, smoke the
-  # built bundle, then package — because the only thing that differs between
-  # them is the packaging toolchain. The UI is built BEFORE tauri so a broken
-  # interface fails in its own red step instead of inside a Rust build log.
+  # Windows and Linux run the same steps in the same order as macOS; only the
+  # packaging toolchain differs.
   # ==========================================================================
 
   windows:
-    name: Windows · ui · smoke · msi + nsis
+    name: Windows · smoke · engine · nsis setup
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
-        working-directory: apps/desktop
 
     steps:
       - uses: actions/checkout@v7
@@ -185,127 +294,140 @@ jobs:
           rustup update stable
           rustup default stable
           rustc --version
-          cargo --version
           node --version
 
       - name: npm install
+        working-directory: apps/desktop
         run: npm install --no-audit --no-fund
 
       - name: tsc --noEmit
+        working-directory: apps/desktop
         run: npm run ui:typecheck
 
-      - name: Build the UI bundle
+      - name: Build the preview bundle
+        working-directory: apps/desktop
         run: npm run ui:build
 
-      # The render check: the built bundle, executed, audited for content, for
-      # collapsed mail, and for so much as an attempt to open a connection.
-      - name: Smoke the embedded bundle
+      - name: Smoke the preview bundle
+        working-directory: apps/desktop
         run: npm run smoke
 
-      - name: tauri build (msi + nsis)
-        run: npx tauri build --bundles msi,nsis
+      - name: cargo test (both configurations)
+        working-directory: apps/desktop/src-tauri
+        run: |
+          set -euo pipefail
+          cargo test
+          cargo test --features local-engine
+
+      - name: Install the locked dependency tree
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the engine bundle
+        run: |
+          set -euo pipefail
+          D="$(mktemp -d)" && (cd "$D" && npm install --no-save esbuild@0.24.0)
+          OHMAIL_ESBUILD_FROM="$D" node scripts/engine-bundle.mjs
+
+      - name: The engine boots from the shipped layout, and only from it
+        run: node scripts/verify-engine-boot.mjs
+
+      - uses: actions/cache@v4
+        with:
+          path: build/vendor
+          key: vendor-node-windows-v22.23.2
+
+      - name: Vendor the Node runtime
+        run: node scripts/vendor-node.mjs --platform windows
+
+      - name: Build the engine-bearing app
+        working-directory: apps/desktop
+        run: npm run app:build:engine -- --bundles nsis
+
+      - name: Name the artifact what the download page links
+        run: |
+          set -euo pipefail
+          B=apps/desktop/src-tauri/target/release/bundle
+          ls -la "$B/nsis"
+          EXE="$(ls "$B"/nsis/*-setup.exe | head -1)"
+          test -s "$EXE"
+          mkdir -p build
+          # RENAMED IN PLACE. Attaching both a versioned and a stable copy would
+          # put two files behind the update feed's `*-setup.exe` glob, which
+          # takes the first match — an arbitrary payload.
+          mv "$EXE" build/ohmail-windows-setup.exe
+          ls -la build/ohmail-windows-setup.exe
 
       - name: Inspect what was produced
         run: |
           set -euo pipefail
-          B=src-tauri/target/release/bundle
-          ls -la "$B/msi" "$B/nsis"
-          MSI="$(ls "$B"/msi/*.msi | head -1)"
-          EXE="$(ls "$B"/nsis/*-setup.exe | head -1)"
-          test -s "$MSI"
-          test -s "$EXE"
+          EXE=build/ohmail-windows-setup.exe
 
-          # ── The installers must not fetch the WebView2 runtime ────────────
-          # tauri.conf.json sets bundle.windows.webviewInstallMode to "skip".
-          # Tauri's DEFAULT is downloadBootstrapper, which compiles a WiX custom
-          # action into the .msi (`DownloadAndInvokeBootstrapper` — a hidden
-          # powershell.exe running Invoke-WebRequest against go.microsoft.com,
-          # sequenced under NOT(REMOVE OR INSTALLED_WEBVIEW2_VERSION)) and an
-          # `NSISdl::download` step into the -setup.exe. A product that says it
-          # cannot reach the network must not ship an installer that does, so
-          # this is asserted against the built artifacts rather than trusted
-          # from the config. Every one of these greps matched a real 0.1.0
-          # installer built before the config key was set, and none of them
-          # matches one built after — checked by hand on both, not assumed.
+          # ── The installer MUST be able to fetch the WebView2 runtime ───────
           #
-          # `skip` drops the whole `{{#if install_webview}}` section, so the
-          # INSTALLED_WEBVIEW2_VERSION property and its three RegistrySearch
-          # rows go with it. That makes its absence the broadest single check
-          # available here: it fails if any WebView2 install mode comes back,
-          # not only the downloading ones.
-          echo "--- .msi: no WebView2 downloader ---"
-          # MSI string pools are uncompressed, so grep -a sees them directly.
-          ! grep -aq 'DownloadAndInvokeBootstrapper' "$MSI"
-          ! grep -aqi 'fwlink' "$MSI"
-          ! grep -aqi 'go.microsoft.com' "$MSI"
-          ! grep -aqi 'MicrosoftEdgeWebview2Setup' "$MSI"
-          ! grep -aqi 'Invoke-WebRequest' "$MSI"
-          ! grep -aq 'INSTALLED_WEBVIEW2_VERSION' "$MSI"
-
-          echo "--- nsis: no WebView2 install step ---"
-          # The NSIS payload is LZMA-compressed, so unpack it and look at what
-          # the installer would actually drop on disk. Two checks, one per
-          # failure mode: NSIS packs a plugin DLL only when a call to it is
-          # compiled, and `NSISdl::download` lives inside
-          # `!if INSTALLWEBVIEW2MODE == "downloadBootstrapper"`, so NSISdl.dll
-          # present ⇒ the downloader is back; and embedBootstrapper /
-          # offlineInstaller would `File` a MicrosoftEdgeWebview2Setup.exe into
-          # the payload, so any file carrying that name is the other regression.
-          # Verified against a real pre-fix installer: NSISdl.dll was there.
+          # THIS ASSERTION IS THE REVERSE OF WHAT IT USED TO BE, and the reversal
+          # is a product decision rather than a loosened guard. The preview build
+          # set `webviewInstallMode: skip` and this job proved the downloader was
+          # absent, because an app that claimed to reach nothing must not ship an
+          # installer that reaches something. That preview did not need a webview
+          # to be useful — it drew fixtures.
+          #
+          # The engine-bearing build is a mail client. Its window IS the product,
+          # so a missing WebView2 runtime is not a degraded experience, it is an
+          # app that installs and then cannot start. `skip` turned that into the
+          # user's problem on exactly the machines least able to diagnose it. The
+          # engine build therefore uses `downloadBootstrapper`
+          # (tauri.engine.conf.json) and the honest claim changed with it — see
+          # the README: with WebView2 present the installer opens no connection;
+          # without it, it downloads the runtime from Microsoft.
+          #
+          # The preview artifact keeps `skip` in the base config, so its own
+          # claim is untouched. This check is about the artifact people download.
+          #
+          # NSIS packs a plugin DLL only when a call to it is compiled, and
+          # `NSISdl::download` lives inside
+          # `!if INSTALLWEBVIEW2MODE == "downloadBootstrapper"` — so NSISdl.dll
+          # present is exactly the evidence that the bootstrapper is compiled in.
+          #
           # A relative path on purpose: 7z is a Windows binary and find/grep are
           # MSYS, and they disagree about D:\-style paths.
           rm -rf nsis-unpacked
           7z x -y -onsis-unpacked "$EXE" > /dev/null
           find nsis-unpacked
-          # Collected into variables and tested for emptiness, rather than
-          # `! <producer> | grep -q .`. That form can fail in the direction that
-          # matters. When there IS something to find, `grep -q` exits at the
-          # first line; if the producer is still writing after that it dies on
-          # the closed pipe, `pipefail` makes the pipeline non-zero, and the
-          # leading `!` turns that into a PASS — green exactly when the
-          # downloader is back.
-          #
-          # It depends on how much the producer writes, because everything up to
-          # the pipe buffer lands before grep can exit. Measured, with the string
-          # present in every file: 200 files (8 KB of paths) failed correctly;
-          # 4 000 files (168 KB) and 20 000 files (840 KB) both PASSED. So one
-          # stray bootstrapper is caught and a broad regression need not be,
-          # which is the worst way round. The variable form has no pipe and no
-          # threshold.
+          # CAPTURED INTO A VARIABLE AND TESTED, never `producer | grep -q`.
+          # `grep -q` exits at its first match and closes the pipe; the producer
+          # then dies on SIGPIPE and the pipeline's status is that death, which
+          # under `pipefail` is read as the opposite of what happened. Measured
+          # on these very checks: 8 KB of output behaved, 168 KB and 840 KB did
+          # not. The variable form has no pipe and no threshold.
           NSISDL="$(find nsis-unpacked -iname 'NSISdl.dll')"
-          test -z "$NSISDL"
-          BOOTSTRAPPER="$(grep -rlai 'MicrosoftEdgeWebview2Setup' nsis-unpacked || true)"
-          test -z "$BOOTSTRAPPER"
+          if [ -z "$NSISDL" ]; then
+            echo "the WebView2 bootstrapper is NOT in the installer." >&2
+            echo "The engine build needs it: without WebView2 the app cannot render at all." >&2
+            echo "Check bundle.windows.webviewInstallMode in tauri.engine.conf.json." >&2
+            exit 1
+          fi
+          echo "WebView2 bootstrapper present: $NSISDL"
           rm -rf nsis-unpacked
 
-          BIN=src-tauri/target/release/ohmail.exe
+          BIN=apps/desktop/src-tauri/target/release/ohmail.exe
           test -s "$BIN"
           # The UI is embedded uncompressed on purpose (see src-tauri/Cargo.toml),
           # so the shipped binary can be audited without being run. `grep -a`
           # rather than `strings`, which Git Bash does not ship.
-          grep -aq 'Ohbox' "$BIN"
-          grep -aq 'Giulia Ferrari' "$BIN"
           grep -aq "connect-src 'none'" "$BIN"
           echo "URLs in the binary:"
           ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
           printf '%s\n' "$ALL_URLS"
           # ── First-party endpoints: allow EXACTLY the pinned update feed ────
-          # The auto-updater is the one part of this app that reaches the network,
-          # pinned to a single release feed on github.com/trafficflowhq/ohmail. So
-          # the rule is no longer "no first-party URL at all" — the feed
-          # legitimately trips that — but "the ONLY first-party URL is that feed":
-          # take every URL naming ohmail or trafficflow and require each to be the
-          # feed. A second endpoint, a phone-home or a beacon still fails; so does
-          # a build that dropped the feed (the updater silently gone).
+          # The updater is the only first-party endpoint compiled into the
+          # binary. The mail server this build talks to is not here and cannot
+          # be: it is whatever the user types, held in their own config file.
+          # So the rule is unchanged — every URL naming ohmail or trafficflow
+          # must be the feed — and a phone-home or a beacon still fails.
           #
-          # Prefix match, not equality: the endpoint is a Rust string literal with
-          # no terminator in read-only data, so grep can return it with adjacent
-          # rodata glued on. Host and path are pinned by the prefix, so trailing
-          # bytes cannot redirect it off github releases.
-          #
-          # Captured into variables and matched with `case`, never
-          # `! producer | grep -q`: that shape reports success when the producer
-          # dies on a closed pipe — green exactly when a stray URL is present.
+          # Prefix match, not equality: the endpoint is a Rust string literal
+          # with no terminator in read-only data, so grep can return it with
+          # adjacent rodata glued on. Host and path are pinned by the prefix.
           FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
           FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$ALL_URLS" || true)"
           if [ -z "$FIRST_PARTY" ]; then
@@ -324,55 +446,39 @@ jobs:
             echo "first-party URLs other than the pinned update feed are present" >&2
             exit 1
           fi
-          # Everything else is third-party documentation (React, ProseMirror, and
-          # now the updater's transitive HTTP stack: reqwest / hyper / rustls).
-          # That set grew when the updater landed, so the earlier exact count and
-          # the URL tables in both READMEs must be re-counted against a real
-          # updater-bearing release binary and updated in the same change. Echoed
-          # for that reconciliation rather than pinned to a guessed number, which
-          # would wave a new URL through or block the build on a wrong figure.
-          echo "unique URL strings (reconcile with the README enumeration on a real release binary): $(grep -c . <<< "$ALL_URLS" || true)"
+          echo "unique URL strings (reconcile with the README enumeration): $(grep -c . <<< "$ALL_URLS" || true)"
 
-      - name: Upload the .msi
+      - name: Upload the setup .exe
         uses: actions/upload-artifact@v7
         with:
-          name: ohmail-msi-${{ github.run_number }}
-          path: apps/desktop/src-tauri/target/release/bundle/msi/*.msi
-          if-no-files-found: error
-
-      - name: Upload the setup .exe (NSIS)
-        uses: actions/upload-artifact@v7
-        with:
-          name: ohmail-nsis-${{ github.run_number }}
-          path: apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          name: ohmail-windows-${{ github.run_number }}
+          path: build/ohmail-windows-setup.exe
           if-no-files-found: error
 
       - name: Run summary
         if: always()
         run: |
           {
-            echo '### ohmail for Windows — unsigned preview build'
+            echo '### ohmail for Windows — unsigned build (engine-bearing)'
             echo
             echo "| | |"
             echo "|---|---|"
             echo "| commit | \`${GITHUB_SHA:0:9}\` |"
             echo "| toolchain | $(rustc --version) · node $(node --version) |"
-            for f in src-tauri/target/release/bundle/msi/*.msi src-tauri/target/release/bundle/nsis/*-setup.exe; do
-              [ -f "$f" ] || continue
-              echo "| $(basename "$f") | \`$(sha256sum "$f" | cut -d' ' -f1)\` · $(du -h "$f" | cut -f1) |"
-            done
+            [ -f build/ohmail-windows-setup.exe ] && \
+              echo "| ohmail-windows-setup.exe | \`$(sha256sum build/ohmail-windows-setup.exe | cut -d' ' -f1)\` · $(du -h build/ohmail-windows-setup.exe | cut -f1) |"
             echo
             echo 'Not signed with an Authenticode certificate: SmartScreen will warn on first run.'
             echo 'Choose **More info → Run anyway**.'
           } >> "$GITHUB_STEP_SUMMARY"
 
   linux:
-    name: Linux · ui · smoke · appimage + deb
+    name: Linux · smoke · engine · appimage + deb
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
-        working-directory: apps/desktop
+        shell: bash
 
     steps:
       - uses: actions/checkout@v7
@@ -384,7 +490,6 @@ jobs:
       # Tauri's Linux prerequisites: the WebKitGTK webview it renders in, the
       # GTK/soup stack under it, and the tools its bundlers shell out to.
       - name: Install the Tauri prerequisites
-        working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -402,22 +507,52 @@ jobs:
           rustup update stable
           rustup default stable
           rustc --version
-          cargo --version
           node --version
 
       - name: npm install
+        working-directory: apps/desktop
         run: npm install --no-audit --no-fund
 
       - name: tsc --noEmit
+        working-directory: apps/desktop
         run: npm run ui:typecheck
 
-      - name: Build the UI bundle
+      - name: Build the preview bundle
+        working-directory: apps/desktop
         run: npm run ui:build
 
-      - name: Smoke the embedded bundle
+      - name: Smoke the preview bundle
+        working-directory: apps/desktop
         run: npm run smoke
 
-      - name: tauri build (appimage + deb)
+      - name: cargo test (both configurations)
+        working-directory: apps/desktop/src-tauri
+        run: |
+          set -euo pipefail
+          cargo test
+          cargo test --features local-engine
+
+      - name: Install the locked dependency tree
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the engine bundle
+        run: |
+          set -euo pipefail
+          D="$(mktemp -d)" && (cd "$D" && npm install --no-save esbuild@0.24.0)
+          OHMAIL_ESBUILD_FROM="$D" node scripts/engine-bundle.mjs
+
+      - name: The engine boots from the shipped layout, and only from it
+        run: node scripts/verify-engine-boot.mjs
+
+      - uses: actions/cache@v4
+        with:
+          path: build/vendor
+          key: vendor-node-linux-v22.23.2
+
+      - name: Vendor the Node runtime
+        run: node scripts/vendor-node.mjs --platform linux
+
+      - name: Build the engine-bearing app
         # NO_STRIP: linuxdeploy strips the binary again while assembling the
         # AppImage, and on recent glibc that step is a known failure. The Rust
         # release profile already strips (src-tauri/Cargo.toml), so nothing is
@@ -425,31 +560,42 @@ jobs:
         # property the audit below depends on.
         env:
           NO_STRIP: "true"
-        run: npx tauri build --bundles appimage,deb
+        working-directory: apps/desktop
+        run: npm run app:build:engine -- --bundles appimage,deb
+
+      - name: Name the artifacts what the download page links
+        run: |
+          set -euo pipefail
+          B=apps/desktop/src-tauri/target/release/bundle
+          ls -la "$B/appimage" "$B/deb"
+          APPIMAGE="$(ls "$B"/appimage/*.AppImage | head -1)"
+          DEB="$(ls "$B"/deb/*.deb | head -1)"
+          test -s "$APPIMAGE"
+          test -s "$DEB"
+          mkdir -p build
+          # Renamed in place, never copied — see the Windows job.
+          mv "$APPIMAGE" build/ohmail-linux-x86_64.AppImage
+          mv "$DEB" build/ohmail-linux-amd64.deb
+          chmod +x build/ohmail-linux-x86_64.AppImage
+          ls -la build/ohmail-linux-x86_64.AppImage build/ohmail-linux-amd64.deb
 
       - name: Inspect what was produced
         run: |
           set -euo pipefail
-          B=src-tauri/target/release/bundle
-          ls -la "$B/appimage" "$B/deb"
-          APP="$(ls "$B"/appimage/*.AppImage | head -1)"
-          DEB="$(ls "$B"/deb/*.deb | head -1)"
-          test -s "$APP"
-          test -x "$APP"
-          test -s "$DEB"
+          DEB=build/ohmail-linux-amd64.deb
+          APPIMAGE=build/ohmail-linux-x86_64.AppImage
 
           echo "--- .deb control ---"
           dpkg-deb -I "$DEB"
           # Read the listing ONCE, into a variable, and match against that.
           #
-          # Not four `dpkg-deb -c "$DEB" | grep -q …` pipelines, which is what
-          # this was: `grep -q` exits at its first match and closes the pipe,
-          # and the tar subprocess behind dpkg-deb then dies writing to it —
-          # `tar: stdout: write error`, `dpkg-deb: error: tar subprocess
-          # returned error exit status 2`. `pipefail` turns that into a failed
-          # step, so a passing assertion reported a broken build. Whether it
-          # happens depends on where the match sits relative to what tar has
-          # already flushed, so it passed most runs and failed some.
+          # Not several `dpkg-deb -c "$DEB" | grep -q …` pipelines, which is what
+          # this was: `grep -q` exits at its first match and closes the pipe, and
+          # the tar subprocess behind dpkg-deb then dies writing to it —
+          # `tar: stdout: write error`. `pipefail` turns that into a failed step,
+          # so a passing assertion reported a broken build, and whether it
+          # happened depended on where the match sat relative to what tar had
+          # already flushed.
           CONTENTS="$(dpkg-deb -c "$DEB")"
           echo "--- .deb contents ---"
           printf '%s\n' "$CONTENTS"
@@ -458,38 +604,47 @@ jobs:
           grep -qE ' usr/bin/ohmail$' <<< "$CONTENTS"
           grep -qiE ' usr/share/applications/.+\.desktop$' <<< "$CONTENTS"
           grep -qiE ' usr/share/icons/hicolor/128x128/apps/.+\.png$' <<< "$CONTENTS"
+          # THE ENGINE AND ITS RUNTIME ARE INSIDE THE PACKAGE. Tauri puts
+          # resources under /usr/lib/<product>/ on Linux, which is what
+          # `resource_dir()` resolves to and what `engine.rs` composes its two
+          # paths from.
+          grep -qE ' usr/lib/ohmail/engine/bin/ohmail-engine\.mjs$' <<< "$CONTENTS"
+          grep -qE ' usr/lib/ohmail/engine/drizzle/' <<< "$CONTENTS"
+          grep -qE ' usr/lib/ohmail/runtime/node$' <<< "$CONTENTS"
+          # AND THE RUNTIME KEPT ITS EXECUTE BIT through the repackaging. The
+          # shell holds it to "runnable, not merely present", so a lost mode is
+          # reported to the user as a build with no Node in it — which reads as a
+          # broken install rather than as a broken package. dpkg-deb prints the
+          # mode in the first column.
+          NODE_ROW="$(grep -E ' usr/lib/ohmail/runtime/node$' <<< "$CONTENTS")"
+          echo "node row: $NODE_ROW"
+          case "$NODE_ROW" in
+            -rwxr-xr-x*) : ;;
+            *) echo "the vendored runtime is not executable inside the .deb" >&2; exit 1 ;;
+          esac
           # The bundler kebab-cases productName to get the package name. Since
           # productName is `ohmail`, so is the package — `apt remove ohmail`
-          # works, and it matches /usr/bin/ohmail and the AppImage. Pinned so a
-          # future Tauri that changes the slug goes red rather than stale.
+          # works, and it matches /usr/bin/ohmail and the AppImage.
           test "$(dpkg-deb -f "$DEB" Package)" = "ohmail"
 
-          BIN=src-tauri/target/release/ohmail
+          # ── The AppImage carries the same tree ────────────────────────────
+          # Extracted rather than mounted: a runner has no FUSE.
+          rm -rf squashfs-root
+          ./"$APPIMAGE" --appimage-extract > /dev/null
+          test -f squashfs-root/usr/lib/ohmail/engine/bin/ohmail-engine.mjs
+          test -d squashfs-root/usr/lib/ohmail/engine/drizzle
+          test -x squashfs-root/usr/lib/ohmail/runtime/node
+          # It RUNS, which no file assertion can stand in for.
+          squashfs-root/usr/lib/ohmail/runtime/node --version
+          rm -rf squashfs-root
+
+          BIN=apps/desktop/src-tauri/target/release/ohmail
           test -s "$BIN"
-          grep -aq 'Ohbox' "$BIN"
-          grep -aq 'Giulia Ferrari' "$BIN"
           grep -aq "connect-src 'none'" "$BIN"
           echo "URLs in the binary:"
           ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
           printf '%s\n' "$ALL_URLS"
-          # ── First-party endpoints: allow EXACTLY the pinned update feed ────
-          # Identical rule to the Windows job. The auto-updater is the one part of
-          # this app that reaches the network, pinned to a single release feed on
-          # github.com/trafficflowhq/ohmail, so the check is no longer "no
-          # first-party URL at all" — the feed legitimately trips that — but "the
-          # ONLY first-party URL is that feed": take every URL naming ohmail or
-          # trafficflow and require each to be the feed. A second endpoint, a
-          # phone-home or a beacon still fails; so does a build that dropped the
-          # feed (the updater silently gone).
-          #
-          # Prefix match, not equality: the endpoint is a Rust string literal with
-          # no terminator in read-only data, so grep can return it with adjacent
-          # rodata glued on. Host and path are pinned by the prefix, so trailing
-          # bytes cannot redirect it off github releases.
-          #
-          # Captured into variables and matched with `case`, never
-          # `! producer | grep -q`: that shape reports success when the producer
-          # dies on a closed pipe — green exactly when a stray URL is present.
+          # Identical rule to the Windows job; see the reasoning there.
           FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
           FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$ALL_URLS" || true)"
           if [ -z "$FIRST_PARTY" ]; then
@@ -508,41 +663,34 @@ jobs:
             echo "first-party URLs other than the pinned update feed are present" >&2
             exit 1
           fi
-          # Everything else is third-party documentation (React, ProseMirror, and
-          # now the updater's transitive HTTP stack: reqwest / hyper / rustls).
-          # That set grew when the updater landed, so the earlier exact count and
-          # the URL tables in both READMEs must be re-counted against a real
-          # updater-bearing release binary and updated in the same change. Echoed
-          # for that reconciliation rather than pinned to a guessed number, which
-          # would wave a new URL through or block the build on a wrong figure.
-          echo "unique URL strings (reconcile with the README enumeration on a real release binary): $(grep -c . <<< "$ALL_URLS" || true)"
+          echo "unique URL strings (reconcile with the README enumeration): $(grep -c . <<< "$ALL_URLS" || true)"
 
       - name: Upload the AppImage
         uses: actions/upload-artifact@v7
         with:
           name: ohmail-appimage-${{ github.run_number }}
-          path: apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+          path: build/ohmail-linux-x86_64.AppImage
           if-no-files-found: error
 
       - name: Upload the .deb
         uses: actions/upload-artifact@v7
         with:
           name: ohmail-deb-${{ github.run_number }}
-          path: apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+          path: build/ohmail-linux-amd64.deb
           if-no-files-found: error
 
       - name: Run summary
         if: always()
         run: |
           {
-            echo '### ohmail for Linux — unsigned preview build'
+            echo '### ohmail for Linux — unsigned build (engine-bearing)'
             echo
             echo "| | |"
             echo "|---|---|"
             echo "| commit | \`${GITHUB_SHA:0:9}\` |"
             echo "| toolchain | $(rustc --version) · node $(node --version) |"
             echo "| runner | $(. /etc/os-release; echo "$PRETTY_NAME") $(uname -m) |"
-            for f in src-tauri/target/release/bundle/appimage/*.AppImage src-tauri/target/release/bundle/deb/*.deb; do
+            for f in build/ohmail-linux-x86_64.AppImage build/ohmail-linux-amd64.deb; do
               [ -f "$f" ] || continue
               echo "| $(basename "$f") | \`$(sha256sum "$f" | cut -d' ' -f1)\` · $(du -h "$f" | cut -f1) |"
             done
@@ -601,11 +749,11 @@ jobs:
       - name: Confirm the bundle and its runtime layout
         run: |
           set -euo pipefail
-          test -x build/engine/MacOS/ohmail-engine
-          test -f build/engine/MacOS/ohmail-engine.meta.json
+          test -f build/engine/bin/ohmail-engine.mjs
+          test -f build/engine.meta.json
           test -d build/engine/drizzle
-          test -d build/engine/MacOS/node_modules/@electric-sql/pglite
-          echo "engine bundle sha256: $(sha256sum build/engine/MacOS/ohmail-engine | cut -d' ' -f1)"
+          test -d build/engine/bin/node_modules/@electric-sql/pglite
+          echo "engine bundle sha256: $(sha256sum build/engine/bin/ohmail-engine.mjs | cut -d' ' -f1)"
 
       - name: Run summary
         if: always()
@@ -617,6 +765,6 @@ jobs:
             echo "|---|---|"
             echo "| commit | \`${GITHUB_SHA:0:9}\` |"
             echo "| node | $(node --version) |"
-            [ -x build/engine/MacOS/ohmail-engine ] \
-              && echo "| engine bundle sha256 | \`$(sha256sum build/engine/MacOS/ohmail-engine | cut -d' ' -f1)\` |"
+            [ -f build/engine/bin/ohmail-engine.mjs ] \
+              && echo "| engine bundle sha256 | \`$(sha256sum build/engine/bin/ohmail-engine.mjs | cut -d' ' -f1)\` |"
           } >> "$GITHUB_STEP_SUMMARY"
