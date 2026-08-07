@@ -288,6 +288,8 @@
       "price": "{senders, plural, one {1 sender} other {# senders}} · {credits, plural, one {1 credit} other {# credits}}",
       "pricing": "Checking the price…",
       "running": "Buying suggestions…",
+      "progress": "{done} of {total} bought…",
+      "stoppedAt": "Bought {done} of {total}. {reason}",
       "confirm": "Suggest",
       "cancel": "Cancel",
       "nothing": "Nothing to buy here — these senders already have a suggestion, or their mail is held back from the model.",

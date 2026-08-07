@@ -35,7 +35,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { senderKey } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
-import { ApiError, apiConfigured, screener as screenerApi } from "../api-client";
+import { ApiError, apiConfigured, screener as screenerApi, type ScreenerSuggestWire } from "../api-client";
 
 /**
  * One sender's suggestion, in the vocabulary the rows already speak.
@@ -60,7 +60,12 @@ export type SuggestPhase = "closed" | "pricing" | "ready" | "running";
 export interface SuggestBatchControl {
   /** Waiting senders with no suggestion yet — how much there is to buy. */
   available: number;
-  /** Batch sizes offered, clamped to {@link available} and to the endpoint's per-request cap. */
+  /**
+   * Batch sizes offered, clamped to {@link available} and to {@link MAX_SUGGEST_BATCH} — the most
+   * one authorised purchase may buy. This is NOT the endpoint's per-request cap: a chosen size
+   * larger than that cap is priced and bought as several cap-sized requests (chunks), so the
+   * ladder can offer more than one request's worth.
+   */
   sizes: number[];
   /** The size currently chosen. */
   size: number;
@@ -137,13 +142,15 @@ export interface ScreenerSuggestions {
 }
 
 /**
- * The per-request cap to assume before the server has published its own.
+ * The per-request cap (chunk size) to assume before the server has published its own.
  *
  * `GET /screener` answers `suggestable.maxPerRequest` and that number is preferred the moment
- * it arrives; this is what the control offers if that read has not landed (offline, or a
- * press faster than the fetch). It is deliberately BELOW the server's real cap of 400 rather
- * than equal to it: guessing low costs the user a second press, guessing high costs them a
- * 413 on a button that had already quoted a price.
+ * it arrives; this is the chunk size the control uses if that read has not landed (offline, or a
+ * press faster than the fetch). It is deliberately AT OR BELOW the server's real cap of
+ * {@link ../../../packages/services/src/screener-service MAX_SUGGEST_SENDERS} (50) rather than
+ * above it: guessing low makes a purchase into a few more chunks than strictly needed — each one
+ * still cheap and idempotent — while guessing high costs a 413 on a chunk that had already quoted
+ * a price.
  */
 const ASSUMED_MAX_PER_REQUEST = 25;
 
@@ -151,10 +158,27 @@ const ASSUMED_MAX_PER_REQUEST = 25;
  * The sizes offered, before clamping. The small end is watchable, the large end drains a
  * backlog: 10/25/50 to try a handful and see, 100/200/400 to clear a real first-contact pile
  * in one authorised purchase. Every one of these is still priced by a server dry run before it
- * can be pressed, and clamped by {@link batchSizes} to what one request may carry, so a size
- * above the account's queue or the endpoint's cap is never shown.
+ * can be pressed, and clamped by {@link batchSizes} to {@link MAX_SUGGEST_BATCH} and the queue —
+ * a size above the account's queue is never shown. A size above the per-request cap is NOT
+ * dropped: it is bought as several cap-sized requests (see {@link SuggestBatchControl.confirm}).
  */
 const OFFERED_SIZES = [10, 25, 50, 100, 200, 400];
+
+/**
+ * THE MOST ONE AUTHORISED PURCHASE MAY BUY — the ladder's ceiling, and where it stops being the
+ * per-request cap.
+ *
+ * The endpoint's `maxPerRequest` is how many senders ONE request carries; before #90 the ladder
+ * was clamped to it, so a purchase could never exceed one request — and raising that cap to fit a
+ * larger ladder put a single oversized request past the serverless invocation's 60 s. This
+ * decouples the two: the ladder is bounded here, by a number a person can picture spending in one
+ * press, and a chosen size larger than one request is SPLIT into cap-sized chunks. The full set is
+ * still priced first (the sum of the chunk quotes), so consent is to the whole, and spend never
+ * exceeds that sum.
+ *
+ * It is the top of {@link OFFERED_SIZES}: the ladder offers up to here and no higher.
+ */
+export const MAX_SUGGEST_BATCH = 400;
 
 /** How much of the queue one hydration reads. A `cost: read` page; it spends nothing. */
 const HYDRATE_LIMIT = 200;
@@ -461,11 +485,36 @@ export function useScreenerSuggestions(opts: {
       autoSeen.current = true;
       setQueueReady((n) => n + 1);
     }
-    const cap = Math.min(maxPerRequest, addresses.length);
-    const sizes = batchSizes(addresses.length, maxPerRequest);
+    // The ladder is bounded by the PURCHASE ceiling, not the per-request cap — a size larger than
+    // one request is delivered as several requests, below.
+    const sizes = batchSizes(addresses.length, MAX_SUGGEST_BATCH);
     const chosen = sizes.includes(size) ? size : (sizes[sizes.length - 1] ?? 0);
+    // The largest size on the ladder — the default the control opens to.
+    const cap = sizes[sizes.length - 1] ?? 0;
 
-    /** Price `n` senders on the SERVER. No model, no debit, nothing stored. */
+    /**
+     * ONE request carries at most this many senders — the server's published per-request cap
+     * ({@link ASSUMED_MAX_PER_REQUEST} until that read lands). A price or a purchase larger than
+     * this is split into chunks of exactly this size; `chunksOf` is that split, always in the
+     * queue's own order so a chunk is a contiguous prefix-slice and the same press twice covers
+     * the same senders.
+     */
+    const chunkSize = Math.max(1, maxPerRequest);
+    const chunksOf = (set: string[]): string[][] => {
+      const out: string[][] = [];
+      for (let i = 0; i < set.length; i += chunkSize) out.push(set.slice(i, i + chunkSize));
+      return out;
+    };
+
+    /**
+     * Price `n` senders on the SERVER. No model, no debit, nothing stored.
+     *
+     * The set is priced in CAP-SIZED chunks and the quotes are SUMMED — the same chunks the
+     * purchase will use, so the number on screen is the exact ceiling the purchase honours.
+     * Consent is to the sum, not to a first chunk that happened to fit one request. Every chunk
+     * checks the press counter on arrival, so a size changed mid-flight discards the whole
+     * half-summed price rather than painting it under the new label.
+     */
     const price = (n: number) => {
       const set = addresses.slice(0, n);
       if (set.length === 0) {
@@ -474,37 +523,48 @@ export function useScreenerSuggestions(opts: {
         setNotice(t("suggest.nothing"));
         return;
       }
+      // Captured ONCE. Never re-bumped inside the loop — a per-chunk bump would make each chunk
+      // invalidate the next one's check (the SCR-SUGGEST-FLAKE shape, inside one price).
       const run = ++io.current.run;
       setPhase("pricing");
       setQuote(null);
       setNotice(null);
       void (async () => {
-        try {
-          const res = await screenerApi.suggest(set, { dryRun: true });
+        let senders = 0;
+        let credits = 0;
+        for (const chunk of chunksOf(set)) {
+          let res;
+          try {
+            res = await screenerApi.suggest(chunk, { dryRun: true });
+          } catch (err) {
+            if (io.current.run !== run) return;
+            setPhase("ready");
+            setQuote(null);
+            // The server's own sentence. Every refusal on this path — no classifier
+            // connected, AI switched off, no credits — already has a true one, and a second
+            // taxonomy here is how a user gets told the wrong reason.
+            setNotice(messageFor(err, t("suggest.failed")));
+            return;
+          }
           if (io.current.run !== run) return;
-          setPhase("ready");
-          // NO PRICE, NO PURCHASE. A server that answers without `quotedCredits` — one
-          // deployed before the field existed, reached during the minutes between two
-          // deploys — leaves the cost unknown, and an unknown cost is not one a person can
-          // consent to. The confirm stays disabled because `quote` is null; the alternative,
-          // multiplying the count by an assumed credit cost, is the exact guess this field
-          // was added to remove.
+          // NO PRICE, NO PURCHASE — for ANY chunk. A server that answers without `quotedCredits`
+          // (one deployed before the field existed, reached in the minutes between two deploys)
+          // leaves part of the cost unknown, and an unknown cost is not one a person can consent
+          // to. One unpriceable chunk makes the WHOLE set unpriceable rather than partly guessed;
+          // the confirm stays disabled because `quote` is null.
           if (typeof res.quotedCredits !== "number") {
+            setPhase("ready");
             setQuote(null);
             setNotice(t("suggest.failed"));
             return;
           }
-          setQuote({ senders: res.quoted, credits: res.quotedCredits });
-          setNotice(res.quoted === 0 ? t("suggest.nothing") : null);
-        } catch (err) {
-          if (io.current.run !== run) return;
-          setPhase("ready");
-          setQuote(null);
-          // The server's own sentence. Every refusal on this path — no classifier
-          // connected, AI switched off, no credits — already has a true one, and a second
-          // taxonomy here is how a user gets told the wrong reason.
-          setNotice(messageFor(err, t("suggest.failed")));
+          senders += res.quoted;
+          credits += res.quotedCredits;
         }
+        if (io.current.run !== run) return;
+        setPhase("ready");
+        setQuote({ senders, credits });
+        setNotice(senders === 0 ? t("suggest.nothing") : null);
       })();
     };
 
@@ -530,32 +590,77 @@ export function useScreenerSuggestions(opts: {
         setQuote(null);
         setNotice(null);
       },
+      /**
+       * Buy the chosen set — in CAP-SIZED chunks, halting on the first that stops or fails.
+       *
+       * The whole set was priced above (the sum of the chunk quotes), so consent is to the whole
+       * and the money rules are these, in order:
+       *
+       *  - ONE idempotency key PER CHUNK. Each chunk is its own purchase: a retry of a lost chunk
+       *    replays THAT chunk's answer, and a re-press after a mid-run failure re-buys only the
+       *    chunks that never landed — the ones that did answer `duplicate` server-side and cost 0.
+       *    A single key shared across chunks would make chunk 2 replay chunk 1's response.
+       *  - `run` is captured ONCE, here, and every chunk checks it against `io.current.run` on
+       *    arrival. A second press (cancel, or a re-price) bumps the counter and the in-flight loop
+       *    aborts, painting nothing. It is NEVER re-bumped inside the loop — that would make each
+       *    chunk invalidate the next one's check, which is the SCR-SUGGEST-FLAKE self-cancellation
+       *    moved inside a single purchase.
+       *  - Chips land INCREMENTALLY, per chunk, and the notice ticks "X of Y bought". A chunk that
+       *    stops (the gate ran out part-way) or throws HALTS the loop: what earlier chunks bought
+       *    stays on record, the summary names what actually charged, and spend never exceeds the
+       *    sum that was quoted.
+       */
       confirm: () => {
         const set = addresses.slice(0, chosen);
         if (set.length === 0 || phase === "running") return;
         const run = ++io.current.run;
+        const total = set.length;
         setPhase("running");
-        setNotice(t("suggest.running"));
+        setNotice(t("suggest.progress", { done: 0, total }));
         void (async () => {
-          try {
-            // One key per press. A retry of the SAME press replays the answer; a second,
-            // deliberate press is a different purchase and gets a different key.
-            const res = await screenerApi.suggest(set, { idempotencyKey: newKey() });
+          const gotSuggestions: ScreenerSuggestWire["suggestions"] = [];
+          const gotSkipped: Array<{ reason: string }> = [];
+          let charged = 0;
+          let stopped: "out_of_credits" | "spend_unavailable" | undefined;
+          for (const chunk of chunksOf(set)) {
+            let res;
+            try {
+              res = await screenerApi.suggest(chunk, { idempotencyKey: newKey() });
+            } catch (err) {
+              // Stale — a newer press owns the state; paint nothing.
+              if (io.current.run !== run) return;
+              // HALT on the first chunk that threw. Keep what earlier chunks bought (money moved
+              // for them and their chips are already on screen) and show the server's sentence.
+              setPhase("ready");
+              const why = messageFor(err, t("suggest.failed"));
+              if (gotSuggestions.length > 0) {
+                setNotice(t("suggest.stoppedAt", { done: gotSuggestions.length, total, reason: why }));
+                toast(summarize({ suggestions: gotSuggestions, charged, skipped: gotSkipped }, t));
+              } else {
+                setNotice(why);
+              }
+              return;
+            }
+            // Stale — a newer press owns the state; keep nothing from this chunk.
             if (io.current.run !== run) return;
-            merge(
-              res.suggestions.map((s) => ({
-                address: s.sender,
-                suggestion: toSuggestion(s),
-              })),
-            );
-            setPhase("closed");
-            setNotice(null);
-            toast(summarize(res, t));
-          } catch (err) {
-            if (io.current.run !== run) return;
-            setPhase("ready");
-            setNotice(messageFor(err, t("suggest.failed")));
+            // Chips land NOW, before the next chunk is bought.
+            merge(res.suggestions.map((s) => ({ address: s.sender, suggestion: toSuggestion(s) })));
+            gotSuggestions.push(...res.suggestions);
+            gotSkipped.push(...res.skipped);
+            charged += res.charged;
+            stopped ??= res.stopped;
+            setNotice(t("suggest.progress", { done: gotSuggestions.length, total }));
+            // HALT on the first chunk the gate stopped part-way: the balance is exhausted, so
+            // every later chunk would stop too. What this chunk bought stays; the summary says so.
+            if (res.stopped) break;
           }
+          if (io.current.run !== run) return;
+          setPhase("closed");
+          setNotice(null);
+          toast(summarize(
+            { suggestions: gotSuggestions, charged, ...(stopped ? { stopped } : {}), skipped: gotSkipped },
+            t,
+          ));
         })();
       },
     };
