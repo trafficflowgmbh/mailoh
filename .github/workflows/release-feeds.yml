@@ -161,16 +161,23 @@ jobs:
           test -x "$SIGN_UPDATE" || { echo "sign_update not found in the Sparkle distribution" >&2; exit 1; }
 
           rm -rf appdir && mkdir appdir && unzip -q "$MAC_ZIP" -d appdir
-          APP_PLIST="$(find appdir -name Info.plist -path '*/Contents/Info.plist' | head -1)"
+          # The app's OWN Info.plist, not a nested helper's: Sparkle.framework ships Updater.app and
+          # XPC services that each carry a `*/Contents/Info.plist`, and a bare `-name` match would pick
+          # one of those (reporting Sparkle's version, e.g. 2.9.4). Anchor on the app bundle.
+          APP_PLIST="$(find appdir -path '*/ohmail.app/Contents/Info.plist' | head -1)"
           test -f "$APP_PLIST" || { echo "no Contents/Info.plist inside $MAC_ZIP" >&2; exit 1; }
           SHORT_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")"
           BUNDLE_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")"
           MIN_OS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PLIST" 2>/dev/null || echo 15.0)"
           echo "app reports shortVersion=$SHORT_VER build=$BUNDLE_VER minOS=$MIN_OS"
 
-          # sign_update -s <base64 Ed25519 private key> <archive>
-          #   → sparkle:edSignature="…" length="…"
-          ENCLOSURE_ATTRS="$("$SIGN_UPDATE" -s "$OHMAIL_SPARKLE_ED_PRIVATE_KEY" "$MAC_ZIP")"
+          # sign_update --ed-key-file <file> <archive>  → sparkle:edSignature="…" length="…"
+          # Sparkle 2.9.4 REMOVED the inline `-s <key>` form ("Specifying private key as an argument
+          # is no longer supported" — it exits non-zero). The key is written to a private temp file
+          # and read with --ed-key-file, which also keeps it off the process argument list.
+          EDKEY_FILE="$(mktemp)"; printf '%s' "$OHMAIL_SPARKLE_ED_PRIVATE_KEY" > "$EDKEY_FILE"
+          ENCLOSURE_ATTRS="$("$SIGN_UPDATE" --ed-key-file "$EDKEY_FILE" "$MAC_ZIP")"
+          rm -f "$EDKEY_FILE"
           test -n "$ENCLOSURE_ATTRS" || { echo "sign_update produced no signature" >&2; exit 1; }
           case "$ENCLOSURE_ATTRS" in
             *edSignature=*length=*) : ;;
