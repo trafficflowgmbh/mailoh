@@ -506,6 +506,7 @@ export function MessagePane({
           `hydrateBody` returns early on a `ready` record — so without the second term the
           button would write a row and change nothing on screen. */}
       <MessageBody
+        messageId={message.id}
         text={body.text}
         html={body.html}
         remoteLoaded={body.loadedRemoteContent || (chrome.remoteImages?.consented(message.id) ?? false)}

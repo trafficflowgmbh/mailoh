@@ -72,12 +72,18 @@
 .mb-bar-btn:disabled { cursor: default; opacity: 0.55; transform: none; box-shadow: var(--lift-0); }
 
 /* ── the sheet ────────────────────────────────────────────────────────────────────────
-   A letter on the desk. The frame is always a LIGHT sheet, in both themes, and that is a
-   decision rather than an oversight: a sender's html assumes a light background — half of
-   bulk mail sets `color:#333` and no background at all — so re-tinting the surface under it
-   produces dark text on dark, message by message, with no way for us to know which. Every
-   mainstream web client renders mail on white for the same reason. What IS themed is
-   everything this file owns: the bar, the border, the shadow the sheet casts. */
+   A letter on the desk. Light by default in both themes — a sender's html assumes a light
+   background, half of bulk mail sets `color:#333` and no background at all, and re-tinting the
+   surface under such a message would put dark text on a dark ground with no way for us to know
+   which messages those are. That is why the dark VIEWER is a lightness transform applied
+   inside the frame (invert + hue-rotate, see `MessageBody.tsx`) rather than a re-tint here: it
+   flips the mail's own colours as a whole, so a light-assuming message stays legible.
+
+   The one thing this file then owns is the sheet UNDER that transform. `data-dark` — set by
+   the component when the frame is showing its dark rendering, and cleared by the per-message
+   "original" override — darkens the sheet and the frame to match, so a short mail's surround
+   is not a light hole in a dark panel. Everything else this file owns (the bar, the border,
+   the shadow) was already themed. */
 .mb-sheet {
   position: relative;
   border-radius: 12px;
@@ -89,6 +95,9 @@
   outline-offset: -1px;
   max-width: 100%;
 }
+/* The value #e4e4e4 the frame's body carries in dark mode inverts to exactly this, so the
+   mail's own background and the sheet behind it meet with no seam. */
+.mb-sheet[data-dark] { background: #1b1b1b; }
 
 .mb-frame {
   display: block;
@@ -102,6 +111,7 @@
   background: #ffffff;
   color-scheme: light;
 }
+.mb-sheet[data-dark] .mb-frame { background: #1b1b1b; color-scheme: dark; }
 
 /* ── the states this surface owns ─────────────────────────────────────────────────────── */
 

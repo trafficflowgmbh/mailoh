@@ -112,7 +112,9 @@
 
 import DOMPurify from "dompurify";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useOptionalTheme } from "@ohmail/ui";
 import { BodyText } from "../shell/BodyText";
+import { UI_KEYS, usePersistedIdSet } from "../shell/persisted-ui";
 import "./message-body.css";
 
 /**
@@ -131,6 +133,12 @@ export const COPY = {
   pixelOnly: "A tracking pixel was blocked.",
   show: "Show images",
   showing: "Images loaded for this message.",
+  /** The dark-viewer toggle. Shown only in a dark theme; flips THIS message between the
+   *  adapted (dark) rendering and its original light one, and the choice is remembered. */
+  darkOriginal: "Original",
+  darkAdapt: "Adapt to dark",
+  darkOriginalTitle: "Show this message in its original colours",
+  darkAdaptTitle: "Adapt this message to the dark theme",
   frameTitle: "Message content",
   unsupported: "Showing the plain-text version of this message.",
   /**
@@ -970,15 +978,47 @@ a[data-ohmail-host]:hover::after,a[data-ohmail-host]:focus::after{
 a[data-ohmail-elsewhere]::after{
   content:" (" attr(data-ohmail-host) ")";font-size:.82em;opacity:.7;white-space:nowrap}
 a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
+/* ── DARK VIEWING, GATED ON ONE ROOT ATTRIBUTE ─────────────────────────────────────────
+   The transform is a single filter on the body — invert lightness, then hue-rotate 180° so
+   colours land back near where they started rather than as their complements. White paper
+   becomes dark, ink becomes light. It ships in EVERY document, dormant, and is switched by
+   :root[data-ohmail-dark] alone: the component sets that attribute on the LIVE frame with
+   toggleAttribute (see the effect), so flipping theme never rebuilds the srcdoc and never
+   re-parses or re-measures the mail. The body's own default background is a light grey that
+   INVERTS to the app's dark panel, so a short mail carrying no background of its own meets
+   its surround with no seam. This is a lightness transform, not a redesign: a sender who set
+   a dark background gets it inverted to light, which is the known cost of the technique and
+   the reason the reader can drop back to the original per message. */
+:root[data-ohmail-dark] body{background:#e4e4e4;filter:invert(1) hue-rotate(180deg)}
+/* Two wrongs make a right: the body filter negated every picture, so negate the pictures
+   back — real images keep their real colours while the page around them stays inverted. */
+:root[data-ohmail-dark] img{filter:invert(1) hue-rotate(180deg)}
+/* A blocked-image placeholder is OUR chrome, not the sender's picture. Leave it inverted
+   WITH the page (filter:none cancels the re-inversion above) so its box reads as a quiet
+   dark panel rather than flipping to a light one on the dark surface. */
+:root[data-ohmail-dark] img[data-ohmail-blocked],
+:root[data-ohmail-dark] img[data-ohmail-embedded]{filter:none}
 `;
 
 /**
  * Assemble the whole `srcdoc`. A pure string function on purpose: it is what the jsdom
  * tests assert on, while the live browser test asserts on what a real engine does with it.
+ *
+ * ── `dark` IS ONE ATTRIBUTE AND NOTHING ELSE ────────────────────────────────────────────
+ *
+ * The dark transform lives entirely in {@link FRAME_CSS}, gated on `:root[data-ohmail-dark]`.
+ * All this option does is stamp that attribute on the root element, so the light and dark
+ * documents are byte-identical apart from it — which is the property that lets the live flip
+ * be a `toggleAttribute` on the frame's own `documentElement` rather than a rebuilt srcdoc.
+ * `message-body.test.ts` pins that: strip the attribute from the dark output and it must equal
+ * the light output exactly, so a dark path that wrapped or re-sheeted the body would go red.
  */
-export function buildMailDocument(bodyHtml: string, opts: { imagesLoaded?: boolean } = {}): string {
+export function buildMailDocument(
+  bodyHtml: string,
+  opts: { imagesLoaded?: boolean; dark?: boolean } = {},
+): string {
   return [
-    "<!doctype html><html><head><meta charset=\"utf-8\">",
+    `<!doctype html><html${opts.dark === true ? " data-ohmail-dark=\"1\"" : ""}><head><meta charset="utf-8">`,
     `<meta http-equiv="Content-Security-Policy" content="${frameCsp(opts.imagesLoaded === true)}">`,
     // Belongs to the same promise as the CSP: if a consented image is ever fetched through
     // the proxy, not even the path of the page the reader is on travels with it.
@@ -1050,6 +1090,13 @@ function scrollAncestors(el: Element): Element[] {
 // ── the component ──────────────────────────────────────────────────────────────────────
 
 export interface MessageBodyProps {
+  /**
+   * WHICH MESSAGE THIS IS — carried only so the dark-viewer "original" override can be
+   * remembered PER MESSAGE. Absent ⇒ the override still works for the session but is not
+   * persisted (the desktop shell, a bare test mount). Nothing else reads it, and it never
+   * touches the sanitize/srcdoc pipeline.
+   */
+  messageId?: string;
   /** The sensitivity-redacted text part. Always present; the fallback when there is no html. */
   text: string;
   /** The stored `text/html` part, or `null`. Sensitive mail stores none (pipeline.ts). */
@@ -1072,6 +1119,7 @@ export interface MessageBodyProps {
  * rather than reimplemented, so a message with no html renders exactly as it does today.
  */
 export function MessageBody({
+  messageId,
   text,
   html,
   remoteLoaded = false,
@@ -1081,6 +1129,34 @@ export function MessageBody({
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [ready, setReady] = useState(false);
+
+  /**
+   * ── DARK VIEWING — READ THE THEME, LET THE READER OVERRIDE IT PER MESSAGE ────────────────
+   *
+   * `useOptionalTheme` and not `useTheme`: this component renders bare (the desktop shell,
+   * `message-body.test.ts`), and `null` there means light, the same default the provider
+   * itself starts from. The transform only ever engages in a dark theme.
+   *
+   * A message can be dropped back to its original light rendering — a dark-mode invert is a
+   * lightness transform, and some mail (a poster, a logo-heavy newsletter) is worse for it.
+   * That decision is per message and remembered: `usePersistedIdSet` holds the ids the reader
+   * chose to keep original, in one capped key. Without a `messageId` the override is
+   * session-only, which is the right amount for a surface that cannot name the message.
+   */
+  const theme = useOptionalTheme();
+  const themeDark = theme?.resolved === "dark";
+  const overrides = usePersistedIdSet(UI_KEYS.mailOriginal);
+  const [sessionOriginal, setSessionOriginal] = useState(false);
+  const original = messageId ? overrides.has(messageId) : sessionOriginal;
+  const setOriginal = useCallback(
+    (on: boolean) => {
+      if (messageId) overrides.set(messageId, on);
+      else setSessionOriginal(on);
+    },
+    [messageId, overrides],
+  );
+  /** The transform is on when the theme is dark AND the reader has not asked for the original. */
+  const dark = themeDark && !original;
   /**
    * FIRST CLIENT RENDER MUST MATCH THE SERVER RENDER, OR REACT THROWS AWAY THE TREE.
    *
@@ -1110,11 +1186,37 @@ export function MessageBody({
     if (clean.trim().length === 0) return null;
     return {
       state: "ok" as const,
-      doc: buildMailDocument(clean, { imagesLoaded: proxy != null }),
+      // `dark` is baked in for the FIRST paint (no flash), then never rebuilt: every later
+      // flip goes through the toggleAttribute effect below. It is deliberately NOT a dep —
+      // rebuilding the srcdoc on a theme change would re-parse and re-measure the whole mail,
+      // which is exactly what the attribute mechanism exists to avoid. A rebuild driven by a
+      // real dep (html/proxy/mount) reads the current `dark` here, so the two never diverge.
+      doc: buildMailDocument(clean, { imagesLoaded: proxy != null, dark }),
       blocked,
       sheets,
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `dark` is applied live via
+    // toggleAttribute, never by rebuilding the frame; see the note above.
   }, [html, proxy, mounted]);
+
+  /**
+   * FLIP THE DARK TRANSFORM ON THE LIVE DOCUMENT — never by rebuilding the srcdoc.
+   *
+   * The transform is gated on `:root[data-ohmail-dark]` in the frame's own sheet, so switching
+   * it on or off is one attribute write on the frame's `documentElement`. A rebuild would
+   * re-parse the sender's html and force a fresh measurement pass; this does neither, so a
+   * theme change (or the reader's per-message override) is instant and motionless.
+   *
+   * `ready` and `mail` are deps so the attribute is re-asserted after the frame (re)loads —
+   * a new srcdoc starts from whatever `dark` was baked in, and this keeps the live document in
+   * step with the current value. In jsdom `contentDocument` is null, so this is a no-op there,
+   * which is why the dark transform's real proof is a browser check and not this file.
+   */
+  useEffect(() => {
+    const doc = frameRef.current?.contentDocument;
+    if (!doc?.documentElement) return;
+    doc.documentElement.toggleAttribute("data-ohmail-dark", dark);
+  }, [dark, ready, mail]);
 
   /**
    * SIZE THE FRAME TO THE MAIL — AND THE OBVIOUS WAY TO DO IT RUNS AWAY.
@@ -1237,19 +1339,25 @@ export function MessageBody({
   const remote = mail.blocked;
   const sheets = mail.sheets;
   const pixels = remote.filter((b) => b.pixel).length;
-  const showBar = remote.length > 0 || sheets.length > 0;
+  const hasBlocked = remote.length > 0 || sheets.length > 0;
+  // The bar also carries the dark-viewer toggle, so it appears in a dark theme even when there
+  // is nothing blocked to report. The empty text span below still takes the flex space, which
+  // is what pushes the toggle to the right whether or not the blocked-content sentence is there.
+  const showBar = hasBlocked || themeDark;
   const canLoad = imageProxy != null && onLoadRemote != null && !remoteLoaded;
 
   return (
     <div className="mb" ref={shellRef}>
       {showBar ? (
         <div className="mb-bar" role="status">
-          <svg className="mb-bar-icon" viewBox="0 0 16 16" aria-hidden="true" fill="none"
-            stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
-            <path d="M2 8s2.4-4 6-4 6 4 6 4-2.4 4-6 4-6-4-6-4Z" />
-            <circle cx="8" cy="8" r="1.7" />
-            <path d="m3 13 10-10" />
-          </svg>
+          {hasBlocked ? (
+            <svg className="mb-bar-icon" viewBox="0 0 16 16" aria-hidden="true" fill="none"
+              stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+              <path d="M2 8s2.4-4 6-4 6 4 6 4-2.4 4-6 4-6-4-6-4Z" />
+              <circle cx="8" cy="8" r="1.7" />
+              <path d="m3 13 10-10" />
+            </svg>
+          ) : null}
           <span className="mb-bar-text">
             {remote.length === 0
               ? null
@@ -1283,10 +1391,27 @@ export function MessageBody({
               {COPY.show}
             </button>
           ) : null}
+          {/* The dark-viewer toggle. Only meaningful in a dark theme — in light there is
+              nothing to adapt — so it is absent otherwise. `aria-pressed` reports whether the
+              reader has forced the original light rendering for this message. */}
+          {themeDark ? (
+            <button
+              type="button"
+              className="mb-bar-btn"
+              aria-pressed={original}
+              title={original ? COPY.darkAdaptTitle : COPY.darkOriginalTitle}
+              onClick={() => setOriginal(!original)}
+            >
+              {original ? COPY.darkAdapt : COPY.darkOriginal}
+            </button>
+          ) : null}
         </div>
       ) : null}
 
-      <div className="mb-sheet">
+      {/* `data-dark` themes the sheet the frame sits on — the chrome this file owns — to match
+          the transform inside the frame, so a short mail's surround does not read as a light
+          hole in a dark panel. It follows the per-message override, not just the theme. */}
+      <div className="mb-sheet" data-dark={dark ? "1" : undefined}>
         <iframe
           ref={frameRef}
           className="mb-frame"

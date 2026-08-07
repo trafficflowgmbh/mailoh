@@ -149,3 +149,17 @@ export function useTheme(): ThemeContextValue {
   if (!ctx) throw new Error("useTheme must be used inside <ThemeProvider>");
   return ctx;
 }
+
+/**
+ * The theme, or `null` when there is no provider — for a component that renders BOTH inside
+ * the app shell and outside it.
+ *
+ * `useTheme` throws off-provider, and that is correct for the app's own chrome, which always
+ * has one. `MessageBody` does not: it is mounted bare in the desktop shell and in unit tests
+ * that render it directly (`message-body.test.ts`), and a message must still render there.
+ * So it reads the theme through this and treats `null` as light — the same default the
+ * provider itself starts from before it has adopted a preference.
+ */
+export function useOptionalTheme(): ThemeContextValue | null {
+  return useContext(ThemeContext);
+}

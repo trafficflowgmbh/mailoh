@@ -226,7 +226,7 @@ export function ReceiptsView({
                  `ReadsView` for the reasoning; remote content stays blocked here too. */
               bodySlot={
                 body.state === "full" && body.html ? (
-                  <MessageBodyView text={body.text} html={body.html} remoteLoaded={body.loadedRemoteContent} />
+                  <MessageBodyView messageId={m.id} text={body.text} html={body.html} remoteLoaded={body.loadedRemoteContent} />
                 ) : undefined
               }
               unread={isUnread(m) || justSeen.has(m.id)}

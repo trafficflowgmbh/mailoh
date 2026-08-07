@@ -11,7 +11,7 @@ import "@ohmail/tokens/tokens.css";
 import "./base.css";
 
 /* theme */
-export { ThemeProvider, useTheme, themeInitScript } from "./theme/ThemeProvider.js";
+export { ThemeProvider, useTheme, useOptionalTheme, themeInitScript } from "./theme/ThemeProvider.js";
 export type {
   ThemePreference,
   ResolvedTheme,

@@ -229,7 +229,7 @@ export function ReadsView({
          privacy-preserving default the viewer already ships. */
       bodySlot={
         body.state === "full" && body.html ? (
-          <MessageBodyView text={body.text} html={body.html} remoteLoaded={body.loadedRemoteContent} />
+          <MessageBodyView messageId={m.id} text={body.text} html={body.html} remoteLoaded={body.loadedRemoteContent} />
         ) : undefined
       }
       unread={m.unread || justSeen.has(m.id)}
