@@ -567,6 +567,230 @@ export function textDisagreesWithHref(text: string, host: string): boolean {
   return claimedHost !== host && !host.endsWith(`.${claimedHost}`);
 }
 
+// ── how light is this mail? ────────────────────────────────────────────────────────────
+
+/**
+ * ── WHY THE DARK RENDERING HAS TO ASK THIS AT ALL ───────────────────────────────────────
+ *
+ * The dark rendering is one filter — `invert(1) hue-rotate(180deg)` — and a filter has no
+ * opinion about what it is given. Applied to a mail that is ALREADY dark it produces a light
+ * one, so a reader in a dark theme gets a white flash from exactly the senders who took the
+ * trouble to design for dark. That is not a rough edge; it is the transform doing its job to
+ * the wrong input, and no amount of tuning the filter fixes it.
+ *
+ * So the filter is gated on a cheap reading of the mail's own paper: invert what is light,
+ * leave alone what is not. Everything below exists to answer that one question from the
+ * document this file already has in its hands, and nothing else reads it.
+ */
+
+/**
+ * The colour keywords bulk mail is actually written with. Deliberately NOT the full CSS list:
+ * every entry here is a name this scanner must recognise to avoid mistaking a declared
+ * background for "none declared", and the ones that matter are the neutrals a page is painted
+ * with. A name that is absent falls through to "no opinion", which defaults to light — the
+ * same answer as a mail that declares nothing, and the safe direction (see {@link mailIsLight}).
+ */
+const NAMED_COLORS: Record<string, string> = {
+  white: "#ffffff", snow: "#fffafa", ivory: "#fffff0", floralwhite: "#fffaf0",
+  ghostwhite: "#f8f8ff", whitesmoke: "#f5f5f5", seashell: "#fff5ee", beige: "#f5f5dc",
+  oldlace: "#fdf5e6", linen: "#faf0e6", antiquewhite: "#faebd7", aliceblue: "#f0f8ff",
+  azure: "#f0ffff", mintcream: "#f5fffa", honeydew: "#f0fff0", lavender: "#e6e6fa",
+  gainsboro: "#dcdcdc", lightgray: "#d3d3d3", lightgrey: "#d3d3d3", silver: "#c0c0c0",
+  darkgray: "#a9a9a9", darkgrey: "#a9a9a9", gray: "#808080", grey: "#808080",
+  dimgray: "#696969", dimgrey: "#696969", black: "#000000",
+  navy: "#000080", darkslategray: "#2f4f4f", darkslategrey: "#2f4f4f", midnightblue: "#191970",
+};
+
+export interface Rgb { r: number; g: number; b: number; a: number }
+
+/**
+ * A CSS colour, as numbers, or `null` for "this file has no opinion".
+ *
+ * `null` is a real answer and not a failure: `transparent`, `inherit`, a gradient, a colour
+ * function this does not parse, and plain nonsense all mean the same thing to the caller —
+ * KEEP LOOKING — and none of them may be mistaken for an opaque background that was declared.
+ * The alpha is carried for exactly that reason: `rgba(0,0,0,0)` is spelled like a colour and
+ * paints nothing, and treating it as black is how a light mail gets classified dark.
+ */
+export function parseCssColor(input: string): Rgb | null {
+  const v = input.trim().toLowerCase();
+  if (v.length === 0) return null;
+  const named = NAMED_COLORS[v];
+  const hex = named ?? v;
+  if (hex.startsWith("#")) {
+    const d = hex.slice(1);
+    const ok = /^[0-9a-f]+$/.test(d);
+    if (ok && (d.length === 3 || d.length === 4)) {
+      const p = (i: number): number => Number.parseInt(d[i]! + d[i]!, 16);
+      return { r: p(0), g: p(1), b: p(2), a: d.length === 4 ? p(3) / 255 : 1 };
+    }
+    if (ok && (d.length === 6 || d.length === 8)) {
+      const p = (i: number): number => Number.parseInt(d.slice(i, i + 2), 16);
+      return { r: p(0), g: p(2), b: p(4), a: d.length === 8 ? p(6) / 255 : 1 };
+    }
+    return null;
+  }
+  // `rgb(1,2,3)`, `rgba(1,2,3,.5)` and the space-separated `rgb(1 2 3 / 50%)` form.
+  const fn = /^rgba?\(([^)]*)\)$/.exec(v);
+  if (!fn) return null;
+  const parts = fn[1]!.split(/[,/\s]+/).filter((s) => s.length > 0);
+  if (parts.length < 3) return null;
+  const chan = (s: string): number => {
+    const n = Number.parseFloat(s);
+    if (!Number.isFinite(n)) return Number.NaN;
+    return s.endsWith("%") ? (n / 100) * 255 : n;
+  };
+  const r = chan(parts[0]!), g = chan(parts[1]!), b = chan(parts[2]!);
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return null;
+  let a = 1;
+  if (parts.length >= 4) {
+    const rawAlpha = parts[3]!;
+    const n = Number.parseFloat(rawAlpha);
+    if (!Number.isFinite(n)) return null;
+    a = rawAlpha.endsWith("%") ? n / 100 : n;
+  }
+  return { r, g, b, a };
+}
+
+/**
+ * WCAG 2.x relative luminance. The sRGB channels are linearised before they are weighted,
+ * which is the difference between "how bright is this number" and "how bright does this look";
+ * a plain channel average calls `#008000` light and it is not.
+ */
+export function relativeLuminance({ r, g, b }: Rgb): number {
+  const lin = (c: number): number => {
+    const s = Math.min(Math.max(c, 0), 255) / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/**
+ * THE THRESHOLD, AND IT IS NOT A ROUND NUMBER BY ACCIDENT.
+ *
+ * 0.179 is the relative luminance at which black and white text have equal contrast against a
+ * background — the crossover the WCAG contrast formula produces from `(L+0.05)` on both sides.
+ * Above it a designer reaches for dark ink, below it for light ink, which is precisely the
+ * question the dark rendering needs answered: "was this mail drawn to be read as dark-on-light?"
+ * A mid grey therefore reads as light, which is the right call — inverting `#808080` returns
+ * very nearly `#808080`, so the cost of being wrong in that region is nil either way.
+ */
+export const LIGHT_LUMINANCE = 0.179;
+
+/**
+ * An OPAQUE-ENOUGH background declared on one element, or `null` for "nothing declared here".
+ *
+ * Both spellings mail uses: the html 3.2 `bgcolor` attribute, which is still what a table-based
+ * newsletter is built from, and a `background`/`background-color` declaration in the inline
+ * `style`. The shorthand is scanned token by token because `background:#fff url(x) no-repeat`
+ * is one declaration with the colour buried in it.
+ *
+ * A translucent value (alpha under a half) is `null` — it lets the surface behind it through,
+ * so it is not what the mail is painted on.
+ */
+function declaredBackground(el: Element): Rgb | null {
+  const opaque = (c: Rgb | null): Rgb | null => (c && c.a >= 0.5 ? c : null);
+  const attr = el.getAttribute("bgcolor");
+  const fromAttr = attr ? opaque(parseCssColor(attr)) : null;
+  if (fromAttr) return fromAttr;
+  const style = el.getAttribute("style");
+  if (!style) return null;
+  const decl = /(?:^|;)\s*background(?:-color)?\s*:\s*([^;!]+)/i.exec(style);
+  if (!decl) return null;
+  for (const token of decl[1]!.trim().split(/\s+/)) {
+    const c = opaque(parseCssColor(token));
+    if (c) return c;
+  }
+  return null;
+}
+
+/** A `html{…}` / `body{…}` rule's background colour in a stylesheet's text, or `null`. */
+const SHEET_PAGE_BG =
+  /(?:^|[};])\s*(?:html|body)\s*(?:,\s*(?:html|body)\s*)*\{[^{}]*?background(?:-color)?\s*:\s*([^;!}]+)/i;
+
+/**
+ * The tags a PAGE is painted with. A background on an `<a>` or a `<span>` is a highlight on a
+ * word, not the paper, and letting one of those decide would classify a newsletter by whichever
+ * inline flourish happened to come first in the document.
+ */
+const PAINTS_THE_PAGE = new Set([
+  "table", "tbody", "tr", "td", "th", "div", "center", "section", "article", "main", "body",
+]);
+
+/**
+ * How far into the document the wrapper chain is followed. A table-based newsletter nests
+ * `table > tbody > tr > td` three deep before it reaches anything visible and often does it
+ * twice, so this has to be more than a handful — and it must still be a CONSTANT, because the
+ * scan runs synchronously inside `useMemo` on the thread that paints the app, like everything
+ * else in this file.
+ */
+const BG_SCAN_LIMIT = 40;
+
+/**
+ * ── THE MAIL'S EFFECTIVE PAPER, FROM THE DOCUMENT AND NOT FROM A GUESS ──────────────────
+ *
+ * Three places a mail says what it is painted on, in the order they actually win:
+ *
+ *   1. `<body bgcolor>` / `<body style>`. The most explicit statement there is, and it is read
+ *      from the PARSED document rather than the sanitized one — DOMPurify returns the body's
+ *      CONTENT, so the body element's own attributes never survive to be inspected later.
+ *   2. A `html{…}` or `body{…}` rule in the mail's own stylesheet, which is how a designed
+ *      newsletter says the same thing.
+ *   3. The outermost container that declares one. Document order is the wrapper chain in a
+ *      table-based mail, so the first hit IS the outermost — the element that paints the page.
+ *
+ * `null` means the mail declared nothing, which is the ordinary case and is not a failure: mail
+ * that names no background is drawn on the browser's white, and {@link mailIsLight} says so.
+ *
+ * ── WHAT IT CANNOT SEE, STATED RATHER THAN PAPERED OVER ─────────────────────────────────
+ *
+ * There is no layout here and there cannot be — this runs before the frame exists — so
+ * "dominant" is decided by depth and tag, not by painted area. A mail whose outermost wrapper
+ * is a narrow dark bar over a white page will be read as dark and left alone. The cost of that
+ * is one mail rendered in its original colours in a dark theme, which is a rendering the reader
+ * can already ask for by name; the cost of the opposite error is a white flash. The reading is
+ * therefore biased on purpose, and the per-message toggle is the exit.
+ */
+export function effectiveBackground(
+  parsedBody: Element | null,
+  sanitized: Element | null,
+  styleText: string,
+): Rgb | null {
+  if (parsedBody) {
+    const own = declaredBackground(parsedBody);
+    if (own) return own;
+  }
+  const sheet = SHEET_PAGE_BG.exec(styleText);
+  if (sheet) {
+    for (const token of sheet[1]!.trim().split(/\s+/)) {
+      const c = parseCssColor(token);
+      if (c && c.a >= 0.5) return c;
+    }
+  }
+  if (sanitized) {
+    let seen = 0;
+    for (const el of sanitized.querySelectorAll("*")) {
+      if (++seen > BG_SCAN_LIMIT) break;
+      if (!PAINTS_THE_PAGE.has(el.tagName.toLowerCase())) continue;
+      const c = declaredBackground(el);
+      if (c) return c;
+    }
+  }
+  return null;
+}
+
+/**
+ * Is this mail worth inverting?
+ *
+ * `null` — nothing declared — is TRUE, and that default is the whole product: mail that names
+ * no background is drawn on white by every renderer there has ever been, including
+ * {@link FRAME_CSS}'s own `body{background:#fff}`, and it is the overwhelming majority of what
+ * arrives. Defaulting the other way would switch dark viewing off for almost everything.
+ */
+export function mailIsLight(bg: Rgb | null): boolean {
+  return bg === null || relativeLuminance(bg) > LIGHT_LUMINANCE;
+}
+
 // ── the sanitizer ──────────────────────────────────────────────────────────────────────
 
 export interface SanitizeOptions {
@@ -594,6 +818,22 @@ export interface SanitizedMail {
    * and a reader with no sentence to read has been failed twice.
    */
   sheets: string[];
+  /**
+   * IS THIS MAIL WORTH INVERTING? The one input to dark viewing, decided from the document
+   * — see {@link effectiveBackground}. `true` for mail that is effectively light (including
+   * the common case of a mail that declares no background at all); `false` for mail a sender
+   * already drew dark, which the filter must leave alone or it turns white.
+   *
+   * It is a property of the SANITIZED mail rather than a separate pass over the raw html so
+   * that the answer is about the document the frame will actually build.
+   */
+  light: boolean;
+  /**
+   * The paper {@link light} was decided from, or `null` when the mail declared none. Carried
+   * for the tests and for anyone debugging a message that inverted when it should not have;
+   * nothing in the render path reads it.
+   */
+  background: Rgb | null;
   /**
    * The html part was past {@link MAX_HTML_CHARS} and was not rendered at all. Present only
    * in that case, so an ordinary message carries no flag to test.
@@ -667,8 +907,12 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   const sheets: string[] = [];
   const proxy = opts.imageProxy ?? null;
 
-  if (!sanitizerAvailable()) return { html: "", blocked, sheets };
-  if (html.length > MAX_HTML_CHARS) return { html: "", blocked, sheets, oversize: true };
+  // `light: true` on both refusals is not a reading of anything — neither path renders a frame,
+  // so nothing consults it. It is stated rather than left optional so the field is total.
+  if (!sanitizerAvailable()) return { html: "", blocked, sheets, light: true, background: null };
+  if (html.length > MAX_HTML_CHARS) {
+    return { html: "", blocked, sheets, light: true, background: null, oversize: true };
+  }
 
   const seen = new Set<string>();
   const record = (url: string, via: BlockedAsset["via"], pixel: boolean): void => {
@@ -730,6 +974,32 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
       tag === "img" && (declaresPixel(node) || BEACON_PATH.test(node.getAttribute("src") ?? ""));
 
     neutraliseStyleAttr(node, (url) => cssUrl(url, pixel));
+
+    // ── A BACKGROUND IMAGE IS A PICTURE, AND DARK VIEWING MUST NOT NEGATE IT ─────────────
+    //
+    // The dark filter inverts everything under it, and {@link FRAME_CSS} negates `img` back so
+    // photographs and logos keep their real colours. An element painted with a CSS background
+    // image is the same picture by another spelling and needs the same treatment — so it is
+    // MARKED here and counter-inverted by the sheet.
+    //
+    // Only a surviving `url()` counts: the rewrite above has already turned every REMOTE one
+    // into `none`, so what is left is `data:` (and `cid:`, which resolves to nothing today).
+    // That makes this rare — and it is written for the case where it is not, because the shape
+    // it fixes is a logo band that renders as its own photographic negative.
+    //
+    // ── THE ARTIFACT THIS BUYS, NAMED RATHER THAN DISCOVERED LATER ──────────────────────
+    //
+    // A filter applies to an element AND its descendants, so counter-inverting a box that has
+    // both a background image and text inside it puts that TEXT back to its original colour
+    // too — dark ink on a dark surface. There is no way to invert a box's background and not
+    // its content in CSS alone. The trade is deliberate: a hero banner whose picture is its
+    // point reads correctly and its overlaid caption reads worse, which is better than the
+    // banner itself arriving as a negative. Same escape as everywhere else in this transform —
+    // the reader can drop this message back to its original colours.
+    const styled = node.getAttribute("style");
+    if (styled && /background[^:;]*:[^;]*url\(/i.test(styled)) {
+      node.setAttribute("data-ohmail-bgimg", "1");
+    }
 
     // `background="…"` on <body>/<table>/<td> is html 3.2 and bulk mail still emits it.
     // Dropped rather than rewritten even under consent: it is a deprecated attribute with no
@@ -821,8 +1091,12 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
    * promise — see the comment on the `sanitize` call below, which is where that property
    * actually lives.
    */
+  let styleText = "";
   for (const el of parsed.querySelectorAll("style")) {
     el.textContent = neutraliseCss(el.textContent ?? "", (u) => cssUrl(u), recordSheet);
+    // Accumulated for {@link effectiveBackground} only, and it is the NEUTRALISED text — the
+    // sheet the frame is going to get — so the paper this reads is the paper the reader sees.
+    styleText += `${el.textContent}\n`;
   }
 
   /**
@@ -882,12 +1156,15 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     }) as unknown as HTMLElement | null;
 
   // `IS_EMPTY_INPUT` returns null under `RETURN_DOM`, which is a message with no html left.
-  if (!sanitized) return { html: "", blocked, sheets };
+  if (!sanitized) return { html: "", blocked, sheets, light: true, background: null };
 
   // ── THE POST-PASS. Over the document the frame will have, not the one we handed over. ──
   for (const node of sanitized.querySelectorAll("*")) onAttributes(node);
 
-  return { html: sanitized.innerHTML, blocked, sheets };
+  // Read AFTER the post-pass, from the final document, for the same reason the post-pass runs
+  // there: what the reader is shown is what this must be an answer about.
+  const background = effectiveBackground(parsed.body, sanitized, styleText);
+  return { html: sanitized.innerHTML, blocked, sheets, light: mailIsLight(background), background };
 }
 
 // ── the document ───────────────────────────────────────────────────────────────────────
@@ -990,14 +1267,55 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
    a dark background gets it inverted to light, which is the known cost of the technique and
    the reason the reader can drop back to the original per message. */
 :root[data-ohmail-dark] body{background:#e4e4e4;filter:invert(1) hue-rotate(180deg)}
+/* THE CANVAS UNDER A SCALED MAIL, and it exists for the intersection of the two transforms
+   below. The body's background normally propagates to the frame's canvas and paints the whole
+   viewport — but a body that has been SCALED no longer covers the right-hand edge, and a
+   propagated background is painted outside the element's own filter, so that edge would show
+   #e4e4e4 as light grey beside an inverted mail. Declaring a background on :root takes over
+   the propagation with a value that is already the inverse of the body's, so the strip and the
+   paper match. In the unscaled case body covers the viewport and none of this is visible. */
+:root[data-ohmail-dark]{background:#1b1b1b}
 /* Two wrongs make a right: the body filter negated every picture, so negate the pictures
-   back — real images keep their real colours while the page around them stays inverted. */
-:root[data-ohmail-dark] img{filter:invert(1) hue-rotate(180deg)}
+   back — real images keep their real colours while the page around them stays inverted.
+   The [data-ohmail-bgimg] marker is the same picture spelled as a CSS background (see the
+   post-pass, which is what sets it, and which also names the artifact this costs).
+   video, svg and canvas CANNOT MATCH TODAY and are not a guard: ALLOWED_TAGS admits none of
+   them, so the sanitizer removes them before this sheet is ever applied. They are named
+   because this is the one place a picture's counter-inversion belongs, so that admitting one
+   of those tags is a one-line change here rather than a bug found in a dark theme. */
+:root[data-ohmail-dark] img,
+:root[data-ohmail-dark] video,
+:root[data-ohmail-dark] svg,
+:root[data-ohmail-dark] canvas,
+:root[data-ohmail-dark] [data-ohmail-bgimg]{filter:invert(1) hue-rotate(180deg)}
 /* A blocked-image placeholder is OUR chrome, not the sender's picture. Leave it inverted
    WITH the page (filter:none cancels the re-inversion above) so its box reads as a quiet
    dark panel rather than flipping to a light one on the dark surface. */
 :root[data-ohmail-dark] img[data-ohmail-blocked],
 :root[data-ohmail-dark] img[data-ohmail-embedded]{filter:none}
+/* ── SCALE TO FIT, GATED ON THE SECOND ROOT ATTRIBUTE ──────────────────────────────────
+   A fixed-width newsletter — 600 or 700 px of table, which is most of bulk mail — is wider
+   than a reading column on a narrow window, and the browser's answer is a horizontal
+   scrollbar under every message. This is the other answer: lay the mail out exactly as its
+   sender wrote it and shrink the RESULT to the column, which is what a phone does with a
+   desktop page. Dormant in every document like the dark rules, driven by --ohmail-scale, and
+   switched by :root[data-ohmail-scaled] — see measure(), which is what computes both.
+
+   ── COMPOSITION WITH THE DARK FILTER, WHICH IS ON THIS SAME ELEMENT ──────────────────
+   The body carries filter (above) and transform (here) at once whenever a wide mail is read
+   in a dark theme. CSS defines that order: the element is rendered, the FILTER is applied to
+   that rendering, and the TRANSFORM then maps the filtered result into the parent. Nothing
+   here depends on the order holding, because a uniform scale and a per-pixel colour operation
+   commute — inverting then shrinking and shrinking then inverting produce the same pixels —
+   but the two must stay separate properties on one selector each. A shorthand, or a second
+   rule that set filter while scaling, would silently drop one of them.
+
+   transform-origin:0 0 because the mail must shrink toward the top-left corner it starts in;
+   the default 50% 50% would pull it away from both edges and leave a margin the reader did not
+   ask for. And the transform is applied ONLY when it is needed: a transform other than none
+   makes the element a containing block for fixed and absolutely positioned descendants, so
+   applying scale(1) unconditionally would change how ordinary mail lays out for no gain. */
+:root[data-ohmail-scaled] body{transform-origin:0 0;transform:scale(var(--ohmail-scale,1))}
 `;
 
 /**
@@ -1053,6 +1371,42 @@ const PROBE_PX = 600;
  * twenty-five screens — past any newsletter, short of anything that hurts.
  */
 const MAX_FRAME_PX = 20_000;
+
+/**
+ * HOW SMALL THE MAIL MAY BE SHRUNK BEFORE FITTING STOPS BEING WORTH IT.
+ *
+ * Scale-to-fit trades size for the absence of a horizontal scrollbar, and past a point that
+ * trade is a bad one: a 1 200 px poster in a 390 px column is a scale of 0.32, which renders
+ * 15 px body text at under 5 px — present, technically un-scrolled, and unreadable. So the
+ * scale is CAPPED at the floor rather than the fit, and whatever still does not fit gets the
+ * horizontal scroll it was always going to get. Readability wins over fit.
+ *
+ * 0.6 is chosen against the shape this exists for: the fixed-width newsletter. 600 px and
+ * 700 px are what bulk mail is built at, and the narrowest reading column this app produces is
+ * around 390 px — so 390/700 = 0.56 … 390/600 = 0.65, and the common cases land at or just
+ * under the floor while anything pathological is refused outright.
+ */
+export const MIN_FIT_SCALE = 0.6;
+
+/**
+ * The uniform scale that fits `naturalPx` of content into `columnPx` of column — 1 when it
+ * already fits, and never below {@link MIN_FIT_SCALE}.
+ *
+ * SEPARATED FROM {@link measure} ON PURPOSE. jsdom performs no layout, so every number the
+ * measurement reads is 0 there and the fitting can only be proven in a real engine — except
+ * for this, which is arithmetic and is watched in the unit suite. What the browser check has
+ * to prove is that the right numbers reach it.
+ *
+ * A zero or negative reading (a frame that is not laid out, a detached document, jsdom) is 1:
+ * "do not scale" is the only safe answer to "I could not measure", and it is what keeps this
+ * from writing a transform under the unit suite.
+ */
+export function fitScale(columnPx: number, naturalPx: number): number {
+  if (!Number.isFinite(columnPx) || !Number.isFinite(naturalPx)) return 1;
+  if (columnPx <= 0 || naturalPx <= 0) return 1;
+  if (naturalPx <= columnPx) return 1;
+  return Math.max(MIN_FIT_SCALE, columnPx / naturalPx);
+}
 
 /**
  * THE SCROLLABLE ANCESTORS OF THE FRAME, nearest first, plus the document scroller.
@@ -1155,8 +1509,14 @@ export function MessageBody({
     },
     [messageId, overrides],
   );
-  /** The transform is on when the theme is dark AND the reader has not asked for the original. */
-  const dark = themeDark && !original;
+  /**
+   * The transform is WANTED when the theme is dark and the reader has not asked for the
+   * original. Whether it is actually APPLIED is `dark` below, which adds the third condition:
+   * the mail has to be light enough to be worth inverting. Two names because the difference
+   * matters — this one is the reader's intent, and it survives opening a mail the transform
+   * declines to touch.
+   */
+  const darkWanted = themeDark && !original;
   /**
    * FIRST CLIENT RENDER MUST MATCH THE SERVER RENDER, OR REACT THROWS AWAY THE TREE.
    *
@@ -1179,26 +1539,47 @@ export function MessageBody({
   const mail = useMemo(() => {
     if (!html) return null;
     if (!mounted || !sanitizerAvailable()) return { state: "unsupported" as const };
-    const { html: clean, blocked, sheets, oversize } = sanitizeMailHtml(html, { imageProxy: proxy });
+    const { html: clean, blocked, sheets, oversize, light } = sanitizeMailHtml(html, {
+      imageProxy: proxy,
+    });
     // A message too large to neutralise renders as TEXT, with a reason. Never as a blank
     // frame, and never by taking however long the neutralising would have taken.
     if (oversize) return { state: "oversize" as const };
     if (clean.trim().length === 0) return null;
     return {
       state: "ok" as const,
-      // `dark` is baked in for the FIRST paint (no flash), then never rebuilt: every later
-      // flip goes through the toggleAttribute effect below. It is deliberately NOT a dep —
-      // rebuilding the srcdoc on a theme change would re-parse and re-measure the whole mail,
-      // which is exactly what the attribute mechanism exists to avoid. A rebuild driven by a
-      // real dep (html/proxy/mount) reads the current `dark` here, so the two never diverge.
-      doc: buildMailDocument(clean, { imagesLoaded: proxy != null, dark }),
+      /**
+       * IS THERE ANYTHING TO ADAPT? Mail the sender already drew dark is left alone — see
+       * {@link effectiveBackground}. It travels with the sanitized result rather than being
+       * recomputed by the component, because it is a reading of THIS document and the
+       * component would otherwise have to re-parse the html to ask.
+       */
+      light,
+      // `darkWanted && light` is baked in for the FIRST paint (no flash), then never rebuilt:
+      // every later flip goes through the toggleAttribute effect below. It is deliberately NOT
+      // a dep — rebuilding the srcdoc on a theme change would re-parse and re-measure the whole
+      // mail, which is exactly what the attribute mechanism exists to avoid. A rebuild driven
+      // by a real dep (html/proxy/mount) reads the current value here, so the two never diverge.
+      doc: buildMailDocument(clean, { imagesLoaded: proxy != null, dark: darkWanted && light }),
       blocked,
       sheets,
     };
-    // `dark` is intentionally omitted — it is applied live via toggleAttribute, never by
+    // `darkWanted` is intentionally omitted — it is applied live via toggleAttribute, never by
     // rebuilding the frame; see the note on `doc` above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [html, proxy, mounted]);
+
+  /**
+   * THE THREE-TERM ANSWER, IN ONE PLACE SO NOTHING DISAGREES WITH ANYTHING ELSE.
+   *
+   * `adaptable` — this mail is light, so inverting it means something. False for a mail drawn
+   * dark by its sender, and false before there is a document to have read.
+   * `dark` — the filter is actually on. The live `toggleAttribute` and the surround both read
+   * THIS, so a mail the transform declines to touch never gets a dark-styled frame around a
+   * light body.
+   */
+  const adaptable = mail?.state === "ok" ? mail.light : false;
+  const dark = darkWanted && adaptable;
 
   /**
    * FLIP THE DARK TRANSFORM ON THE LIVE DOCUMENT — never by rebuilding the srcdoc.
@@ -1296,10 +1677,38 @@ export function MessageBody({
     const scrollers = scrollAncestors(frame);
     const tops = scrollers.map((el) => el.scrollTop);
 
+    const root = doc.documentElement;
     const restore = frame.style.height;
+
+    // ── THE PROBE READS THE MAIL AT ITS NATURAL SIZE, WHICH MEANS UNSCALED TOO ─────────
+    //
+    // The height probe pins the VIEWPORT to a constant so a sender's `vh` cannot move it. The
+    // fit needs the same treatment for the other axis, and for a sharper reason: the scale is
+    // applied to `body`, and a transformed body contributes its TRANSFORMED extent to the
+    // document's scrollable overflow — so measuring while the previous fit is still applied
+    // reads back the column width, computes a scale of 1, removes the transform, and finds the
+    // mail overflowing again on the next pass. That is an oscillation, not a measurement.
+    // Clearing the attribute first makes the reading a pure function of the content and the
+    // column, exactly like the height, and leaves no feedback edge for either axis.
+    root.removeAttribute("data-ohmail-scaled");
     frame.style.height = `${PROBE_PX}px`;
-    const raw = Math.ceil(doc.documentElement.offsetHeight);
+
+    // `clientWidth` of the FRAME is the column; `scrollWidth` of the frame's root is the widest
+    // the mail actually needs, and it is already clamped up to the viewport, so it is never
+    // less than the column and the scale is never above 1.
+    const scale = fitScale(frame.clientWidth, root.scrollWidth);
+    // Measured BEFORE the transform is applied, then scaled by the same factor — a transform is
+    // a paint-time operation and never changes `offsetHeight`, so the frame would otherwise be
+    // told to reserve the mail's full unscaled height and leave a gap under a fitted message.
+    const raw = Math.ceil(root.offsetHeight * scale);
     const h = Math.min(raw, MAX_FRAME_PX);
+
+    if (scale < 1) {
+      root.style.setProperty("--ohmail-scale", String(scale));
+      root.setAttribute("data-ohmail-scaled", "1");
+    } else {
+      root.style.removeProperty("--ohmail-scale");
+    }
     frame.style.height = h > 0 ? `${h}px` : restore;
 
     for (let i = 0; i < scrollers.length; i++) {
@@ -1344,7 +1753,19 @@ export function MessageBody({
   // The bar also carries the dark-viewer toggle, so it appears in a dark theme even when there
   // is nothing blocked to report. The empty text span below still takes the flex space, which
   // is what pushes the toggle to the right whether or not the blocked-content sentence is there.
-  const showBar = hasBlocked || themeDark;
+  //
+  // `adaptable` and not `themeDark` alone: a mail the sender already drew dark has no adaptation
+  // to offer, so the button would toggle an attribute that changes nothing on screen. A control
+  // that visibly does nothing is worse than an absent one, and an empty bar carrying only that
+  // control is worse still — hence both this and the button below read the same term.
+  const canAdapt = themeDark && adaptable;
+  const showBar = hasBlocked || canAdapt;
+  /**
+   * IS WHAT THE READER IS LOOKING AT DARK? Not the same question as `dark`, which is only
+   * whether the FILTER is on. A mail the sender drew dark is dark on screen with no filter at
+   * all, and the surround has to match that too or a dark newsletter sits in a light frame.
+   */
+  const surfaceDark = themeDark && (dark || !adaptable);
   const canLoad = imageProxy != null && onLoadRemote != null && !remoteLoaded;
 
   return (
@@ -1395,7 +1816,7 @@ export function MessageBody({
           {/* The dark-viewer toggle. Only meaningful in a dark theme — in light there is
               nothing to adapt — so it is absent otherwise. `aria-pressed` reports whether the
               reader has forced the original light rendering for this message. */}
-          {themeDark ? (
+          {canAdapt ? (
             <button
               type="button"
               className="mb-bar-btn"
@@ -1412,7 +1833,7 @@ export function MessageBody({
       {/* `data-dark` themes the sheet the frame sits on — the chrome this file owns — to match
           the transform inside the frame, so a short mail's surround does not read as a light
           hole in a dark panel. It follows the per-message override, not just the theme. */}
-      <div className="mb-sheet" data-dark={dark ? "1" : undefined}>
+      <div className="mb-sheet" data-dark={surfaceDark ? "1" : undefined}>
         <iframe
           ref={frameRef}
           className="mb-frame"
