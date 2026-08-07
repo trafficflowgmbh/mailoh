@@ -4,6 +4,7 @@ import {
   IndexedDbMirrorStore,
   OhmailEngine,
   purgeLegacyMirror,
+  type StorePolicy,
 } from "@ohmail/client-engine";
 import { createSyncGate, registerSyncGate } from "./sync-scheduler";
 
@@ -75,6 +76,31 @@ export class EngineUnarmedError extends Error {
 }
 
 /**
+ * HOW MUCH OF THE MAILBOX THE BROWSER KEEPS ON DISK — the ninety-day window, plus a floor.
+ *
+ * The browser's mirror is a CACHE in front of a server that still holds everything; the desktop
+ * tier's mirror is the mail itself. `StorePolicy` defaults to `full` precisely so that a host
+ * which configures nothing keeps every message — a policy that pruned by omission would be a
+ * data-loss default — and the consequence is that this line is the ONLY thing standing between a
+ * browser and a mirror that grows without bound. IndexedDB has a quota; a mailbox does not care.
+ *
+ * `minRows` is not a rounding of `days`, it is the floor that keeps them independent: a mailbox
+ * that has been quiet for four months would otherwise evict itself down to nothing and render an
+ * empty app to somebody whose mail is all present on the server. Whichever of the two keeps MORE
+ * mail wins, every time.
+ *
+ * Nothing is lost by pruning. `MirrorStore.prune` deletes rather than tombstones, so an evicted
+ * row is one `/sync` change or one re-snapshot away — and the mail past the window is reachable
+ * directly through `OhmailEngine.listOlder`, which is the other half of this decision.
+ *
+ * It is a NAMED CONSTANT rather than an inline literal so that the test pinning it to the live
+ * path can name it too. The risk this guards is one-sided and silent: dropping the option leaves
+ * a working, correct, fully-tested app whose only symptom is a mirror that quietly regrows to the
+ * whole mailbox, months later, on somebody else's machine.
+ */
+export const BROWSER_WINDOW = { mode: "windowed", days: 90, minRows: 5000 } as const satisfies StorePolicy;
+
+/**
  * Build the engine for a resolved mode.
  *
  * `demo` WINS over everything. It is checked first and there is no configuration, no
@@ -113,6 +139,9 @@ export function createEngine(
   // effect from the old `!demo && apiBase` ordering; spelled as an early return because the
   // branch below now throws, and "the demo is decided before anything can fail" has to stay
   // obvious.
+  // No `storePolicy` here either, and that is not an oversight: the absent branch is `full`, the
+  // demo has no persistent mirror to prune, and a window over a hand-made fixture world could
+  // only ever delete part of the story Mila is being shown.
   if (demo) return new OhmailEngine({ adapter: new FixturesAdapter() });
 
   // FIXTURES ARE NOT A FALLBACK. See {@link EngineUnarmedError}: reaching here without a
@@ -146,6 +175,7 @@ export function createEngine(
     new OhmailEngine({
       adapter: gate.guard(new HttpAdapter({ baseUrl: apiBase })),
       ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),
+      storePolicy: BROWSER_WINDOW,
     }),
     gate,
   );

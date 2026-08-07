@@ -1,9 +1,11 @@
 import {
   MutationRejectedError,
   type EngineAdapter,
+  type ListOlderFn,
   type MessageBodyWire,
   type MutationOutcome,
   type OhmailEngine,
+  type SnapshotFn,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
@@ -260,9 +262,22 @@ const isAborted = (err: unknown): err is SyncAbortedError => err instanceof Sync
  * `engine.start()` are unaffected — the gate only ever narrows a surface a scheduler is
  * actively driving.
  */
+/**
+ * THE TWO CAPABILITIES `EngineAdapter` DOES NOT DECLARE.
+ *
+ * `snapshot` and `listMessages` are STRUCTURAL in `@ohmail/client-engine` — the engine reaches
+ * for them on the adapter it was handed and treats absence as a real answer, so neither is a
+ * member of the interface. That is what makes them droppable HERE: an object literal that omits
+ * one still satisfies `EngineAdapter` and still compiles, and the demo is never wrapped, so the
+ * loss shows up on the live path alone. Naming them in the gate's own signature is what turns
+ * "the wrapper forgot" from a silent behaviour change into something a reader can check against
+ * a list — and the imported types are the package's own, so a rename over there fails here.
+ */
+type GatedAdapter = EngineAdapter & { snapshot?: SnapshotFn; listMessages?: ListOlderFn };
+
 export interface SyncGate {
   /** Wrap the engine's transport. Call once, at construction, on the adapter you pass in. */
-  guard(adapter: EngineAdapter): EngineAdapter;
+  guard(adapter: GatedAdapter): GatedAdapter;
   /**
    * Claim the gate for a scheduler's lifetime. There is deliberately no `release`: the
    * predicate a scheduler installs closes ITSELF once that scheduler is stopped (it reads the
@@ -325,6 +340,60 @@ export function createSyncGate(): SyncGate {
         ...(adapter.searchServer ? { searchServer: adapter.searchServer.bind(adapter) } : {}),
 
         /*
+         * ── THE COLD-START READ — FORWARDED, AND THIS ONE **IS** THE GATED PAGE ────────────
+         *
+         * `GET /sync/snapshot` is not a sibling of `fetchBody` and `searchServer`; it is
+         * `sync()`'s own first page under another name. The engine takes it INSTEAD of
+         * `since=0` whenever the mirror's cursor is "0" — a first-ever start, a bootstrap that
+         * crashed before its last page, or the 410 branch. So the visibility argument that
+         * exempts the others points the other way here: a hidden tab paging through a whole
+         * snapshot is exactly the cost invariant #10 is about.
+         *
+         * It is nevertheless NOT gated in this literal, and that is deliberate rather than an
+         * omission. The engine calls `snapshot()` from `runSnapshot()`, whose page-1 failure
+         * path LATCHES "this route is unusable" and silently falls back to `since=0`; a
+         * `SyncAbortedError` thrown from here on page 1 would be swallowed as that latch and
+         * the tab would spend the rest of its life on the old bootstrap path. Page 2 onwards
+         * would be worse — `runSnapshot` rethrows there, which is correct for a network
+         * failure and wrong for a cancellation, and the drain would count it against the
+         * backoff. The gate on `sync()` already bounds the drain: the delta pages that follow
+         * the snapshot refuse, and a torn-down or hidden tab stops there.
+         *
+         * SPREAD, for the third time and the usual reason: defining it unconditionally would
+         * make a `FixturesAdapter` behind a gate claim a snapshot endpoint it has no server
+         * for, and `?demo=1` would issue a request on its first drain (invariants #6/#8).
+         *
+         * FORWARDED AT ALL: this literal is the whole surface the engine sees, and the demo is
+         * never wrapped — so a capability missing from this list is missing on the LIVE PATH
+         * ONLY. Every live account would fall back to replaying the log from seq zero, forever,
+         * with every test in the repo green because they build engines from bare adapters.
+         * `snapshot-wired.test.ts` builds the real live engine through `createEngine` so that
+         * deleting this line goes red.
+         */
+        ...(adapter.snapshot ? { snapshot: adapter.snapshot.bind(adapter) } : {}),
+
+        /*
+         * ── READING PAST THE END OF THE WINDOW — FORWARDED, NOT GATED, AND SPREAD ──────────
+         *
+         * `GET /messages?view=&cursor=`, the companion to the windowed store: a page of the mail
+         * this client chose not to keep on disk. Same rule as `fetchBody` and `searchServer` on
+         * all three counts.
+         *
+         * NOT GATED: it fires when somebody scrolls to the bottom of a pile, in a tab they are
+         * looking at, and it is bounded by that act — one page per scroll, never speculative.
+         * Invariant #10 is about a hidden tab paging through a bootstrap nobody asked for.
+         *
+         * SPREAD: `OhmailEngine.listOlderAvailable()` decides whether the end of a list offers a
+         * control at all. Defining this unconditionally would put "there is more, older mail" at
+         * the bottom of the demo's Ohbox, over fixtures that are the whole of Mila's world.
+         *
+         * FORWARDED AT ALL: without the line, a live windowed account reaches the end of its
+         * ninety-day window and is told that is the end of their mail — which is the falsest
+         * sentence this app could put on a screen, and it would say it only in production.
+         */
+        ...(adapter.listMessages ? { listMessages: adapter.listMessages.bind(adapter) } : {}),
+
+        /*
          * ── ATTACHMENTS — FORWARDED, NOT GATED, AND SPREAD ────────────────────────────────
          *
          * Three capabilities, one rule, and it is `searchServer`'s rule for the third time.
@@ -356,7 +425,7 @@ export function createSyncGate(): SyncGate {
         ...(adapter.listAttachments ? { listAttachments: adapter.listAttachments.bind(adapter) } : {}),
         ...(adapter.fetchAttachment ? { fetchAttachment: adapter.fetchAttachment.bind(adapter) } : {}),
         ...(adapter.fetchAllAttachments ? { fetchAllAttachments: adapter.fetchAllAttachments.bind(adapter) } : {}),
-      } satisfies EngineAdapter & { transport: EngineAdapter };
+      } satisfies GatedAdapter & { transport: EngineAdapter };
     },
   };
 }
