@@ -1061,24 +1061,6 @@ export function unsubscribeHeaderState(
 }
 
 /**
- * The first `https:` unsubscribe URI a message publishes, or `null`.
- *
- * This is the link behind {@link UnsubscribeHeaderState}'s `not_one_click`: a page the SENDER
- * offers for a person to open in their OWN browser. It is deliberately NOT
- * {@link oneClickUnsubscribeUri}, which additionally requires `List-Unsubscribe-Post` and is a
- * POST target this server acts on — never something handed to the client. A surface offers this
- * as a plain outbound link when one-click is not on offer, so the reader can still leave the
- * list; the same {@link isOneClickUri} https-only, no-userinfo filter applies, so a `mailto:` or
- * a userinfo-bearing URL is never returned.
- */
-export function httpsUnsubscribeUri(headers: Readonly<Record<string, unknown>>): string | null {
-  const list = headerValues(headers, LIST_UNSUBSCRIBE_HEADER);
-  if (list === null) return null;
-  const uris = list.length === 1 ? angleUris(list[0]!) : list.flatMap(angleUris);
-  return uris.find((u) => isOneClickUri(u)) ?? null;
-}
-
-/**
  * Money words that stand ALONE. A personal note does not carry these in its subject line —
  * "I've attached the invoice" is a sentence in a body, and the body is not read here.
  */

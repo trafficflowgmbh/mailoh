@@ -3,7 +3,6 @@ import {
   messages, folderState, flagState, messageBodies, claimIdempotencyKey, recordChange, type Tx,
 } from "@trafficflow/db";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
-import { httpsUnsubscribeUri, unsubscribeHeaderState } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { materializeMessage } from "./dto/materialize.js";
@@ -213,21 +212,12 @@ export class MessageService {
       .where(eq(messageBodies.messageId, id)).limit(1);
     // The stored `text` is already sensitivity-redacted — returned as-is,
     // never re-derived. A message with no ingested body yields an empty body.
-    const headers = (body?.headers as Record<string, unknown>) ?? {};
-    // The unsubscribe posture is DERIVED here, from the raw headers this endpoint already holds,
-    // and only the enum + optional https link cross the wire — the raw headers do NOT enter the
-    // client mirror. `unsubscribeUrl` is the sender's own https page and rides only the
-    // `not_one_click` case (one-click is acted on by the server route, whose POST token never
-    // reaches the client).
-    const unsubscribe = unsubscribeHeaderState(headers);
     return {
       messageId: id,
       text: body?.text ?? "",
       html: body?.html ?? null,
-      headers,
+      headers: (body?.headers as Record<string, unknown>) ?? {},
       loadedRemoteContent: body?.loadedRemoteContent ?? false,
-      unsubscribe,
-      unsubscribeUrl: unsubscribe === "not_one_click" ? httpsUnsubscribeUri(headers) : null,
     };
   }
 

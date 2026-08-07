@@ -1,4 +1,4 @@
-import type { Destination, EmailAddress, UnsubscribeHeaderState, WorkflowStep, WorkflowTrigger, WorkflowPattern } from "@trafficflow/core/mail";
+import type { Destination, EmailAddress, WorkflowStep, WorkflowTrigger, WorkflowPattern } from "@trafficflow/core/mail";
 import type { EntityType, ChangeOp } from "@trafficflow/db";
 
 export type { EntityType, ChangeOp };
@@ -103,21 +103,6 @@ export interface MessageBodyDTO {
   html: string | null;
   headers: Record<string, unknown>;
   loadedRemoteContent: boolean;
-  /**
-   * What this sender's `List-Unsubscribe`/`-Post` headers offer, DERIVED server-side from the
-   * raw `headers` above (which never reach the client mirror). It rides the body fetch a surface
-   * already makes, so a Screener preview can say "this sender offers a way out" and, for
-   * `one_click`, act on it via `POST /messages/:id/unsubscribe`. See
-   * `@trafficflow/core/mail#unsubscribeHeaderState`.
-   */
-  unsubscribe: UnsubscribeHeaderState;
-  /**
-   * The sender's OWN `https:` unsubscribe page, present ONLY for `unsubscribe === "not_one_click"`
-   * — a link the reader opens in their own browser when one-click is not on offer. `null`
-   * otherwise: a `one_click` message is acted on by the server route (its POST token never
-   * reaches the client), and `no_header`/`mailto_only` have no https link to offer.
-   */
-  unsubscribeUrl: string | null;
 }
 
 /**
