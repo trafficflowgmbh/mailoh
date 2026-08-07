@@ -251,6 +251,29 @@ export function openTargetFor(
 }
 
 /**
+ * THE BODY-HYDRATION CALLBACK, as a factory whose one job is watchable: FORWARD the caller's
+ * options to the engine.
+ *
+ * This lived inline as `(messageId) => engine.hydrateBody(messageId)` — dropping the second
+ * argument. Every consumer's type is `(id, opts?: { retry?: boolean }) => void` and four of them
+ * (`MessagePane`, `ScreenerView`, `ReadsView`, `ReceiptsView`) pass `{ retry: true }` from a
+ * human pressing "try again". `OhmailEngine.hydrateBody` re-asks a FAILED body ONLY under that
+ * flag (`engine.ts` — an automatic trigger must never re-poll a server that refused, invariant
+ * #10), so with the flag dropped every retry button in the app was inert: a held message whose
+ * body 500'd could not be recovered without reloading the tab, and in the Screener that is a
+ * consent decision left standing on a one-line snippet. The declared type accepted `opts` and the
+ * implementation ignored them — the "type-level guard that silently does not guard", so it is a
+ * named unit now, with `hydrate-body-retry.test.ts` watching the forward.
+ */
+export function makeHydrateBody(
+  engine: { hydrateBody: (messageId: string, opts?: { retry?: boolean }) => unknown },
+): (messageId: string, opts?: { retry?: boolean }) => void {
+  return (messageId, opts) => {
+    void engine.hydrateBody(messageId, opts);
+  };
+}
+
+/**
  * The tags EVERY message in `ids` carries — the intersection, not the union.
  *
  * The picker renders a tag as assigned or not, and pressing an assigned one REMOVES it. Over
@@ -820,22 +843,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   /**
    * BODY HYDRATION, WIRED ONCE.
    *
-   * Two callbacks, both stable across version bumps and both reading `engine.read()` at
-   * INVOCATION time — the same discipline `conversationOf` documents below. A `useMemo` keyed
-   * on `version` would give the same freshness and a new identity every bump, which for
-   * `hydrateBody` means every view effect that depends on it re-firing once per delta.
+   * Both reads read `engine.read()` at INVOCATION time — the same discipline `conversationOf`
+   * documents below — and both are keyed on `engine` alone, NOT on `version`: a new identity every
+   * mirror delta would re-fire every view effect that depends on `hydrateBody` once per delta.
    *
-   * `hydrateBody` swallows nothing: `OhmailEngine.hydrateBody` never rejects, because its
-   * outcome is a record the UI renders rather than an exception thrown at a React effect. The
-   * `void` is therefore a statement that there is no promise worth awaiting here, not a
-   * discarded error.
+   * `hydrateBody` is `makeHydrateBody(engine)` (see its docblock) so that the FORWARD of the
+   * caller's `{ retry }` option is a named, tested unit rather than an inline closure that once
+   * silently dropped it. It swallows nothing: `OhmailEngine.hydrateBody` never rejects — its
+   * outcome is a record the UI renders rather than an exception thrown at a React effect — so the
+   * `void` inside the factory states there is no promise worth awaiting, not a discarded error.
    */
-  const hydrateBody = useCallback(
-    (messageId: string) => {
-      void engine.hydrateBody(messageId);
-    },
-    [engine],
-  );
+  const hydrateBody = useMemo(() => makeHydrateBody(engine), [engine]);
   const bodyOfMessage = useCallback(
     (m: EngineMessage) => bodyOf(engine.read(), m),
     [engine],
