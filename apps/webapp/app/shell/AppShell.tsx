@@ -203,15 +203,41 @@ export type OpenTarget =
   | { kind: "reader"; id: string };
 
 /**
- * @param narrow  the reading column is `display:none` — under 900px, `app.css`.
- * @param rowFor  the Screener row that speaks for this sender, or null when none is held.
+ * @param narrow   the reading column is `display:none` — under 900px, `app.css`.
+ * @param rowFor   the Screener row that speaks for this sender, or null when none is held.
+ * @param placeOf  the consent cutline's presentation map, or undefined when there is no
+ *                 partition (demo, desktop, or before `GET /consent` lands). See below.
+ *
+ * ── PRESENTATION BEFORE PHYSICAL FOLDER, OR THE HIT LANDS IN THE WRONG PILE ──────────────
+ *
+ * The consent cutline SHOWS a message somewhere other than its folder without moving it on the
+ * server: an active-undecided sender's INBOX mail presents in the Screener, a dormant one's in
+ * History, and a decided sender's Screener mail presents in the Ohbox. `SearchView` already
+ * reads `consentView.placeOf` to label a hit's chip with where it lives — but opening the hit
+ * routed by `m.folder`, so a message presenting in the Screener was navigated to the Ohbox,
+ * where its row does not exist and the locate flash times out against a pile it was never in.
+ * The reported "brings me to the mail in the screener but does not select it" was the SAME hit
+ * on the day its folder happened to agree with its presentation; this is the day it does not.
+ *
+ * So consult `placeOf` first. It is total over the mirror (`consent-cutline.ts`), so a `get`
+ * that returns `undefined` means "no partition considered this message" — demo/desktop, or a
+ * folder outside the presented set — and only THEN is the physical folder the honest answer.
+ * `null` is History, which is pile-less by construction: a message there belongs to no list, so
+ * the reader is the only surface that can show it — the same choice `HistoryView`'s own `onOpen`
+ * makes, and the reason there is no "history" list-row to locate.
  */
 export function openTargetFor(
   m: EngineMessage,
   narrow: boolean,
   rowFor: (m: EngineMessage, segment: ScreenerSegmentId) => string | null,
+  placeOf?: ReadonlyMap<string, Folder | null>,
 ): OpenTarget {
-  const view: OhmailView | undefined = VIEW_OF_FOLDER[m.folder];
+  const presented = placeOf?.get(m.id);
+  // `null` ⟺ History (dormant, undecided) — pile-less, so the reader is where it opens.
+  if (presented === null) return { kind: "reader", id: m.id };
+  // The presented folder when the cutline placed it, the physical one when it did not.
+  const folder: Folder = presented ?? m.folder;
+  const view: OhmailView | undefined = VIEW_OF_FOLDER[folder];
   if (view === "ohbox") return { kind: "ohbox", id: m.id, reader: narrow };
   if (view === "reads" || view === "receipts") return { kind: "stream", view, id: m.id };
   if (view === "screener" || view === "screened" || view === "spam") {
@@ -1691,18 +1717,23 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    *     Unchanged: these piles open IN PLACE and the clamp is their contract.
    *   · **screener / screened / spam** — now SELECTS THE SENDER as well as navigating. The
    *     segment alone was the misroute the ruling named third: a consent surface that drops
-   *     you at a queue of strangers when you asked about one of them.
-   *   · **anything else** — a folder this client has no view for. There is no pile to route
-   *     to, so the message opens in the reader over wherever you are. This arm is defensive
-   *     rather than reachable: `Folder` is a closed six-member union and `MessageDTO.folder`
-   *     is typed to it, so `VIEW_OF_FOLDER` is total today and no hit can fall here. The gap
-   *     row's "a hit in Sent falls into the Screener" is therefore NOT reachable — see the
-   *     report. It is written because the contract says a server may add folders a shipped
-   *     client has never heard of, and the honest answer to one is the message itself.
+   *     you at a queue of strangers when you asked about one of them. Reached whenever the
+   *     PRESENTATION is the Screener, which is not the same set as "physically in a Screener
+   *     folder" — an undecided sender's INBOX mail lands here, which is the whole of the
+   *     presentation fix (`openTargetFor`).
+   *   · **History, or a folder this client has no view for** — the reader, over wherever you
+   *     are. History is now a REACHABLE case, not just the defensive one: a dormant-undecided
+   *     message presents in History (`placeOf` is `null`), belongs to no pile, and so opens in
+   *     the reader exactly as HistoryView's own row does. The defensive half remains — `Folder`
+   *     is a closed union and `VIEW_OF_FOLDER` is total, so an unknown folder cannot reach here
+   *     from the wire — and its answer is the same: the message itself.
    */
   const openMessage = useCallback(
     (m: EngineMessage) => {
-      const target = openTargetFor(m, readColumnHidden(), screenerRowFor);
+      // `consentView?.placeOf` is what turns "open it where its FOLDER is" into "open it where
+      // it is PRESENTED" — the same map SearchView labels the hit's chip from, so the arrival
+      // and the chip can no longer disagree. Undefined on demo/desktop, where folder is place.
+      const target = openTargetFor(m, readColumnHidden(), screenerRowFor, consentView?.placeOf);
       switch (target.kind) {
         case "ohbox":
           setOhboxSel(target.id);
@@ -1728,11 +1759,14 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           goScreener(target.segment);
           return;
         default:
-          // No navigation, so no `readerPending` is needed: nothing will clear this.
+          // No navigation, so no `readerPending` is needed: nothing will clear this. This is
+          // both the "folder no view owns" arm and the History arm — a message presented in
+          // History belongs to no pile, so the reader opens over wherever you are, exactly as
+          // HistoryView's own row does.
           setReaderFor(target.id);
       }
     },
-    [readColumnHidden, screenerRowFor],
+    [readColumnHidden, screenerRowFor, consentView?.placeOf],
   );
 
   /**
