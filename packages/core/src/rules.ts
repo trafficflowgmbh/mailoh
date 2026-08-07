@@ -727,14 +727,83 @@ interface AuthMethodResult {
 }
 
 /**
+ * Drop the RFC 5322 `(parenthesised comments)` an Authentication-Results part may carry, replacing
+ * each with a single space. A comment is RFC 8601 CFWS — semantically whitespace — and never
+ * carries an auth property, so removing it is lossless for this parser AND collapses a comment that
+ * sits as CFWS around an `=` (`dkim (ok)= pass`) down to the whitespace case that
+ * {@link collapseWsAroundEq} then absorbs. Comments nest; text inside a quoted string is copied
+ * verbatim (a `(` there is a literal, not a comment opener).
+ */
+function stripAuthComments(part: string): string {
+  const out: string[] = [];
+  let quoted = false;
+  let paren = 0;
+  for (let i = 0; i < part.length; i++) {
+    const c = part[i]!;
+    if (quoted) {
+      out.push(c);
+      if (c === "\\" && i + 1 < part.length) { out.push(part[++i]!); continue; }
+      if (c === "\"") quoted = false;
+      continue;
+    }
+    if (paren > 0) {
+      if (c === "\\") { i++; continue; }
+      if (c === "(") paren++;
+      else if (c === ")") paren--;
+      continue;
+    }
+    if (c === "\"") { quoted = true; out.push(c); continue; }
+    if (c === "(") { paren++; out.push(" "); continue; }
+    out.push(c);
+  }
+  return out.join("");
+}
+
+/**
+ * Collapse folding whitespace on either side of every top-level `=`, so an RFC 8601
+ * `method [CFWS] "=" [CFWS] result` — and each `ptype.property [CFWS] "=" [CFWS] pvalue` after it —
+ * survives the whitespace tokeniser in {@link parseAuthMethodResult}. Without this, `dkim = fail`
+ * splits into `["dkim", "=", "fail"]`: the head token carries no `=`, the whole clause is dropped,
+ * and the drop reads as "no evidence" — the parser fails OPEN on the very failures it exists to
+ * read. Text inside a quoted string is copied verbatim, so whitespace around an `=` in a
+ * quoted pvalue is preserved.
+ */
+function collapseWsAroundEq(part: string): string {
+  const out: string[] = [];
+  let quoted = false;
+  for (let i = 0; i < part.length; i++) {
+    const c = part[i]!;
+    if (quoted) {
+      out.push(c);
+      if (c === "\\" && i + 1 < part.length) { out.push(part[++i]!); continue; }
+      if (c === "\"") quoted = false;
+      continue;
+    }
+    if (c === "\"") { quoted = true; out.push(c); continue; }
+    if (c === "=") {
+      while (out.length > 0 && /\s/.test(out[out.length - 1]!)) out.pop();
+      out.push("=");
+      while (i + 1 < part.length && /\s/.test(part[i + 1]!)) i++;
+      continue;
+    }
+    out.push(c);
+  }
+  return out.join("");
+}
+
+/**
  * Parse one `method[/version]=result [ptype.property=value]*` part.
  *
  * Returns `null` for anything that is not that shape — a trailing empty segment, a bare comment,
  * a `none` line with no `=`. An unparseable clause contributes no evidence; it never contributes
  * a failure, because "I could not read this" is not "the sender failed".
+ *
+ * RFC 8601 CFWS (comments and folding whitespace) is normalised away FIRST — comments dropped, then
+ * whitespace collapsed around every `=` — so a valid result written `dkim = fail` or
+ * `dkim (ok)= fail` is not silently discarded.
  */
 function parseAuthMethodResult(part: string): AuthMethodResult | null {
-  const tokens = part.trim().split(/\s+/).filter((t) => t.length > 0);
+  const tokens = collapseWsAroundEq(stripAuthComments(part)).trim().split(/\s+/).filter((t) => t.length > 0);
   const head = tokens[0];
   if (head === undefined) return null;
   const eq = head.indexOf("=");
@@ -761,11 +830,22 @@ function domainPart(value: string): string {
 /**
  * Is a DKIM signing domain aligned with the claimed author's domain?
  *
- * Deliberately RELAXED and deliberately not a Public-Suffix-List check: `tldts` is not a
- * dependency of this package, and a wrong answer here is harmless in one specific direction —
- * alignment is only ever consulted to produce {@link AuthVerdict} `"pass"`, which
- * {@link evaluateRules} does not read. It can therefore never demote a message, which is why an
- * approximation is acceptable HERE and would not be if the polarity were reversed.
+ * Deliberately RELAXED and deliberately not a Public-Suffix-List check: `tldts` is not a dependency
+ * of this package. It treats any exact match or parent/child suffix relationship as aligned, so it
+ * OVER-declares alignment only across a domain boundary a real PSL check would separate — most
+ * notably a bare public suffix (`co.uk`) as `header.d`.
+ *
+ * {@link authVerdictFromHeaders} consults this in both directions now:
+ *  · to promote an aligned dkim=pass to {@link AuthVerdict} `"pass"`, which {@link evaluateRules}
+ *    never reads — over-declaring alignment there is harmless, the original reason an approximation
+ *    was acceptable;
+ *  · to gate an aligned dkim=fail to `"fail"`, which DOES demote. Here the over-declared
+ *    direction could in principle demote a message whose signature merely shares a suffix with the
+ *    author. That residual is bounded and acceptable because: it is strictly LESS demotion than the
+ *    unconditional fail it replaces; the case this gate targets — an unrelated third-party ESP/list
+ *    signature with no suffix relationship at all — is correctly judged not-aligned and does not
+ *    demote; a demote only routes to the recoverable Screener; and the whole path is inert until an
+ *    authserv-id is trusted. A real PSL check is the follow-up if Axis C is ever run hot.
  */
 function dkimAligned(signing: string, authorDomain: string): boolean {
   const d = domainPart(signing);
@@ -843,14 +923,19 @@ export function authVerdictFromHeaders(
   if (dmarc.some((r) => r.result === "fail")) return "fail";
   if (dmarc.some((r) => r.result === "pass")) return "pass";
 
-  // An ALIGNED dkim pass outranks a broken third-party signature on the same message: a mailing
-  // list that re-signs and breaks the original is the common shape, and treating it as a failure
-  // would screen mail the user asked for.
+  // Only an ALIGNED dkim signature speaks about the CLAIMED author, in BOTH directions.
+  //  · An aligned pass outranks a broken third-party signature on the same message: a mailing list
+  //    that re-signs and breaks the original is the common shape, and treating that as a failure
+  //    would screen mail the user asked for.
+  //  · An UNALIGNED fail — the third-party ESP or list signature that broke in transit, `header.d`
+  //    belonging to someone other than the author — says NOTHING about this author. It must not
+  //    demote and must not override an allow. Before this gate every dkim=fail demoted, so an
+  //    unaligned third-party failure screened genuine mail and beat the user's own allow rule.
+  // Only a fail on a signature aligned with the From domain is evidence against the claimed author.
   const dkim = results.filter((r) => r.method === "dkim");
-  const alignedPass = dkim.some((r) =>
-    r.result === "pass" && dkimAligned(r.props["header.d"] ?? r.props["header.i"] ?? "", authorDomain));
-  if (alignedPass) return "pass";
-  if (dkim.some((r) => r.result === "fail")) return "fail";
+  const dkimSigner = (r: AuthMethodResult): string => r.props["header.d"] ?? r.props["header.i"] ?? "";
+  if (dkim.some((r) => r.result === "pass" && dkimAligned(dkimSigner(r), authorDomain))) return "pass";
+  if (dkim.some((r) => r.result === "fail" && dkimAligned(dkimSigner(r), authorDomain))) return "fail";
 
   // Everything else — `none`, `neutral`, `softfail`, `policy`, `temperror`, `permerror`, an spf
   // failure on its own, a header we could not parse — is the ABSENCE of evidence, and absence
