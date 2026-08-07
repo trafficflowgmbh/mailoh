@@ -60,6 +60,7 @@ import {
   useToast,
   type Command,
   type RailGroup,
+  type RailNavProps,
 } from "@ohmail/ui";
 import {
   EngineProvider,
@@ -290,6 +291,38 @@ function tagsOnAll(reader: EntityReader, ids: string[]): string[] {
     (acc, labels) => acc.filter((tagId) => labels.includes(tagId)),
     [...lists[0]!],
   );
+}
+
+/**
+ * THE RAIL, AND THE TAG-COLLAPSE STATE THAT BELONGS TO IT.
+ *
+ * `tagsOpen` used to be `AppShell` state, and it caused the ~5s tag collapse two ways at once:
+ *
+ *  1. It re-rendered the WHOLE shell. Toggling a rail group has nothing to do with the mail, but
+ *     `setTagsOpen` sat on the top-level component, so every toggle re-rendered the active view —
+ *     on a full mailbox that is the hundreds-of-rows list, and that reconciliation is the wait.
+ *  2. It did not even respond. `open: tagsOpen` / `onOpenChange: setTagsOpen` were baked into
+ *     `AppShell`'s `groups` `useMemo`, whose deps did NOT list `tagsOpen`, so the controlled
+ *     `open` prop was frozen — the group only "caught up" when some unrelated change happened to
+ *     recompute that memo, which is what made the collapse feel like it lagged by seconds.
+ *
+ * Holding the state HERE fixes both. A toggle re-renders only this component and `RailNav`, never
+ * `AppShell` and never the view beside it; and `open` is injected fresh on every render, so there
+ * is no memo to go stale. Persistence stays the shell's job because `RailNav` is shared with the
+ * Desktop, which has no `localStorage` — `usePersistedFlag` is SSR-safe and its post-mount read
+ * now re-renders only the rail. The `groups` handed in still carry `defaultOpen`; this injects the
+ * live `open`/`onOpenChange` onto whichever group owns the Tags sub-list.
+ */
+function ShellRail({ groups, ...rest }: RailNavProps) {
+  const [tagsOpen, setTagsOpen] = usePersistedFlag(UI_KEYS.tagsOpen, true);
+  const withTagState = useMemo<RailGroup[]>(
+    () =>
+      groups.map((g) =>
+        g.tags ? { ...g, tags: { ...g.tags, open: tagsOpen, onOpenChange: setTagsOpen } } : g,
+      ),
+    [groups, tagsOpen, setTagsOpen],
+  );
+  return <RailNav groups={withTagState} {...rest} />;
 }
 
 /**
@@ -681,8 +714,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     const saved = readComposeDraft();
     if (saved.to || saved.subject || saved.body) setCompose(saved);
   }, []);
-  // Survives a reload; see `persisted-ui.ts` for why it is local and read after mount.
-  const [tagsOpen, setTagsOpen] = usePersistedFlag(UI_KEYS.tagsOpen, true);
+  // The tag-collapse flag lives in `ShellRail`, not here — see its header. Holding it on this
+  // top-level component is what made toggling it re-render the whole mailbox view (~5s).
   const [picker, setPicker] = useState<TagPickerState | null>(null);
   /**
    * WHO THE OPEN TAG PICKER IS ACTUALLY FOR.
@@ -2217,11 +2250,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         tags: {
           label: t("rail.tags"),
           defaultOpen: true,
-          // Persisted, because a rail that springs back open on every reload is a rail that
-          // ignores the person using it. `RailNav` stays uncontrolled-by-default so the
-          // desktop shell, which has no `localStorage`, keeps working untouched.
-          open: tagsOpen,
-          onOpenChange: setTagsOpen,
+          // `open` / `onOpenChange` are injected by `ShellRail`, which owns the persisted collapse
+          // flag. They are deliberately NOT here: this object is memoized without `tagsOpen` in its
+          // deps, so a value read here would freeze — the stale-`open` half of the ~5s bug. Keeping
+          // them out also keeps the flag off this top-level component, so a toggle never re-renders
+          // the view. `RailNav` stays uncontrolled-by-default for the Desktop, which has no storage.
           items: tagGroups.map((g) => ({
             id: g.tag.id,
             label: g.tag.name,
@@ -2544,7 +2577,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         </div>
 
         <div className="deck">
-          <RailNav
+          <ShellRail
             className={railOpen ? "open" : undefined}
             composeLabel={t("rail.compose")}
             onCompose={() => {
