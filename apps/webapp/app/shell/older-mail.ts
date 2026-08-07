@@ -54,7 +54,15 @@ export interface OlderMail {
   items: EngineMessage[];
   /** A page is in flight. */
   loading: boolean;
-  /** The server's own sentence, when the last attempt was refused. */
+  /**
+   * NON-NULL WHEN THE LAST ATTEMPT FAILED. The string is a sentence to append to the surface's
+   * own failure copy — and it is the EMPTY STRING for most failures, on purpose.
+   *
+   * `null` and `""` are different states and the difference is load-bearing: `null` is "nothing
+   * has gone wrong", which renders no failure line at all, and `""` is "this failed and the
+   * server had nothing to say that a person should read", which renders the surface's own
+   * sentence and its retry control with nothing appended. See {@link readerFacing}.
+   */
   error: string | null;
   /**
    * The server has said there is no more. Distinct from `items.length === 0`, which is what a
@@ -75,6 +83,34 @@ interface Page {
 }
 
 const EMPTY: Page = { items: [], cursor: null, loading: false, error: null, exhausted: false };
+
+/**
+ * ERROR CODES WHOSE MESSAGE IS WRITTEN FOR THE PERSON, NOT FOR A LOG.
+ *
+ * An ALLOWLIST, and it has to be one. A server's error message is developer text by default: it
+ * names internal vocabulary, it is not translated, and it is written on the assumption that
+ * whoever reads it can change the request. Passing it through to a mail list means the first
+ * refusal nobody anticipated is published verbatim into somebody's mailbox — which is exactly how
+ * a validation message listing the server's own internal view names came to be rendered under a
+ * pile of mail.
+ *
+ * The spend gate is the exception the list exists for. A 402 here says what ran out and what to
+ * do about it; replacing it with "could not be loaded" would take away the only thing that would
+ * let the reader fix it. So the rule is: say nothing extra unless the server's sentence was
+ * addressed to the reader.
+ */
+const SPEAKS_TO_THE_READER: ReadonlySet<string> = new Set(["payment_required"]);
+
+/**
+ * The part of a refusal a surface may show, which is usually none of it.
+ *
+ * Returns `""` rather than `null` deliberately — see {@link OlderMail.error}. The failure still
+ * has to be visible and still has to offer a retry; it is only the server's WORDS that are
+ * withheld.
+ */
+function readerFacing(outcome: { error: string; code: string | null }): string {
+  return outcome.code !== null && SPEAKS_TO_THE_READER.has(outcome.code) ? outcome.error : "";
+}
 
 export function useOlderMail(engine: OhmailEngine, view: OhmailView, version: number): OlderMail {
   const available = engine.listOlderAvailable();
@@ -138,7 +174,10 @@ export function useOlderMail(engine: OhmailEngine, view: OhmailView, version: nu
           // NOT exhausted. A refusal leaves the cursor where it was, so pressing again retries
           // the same page rather than skipping it — and the list keeps offering the control,
           // because "the network failed" is not "your mail ends here".
-          setPage((prev) => ({ ...prev, loading: false, error: outcome.error }));
+          //
+          // The server's own words are filtered, not forwarded: the surface has a sentence for
+          // this, and the raw message is developer text unless the code says otherwise.
+          setPage((prev) => ({ ...prev, loading: false, error: readerFacing(outcome) }));
           return;
         }
         cursor.current = outcome.nextCursor;

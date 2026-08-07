@@ -240,11 +240,18 @@ export type ServerSearchOutcome =
  *
  * `nextCursor` is `null` on the last page, which is what lets a surface stop asking rather than
  * poll the end of the mailbox forever.
+ *
+ * `code` on a failure is the server's own error code, or `null` when the failure never reached a
+ * server (a dead network, a bug in this client). It is here because `error` is NOT uniformly
+ * showable text: some of what a server puts in an error message is written for whoever reads a
+ * log, and some of it — the spend gate's explanation of what ran out — is written for the person
+ * holding the mailbox. Only the code tells them apart, and a surface that guesses ends up
+ * printing an internal vocabulary into somebody's mail.
  */
 export type ListOlderOutcome =
   | { state: "unavailable" }
   | { state: "ready"; items: EngineMessage[]; nextCursor: string | null }
-  | { state: "failed"; error: string };
+  | { state: "failed"; error: string; code: string | null };
 
 // ── attachments ────────────────────────────────────────────────────────────
 //
@@ -1534,6 +1541,9 @@ export class OhmailEngine {
       .catch((err: unknown): ListOlderOutcome => ({
         state: "failed",
         error: err instanceof Error ? err.message : String(err),
+        // The code travels with the sentence so the surface can decide whether the sentence is
+        // one a person should be shown. `null` for anything that never reached a server.
+        code: err instanceof MutationRejectedError ? err.code : null,
       }))
       .finally(() => {
         this.olderPages.delete(key);

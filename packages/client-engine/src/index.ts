@@ -133,7 +133,15 @@ export { decideFolder, mutationEffects, replySubject, type EffectContext, type M
 // Adapters.
 export type { EngineAdapter, MutationOutcome, SyncParams } from "./adapters/adapter.js";
 export { DEMO_NOW, FixturesAdapter, parseFixtureTime, type FixturesAdapterOptions } from "./adapters/fixtures-adapter.js";
-export { HttpAdapter, type FetchLike, type HttpAdapterOptions } from "./adapters/http-adapter.js";
+export {
+  HttpAdapter,
+  // The client↔server view vocabularies and the single table that joins them. Exported so the
+  // translation can be checked against the server's own list rather than only through a request.
+  SERVER_VIEW_OF,
+  type FetchLike,
+  type HttpAdapterOptions,
+  type ServerMessageView,
+} from "./adapters/http-adapter.js";
 
 // The engine.
 export {
