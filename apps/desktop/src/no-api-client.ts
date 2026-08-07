@@ -418,7 +418,7 @@ export interface ScreenerWireItem {
     snippet: string;
     receivedAt: string;
     aiSuggestion: {
-        decision: "yes" | "no";
+        decision: "yes" | "no" | "hold";
         confidence: number;
         rationale: string;
     } | null;
@@ -446,7 +446,7 @@ export interface ScreenerSuggestWire {
     suggestions: Array<{
         sender: string;
         messageId: string;
-        decision: "yes" | "no";
+        decision: "yes" | "no" | "hold";
         confidence: number;
         rationale: string;
     }>;
