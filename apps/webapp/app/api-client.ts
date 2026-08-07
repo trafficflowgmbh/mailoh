@@ -447,6 +447,8 @@ export interface ScreenerSuggestWire {
         sender: string;
         messageId: string;
         decision: "yes" | "no" | "hold";
+        destination?: string;
+        spam?: boolean;
         confidence: number;
         rationale: string;
     }>;
