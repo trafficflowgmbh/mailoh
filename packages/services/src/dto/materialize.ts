@@ -246,6 +246,7 @@ export async function materializeDraft(db: Db, accountId: string, id: string): P
     html: d.html ?? null,
     to: (d.to as EmailAddress[]) ?? [],
     cc: (d.cc as EmailAddress[]) ?? [],
+    bcc: (d.bcc as EmailAddress[]) ?? [],
     rationale: d.rationale ?? null,
     status: d.status as DraftStatus,
     createdAt: d.createdAt.toISOString(),

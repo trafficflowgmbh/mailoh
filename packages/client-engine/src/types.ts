@@ -387,6 +387,8 @@ export interface EngineDraft {
   body: string;
   to: EmailAddress[];
   cc: EmailAddress[];
+  /** Blind-carbon recipients. Delivered on the envelope only; never a header on the sent mail. */
+  bcc: EmailAddress[];
   rationale: string | null;
   status: "draft" | "sending" | "sent" | "unverified";
   /** Client-local: the user took the AI draft into the editor. */
@@ -728,9 +730,11 @@ export type EngineMutation =
    * (`sendingMailboxId`), because the account's own address is not something a compose form
    * can know.
    *
-   * There is no `cc`. `OutboundMessage` (packages/core) has no cc field, so `SendService`
-   * stores `drafts.cc` and never delivers it — a Cc box would drop the copy silently. Filed
-   * as owed rather than offered.
+   * `cc` and `bcc` are the compose fork's, and both are DELIVERED now. They ride
+   * `POST /drafts`, are stored on the row, and `SendService` copies them into `OutboundMessage`
+   * (cc + bcc → the SMTP RCPT list). The privacy line lives at the MIME builder, not here: cc is a
+   * `Cc:` header on the sent mail, bcc is on the envelope ONLY and never a header (`imap.ts#send`).
+   * A reply leaves both unset; only Compose fills them, from the user's own fields.
    */
   | {
       kind: "mail_send";
@@ -762,6 +766,10 @@ export type EngineMutation =
       threadId?: string | null;
       subject?: string;
       to?: EmailAddress[];
+      /** Carbon recipients (Compose only). A `Cc:` header on the delivered mail. */
+      cc?: EmailAddress[];
+      /** Blind-carbon recipients (Compose only). Delivered on the envelope; never a header. */
+      bcc?: EmailAddress[];
     }
   | { kind: "draft_accept"; draftId: string }
   /**

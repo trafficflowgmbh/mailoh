@@ -1590,10 +1590,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   async send(msg: OutboundMessage): Promise<SendResult> {
     if (!this.transporter) throw new Error("send(): SMTP not configured (ImapConfig.smtp is required)");
     const messageId = msg.messageId ?? `<${randomUUID()}@${this.config.sentDomain ?? "trafficflow.ch"}>`;
-    const mail: Mail.Options = {
-      from: msg.from, to: msg.to, subject: msg.subject, text: msg.text, html: msg.html,
-      messageId, inReplyTo: msg.inReplyTo, references: msg.references,
-    };
+    // ONE options object drives BOTH the SMTP delivery and the Sent-folder copy, on purpose: the
+    // envelope nodemailer computes for `sendMail` and the raw bytes `buildRaw` appends to Sent are
+    // built from the same `bcc`, so a bcc recipient is on the RCPT list AND absent from the Sent
+    // copy's headers — there is no way for the two to disagree about who was blind-copied.
+    const mail = outboundToMail(msg, messageId);
 
     await this.transporter.sendMail(mail);
     const raw = await buildRaw(mail);
@@ -1740,6 +1741,35 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       lock.release();
     }
   }
+}
+
+/**
+ * An {@link OutboundMessage} as the nodemailer options that build the delivered message AND the
+ * Sent-folder copy — pulled out of {@link ImapAdapter.send} so the BCC-ENVELOPE-ONLY invariant is
+ * testable without a socket.
+ *
+ * The load-bearing lines are `cc` and `bcc`. Both are passed straight through, and both reach the
+ * SMTP RCPT list because `sendMail`'s envelope is `to + cc + bcc`. The asymmetry that makes bcc
+ * blind is nodemailer's default `keepBcc: false`, which this function relies on rather than
+ * restates: the compiled message (whether transmitted or handed to `buildRaw` for the Sent append)
+ * carries a `Cc:` header and no `Bcc:` header. `keepBcc` is NEVER set here — doing so would write
+ * the blind recipients into the delivered headers, which is precisely the leak the feature exists
+ * to prevent. The Cc/Bcc round-trip test builds this and asserts both halves,
+ * and was watched to go red when `bcc` is spelt as `keepBcc: true` or moved into the headers.
+ */
+export function outboundToMail(msg: OutboundMessage, messageId: string): Mail.Options {
+  return {
+    from: msg.from,
+    to: msg.to,
+    ...(msg.cc !== undefined ? { cc: msg.cc } : {}),
+    ...(msg.bcc !== undefined ? { bcc: msg.bcc } : {}),
+    subject: msg.subject,
+    text: msg.text,
+    html: msg.html,
+    messageId,
+    inReplyTo: msg.inReplyTo,
+    references: msg.references,
+  };
 }
 
 function buildRaw(mail: Mail.Options): Promise<Buffer> {

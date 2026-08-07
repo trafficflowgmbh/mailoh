@@ -972,6 +972,38 @@ body.reading .shell {
   padding: 7px 11px;
   margin: 8px 0 0;
 }
+/* The Cc/Bcc affordance sits in the 56px label gutter's own column so it lines up under the To
+   field's addresses rather than under its label — it is an action ON the recipients, not a field. */
+.c-ccbcc-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 2px 0;
+}
+.c-ccbcc-toggle {
+  border: 0;
+  background: none;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--ink3);
+  cursor: pointer;
+  border-radius: 6px;
+}
+.c-ccbcc-toggle:hover {
+  color: var(--ink);
+}
+.c-ccbcc-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The one-line note under Bcc. Quieter than an error, and it is a statement of fact about how Bcc
+   behaves rather than a problem with what was typed. */
+.c-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink3);
+  margin: 6px 2px 0;
+}
 .draft-card {
   border-radius: 20px;
   background: var(--accent-soft);
@@ -1131,6 +1163,14 @@ body.reading .shell {
    with the field when the compose form scrolls. */
 .rcp {
   position: relative;
+  /* FILL THE FIELD ROW. The wrapper holds the `.c-input`, but `.c-input`'s own `flex: 1` acts on
+     its parent's flex context — and that parent is this block `.rcp`, not the `.c-field` row. So
+     without a flex here the wrapper collapsed to the input's ~180px default width, the popover
+     (pinned `left:0; right:0` to this element) was that same 180px, and `ADDRESS_MAX` — tuned for a
+     ~390px field — clipped every address that would have fit a full-width row. Growing the wrapper
+     is the "widen the container" fix: the popover is now the whole field width the budget assumes. */
+  flex: 1;
+  min-width: 0;
 }
 .rcp-list {
   position: absolute;
@@ -1183,6 +1223,12 @@ body.reading .shell {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
+  /* An ellipsis, not a hard cut. The local part is JS-middle-truncated to a character budget, but
+     when a long name shares the row the address column can still be tighter than that budget
+     assumed — so this is the last line of defence, and without it the local part was sliced off
+     mid-character with nothing to show it had been. The domain rides its own span and never
+     shrinks, so what gives way here is always the least load-bearing half. */
+  text-overflow: ellipsis;
 }
 .rcp-opt .rcp-domain {
   flex: 0 0 auto;

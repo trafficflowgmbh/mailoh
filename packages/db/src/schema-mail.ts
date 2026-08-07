@@ -1117,6 +1117,11 @@ export const drafts = pgTable("drafts", {
   html: text("html"),
   to: jsonb("to").notNull().default(sql`'[]'::jsonb`),   // EmailAddress[]
   cc: jsonb("cc").notNull().default(sql`'[]'::jsonb`),   // EmailAddress[]
+  // Migration 0045. Bcc rides the SMTP ENVELOPE ONLY — `SendService.reserve` copies it into
+  // `OutboundMessage.bcc` and nodemailer never writes a Bcc header into the message or the Sent
+  // copy. Stored here (not just on the create request) because the send is a second, recipient-less
+  // request that reads this row to build the envelope. ──
+  bcc: jsonb("bcc").notNull().default(sql`'[]'::jsonb`),   // EmailAddress[]
   rationale: text("rationale"),                          // AI drafter's reasoning (3b); null for manual compose
   status: text("status").notNull().default("draft"),     // draft|sending|sent|unverified
   // ── Migration 0015: the per-step crash-resume dedup key — see

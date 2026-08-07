@@ -208,7 +208,12 @@ export class SendService {
         throw new ServiceError("conflict", 409, `draft cannot be sent from status '${d.status}'`);
       }
       const to = (d.to as EmailAddress[]) ?? [];
-      if (to.length === 0) {
+      const cc = (d.cc as EmailAddress[]) ?? [];
+      const bcc = (d.bcc as EmailAddress[]) ?? [];
+      // A draft with recipients ONLY in Cc/Bcc is still a real send — the "no recipients" refusal is
+      // about the envelope being empty, not about To specifically. So the guard counts everyone who
+      // will receive the mail, which is exactly the set the RCPT list is built from below.
+      if (to.length + cc.length + bcc.length === 0) {
         throw new ServiceError("validation_failed", 400, "draft has no recipients");
       }
 
@@ -273,9 +278,21 @@ export class SendService {
        */
       const html = d.html ? sanitizeOutboundHtml(d.html) : null;
 
+      // ── CC IS A HEADER, BCC IS ENVELOPE-ONLY, AND THIS IS WHERE THE DIFFERENCE IS SET ──────
+      //
+      // `cc` and `bcc` are both handed to nodemailer (in `imap.ts#send`), which flattens
+      // to+cc+bcc into the SMTP RCPT list — so every bcc recipient is DELIVERED. What keeps bcc
+      // off the wire's headers is nodemailer's default `keepBcc: false`: a `Cc:` header is written
+      // into the delivered message and the Sent-folder copy, a `Bcc:` header is written into
+      // NEITHER. That is the whole correctness property of a Bcc, and it lives one layer down at
+      // the MIME builder rather than here — this function only decides WHO is copied, not which of
+      // them is visible. Empty arrays are omitted so a plain send builds the exact same options it
+      // always did. The Cc/Bcc round-trip test mutation-watches the invariant.
       const msg: OutboundMessage = {
         from: mb?.address ?? "",
         to: to.map((a) => a.address),
+        ...(cc.length ? { cc: cc.map((a) => a.address) } : {}),
+        ...(bcc.length ? { bcc: bcc.map((a) => a.address) } : {}),
         subject: d.subject,
         text: d.body,
         ...(html ? { html } : {}),

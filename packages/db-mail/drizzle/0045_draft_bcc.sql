@@ -1,0 +1,34 @@
+-- BCC ON A DRAFT — one jsonb column, the exact twin of `drafts.cc`.
+--
+-- ══ WHY A COLUMN AND NOT AN ENVELOPE-ONLY WIRE FIELD ══════════════════════════════════════
+--
+-- Bcc has to survive the two-request send. A compose is `POST /drafts` (stored) followed by
+-- `POST /drafts/:id/send` (the reservation, the SMTP call, the Sent-append), and the second
+-- request carries no recipients — it names a draft id and `SendService.reserve` reads the row to
+-- build the envelope. So a bcc that lived only on the create request would be gone by the time the
+-- envelope is assembled. It is stored on the draft for the same reason `to` and `cc` are.
+--
+-- `EmailAddress[]` JSON, `NOT NULL DEFAULT '[]'`, mirroring `cc` (schema-mail.ts) so a draft that
+-- names no bcc is `[]` rather than NULL and every reader treats the empty case the same way it
+-- treats an empty `cc`. No backfill: every draft that exists predates bcc and has none.
+--
+-- ══ THE INVARIANT THIS COLUMN FEEDS, NAMED HERE SO IT IS NOT REDISCOVERED ═════════════════
+--
+-- Bcc rides the SMTP ENVELOPE ONLY and NEVER the message headers. `SendService.reserve` copies
+-- these addresses into `OutboundMessage.bcc`; nodemailer flattens to+cc+bcc into the RCPT list but
+-- (keepBcc defaulting off) writes no Bcc header into either the transmitted message or the
+-- Sent-folder copy. A stored bcc is therefore private to the sender and the transport — the one
+-- correctness property a Bcc feature exists to keep. See `imap.ts#send` and `send-service.ts`.
+--
+-- ══ DEPLOY ORDER IS MIGRATION → API ══════════════════════════════════════════════════════
+--
+-- `materializeDraft` and `SendService.reserve` both select the whole `drafts` row through the
+-- drizzle schema, so an API carrying this column against a database without it answers Postgres
+-- 42703 on every draft read AND on the send path — compose and reply both dark. The health marker
+-- (`drafts.bcc`, `health.ts`) turns that into a 503 naming the file to run rather than a 500 nobody
+-- can attribute. There is no worker half: nothing in `apps/worker` reads or writes `drafts`.
+--
+-- ROLLBACK is `ALTER TABLE drafts DROP COLUMN bcc`. Its only cost is that a stored bcc is lost;
+-- the message still sends to its To/Cc recipients, because those live in their own columns.
+
+ALTER TABLE "drafts" ADD COLUMN IF NOT EXISTS "bcc" jsonb NOT NULL DEFAULT '[]'::jsonb;

@@ -316,6 +316,13 @@
       "when": 1788036886206,
       "tag": "0044_dormancy_days_max",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1788123286206,
+      "tag": "0045_draft_bcc",
+      "breakpoints": true
     }
   ]
 }

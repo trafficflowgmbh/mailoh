@@ -417,7 +417,10 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         subject: m.subject ?? (parent ? replySubject(parent.subject) : ""),
         body: m.body,
         to,
-        cc: [],
+        // Compose fills these; a reply leaves them unset. The overlay carries what the wire
+        // carries, so a listed draft shows the same recipients the server will deliver to.
+        cc: m.cc ?? [],
+        bcc: m.bcc ?? [],
         rationale: null,
         status: "sending",
         createdAt: iso,

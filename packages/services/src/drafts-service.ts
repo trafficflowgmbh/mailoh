@@ -44,6 +44,12 @@ export interface CreateDraftBody {
   html?: string | null;
   to?: EmailAddress[];
   cc?: EmailAddress[];
+  /**
+   * Blind-carbon recipients. Stored on the draft and delivered on the SMTP ENVELOPE ONLY — never
+   * written into the message headers of the delivered mail or the Sent-folder copy (see
+   * `SendService.reserve` → `OutboundMessage.bcc`, and `imap.ts#send`). Omit or `[]` for none.
+   */
+  bcc?: EmailAddress[];
   /** The AI drafter's reasoning (3b). Null/omitted for manual compose. */
   rationale?: string | null;
 }
@@ -86,6 +92,7 @@ export class DraftsService {
     const html = rich ? rich.html : null;
     const to = this.validAddresses(body.to, "to");
     const cc = this.validAddresses(body.cc, "cc");
+    const bcc = this.validAddresses(body.bcc, "bcc");
     const rationale = body.rationale ?? null;
     const now = ctx.now();
 
@@ -95,7 +102,7 @@ export class DraftsService {
         mailboxId,
         threadId: body.threadId ?? null,
         inReplyToMessageId: body.inReplyToMessageId ?? null,
-        subject, body: text, html, to, cc, rationale,
+        subject, body: text, html, to, cc, bcc, rationale,
         status: "draft",
         createdAt: now, updatedAt: now,
       }).returning({ id: drafts.id });
@@ -147,6 +154,7 @@ export class DraftsService {
     }
     if (patch.to !== undefined) set.to = this.validAddresses(patch.to, "to");
     if (patch.cc !== undefined) set.cc = this.validAddresses(patch.cc, "cc");
+    if (patch.bcc !== undefined) set.bcc = this.validAddresses(patch.bcc, "bcc");
     if (patch.threadId !== undefined) set.threadId = patch.threadId ?? null;
     if (patch.inReplyToMessageId !== undefined) set.inReplyToMessageId = patch.inReplyToMessageId ?? null;
 

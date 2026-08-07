@@ -132,6 +132,26 @@ export function ComposeView({
       ? plan.invalid
       : plan.invalid.filter((entry) => entry !== stillTyping);
 
+  /**
+   * ── CC AND BCC, BEHIND ONE AFFORDANCE ──────────────────────────────────────────────────
+   *
+   * Hidden by default because most messages have neither, and a compose form that opens with two
+   * empty extra rows is answering a question nobody asked. Revealed by the "Cc/Bcc" toggle — and
+   * revealed AUTOMATICALLY when the fields already hold text, so a restored draft or an AI draft
+   * that addressed a Cc never hides recipients the user cannot see they have.
+   *
+   * The still-typing gate is the To field's, applied per field: an entry being typed is unfinished,
+   * not wrong, so its "not an address" line is withheld while the field has focus and the value
+   * does not already end in a comma. `gatedInvalid` is the shared shape; the To field keeps its own
+   * literal form above because it is the one the reported bug was about.
+   */
+  const [showCcBcc, setShowCcBcc] = useState(false);
+  const [ccFocused, setCcFocused] = useState(false);
+  const [bccFocused, setBccFocused] = useState(false);
+  const ccBccOpen = showCcBcc || fields.cc.trim() !== "" || fields.bcc.trim() !== "";
+  const ccShownInvalid = gatedInvalid(fields.cc, ccFocused, plan.cc.invalid);
+  const bccShownInvalid = gatedInvalid(fields.bcc, bccFocused, plan.bcc.invalid);
+
   const book = useMemo(
     () => addressBook(engine.read(), { exclude: from.address ? [from.address] : [] }),
     [engine, from.address],
@@ -176,6 +196,9 @@ export function ComposeView({
     onFields({
       ...fields,
       to: fields.to || draft.to.map((a) => (a.name ? `${a.name} <${a.address}>` : a.address)).join(", "),
+      // A draft the drafter addressed a Cc to fills the Cc line too — the same rule as `to`, and the
+      // reason `ccBccOpen` reveals the row when it is non-empty. `bcc` is never on an AI draft.
+      cc: fields.cc || draft.cc.map((a) => (a.name ? `${a.name} <${a.address}>` : a.address)).join(", "),
       subject: fields.subject || draft.subject,
       body: draft.body,
       // `EngineDraft.body` IS PLAIN TEXT, so the markup half is emptied rather than left
@@ -268,6 +291,70 @@ export function ComposeView({
             </p>
           ) : null}
 
+          {/* The affordance, not the fields. It vanishes once the rows are open (there is nothing
+              left to reveal), and it is a button rather than a checkbox because it does one thing:
+              show two more inputs. `aria-expanded` names the state for a screen reader. */}
+          {!ccBccOpen ? (
+            <div className="c-ccbcc-row">
+              <button
+                type="button"
+                className="c-ccbcc-toggle"
+                aria-expanded={false}
+                aria-controls="compose-cc compose-bcc"
+                onClick={() => setShowCcBcc(true)}
+              >
+                {t("ccBcc")}
+              </button>
+            </div>
+          ) : null}
+
+          {ccBccOpen ? (
+            <>
+              <div className="c-field">
+                <label htmlFor="compose-cc">{t("cc")}</label>
+                <RecipientField
+                  id="compose-cc"
+                  value={fields.cc}
+                  onChange={(next) => onFields({ ...fields, cc: next })}
+                  book={book}
+                  disabled={inFlight}
+                  placeholder={t("ccPlaceholder")}
+                  invalid={ccShownInvalid.length > 0}
+                  describedBy={ccShownInvalid.length > 0 ? "compose-cc-error" : undefined}
+                  onFocusChange={setCcFocused}
+                />
+              </div>
+              {ccShownInvalid.length > 0 ? (
+                <p className="c-error" id="compose-cc-error">
+                  {t("toInvalid", { entries: ccShownInvalid.join(", ") })}
+                </p>
+              ) : null}
+
+              <div className="c-field">
+                {/* Bcc says out loud what "blind" means, because a recipient who assumes a Cc is
+                    a privacy incident. Delivered on the envelope, never a header — see `compose.ts`. */}
+                <label htmlFor="compose-bcc">{t("bcc")}</label>
+                <RecipientField
+                  id="compose-bcc"
+                  value={fields.bcc}
+                  onChange={(next) => onFields({ ...fields, bcc: next })}
+                  book={book}
+                  disabled={inFlight}
+                  placeholder={t("bccPlaceholder")}
+                  invalid={bccShownInvalid.length > 0}
+                  describedBy={bccShownInvalid.length > 0 ? "compose-bcc-error" : undefined}
+                  onFocusChange={setBccFocused}
+                />
+              </div>
+              {bccShownInvalid.length > 0 ? (
+                <p className="c-error" id="compose-bcc-error">
+                  {t("toInvalid", { entries: bccShownInvalid.join(", ") })}
+                </p>
+              ) : null}
+              <p className="c-hint">{t("bccHint")}</p>
+            </>
+          ) : null}
+
           <div className="c-field">
             <label htmlFor="compose-subject">{t("subject")}</label>
             <input
@@ -357,6 +444,22 @@ export function ComposeView({
       </div>
     </section>
   );
+}
+
+/**
+ * The invalid entries a field should SHOW, withholding the one still being typed.
+ *
+ * The To field has its own literal copy of this above (it is the surface the bug was reported
+ * against); Cc and Bcc share this. An entry is "still being typed" when the field has focus and the
+ * value does not already end in a comma — a trailing comma means the user committed it and moved
+ * on, so its error is shown. It is a DISPLAY gate only: `composePlan` empties the mutation on any
+ * invalid entry regardless, so nothing here can loosen the send guard.
+ */
+function gatedInvalid(raw: string, focused: boolean, invalid: string[]): string[] {
+  const stillTyping = focused && !/,\s*$/.test(raw) ? (raw.split(",").pop() ?? "").trim() : null;
+  return stillTyping === null || stillTyping === ""
+    ? invalid
+    : invalid.filter((entry) => entry !== stillTyping);
 }
 
 /** Bold the source spans of the grounding line, like the prototype. */

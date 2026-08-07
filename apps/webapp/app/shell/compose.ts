@@ -14,6 +14,18 @@ import type { EmailAddress, EngineMutation } from "@ohmail/client-engine";
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
 export interface ComposeFields {
   to: string;
+  /**
+   * Carbon and blind-carbon recipients, each ONE comma-separated string exactly like {@link to}.
+   *
+   * They are the same shape as `to` on purpose: the same `RecipientField` combobox drives all
+   * three, the same `parseRecipients` splits them, and the same "a typo blocks the whole send"
+   * rule applies (`composePlan`). A `Cc` recipient is a visible header on the delivered mail; a
+   * `Bcc` recipient is delivered on the SMTP envelope and NEVER written into the headers — the
+   * asymmetry is enforced at the MIME builder (`imap.ts#send`), not here, so this form only has to
+   * carry two more lines of text.
+   */
+  cc: string;
+  bcc: string;
   subject: string;
   /**
    * The message as PLAIN TEXT — the editor's own rendering when {@link html} is set.
@@ -54,7 +66,7 @@ export interface ComposeFields {
 }
 
 export const EMPTY_COMPOSE: ComposeFields = {
-  to: "", subject: "", body: "", html: "", fromMailboxId: null,
+  to: "", cc: "", bcc: "", subject: "", body: "", html: "", fromMailboxId: null,
 };
 
 /** `localStorage` key for the compose scratch buffer — one, because there is one compose. */
@@ -81,6 +93,10 @@ export function readComposeDraft(): ComposeFields {
     const parsed = JSON.parse(raw) as Partial<ComposeFields>;
     return {
       to: typeof parsed.to === "string" ? parsed.to : "",
+      // Guarded field-wise like every other line here, so a buffer written before Cc/Bcc existed
+      // restores as a draft with empty Cc/Bcc rather than throwing or dropping the whole draft.
+      cc: typeof parsed.cc === "string" ? parsed.cc : "",
+      bcc: typeof parsed.bcc === "string" ? parsed.bcc : "",
       subject: typeof parsed.subject === "string" ? parsed.subject : "",
       body: typeof parsed.body === "string" ? parsed.body : "",
       // Same field-wise guard as `fromMailboxId` below, and it is what makes a draft written
@@ -116,7 +132,7 @@ export function writeComposeDraft(f: ComposeFields): void {
      * buffer behind. `body` is the editor's plain rendering and is `""` for that document,
      * which is why it is the field that decides. Same rule as `isRichEmpty`.
      */
-    if (f.to === "" && f.subject === "" && f.body === "") {
+    if (f.to === "" && f.cc === "" && f.bcc === "" && f.subject === "" && f.body === "") {
       window.localStorage.removeItem(COMPOSE_DRAFT_KEY);
       return;
     }
@@ -226,6 +242,14 @@ export interface ComposePlan extends RecipientParse {
   mutation: MailSend;
   /** True when the subject is blank — a warning on screen, never a refusal. See below. */
   noSubject: boolean;
+  /**
+   * The Cc and Bcc parses, each their own {@link RecipientParse}. The `to` parse is the spread
+   * `addresses`/`invalid` above (backwards-compatible — `plan.invalid` still means the To field);
+   * these two are named so `ComposeView` can draw a per-field error line and run the same
+   * still-typing gate the To field has, without re-parsing.
+   */
+  cc: RecipientParse;
+  bcc: RecipientParse;
 }
 
 /**
@@ -263,8 +287,20 @@ export interface ComposePlan extends RecipientParse {
  */
 export function composePlan(fields: ComposeFields, mailboxId: string | null): ComposePlan {
   const parsed = parseRecipients(fields.to);
+  // `?? ""` because `composePlan` is called directly by tests with a bare `{to,subject,body,html}`
+  // form, and by a scratch buffer written before these fields existed — both reach here with `cc`
+  // and `bcc` undefined, which is an empty field, not an error.
+  const cc = parseRecipients(fields.cc ?? "");
+  const bcc = parseRecipients(fields.bcc ?? "");
+  // A typo in ANY of the three fields blocks the whole send — the same rule the To field already
+  // enforces, widened to Cc and Bcc. It is expressed by emptying the recipient set the mutation
+  // carries, so `canSend` (which reads `mutation.to`) refuses with no second predicate, and a bad
+  // Cc address can no more "send the valid ones" than a bad To address can.
+  const anyInvalid = parsed.invalid.length + cc.invalid.length + bcc.invalid.length > 0;
   return {
     ...parsed,
+    cc,
+    bcc,
     noSubject: fields.subject.trim().length === 0,
     mutation: {
       kind: "mail_send",
@@ -278,7 +314,11 @@ export function composePlan(fields: ComposeFields, mailboxId: string | null): Co
       // rather than sent as `""` so a plain compose produces the same request it always did.
       ...(fields.html ? { html: fields.html } : {}),
       subject: fields.subject,
-      to: parsed.invalid.length === 0 ? parsed.addresses : [],
+      // When anything is unparseable the mutation carries NO recipients at all — not the valid
+      // subset — so a half-typed or mistyped address cannot leave a partial send on the wire.
+      to: anyInvalid ? [] : parsed.addresses,
+      cc: anyInvalid ? [] : cc.addresses,
+      bcc: anyInvalid ? [] : bcc.addresses,
       ...(mailboxId ? { mailboxId } : {}),
       threadId: null,
     },

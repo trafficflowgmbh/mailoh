@@ -456,6 +456,14 @@ export interface ChangeBatch {
 
 export interface OutboundMessage {
   from: string; to: string | string[]; subject: string;
+  /**
+   * Carbon and blind-carbon recipients, both DELIVERED (nodemailer flattens to+cc+bcc into the
+   * SMTP RCPT list). The difference is in the HEADERS of the built message, not here: `cc` is
+   * written as a `Cc:` header on both the delivered message and the Sent-folder copy; `bcc` is
+   * written into NEITHER (nodemailer's default `keepBcc: false`). That header asymmetry — not any
+   * omission at this seam — is what makes a Bcc blind. See `imap.ts#send` / `outboundToMail`.
+   */
+  cc?: string | string[]; bcc?: string | string[];
   text: string; html?: string;
   messageId?: string; inReplyTo?: string; references?: string | string[];
 }

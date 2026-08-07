@@ -284,6 +284,7 @@ export class FixturesAdapter implements EngineAdapter {
       body: fx.composeDraft.body,
       to: [fx.composeDraft.to],
       cc: [],
+      bcc: [],
       rationale: fx.composeDraft.grounding,
       status: "draft",
       accepted: false,

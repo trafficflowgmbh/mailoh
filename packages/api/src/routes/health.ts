@@ -340,6 +340,13 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // No worker half: nothing in the sync worker reads or writes `drafts`. The order is migration →
   // API, with no third step to get wrong.
   ["drafts", "html"],
+  // mail 0045_draft_bcc — the Bcc recipients of a draft. One jsonb column on `drafts`, the twin of
+  // `cc`, and it earns a marker for the same sharper reason `html` does. `materializeDraft` selects
+  // the whole row through the drizzle schema (42703 on every draft read ahead of the migration),
+  // and `SendService.reserve` reads the SAME row to build the envelope — so a stale database takes
+  // out compose and reply both, from a column a bcc-less send never looks at. The order is
+  // migration → API, no worker half.
+  ["drafts", "bcc"],
   // mail 0038_initial_import_completed — WHEN a mailbox's first import actually finished: the
   // per-mailbox floor the client reads as `IS NULL ⇒ still importing`. One nullable column on
   // `mailboxes`, and it earns a marker for the generic reason plus a worker one.
@@ -748,8 +755,15 @@ export const MAIL_EXPECTED_MARKERS =
  * (the partial index is a cost object; its absence is slow, not wrong) and no CHECK marker, because
  * `message_failures_code_closed` is created INSIDE the `CREATE TABLE` and could only ever fail
  * together with the column above.
+ *
+ * `0045_draft_bcc` is probed ONCE, by `drafts.bcc`, the twin of the `drafts.html` marker and for
+ * the same sharper reason: `materializeDraft` and `SendService.reserve` both select WHOLE `drafts`
+ * rows, so an API deployed ahead of the migration 42703s every draft read AND the send path —
+ * compose and reply both dark, from a column a bcc-less send never reads. No CHECK marker (the
+ * column is a plain jsonb default, no constraint) and no INDEX marker. No worker half: nothing in
+ * `apps/worker` reads `drafts`, so the order is migration → API with no third step.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0044_dormancy_days_max";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0045_draft_bcc";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
