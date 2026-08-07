@@ -465,11 +465,27 @@ fn an_override_that_is_not_runnable_falls_through_rather_than_failing() {
 #[test]
 fn a_development_build_with_no_vendored_runtime_finds_one_on_the_path() {
     // No resources, which is what `cargo run` from the workspace looks like.
-    let env = env_of(&[("PATH", "/nope:/usr/local/bin")]);
-    let there = vec![PathBuf::from("/usr/local/bin/node")];
+    //
+    // BOTH HALVES OF THE PATH ARE COMPOSED, NOT SPELLED. `resolve_node` splits PATH on the
+    // platform's own separator and looks for the platform's own executable name — `;` and
+    // `node.exe` on Windows, `:` and `node` everywhere else. Writing either by hand asserts a
+    // Unix-only fact: with a literal `:` the Windows split returned ONE entry, `/nope:/opt/…`,
+    // and looked in it for a `node.exe` that was never going to be there, so this test failed on
+    // Windows for a reason that has nothing to do with the branch it is named after.
+    //
+    // The directory is deliberately NOT one of DEFAULT_NODE_LOCATIONS. It used to be
+    // `/usr/local/bin`, which IS a default on both macOS and Linux, so `resolve_node` answered
+    // from the defaults loop and returned before PATH was ever consulted — the test passed on
+    // those platforms without exercising the fallback it exists to prove.
+    let dir = Path::new("/opt/dev-tools/bin");
+    let on_path = dir.join(node_file_name());
+    let path_var =
+        std::env::join_paths([Path::new("/nope"), dir]).expect("neither entry contains a separator");
+    let env = env_of(&[("PATH", path_var.to_str().expect("the composed PATH is utf-8"))]);
+    let there = vec![on_path.clone()];
     assert_eq!(
         resolve_node(&|k| env.get(k).cloned(), None, &fs_with(&there)),
-        Some(PathBuf::from("/usr/local/bin/node")),
+        Some(on_path),
     );
 }
 
@@ -982,10 +998,23 @@ fn an_engine_that_dies_mid_request_fails_the_caller_instead_of_hanging() {
     // Give the request time to be written and registered before the engine is taken away.
     thread::sleep(Duration::from_millis(150));
     let pid = engine.pid().expect("a running engine");
-    let killed = std::process::Command::new("kill")
-        .args(["-9", &pid.to_string()])
-        .status()
-        .expect("kill runs");
+    // Taken away the way the platform takes a process away. Windows ships no `kill`, so this
+    // shelled out to a program that does not exist there and failed with "could not kill the
+    // engine" — a message about the test's own tooling, not about the shell under test. What is
+    // asserted is unchanged: a request in flight when the engine dies must FAIL the caller rather
+    // than hang for ever. Only the manner of the killing is per-platform. `/T` takes the process
+    // tree, which is what `kill -9` on the child amounts to here.
+    let killed = if cfg!(windows) {
+        std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .status()
+            .expect("taskkill runs")
+    } else {
+        std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+            .expect("kill runs")
+    };
     assert!(killed.success(), "could not kill the engine");
 
     let answer = caller.join().expect("the calling thread did not panic");
