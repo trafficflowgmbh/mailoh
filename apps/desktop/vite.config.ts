@@ -151,7 +151,23 @@ function shellMessagesOnly(): Plugin {
  */
 export default defineConfig({
   base: "./",
-  plugins: [shellMessagesOnly(), react()],
+  plugins: [
+    shellMessagesOnly(),
+    react(),
+    {
+      /* The webview loads the bundle as an ES module, where `import.meta` is valid; the smoke test
+         loads it as a CLASSIC script in jsdom (which cannot run module scripts), where `import.meta`
+         is a syntax error that aborts boot and renders nothing. With the single dynamic import
+         inlined (AttachmentPreview's pdf stub), the only `import.meta.url` left is vite's dynamic-
+         import preload-helper argument — and with no dependencies to resolve it is never read, in
+         either load context. Neutralise it to an empty string so the classic-script load parses. */
+      name: "ohmail:neutralise-unused-import-meta",
+      enforce: "post",
+      renderChunk(code) {
+        return code.includes("import.meta.url") ? code.split("import.meta.url").join('""') : null;
+      },
+    },
+  ],
 
   define: {
     /* apps/webapp/app/shell/engine.tsx branches on this to pick FixturesAdapter
@@ -177,7 +193,11 @@ export default defineConfig({
       { find: "@tiptap/starter-kit", replacement: r("./node_modules/@tiptap/starter-kit") },
       { find: "@tiptap/extension-link", replacement: r("./node_modules/@tiptap/extension-link") },
       { find: "dompurify", replacement: r("./node_modules/dompurify") },
-      { find: "pdfjs-dist", replacement: r("./node_modules/pdfjs-dist") },
+      /* pdf.js is kept OUT of the runtime bundle: the shell is fixtures-only (no attachment bytes,
+         worker-src 'none'), so it never previews a PDF, and the real library's module-init breaks
+         boot under the locked CSP. The dynamic import resolves to a no-op stub. tsconfig.json still
+         points the TYPE at the real package, so AttachmentPreview.tsx typechecks against pdf.js. */
+      { find: "pdfjs-dist", replacement: r("./src/no-pdfjs.ts") },
 
       /* Anchored at both ends: a RegExp `find` replaces only the matched span,
          so a pattern that leaves the leading "./" behind yields a broken path. */
@@ -207,6 +227,14 @@ export default defineConfig({
     sourcemap: false,
     target: "es2022",
     assetsInlineLimit: 0,
+    /* Emit ONE chunk, no dynamic-import split. The shared shell's only dynamic import is
+       AttachmentPreview.tsx's `import("pdfjs-dist")` (here a no-op stub — the preview never runs in
+       this fixtures-only shell). Vite otherwise code-splits it and wraps the call in a preload helper
+       that references `import.meta.url`; the smoke loads the bundle as a CLASSIC script (jsdom cannot
+       run module scripts), where `import.meta` is a syntax error that aborts the whole boot and
+       renders nothing. Inlining removes the split and the `import.meta`, so the bundle boots as one
+       file. The stub is tiny, so nothing is deferred that mattered. */
+    rollupOptions: { output: { inlineDynamicImports: true } },
   },
 
   server: { port: 5174, strictPort: true },

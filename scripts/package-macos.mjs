@@ -1106,17 +1106,47 @@ if (imports === null) {
 
 /* (d) THE HOST ALLOW-LIST. dyld says the binary CAN speak HTTP; this says WHERE.
  * Every http(s) host string compiled into the Mach-O must be one accounted for in
- * HOST_ALLOWLIST — the Cloud API it dials, the local-engine pipe pseudo-host, and
- * the app-password pages it shows as selectable text. A telemetry or analytics
+ * HOST_ALLOWLIST — the Cloud API it dials, the app-password pages it shows as
+ * selectable text, and the local-engine pipe pseudo-host. A telemetry or analytics
  * endpoint, or any other third-party host, is not on the list and fails.
  *
- * `strings -a` reads every printable run including those in NUL-bearing sections,
- * and its output is captured into a variable and tested by length — never
- * `producer | grep -q`, whose SIGPIPE death would read as "found nothing". A null
- * capture is a check that did not run, reported rather than passed over. */
-const embedded = capture("strings", ["-a", MACHO]);
+ * The hosts are read from the binary's STRING CONSTANTS (`__TEXT,__cstring`), NOT
+ * from `strings -a` over the whole file. `strings -a` also reads EXECUTABLE CODE, and
+ * a URL short enough for the Swift small-string optimisation (≤15 UTF-8 bytes) is
+ * emitted as immediate MOV operands inside the code rather than as a `__cstring`
+ * literal — so the 14-byte pseudo-host `http://sidecar` reads back, across the movabs
+ * opcode bytes that split it (`http://s` · 0x48 'H' · …), as the spurious host `sh`.
+ * That is a disassembly artifact, not an embedded URL. Reading `__cstring` alone sees
+ * every genuine URL host and no code artifact. A real network host the app would DIAL
+ * is a full URL literal, so it is a `__cstring`; the inlined `sidecar` is a stdio pipe
+ * nothing dials, and it stays on the allow-list as documentation.
+ *
+ * `segedit` operates on a THIN Mach-O, so a universal binary is split per arch first;
+ * the string literals are identical across arches, so the hosts are unioned. A section
+ * that could not be read is a check that did not run — reported, never passed over. */
+const cstringStrings = (thinBin) => {
+  const out = path.join(STAGE ?? os.tmpdir(), `cstring-${path.basename(thinBin)}-${crypto.randomUUID()}.bin`);
+  // `run(..., { tolerate })` returns null on failure and the (empty) stdout on success, so the
+  // failure test is `=== null`, never falsiness — an empty stdout is a SUCCESS here.
+  if (run("segedit", [thinBin, "-extract", "__TEXT", "__cstring", out], { tolerate: true }) === null) return null;
+  return capture("strings", ["-a", out]);
+};
+const arches = (capture("lipo", ["-archs", MACHO]) ?? "").trim().split(/\s+/).filter(Boolean);
+let embedded = "";
+if (arches.length > 1) {
+  for (const a of arches) {
+    const thin = path.join(STAGE ?? os.tmpdir(), `ohmail-thin-${a}`);
+    if (run("lipo", [MACHO, "-thin", a, "-output", thin], { tolerate: true }) === null) { embedded = null; break; }
+    const s = cstringStrings(thin);
+    if (s === null) { embedded = null; break; }
+    embedded += `${s}\n`;
+  }
+} else {
+  embedded = cstringStrings(MACHO); // already thin
+}
 if (embedded === null) {
-  fail("the host allow-list", "strings could not read the binary, so the embedded hosts were never checked");
+  fail("the host allow-list",
+       "the binary's __cstring section could not be read, so the embedded hosts were never checked");
 } else {
   const hosts = new Set();
   const hostRe = /\bhttps?:\/\/([A-Za-z0-9.-]+)/g;
