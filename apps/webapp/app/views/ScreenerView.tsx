@@ -28,6 +28,7 @@ import {
   ListPane,
   ListRows,
   MessageRow,
+  ProtectedBlock,
   SegmentedControl,
   type DecisionDestination,
   type DecisionScope,
@@ -37,7 +38,7 @@ import { avatarHue } from "../shell/format";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { goScreener, type ScreenerSegmentId } from "../shell/routing";
-import type { ScreenerState, SpamRow } from "../shell/screener-state";
+import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
 import type { SuggestBatchControl } from "../shell/screener-suggest";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { MessageBody } from "../components/MessageBody";
@@ -654,6 +655,7 @@ export function ScreenerView({
             }}
             onDecide={(dest, opts) => decideCurrent(dest, opts.markRead)}
             onRetryBody={retryBody}
+            bodyStall={state.bodyStall}
             remoteImages={remoteImages}
             onBack={() => onFull(false)}
           />
@@ -668,6 +670,7 @@ export function ScreenerView({
               setChoosing(null);
             }}
             onRetryBody={retryBody}
+            bodyStall={state.bodyStall}
             remoteImages={remoteImages}
             onUnsubscribe={onUnsubscribe}
             onBack={() => onFull(false)}
@@ -688,6 +691,7 @@ export function ScreenerView({
             }}
             onDelete={() => state.deleteSpam(current as SpamRow)}
             onRetryBody={retryBody}
+            bodyStall={state.bodyStall}
             remoteImages={remoteImages}
             onUnsubscribe={onUnsubscribe}
             onBack={() => onFull(false)}
@@ -827,6 +831,7 @@ function HeldMail({
   body,
   html,
   bodyState,
+  bodyStall,
   remoteLoaded,
   imageProxy,
   onLoadRemote,
@@ -850,6 +855,11 @@ function HeldMail({
   html?: string | null;
   /** Absent ⇒ full, which is a fixture row. See `ScreenerHeldMail.bodyState`. */
   bodyState?: BodyState;
+  /**
+   * Whether this message's body is stalled for good, and why — `ScreenerState.bodyStall`.
+   * Null/absent means a body may still arrive, which is the only case that may show a spinner.
+   */
+  bodyStall?: HeldBodyStall | null;
   /** Whether remote content has been consented to for THIS held message. */
   remoteLoaded?: boolean;
   /** How to reach a remote image after consent, or null for "no way to". */
@@ -886,16 +896,39 @@ function HeldMail({
    * only be recovered by reloading the tab. In the one pile where the text is the basis of a
    * consent decision, that is not an acceptable dead end.
    */
+  /**
+   * ── AND THE SPINNER MUST BE A CLAIM ABOUT A REAL REQUEST ────────────────────────────────
+   *
+   * This used to map everything that was not `full` or `failed` to `t("loading")`, on the
+   * argument written above it: selecting a sender hydrates its whole held list, so a `snippet`
+   * on screen is a body already on its way. That argument is sound for the common case and
+   * FALSE for two, and in both of them `hydrateBody` returns having asked for nothing — so the
+   * sentence promised a request nobody would ever make and there was no control to escape it.
+   * A protected held message and one whose row has left the mirror both sat under "Loading the
+   * full message…" for as long as the sender stayed selected.
+   *
+   * `bodyStall` is that fact, read from the same predicate `hydrateBody` decides on
+   * ({@link HeldBodyStall}). The four states are now distinguished by what is true of each:
+   *
+   *   protected  → the block, and no text at all. Invariant #1, exactly as `MessagePane` does
+   *                it — a spinner over a message whose body must not exist is the wrong
+   *                sentence twice over.
+   *   failed     → the failure, WITH Retry, unchanged.
+   *   loading    → the spinner, and only here: a request is genuinely in the air.
+   *   snippet
+   *     · stalled  → nothing. The snippet is all there will ever be, and the preview shows it
+   *                  rather than narrating a wait that has no end.
+   *     · in flight → the spinner, which is the original argument, kept for the case it holds.
+   */
+  const protectedMail = bodyStall === "protected";
   const note =
-    bodyState === undefined || bodyState === "full"
+    protectedMail || bodyState === undefined || bodyState === "full"
       ? null
       : bodyState === "failed"
         ? t("failed")
-        // `snippet` says "loading" and not "this is a preview", because in THIS view it is a
-        // sub-frame state: selecting a sender hydrates its whole held list unconditionally,
-        // so a snippet on screen is a body already on its way. Elsewhere `snippet` can mean
-        // "nobody has asked", which is why the mapping is per-surface and not in `bodyOf`.
-        : t("loading");
+        : bodyState === "loading" || bodyStall == null
+          ? t("loading")
+          : null;
   return (
     <article className={dull ? "hmail dull" : "hmail"}>
       <div className="hm-line">
@@ -917,13 +950,24 @@ function HeldMail({
           fixture row, or a body not yet hydrated to `full`) `MessageBody` renders the text
           part, which is what this preview showed before. */}
       <div className="hm-body">
-        <MessageBody
-          text={body}
-          html={html}
-          remoteLoaded={remoteLoaded}
-          imageProxy={imageProxy}
-          onLoadRemote={onLoadRemote}
-        />
+        {protectedMail ? (
+          /* INVARIANT #1 REACHES THIS PILE TOO. The gate is where a stranger's first mail is
+             read, and a verification code from a stranger is the ordinary case rather than an
+             exotic one. `MessagePane` has always routed a protected message past its body
+             renderer; this preview handed the same message's text to `MessageBody` and then
+             said it was still loading. The block carries its own default label — the string
+             `ohbox.protectedPreview` and `reply.quotedProtected` already show elsewhere — so
+             the reader gets the product's one answer for protected mail, not a third one. */
+          <ProtectedBlock />
+        ) : (
+          <MessageBody
+            text={body}
+            html={html}
+            remoteLoaded={remoteLoaded}
+            imageProxy={imageProxy}
+            onLoadRemote={onLoadRemote}
+          />
+        )}
       </div>
       {note ? (
         <p className={bodyState === "failed" ? "hm-state warn" : "hm-state"} role="status">
@@ -938,7 +982,7 @@ function HeldMail({
       {/* The unsubscribe control (C): only once the body is hydrated (`full`), so the posture is
           real, and only where a server can act on it (`onUnsubscribe` present — absent on the
           demo and in the waiting preview). */}
-      {bodyState === "full" && onUnsubscribe && unsubscribe ? (
+      {!protectedMail && bodyState === "full" && onUnsubscribe && unsubscribe ? (
         <HeldUnsubscribe state={unsubscribe} url={unsubscribeUrl ?? null} onUnsubscribe={onUnsubscribe} />
       ) : null}
     </article>
@@ -951,6 +995,7 @@ function WaitingPreview({
   onScopeChange,
   onDecide,
   onRetryBody,
+  bodyStall,
   remoteImages,
   onBack,
 }: {
@@ -960,6 +1005,8 @@ function WaitingPreview({
   onDecide: Parameters<typeof DecisionBar>[0]["onDecide"];
   /** Ask for one held message's body again. */
   onRetryBody: (id: string) => void;
+  /** `ScreenerState.bodyStall`, per held id — see {@link HeldBodyStall}. */
+  bodyStall: (messageId: string) => HeldBodyStall | null;
   remoteImages?: RemoteImagesChrome;
   onBack: () => void;
 }) {
@@ -1057,6 +1104,7 @@ function WaitingPreview({
             html={h.html}
             bodyState={h.bodyState}
             onRetry={() => onRetryBody(h.id)}
+            bodyStall={bodyStall(h.id)}
             trackerNote={h.trackerNote}
             dull={sender.dull}
             {...heldRemoteProps(remoteImages, h)}
@@ -1074,6 +1122,7 @@ function ScreenedPreview({
   onCancel,
   onAllow,
   onRetryBody,
+  bodyStall,
   remoteImages,
   onUnsubscribe,
   onBack,
@@ -1084,6 +1133,8 @@ function ScreenedPreview({
   onCancel: () => void;
   onAllow: (dest: "ohbox" | "reads") => void;
   onRetryBody: (id: string) => void;
+  /** `ScreenerState.bodyStall`, per held id — see {@link HeldBodyStall}. */
+  bodyStall: (messageId: string) => HeldBodyStall | null;
   remoteImages?: RemoteImagesChrome;
   onUnsubscribe?: (id: string) => Promise<UnsubscribeResult | null>;
   onBack: () => void;
@@ -1135,6 +1186,7 @@ function ScreenedPreview({
             html={h.html}
             bodyState={h.bodyState}
             onRetry={() => onRetryBody(h.id)}
+            bodyStall={bodyStall(h.id)}
             unsubscribe={h.unsubscribe}
             unsubscribeUrl={h.unsubscribeUrl}
             onUnsubscribe={onUnsubscribe ? () => onUnsubscribe(h.id) : undefined}
@@ -1157,6 +1209,7 @@ function SpamPreview({
   onToOhbox,
   onDelete,
   onRetryBody,
+  bodyStall,
   remoteImages,
   onUnsubscribe,
   onBack,
@@ -1169,6 +1222,8 @@ function SpamPreview({
   onToOhbox: () => void;
   onDelete: () => void;
   onRetryBody: (id: string) => void;
+  /** `ScreenerState.bodyStall`, per held id — see {@link HeldBodyStall}. */
+  bodyStall: (messageId: string) => HeldBodyStall | null;
   remoteImages?: RemoteImagesChrome;
   onUnsubscribe?: (id: string) => Promise<UnsubscribeResult | null>;
   onBack: () => void;
@@ -1230,6 +1285,7 @@ function SpamPreview({
             html={h.html}
             bodyState={h.bodyState}
             onRetry={() => onRetryBody(h.id)}
+            bodyStall={bodyStall(h.id)}
             unsubscribe={h.unsubscribe}
             unsubscribeUrl={h.unsubscribeUrl}
             onUnsubscribe={onUnsubscribe ? () => onUnsubscribe(h.id) : undefined}

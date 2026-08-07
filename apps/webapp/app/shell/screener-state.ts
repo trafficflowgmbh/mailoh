@@ -47,6 +47,7 @@ import { useMemo, useReducer, useRef } from "react";
 import { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
+  isProtectedMessage,
   physicalFolderOf,
   screenerSegments,
   senderKey,
@@ -83,6 +84,27 @@ export interface DecideOptions {
   scope: DecisionScope;
   quiet?: boolean;
 }
+
+/**
+ * WHY A HELD MESSAGE'S BODY IS NEVER GOING TO ARRIVE.
+ *
+ * `ScreenerHeldMail.bodyState` answers what the text on screen IS — `snippet`, `loading`,
+ * `failed`, `full`. It cannot answer whether a `snippet` is a body in flight or a body nobody
+ * will ever fetch, because that is not a fact about the body record; it is a fact about the
+ * MESSAGE, and it is `OhmailEngine.hydrateBody` that holds it.
+ *
+ *  · `protected` — invariant #1. `hydrateBody` returns without asking, and purges any body a
+ *    previous build cached, because a protected message must hold no raw text at rest. There is
+ *    no request, so there is nothing to wait for.
+ *  · `absent`    — the id is not in the mirror. A fixture `screener_sender`'s held ids are not
+ *    message ids at all, and a real row can be drained away or evicted by the windowed store.
+ *    `hydrateBody` returns on `if (!msg)`, again without asking.
+ *
+ * Both were rendered as "Loading the full message…" with no control and no end: the preview
+ * claimed a request the engine had already decided never to make. Reading the same predicate
+ * `hydrateBody` reads is what keeps the two from drifting apart again.
+ */
+export type HeldBodyStall = "protected" | "absent";
 
 interface PendingEntry {
   sender: ScreenerSenderDTO;
@@ -124,6 +146,11 @@ export interface ScreenerState {
   screenedOut: ScreenerSenderDTO[];
   spam: SpamRow[];
   isExiting: (id: string) => boolean;
+  /**
+   * Is this held message's body stalled for good, and why? Null while it may still arrive.
+   * See {@link HeldBodyStall} — the preview renders a spinner ONLY on a null answer.
+   */
+  bodyStall: (messageId: string) => HeldBodyStall | null;
   decide: (sender: ScreenerSenderDTO, dest: DecisionDestination, opts: DecideOptions) => void;
   applyAll: (scopeOf: (s: ScreenerSenderDTO) => DecisionScope) => void;
   markAllSpam: (scopeOf: (s: ScreenerSenderDTO) => DecisionScope) => void;
@@ -683,6 +710,19 @@ export function useScreenerState(
     for (const id of [...s.pending.keys()]) commit(id);
   };
 
+  /**
+   * See {@link HeldBodyStall}. The RAW reader, deliberately: the projection answers where a
+   * message PRESENTS, and this asks two questions about the message itself — does it exist, and
+   * is it protected. `isProtectedMessage` rather than a re-derived test, because it is the exact
+   * predicate `hydrateBody` uses to decide not to fetch, and the whole defect was a surface
+   * disagreeing with that decision.
+   */
+  const bodyStall = (messageId: string): HeldBodyStall | null => {
+    const m = reader.get<EngineMessage>("message", messageId);
+    if (!m) return "absent";
+    return isProtectedMessage(m) ? "protected" : null;
+  };
+
   // A pinned sender and the DERIVED row for the same address are the same sender: the
   // pin is this session's memory of a decision whose mail the mirror now reports sitting
   // in `ohmail/Quarantine`. Without the address filter, marking a sender spam lists them
@@ -703,6 +743,7 @@ export function useScreenerState(
     screenedOut: segments.screenedOut,
     spam,
     isExiting: (id) => s.pending.has(id),
+    bodyStall,
     decide,
     applyAll,
     markAllSpam,
