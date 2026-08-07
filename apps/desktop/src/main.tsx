@@ -3,23 +3,23 @@
  *
  * There is no desktop fork of the interface. `AppShell` below is the same file
  * app.ohmail.app renders; the rail, the Screener, the reader, the ⌘K palette and
- * every view come from `apps/webapp/app/{shell,views}` and `@ohmail/ui`, and the
- * data comes from `@ohmail/client-engine` running its `FixturesAdapter`. What is
+ * every view come from `apps/webapp/app/{shell,views}` and `@ohmail/ui`. What is
  * different here is only what a window needs and a browser tab does not:
  * providers wired by hand instead of by Next, and the offline guard.
  *
- * `demo` is hard-coded true. It is not a flag to flip later — in the preview
- * build the Cloud adapter is aliased out of this bundle entirely (see
- * `no-http-adapter.ts`), and in the local-engine build the shell it renders is
- * still the preview until the surface that consumes the bridge lands.
+ * `demo` is hard-coded true on the mount below, and it is not a flag to flip
+ * later: this is the interface preview, the Cloud adapter is aliased out of the
+ * bundle entirely (see `no-http-adapter.ts`), and the invented mailbox is the
+ * only mail there is anything to show.
  *
  * ── TWO MOUNTS, ONE OF WHICH IS COMPILED AWAY ──────────────────────────────
  *
  * The engine-bearing build wraps the same shell in `DesktopGate`, which asks
  * the native shell what the engine is doing and shows the door chooser, an
- * honest notice, or the client. `__OHMAIL_LOCAL_ENGINE__` is a literal at build
- * time, so the preview keeps exactly the mount it has always had and the gate
- * and everything it reaches are not in that bundle at all.
+ * honest notice, or the mail client running against the engine on this machine.
+ * `__OHMAIL_LOCAL_ENGINE__` is a literal at build time, so the preview keeps
+ * exactly the mount it has always had and the gate and everything it reaches
+ * are not in that bundle at all.
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -47,12 +47,11 @@ installOfflineGuard();
    rather than merely skipped: grep the preview's output for `engine_request`
    and there is nothing to find.
 
-   What it does NOT do yet is render the MAIL against it — the surface below is
-   still the preview's. Connecting the transport and moving the mail onto it are
-   separate changes on purpose: this one can be verified on its own, and it is
-   the half with the security properties. What the gate below DOES render live is
-   everything about the install itself — which door, which mailbox, and the
-   actions that change either. */
+   The call is a boot-time check and nothing more. It proves two things at once
+   and reports them to the log: that this window can reach the shell at all, and
+   that this build compiled the real client rather than the preview's stub —
+   whose constructor throws. The engine the MAIL runs on is built by
+   `DesktopGate`, once the shell has said which mailbox is being served. */
 if (__OHMAIL_LOCAL_ENGINE__) {
   void connectLocalEngine().then(
     (status) => console.info(`ohmail: local engine — ${status.state}`),

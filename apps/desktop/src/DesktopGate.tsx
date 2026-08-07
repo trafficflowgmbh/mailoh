@@ -14,13 +14,19 @@
  * the runtime defines its command channel before any bundle script runs. So the notice is
  * reserved for the case that matters, which is a shell that IS there and cannot answer.
  *
- * ── THE MAIL IS STILL THE PREVIEW'S ─────────────────────────────────────────────────────────
+ * ── THE MAIL IS THE MAILBOX'S ───────────────────────────────────────────────────────────────
  *
- * `AppShell` below is mounted exactly as the preview mounts it. Pointing the client's data at
- * the bridge is a separate change with its own risks — the transport is connected and the
- * adapter is built (`bridge-fetch.ts`), and consuming it is the next step. Everything on this
- * screen that describes the INSTALL is live and comes from the shell; what is on the mail
- * surface does not yet.
+ * When the shell says an engine is serving, `AppShell` below is handed a real client engine
+ * running over the bridge (`bridge-fetch.ts`) and renders that mailbox — the same component, the
+ * same views, the same keyboard, with the data coming from the process on this machine instead of
+ * from fixtures. {@link mailMount} is the decision and it is a pure function, so which of the three
+ * surfaces a given engine state produces is something a test drives rather than something this
+ * component describes.
+ *
+ * Loaded WITHOUT a shell — a development server, or the render check that loads the built files in
+ * a headless DOM — there is no engine to run against and the bundle shows the invented mailbox it
+ * has always shown. That is the same "there is no shell" case the notice section below is about,
+ * seen from the mail surface.
  *
  * ── AND THE NATIVE CHROME IS DRIVEN FROM HERE ───────────────────────────────────────────────
  *
@@ -31,15 +37,16 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import { Button } from "@ohmail/ui";
 
 import { AppShell } from "../../webapp/app/shell/AppShell";
 import { go } from "../../webapp/app/shell/routing";
 import { DoorChooser } from "./DoorChooser.js";
 import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
-import { gateFor, readShell, type Shell } from "./doors.js";
+import { gateFor, mailMount, readShell, type Shell } from "./doors.js";
 import { notify, onMenuNavigate, setBadge } from "./native.js";
-import type { EngineStatus } from "./bridge-fetch.js";
+import { createLocalEngine, type EngineStatus } from "./bridge-fetch.js";
 
 /** How often the window re-asks while the engine is on its way up. */
 const SETTLING_POLL_MS = 1000;
@@ -86,7 +93,30 @@ export function DesktopGate() {
      than expected" crash, arriving on whichever render first took a different branch. */
   const onUnread = useUnreadSink();
 
+  /**
+   * THE CLIENT ENGINE ON SCREEN — one per mailbox, kept across a restart of the process behind it.
+   *
+   * It is state rather than a memo because it has to SURVIVE: `mailMount` is told which mailbox is
+   * already mounted and answers with the same key while the engine bounces, which only means
+   * anything if the object itself is still here to be answered about.
+   *
+   * Built during the render that first needs it — React's own "adjusting state when a prop
+   * changes" — rather than in an effect, so the mail surface never paints one empty frame between
+   * the shell saying `serving` and the client that runs against it. The constructor opens nothing;
+   * the shared shell is what starts the engine and drives its sync loop, exactly as it does for a
+   * browser tab.
+   */
+  const [live, setLive] = useState<{ key: string; engine: OhmailEngine } | null>(null);
   const gate = gateFor(shell ?? { kind: "none" });
+  const mount = mailMount(shell ?? { kind: "none" }, live?.key ?? null);
+  if (mount.kind === "engine" && live?.key !== mount.key) {
+    setLive({ key: mount.key, engine: createLocalEngine() });
+  } else if (mount.kind !== "engine" && live !== null) {
+    /* Signed out, or the door was given up. Dropping the reference is what takes the mirror — a
+       copy of somebody's mail — out of this window's memory; keeping it would leave it sitting
+       behind the chooser for the life of the process. */
+    setLive(null);
+  }
 
   if (shell === null) {
     /* Nothing has been asked yet. One quiet line and no sample world: a window that guesses at
@@ -126,10 +156,35 @@ export function DesktopGate() {
 
   const status = shell.kind === "status" ? shell.status : null;
 
+  /* Null on the one render where the engine has just been asked for and the state that holds it
+     has not caught up. React re-renders before painting, so that render is never seen; it still
+     has to draw something, and the honest something is the line below. */
+  const engine = mount.kind === "engine" && live?.key === mount.key ? live.engine : null;
+
+  if (mount.kind !== "sample" && engine === null) {
+    /* A door is chosen and no engine has served yet — a first launch migrating a database, or an
+       engine on its way back up. One line, and no mail: the two things this window could put on
+       screen instead are a guess and the sample mailbox, and the sample mailbox under somebody's
+       own address is the worse of the two. The settling poll above is what ends this state. */
+    return (
+      <div className="gate">
+        <div className="gate-card">
+          <span className="wordmark"><b>ohmail</b><em>.</em></span>
+          <p>Opening your mailbox…</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <AppShell
-        demo
+        /* The invented mailbox is what a window with no engine behind it shows; a window with one
+           shows that engine's mail. `demo` is the client's own flag for the first — it is what
+           puts the ribbon on screen and freezes the clock — and it must be false in the second,
+           because every one of those things would be a lie about somebody's own mail. */
+        demo={engine === null}
+        {...(engine ? { engine } : {})}
         /* The pane the web client cannot have. Present only when the shell answered — outside
            the app there is no install to describe, and an empty one would be a pane about
            nothing. */

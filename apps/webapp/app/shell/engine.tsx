@@ -45,6 +45,23 @@ import {
  */
 export type OwnerResolver = () => Promise<string | null>;
 
+/**
+ * AN ENGINE THE HOST ALREADY OWNS — the third way this provider can get one, and the only one
+ * that does not involve a decision taken here.
+ *
+ * Two of the three are decisions: the demo builds a fixtures engine, and a Cloud tab builds a
+ * network engine once it knows whose mailbox it holds. The desktop app is neither. Its mail comes
+ * from a process on the same machine, reached over a channel that is not `fetch` and that this
+ * shared file must never learn about — so the app builds the engine where the channel is, and
+ * hands the finished object in.
+ *
+ * What that buys is the same thing {@link OwnerResolver} buys: the desktop keeps rendering this
+ * exact shell, with no fork and no second copy of the wiring, while the two builds keep their
+ * own transports. What it does NOT buy is a way to turn the demo off — see the initializer, where
+ * `demo` is still checked first and still returns.
+ */
+export type ProvidedEngine = OhmailEngine;
+
 interface EngineBinding {
   engine: OhmailEngine;
   /** The mode the ENGINE was actually built in — client truth, never the server's guess. */
@@ -109,10 +126,13 @@ function resolveDemo(serverDemo: boolean): boolean {
 
 export function EngineProvider({
   demo: serverDemo,
+  engine: provided,
   resolveOwner,
   children,
 }: {
   demo: boolean;
+  /** See {@link ProvidedEngine}. Absent everywhere but the desktop app. */
+  engine?: ProvidedEngine;
   resolveOwner?: OwnerResolver;
   children: ReactNode;
 }) {
@@ -141,6 +161,18 @@ export function EngineProvider({
   const [binding, setBinding] = useState<Binding>(() => {
     const demo = resolveDemo(serverDemo);
     if (demo) return { status: "ready", demo, engine: createEngine(demo) };
+    /**
+     * A HOST-BUILT ENGINE IS ALREADY THE ANSWER, and it is checked here — after the demo and
+     * before everything else.
+     *
+     * After the demo, because the ordering above is the safety property: nothing may make a
+     * `demo: true` render run against a non-fixtures engine, and an argument is not an
+     * exception to that. Before everything else, because the two questions the branches below
+     * ask — is there a remembered account, can this build confirm one — are questions about a
+     * mailbox reached over the network. This engine was built by the process that holds the
+     * mailbox; there is no owner to look up and no session to confirm.
+     */
+    if (provided) return { status: "ready", demo: false, engine: provided };
     const remembered = resolveOwner ? readOwner() : null;
     if (remembered === null) return { status: "resolving" };
     return { status: "warm", owner: remembered, engine: createEngine(false, undefined, remembered) };
@@ -154,6 +186,20 @@ export function EngineProvider({
   // may touch persistence again.
   const desired = resolveDemo(serverDemo);
   useEffect(() => {
+    /**
+     * A HOST THAT HANDS IN A DIFFERENT ENGINE IS SAYING "THIS IS A DIFFERENT MAILBOX NOW", and
+     * the binding has to follow it. The desktop builds one engine per mailbox its shell reports
+     * serving, so a person who switches to another mailbox gets a new object — and a provider
+     * that kept the first one would go on rendering the previous mailbox's mail under the new
+     * mailbox's name. Adopting it here rather than asking every caller to remember a `key` keeps
+     * the failure out of the wiring: forgetting a prop is silent, and this is not.
+     *
+     * The demo still wins, checked first, exactly as it is in the initializer.
+     */
+    if (!desired && provided && !(binding.status === "ready" && binding.engine === provided)) {
+      setBinding({ status: "ready", demo: false, engine: provided });
+      return;
+    }
     if (binding.status === "ready" ? desired === binding.demo : !desired) return;
     // TWO TEARDOWNS, and only one of them is this line's.
     //
@@ -174,7 +220,7 @@ export function EngineProvider({
     setBinding(
       desired ? { status: "ready", demo: true, engine: createEngine(true) } : { status: "resolving" },
     );
-  }, [desired, binding]);
+  }, [desired, binding, provided]);
 
   /**
    * ASK WHOSE MAILBOX THIS IS, then build the engine that persists it.

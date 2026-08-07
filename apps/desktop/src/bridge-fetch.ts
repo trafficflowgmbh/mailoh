@@ -36,7 +36,7 @@
  * which the guard has replaced with a thrower. A forgotten wire is loud rather than silent.
  */
 
-import { HttpAdapter } from "@ohmail/client-engine";
+import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 
 /**
  * The shape `HttpAdapterOptions.fetch` is satisfied by.
@@ -372,17 +372,45 @@ export function createEngineAdapter(): HttpAdapter {
   return new HttpAdapter({ baseUrl: "", fetch: bridgeFetch });
 }
 
-let connected: HttpAdapter | null = null;
-
 /**
- * The adapter this window runs against, or `null` if the bridge was never connected.
+ * THE CLIENT ENGINE THIS WINDOW RUNS ON — the same `OhmailEngine` the hosted client builds, over
+ * the bridge instead of over a socket.
  *
- * The reader exists because the mount does not consume it yet: this build connects the transport
- * and the surface that will run on it is a separate change. Holding it here rather than passing it
- * through `main.tsx` keeps that change to one file.
+ * ── WHAT IS DELIBERATELY NOT PASSED ─────────────────────────────────────────────────────────
+ *
+ * **No `storePolicy`.** The absent branch is `full`, and full is the only correct answer here:
+ * this tier's promise is that the mail is on the machine, so a window that evicted the older half
+ * of it would be deleting the product. The browser's ninety-day window exists because a browser
+ * mirror is a cache in front of a server that still holds everything; nothing about that argument
+ * applies to a copy the local engine already keeps on disk.
+ *
+ * **No `store`.** The mirror is in memory and is rebuilt on each launch. There is already exactly
+ * one copy of this mailbox on the disk — the engine's — and writing a second one into the
+ * webview's storage would double it for no benefit: the drain that fills this mirror is a pipe to
+ * a process on the same machine, not a network round trip, so re-reading it costs a few seconds of
+ * local IPC rather than a bootstrap over somebody's connection.
+ *
+ * ── AND ONE CAPABILITY IS WITHHELD ──────────────────────────────────────────────────────────
+ *
+ * `OhmailEngine` reaches for an optional `snapshot` method on the adapter it is given, and takes
+ * `GET /sync/snapshot` instead of replaying the change log whenever the mirror is cold. That is
+ * the right trade against a server across the internet and the wrong one here, for a reason that
+ * has nothing to do with speed: the two doors this app can come in by do not both serve that route
+ * from the same place. One answers it locally; the other has no local handler for it and relays it
+ * onward, which returns a cursor counted in a different sequence from the one the very next `/sync`
+ * request is answered in — and a cursor from the wrong sequence is a mailbox that bootstraps once,
+ * looks complete, and then never receives another change.
+ *
+ * So the bootstrap here is the one every client used before that route existed: `since=0`, paged,
+ * over the pipe. It is cheap because the pipe is local, and it is the same path in both doors.
+ * Withheld as an own property rather than by wrapping the adapter, because a wrapper that rebuilds
+ * the adapter's surface as an object literal is how the other optional capabilities have been
+ * dropped by accident before — this drops exactly one, in one line, visibly.
  */
-export function localEngineAdapter(): HttpAdapter | null {
-  return connected;
+export function createLocalEngine(): OhmailEngine {
+  const adapter = createEngineAdapter();
+  Object.defineProperty(adapter, "snapshot", { value: undefined, configurable: true });
+  return new OhmailEngine({ adapter });
 }
 
 /**
@@ -394,6 +422,6 @@ export function localEngineAdapter(): HttpAdapter | null {
  */
 export async function connectLocalEngine(): Promise<EngineStatus> {
   const status = await engineStatus();
-  connected = createEngineAdapter();
+  createEngineAdapter();
   return status;
 }

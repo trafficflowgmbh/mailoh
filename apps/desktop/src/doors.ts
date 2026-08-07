@@ -129,6 +129,54 @@ export function gateFor(shell: Shell): Gate {
   }
 }
 
+/**
+ * WHICH MAIL THE WINDOW SHOWS, once {@link gateFor} has said the mail client is what renders.
+ *
+ * `gateFor` answers the onboarding question — chooser, notice, or the app. This answers the one
+ * after it, and they are genuinely different questions: "a door is chosen" is not the same fact as
+ * "there is an engine serving mail right now", and the window has three honest things to draw.
+ *
+ *  · `sample` — there is no shell to ask. The bundle is running outside the app: a development
+ *    server, or the render check that loads the built files in a headless DOM. Nothing is being
+ *    organized, so the invented mailbox is the only thing there is to show, and it is the same
+ *    thing this bundle has always shown without a shell.
+ *  · `engine` — the shell says an engine is serving, and `key` names the mailbox it is serving.
+ *    The real client runs against it.
+ *  · `opening` — a door is chosen and no engine has served yet. Nothing is drawn about the mail,
+ *    because the only alternatives are a guess and somebody else's sample mail under their own
+ *    mailbox's name.
+ *
+ * ── `mounted` IS WHY A RESTART DOES NOT EMPTY THE SCREEN ─────────────────────────────────────
+ *
+ * The caller passes the key of the client already on screen, or `null`. Once a mailbox has been
+ * served, a status that is no longer `serving` — the engine bouncing after a settings change, a
+ * moment of `restarting` — keeps that client mounted rather than replacing the mail with a
+ * spinner. Its mirror is already in memory and its next request simply waits. What DOES replace it
+ * is a different mailbox, because the key changes, and that is the case where continuing to render
+ * would be showing one mailbox's mail under another's name.
+ */
+export type MailMount =
+  | { kind: "sample" }
+  | { kind: "engine"; key: string }
+  | { kind: "opening" };
+
+export function mailMount(shell: Shell, mounted: string | null): MailMount {
+  if (shell.kind === "none") return { kind: "sample" };
+  const status = shell.kind === "status" ? shell.status : null;
+  if (status?.state === "serving" && status.mailboxId) {
+    return { kind: "engine", key: status.mailboxId };
+  }
+  /* NOT SERVING, and the two reasons for that are not alike. An engine between states still has a
+     mailbox behind it; a window with no door chosen, or one that cannot reach its engine at all,
+     does not — and mail must come off the screen in the second case rather than linger under a
+     mailbox that is no longer this install's. `gateFor` is where that distinction already lives,
+     so it is asked rather than restated here. An engine reporting `serving` with no mailbox id
+     lands here too: it has not finished announcing itself, and there would be nothing to name the
+     client after. */
+  if (gateFor(shell).kind !== "app") return { kind: "opening" };
+  return mounted === null ? { kind: "opening" } : { kind: "engine", key: mounted };
+}
+
 /** What the local door's form collects. Every field is what the user typed, untrimmed. */
 export interface LocalDoorFields {
   /** The preset's id — `providerById` in the shared shell resolves it to hosts and ports. */

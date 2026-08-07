@@ -68,6 +68,7 @@ import {
   useEngine,
   useEngineVersion,
   type OwnerResolver,
+  type ProvidedEngine,
 } from "./engine";
 import { useOlderMail } from "./older-mail";
 import { PLACE_LABEL, avatarHue, firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
@@ -346,6 +347,7 @@ function ShellRail({ groups, ...rest }: RailNavProps) {
  */
 export function AppShell({
   demo,
+  engine,
   resolveOwner,
   mailboxFacts,
   accountSection,
@@ -357,6 +359,16 @@ export function AppShell({
   onUnread,
 }: {
   demo: boolean;
+  /**
+   * AN ENGINE THE HOST BUILT ITSELF — the desktop app's seam, and nobody else's.
+   *
+   * `EngineProvider` normally decides what engine this shell runs on: fixtures for the demo, a
+   * network client for a signed-in tab. The desktop app's mail comes from a process on the same
+   * machine over a channel that is not `fetch`, and this file is compiled into a browser tab as
+   * well as into that app — so the app builds the engine where the channel is and passes the
+   * finished object through. See {@link ProvidedEngine}; `demo` still wins over it.
+   */
+  engine?: ProvidedEngine;
   resolveOwner?: OwnerResolver;
   /**
    * "What state are this account's mailboxes in?", as a function the SHELL does not know how
@@ -399,9 +411,11 @@ export function AppShell({
    * It carries its own `label`, like the sent-mail review's entry does, because the words
    * belong to the desktop's vocabulary and this shared file does not own them.
    *
-   * NOT gated on `demo`, unlike the four panes above it, and that is the whole difference:
-   * the desktop shell runs the client in demo mode today, so a `demo ? undefined : …` here
-   * would withhold the pane from the one surface it exists for.
+   * NOT gated on `demo`, unlike the four panes above it, and that is the whole difference: the
+   * pane describes the INSTALL rather than an account, so it is as true of a window showing
+   * sample mail as of one showing somebody's own. A `demo ? undefined : …` here would withhold
+   * it from the surface it exists for on exactly the launches where somebody is most likely to
+   * go looking for it.
    */
   desktopSection?: { label: string; node: ReactNode };
   /**
@@ -420,7 +434,7 @@ export function AppShell({
   onUnread?: (unread: number) => void;
 }) {
   return (
-    <EngineProvider demo={demo} resolveOwner={resolveOwner}>
+    <EngineProvider demo={demo} engine={engine} resolveOwner={resolveOwner}>
       {/* ONE keydown listener for the whole client. Outside `ShellInner` so
           every view mounted under it can declare bindings into the same table, which is
           also the table the `?` sheet is generated from. */}
