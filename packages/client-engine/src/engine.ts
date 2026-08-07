@@ -6,10 +6,14 @@ import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.
 import {
   CursorExpiredError,
   MutationRejectedError,
+  encodeSeqCursor,
   isProtectedMessage,
+  type EngineDraft,
   type EngineMessage,
   type EngineMutation,
   type MessageBodyRecord,
+  type MessageStateDTO,
+  type SyncSnapshotPage,
   type UnsubscribeResult,
 } from "./types.js";
 
@@ -78,6 +82,92 @@ export type ServerSearchFn = (
  */
 interface ServerSearchCapableAdapter {
   searchServer?: ServerSearchFn;
+}
+
+/**
+ * `GET /sync/snapshot` as the engine calls it — see {@link SyncSnapshotPage} for the protocol.
+ *
+ * `cursor` is the server's own opaque paging token from the previous page, absent on the first.
+ * `limit` is a hint the engine does not currently send: page 1 is defined as "all live state plus
+ * the newest page of messages", and a client-imposed limit could cut that definition in half.
+ */
+export type SnapshotFn = (params: { cursor?: string; limit?: number }) => Promise<SyncSnapshotPage>;
+
+/**
+ * The adapter capability the cold-start path reaches for.
+ *
+ * Declared STRUCTURALLY here, exactly as {@link ServerSearchCapableAdapter} is, and for the same
+ * reason: absence is a real answer, not a broken adapter. The FixturesAdapter has no server and a
+ * `?demo=1` tab must issue zero requests (invariant #6); an older HttpAdapter, or a Cloud that has
+ * not deployed the route, simply has no `snapshot` — and the engine falls back to `since=0`, which
+ * is the path every client used before this existed and still converges to the same mirror.
+ *
+ * ── THE WIRING RISK THIS SHAPE CARRIES ────────────────────────────────────────────────────
+ *
+ * Because it is structural rather than a member of `EngineAdapter`, an adapter WRAPPER that
+ * rebuilds the surface as an object literal will silently drop it and still satisfy
+ * `EngineAdapter`. `apps/webapp/app/shell/sync-scheduler.ts` has exactly such a wrapper (`guard`),
+ * and `fetchBody`, `searchServer` and the three attachment methods each shipped unforwarded on the
+ * LIVE path at some point for precisely this reason — the demo is unwrapped, so every test stayed
+ * green. A wrapper must spread it the way it spreads the others:
+ *
+ *     ...(adapter.snapshot ? { snapshot: adapter.snapshot.bind(adapter) } : {})
+ *
+ * conditionally, never unconditionally: defining it always would make a fixtures adapter behind a
+ * gate claim a snapshot endpoint it has no server for.
+ */
+interface SnapshotCapableAdapter {
+  snapshot?: SnapshotFn;
+}
+
+/**
+ * HOW MUCH OF THE MAILBOX THIS CLIENT KEEPS ON DISK.
+ *
+ * `full` is the DEFAULT and the absent-config branch, and that ordering is the whole safety
+ * property: the desktop tier's entire promise is that the mail is on the device, so a host that
+ * forgets to configure this must get today's behaviour — nothing is ever evicted — rather than a
+ * quietly truncated mailbox. A policy that pruned by omission would be a data-loss default.
+ *
+ * `windowed` is the browser's answer, where the mirror is a cache in front of a Cloud that still
+ * holds everything: keep the newest `minRows` messages unconditionally, plus anything within
+ * `days`, and drop the rest. Dropped rows are not lost — they are one `/sync` change or one
+ * re-snapshot away, because {@link MirrorStore.prune} deletes rather than tombstones.
+ */
+export type StorePolicy =
+  | { mode: "full" }
+  | { mode: "windowed"; days: number; minRows: number };
+
+/**
+ * The two `/sync` entity types the pin set reads, narrowed to the ONE field each that decides
+ * whether the user still owes it an answer.
+ *
+ * Declared here rather than in `types.ts` for the same reason {@link SnapshotCapableAdapter} is:
+ * this is the only code in the package that looks at either type, and mirroring the server's whole
+ * `RoutingDecisionDTO`/`ApprovalDTO` would be a second copy of a shape nothing else reads —
+ * which is a shape that can drift without anything noticing. Every field is optional-safe: a
+ * status this build has never heard of is simply not one of the pinning values, and the row is
+ * treated as resolved.
+ */
+interface PendingRoutingDecision {
+  messageId?: string;
+  status?: string;
+}
+interface PendingApproval {
+  messageId?: string | null;
+  status?: string;
+}
+
+/**
+ * WHEN a message is, for windowing purposes — the mail's own date, falling back to the row's
+ * `updatedAt`, and 0 for a row with neither.
+ *
+ * 0 sorts oldest, which is the conservative direction ONLY because the `minRows` floor and the
+ * pin set are both checked independently of this number: an undated row can be evicted for being
+ * undated, but never one of the newest N and never one something still references.
+ */
+function messageTime(m: EngineMessage): number {
+  const t = Date.parse(m.date ?? m.updatedAt ?? "");
+  return Number.isFinite(t) ? t : 0;
 }
 
 /**
@@ -240,6 +330,11 @@ export interface EngineOptions {
   serverSearch?: ServerSearchFn;
   /** Defaults to an in-memory mirror (SSR/tests); pass IndexedDbMirrorStore on web. */
   store?: MirrorStore;
+  /**
+   * How much of the mailbox to keep locally. ABSENT ⇒ `{ mode: "full" }` — see
+   * {@link StorePolicy}. Enforced by one pass at the end of each successful drain.
+   */
+  storePolicy?: StorePolicy;
   /** Optional `?types=` filter for /sync. */
   types?: string[];
   /** Page size for the drain loop. */
@@ -321,6 +416,16 @@ export class OhmailEngine {
   private readonly bodyRequests = new Map<string, Promise<void>>();
   /** The archive transport, or `null` when this client has no server behind it. */
   private readonly serverSearchFn: ServerSearchFn | null;
+  /** `GET /sync/snapshot`, or `null` when this adapter has no such route — see {@link SnapshotCapableAdapter}. */
+  private readonly snapshotFn: SnapshotFn | null;
+  /**
+   * Latched TRUE once the snapshot route has proven unusable on its FIRST page — see
+   * {@link OhmailEngine.runSnapshot}. It bounds the cost of a client that ships ahead of the
+   * server to exactly one wasted request per engine, rather than one per drain forever.
+   */
+  private snapshotUnavailable = false;
+  /** How much of the mailbox to keep. Resolved once; `full` when the host said nothing. */
+  private readonly storePolicy: StorePolicy;
   /** In-flight archive passes by query key — see {@link OhmailEngine.searchServer}. */
   private readonly serverSearches = new Map<string, Promise<ServerSearchOutcome>>();
 
@@ -349,6 +454,12 @@ export class OhmailEngine {
       opts.serverSearch ??
       (opts.adapter as ServerSearchCapableAdapter).searchServer?.bind(opts.adapter) ??
       null;
+    // Same resolution rule as `serverSearchFn`: the adapter's own capability, bound ONCE, so
+    // nothing can answer "there is a snapshot route" differently from what `drain` will do.
+    this.snapshotFn = (opts.adapter as SnapshotCapableAdapter).snapshot?.bind(opts.adapter) ?? null;
+    // THE ABSENT BRANCH IS `full`. See {@link StorePolicy} — a host that configures nothing gets
+    // today's behaviour, and no mirror is ever pruned by omission.
+    this.storePolicy = opts.storePolicy ?? { mode: "full" };
     this.store = opts.store ?? new MemoryMirrorStore();
     this.types = opts.types;
     this.syncLimit = opts.syncLimit;
@@ -437,7 +548,16 @@ export class OhmailEngine {
     for (const id of victims) await this.store.putLocal("message_body", id, null);
   }
 
-  /** Hydrate the mirror, then bootstrap/catch up. */
+  /**
+   * Hydrate the mirror, then bootstrap/catch up.
+   *
+   * THE COLD-START SNAPSHOT IS NOT A SEPARATE CALL HERE. `syncOnce()` → `drain()`, and `drain()`
+   * checks for a cursor of "0" at the top of its loop, which is the same condition a cold start
+   * is. Writing the check here TOO would be a second seam that has to stay in agreement with the
+   * first — and the drain's copy is the one that has to exist regardless, because the 410
+   * re-bootstrap re-enters the loop with a cursor of "0" without ever passing through `start()`.
+   * So there is one condition in one place, and a cold start reaches it by calling `syncOnce`.
+   */
   async start(): Promise<void> {
     await this.hydrate();
     await this.syncOnce();
@@ -460,6 +580,14 @@ export class OhmailEngine {
   private async drain(): Promise<void> {
     let rebootstrapped = false;
     for (;;) {
+      // COLD MIRROR + A SNAPSHOT ROUTE ⇒ TAKE THE SNAPSHOT INSTEAD OF REPLAYING THE LOG.
+      //
+      // This is the ONE place the condition is written, and it is reached by all three callers
+      // that can present a cursor of "0": a first-ever `start()`, a `start()` over a mirror whose
+      // last bootstrap crashed before its final page, and the 410 branch below — which resets to
+      // "0" and `continue`s straight back here. See {@link OhmailEngine.runSnapshot}.
+      if (this.store.getCursor() === "0" && this.snapshotFn) await this.runSnapshot();
+
       let resp;
       try {
         resp = await this.adapter.sync({
@@ -469,17 +597,210 @@ export class OhmailEngine {
         });
       } catch (err) {
         if (err instanceof CursorExpiredError && !rebootstrapped) {
+          // The once-per-drain guard stays exactly as it was: a SECOND 410 inside one drain is a
+          // server that expires the cursor it just issued, and is surfaced rather than looped on.
+          // It bounds the snapshot path too — at most one snapshot can follow a 410 per drain.
           rebootstrapped = true;
           await this.store.resetForBootstrap(); // cursor → "0"
           this.notify();
+          // Back to the top: with a snapshot route the cursor of "0" selects the snapshot and the
+          // delta drain then resumes from `asOfSeq`; without one it selects `since=0`, which is
+          // the pre-snapshot path and still converges. The fallback is not dead code — it is what
+          // the FixturesAdapter and any adapter older than this route take.
           continue;
         }
         throw err;
       }
       await this.store.applyResponse(resp);
       this.notify();
-      if (!resp.hasMore) return;
+      if (resp.hasMore) continue;
+
+      // ONE PRUNE PASS PER SUCCESSFUL DRAIN, at the point the mirror is caught up and therefore
+      // at its most complete — which is when a windowed client's eviction decision is least
+      // likely to be made about a half-arrived mailbox. A `full` policy returns immediately.
+      if (await this.pruneToPolicy()) this.notify();
+      return;
     }
+  }
+
+  /**
+   * FETCH `GET /sync/snapshot` TO COMPLETION, COMMITTING THE CURSOR WITH THE LAST PAGE AND NOT
+   * ONE PAGE EARLIER.
+   *
+   * ## THE ATOMICITY THAT MAKES A CRASH SAFE
+   *
+   * Every page but the last goes through `applyChanges`, which writes rows and DOES NOT TOUCH THE
+   * CURSOR. Only the last page goes through `applyResponse`, whose single flush carries the rows
+   * and `String(asOfSeq)` together (contract §3.3 step 3). So the mirror is only ever in one of
+   * two states a restart can observe:
+   *
+   *  · cursor "0" — some prefix of the snapshot is present, and the next drain re-snapshots. The
+   *    rows already written are not wasted and not wrong: they carry `seq === asOfSeq`, so a
+   *    re-snapshot at the same point skips them on the seq guard and a re-snapshot at a LATER
+   *    point overwrites them. Either way it converges, which is what makes "just do it again" a
+   *    complete recovery rather than a hope.
+   *  · cursor `asOfSeq` — the whole snapshot landed, and the delta drain resumes from a point the
+   *    mirror genuinely holds.
+   *
+   * There is no third state. The one that would be fatal — a cursor past rows that never
+   * arrived — is unreachable, because nothing but the final page can write the cursor at all.
+   *
+   * ## WHY RESUMING AT `asOfSeq` MISSES NOTHING
+   *
+   * `asOfSeq` is the point the snapshot was READ at, identical on every page, not "where paging
+   * got to". Changes committed while the pages were being fetched have seqs above it and are
+   * still in the log, so the delta drain that follows picks them up. A cursor of "the last page's
+   * high-water mark" would be the version of this that silently loses writes.
+   *
+   * ## THE PAGING TOKEN IS NEVER THE CURSOR, AND THE CURSOR IS NOT A DECIMAL
+   *
+   * `nextCursor` is the server's opaque paging state and is passed straight back; it is not
+   * written to the mirror and has no relationship to a `/sync` cursor. Conflating the two would
+   * put a token `/sync` cannot read into `since=`.
+   *
+   * The cursor written for `asOfSeq` is {@link encodeSeqCursor}'s base64url, NOT `String(seq)`.
+   * This was measured, not assumed: `String(asOfSeq)` is what the first version committed, and
+   * `contract.test.ts` — which drives a real backend — turned eight tests red with
+   * `CursorExpiredError`, because `SyncService.decodeCursor` base64url-decodes what it is given
+   * and treats a non-numeric result as an expired cursor. A bare "900" decodes to bytes that are
+   * not digits, so every drain after a snapshot 410'd. The two encoders are the same function on
+   * both sides of the wire and must stay that way.
+   *
+   * ## A FIRST-PAGE FAILURE FALLS BACK; A LATER ONE DOES NOT
+   *
+   * This route is newer than the clients that call it, and an engine whose cold start HARD-FAILS
+   * when it is missing or misbehaving is a mailbox that renders empty in silence —
+   * `http-adapter-binding.test.ts` exists because that exact thing shipped once already. So a
+   * failure on page 1 latches {@link snapshotUnavailable} and returns, and the caller proceeds
+   * down the `since=0` path that every client used before this existed.
+   *
+   * That swallow cannot hide an outage, which is the only reason it is acceptable: the very next
+   * thing the drain does is call `/sync` on the same origin, so a server that is down, refusing,
+   * or unreachable still rejects the drain a moment later, through the path that has always
+   * reported it.
+   *
+   * A failure on a LATER page is different in kind and is rethrown. Rows carrying `seq ===
+   * asOfSeq` are already in the mirror, and `since=0` over them would be silently WRONG: the seq
+   * guard drops every replayed change at or below `asOfSeq`, so the pages the snapshot had not
+   * reached yet would never be delivered by either path, and the mirror would settle into a
+   * permanently truncated state that looks healthy. Rethrowing leaves the cursor at "0", so the
+   * next drain re-snapshots from page 1 — and if the route really has gone, that page-1 attempt
+   * takes the fallback above.
+   */
+  private async runSnapshot(): Promise<void> {
+    const snapshot = this.snapshotFn;
+    if (!snapshot || this.snapshotUnavailable) return;
+    let cursor: string | undefined;
+    let applied = false;
+    for (;;) {
+      let page: SyncSnapshotPage;
+      try {
+        page = await snapshot(cursor !== undefined ? { cursor } : {});
+      } catch (err) {
+        if (applied) throw err; // unsound to fall back — see the note above
+        this.snapshotUnavailable = true;
+        return; // nothing was written; `since=0` takes over
+      }
+      const last = page.nextCursor == null || page.nextCursor === "";
+      if (last) {
+        // Rows + cursor in ONE flush. The buckets are a formality: `flattenResponse` concatenates
+        // all four and `applyToRecords` dispatches on each change's own `op`, so which bucket a
+        // change sits in cannot affect the result. Snapshot changes are all `op:"create"`.
+        await this.store.applyResponse({
+          changes: { creates: page.changes, updates: [], moves: [], deletes: [] },
+          cursor: encodeSeqCursor(page.asOfSeq),
+          hasMore: false,
+          serverTime: this.now().toISOString(),
+        });
+      } else {
+        await this.store.applyChanges(page.changes); // rows only — the cursor stays "0"
+      }
+      applied = true;
+      this.notify();
+      if (last) return;
+      cursor = page.nextCursor as string;
+    }
+  }
+
+  // ── the windowed store: keeping only part of the mailbox on disk ─────────
+
+  /**
+   * EVICT THE MESSAGES THIS CLIENT HAS CHOSEN NOT TO KEEP. Returns whether anything went.
+   *
+   * The shape is {@link OhmailEngine.purgeProtectedBodies}'s: one pass over the mirror computing
+   * a victim list, then the store write. It runs after a drain rather than on a timer because a
+   * timer would evict rows in the middle of a bootstrap, and because "we are caught up" is the
+   * only moment at which the newest-N half of the window means what it says.
+   *
+   * ── THE RULE ────────────────────────────────────────────────────────────────────────────
+   *
+   * Keep the newest `minRows` messages whatever their age; of the rest, keep anything newer than
+   * `days`; evict what is left. `minRows` is not a nicety — it is what stops a mailbox that has
+   * been quiet for a month from evicting itself down to nothing and rendering an empty app.
+   *
+   * ── MINUS THE PIN SET, WHICH IS THE PART THAT MATTERS ───────────────────────────────────
+   *
+   * A message the product is still USING must never be evicted for being old, because the thing
+   * referencing it renders from the mirror and would render a hole. Four references pin:
+   *
+   *  · a `draft` replying to it (`inReplyToMessageId`) — the compose view shows what is being
+   *    replied to, and a reply-later draft can easily outlive the window;
+   *  · a `message_state` that is not `none` — every triage pile IS a set of these, and
+   *    `bubbled_up` in particular is a TIMER on an old message: the whole point is that it is old
+   *    and comes back. Evicting it would delete the reminder;
+   *  · a `routing_decision` still `pending_approval`, and
+   *  · an `approval` still `pending` — both are questions the user has not answered yet, and the
+   *    question is unanswerable without the mail it is about.
+   *
+   * Anything already resolved (`approved`, `rejected`, `expired`, `auto_applied`) does NOT pin:
+   * it is history, and history is what the window is for.
+   */
+  private async pruneToPolicy(): Promise<boolean> {
+    const policy = this.storePolicy;
+    if (policy.mode !== "windowed") return false; // `full` — the default. Nothing is ever evicted.
+
+    const rows = this.store.entries<EngineMessage>("message");
+    if (rows.length <= policy.minRows) return false;
+
+    // Newest first. `date` is the mail's own time and the order every pile renders in; a row
+    // without one (or with an unparseable one) sorts oldest, but is still protected by the
+    // minRows floor and by the pin set — it is never singled out.
+    const sorted = [...rows].sort((a, b) => messageTime(b.entity) - messageTime(a.entity));
+    const cutoff = this.now().getTime() - policy.days * 86_400_000;
+    const pinned = this.pinnedMessageIds();
+
+    const victims: Array<{ type: string; id: string }> = [];
+    for (let i = policy.minRows; i < sorted.length; i++) {
+      const row = sorted[i]!;
+      if (messageTime(row.entity) >= cutoff) continue;
+      if (pinned.has(row.id)) continue;
+      victims.push({ type: "message", id: row.id });
+    }
+    if (victims.length === 0) return false;
+    await this.store.prune(victims); // hard delete + the `message_body` cascade
+    return true;
+  }
+
+  /** The pin set — every message id the mirror is still referencing. See {@link pruneToPolicy}. */
+  private pinnedMessageIds(): Set<string> {
+    const pinned = new Set<string>();
+
+    for (const d of this.store.list<EngineDraft>("draft")) {
+      if (d.inReplyToMessageId) pinned.add(d.inReplyToMessageId);
+    }
+    // The record id IS the message id for `message_state` (see `mutations.ts`), but the DTO
+    // carries it too — read the field first so a server that ever keys these differently does not
+    // silently empty this half of the set.
+    for (const { id, entity } of this.store.entries<MessageStateDTO>("message_state")) {
+      if (entity.state && entity.state !== "none") pinned.add(entity.messageId || id);
+    }
+    for (const r of this.store.list<PendingRoutingDecision>("routing_decision")) {
+      if (r.status === "pending_approval" && r.messageId) pinned.add(r.messageId);
+    }
+    for (const a of this.store.list<PendingApproval>("approval")) {
+      if (a.status === "pending" && a.messageId) pinned.add(a.messageId);
+    }
+    return pinned;
   }
 
   /**

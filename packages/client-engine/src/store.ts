@@ -53,6 +53,38 @@ export interface MirrorStore extends EntityReader {
   putLocal(type: string, id: string, entity: unknown | null): Promise<void>;
   getMeta<T = unknown>(key: string): T | undefined;
   setMeta(key: string, value: unknown): Promise<void>;
+  /**
+   * HARD-DELETE records the client has chosen not to keep — the windowed-store eviction pass.
+   *
+   * ## HARD DELETE, NOT A TOMBSTONE, AND THAT IS THE WHOLE DESIGN
+   *
+   * Every other removal in this file writes `entity: null` at the deleting change's seq, because
+   * the seq guard in `applyToRecords` is what makes a replayed page converge. A prune is the
+   * opposite case: the row is being dropped for LOCAL storage reasons, the server still has it,
+   * and the client wants it BACK the moment it becomes interesting again. A tombstone would carry
+   * a seq, and the seq guard would then refuse every later delta at or below it — so an update to
+   * a pruned message would be silently dropped and the row would stay invisible forever.
+   *
+   * Deleting the record outright leaves NO seq to guard against, so the next `/sync` change that
+   * mentions the id re-materializes it. That is sound only because `/sync` changes carry FULL
+   * DTOs (contract §3.1 — `entity` is the whole resource, not a patch), so a plain `update` is
+   * enough to rebuild a row from nothing. `applyToRecords`'s `create|update` branch upserts the
+   * carried entity without consulting what was there before, which is exactly what is needed.
+   *
+   * ## `message_body` CASCADES
+   *
+   * Invariant #1: raw body text must not sit at rest without the message it belongs to. A
+   * `message_body` is client-local — `/sync` has no vocabulary for it, so nothing else will ever
+   * remove one — and it is the single largest thing the mirror holds. Pruning a `message` without
+   * its body would evict the row and keep the payload, which inverts the point of the pass. So
+   * the cascade is structural here, exactly as it is in {@link cascadeLocalDeletes}, rather than
+   * a rule each caller has to remember.
+   *
+   * `maxSeq()` and the cursor are NOT touched. Pruning is a statement about local storage, never
+   * about how much of the log this client has seen; moving either backwards would re-request
+   * deltas already applied to the rows that were kept.
+   */
+  prune(keys: ReadonlyArray<{ type: string; id: string }>): Promise<void>;
   /** Discard all local state and reset the cursor to "0" (410 re-bootstrap, §3.2). */
   resetForBootstrap(): Promise<void>;
   /** Overwrite the in-memory cursor (dev/test only — e.g. forcing a 410 path). */
@@ -77,6 +109,15 @@ export abstract class BaseMirrorStore implements MirrorStore {
   ): Promise<void>;
   /** Drop ALL persisted state. */
   protected abstract wipe(): Promise<void>;
+  /**
+   * HARD-DELETE persisted records by "type:id" key — the persistence half of {@link prune}.
+   *
+   * Separate from `persist` because it is the one write in this class that REMOVES rather than
+   * upserts, and folding it into the dirty-set flush would mean encoding "gone" as a sentinel
+   * record that every reader would then have to know about. It carries no cursor and no meta on
+   * purpose: a prune must never be able to move the sync cursor.
+   */
+  protected abstract purge(keys: string[]): Promise<void>;
 
   getCursor(): Cursor {
     return this.cursor;
@@ -199,6 +240,23 @@ export abstract class BaseMirrorStore implements MirrorStore {
     await this.persist(dirty, resp.cursor, []);
   }
 
+  /** See {@link MirrorStore.prune} — hard delete, body cascade, cursor and maxSeq untouched. */
+  async prune(keys: ReadonlyArray<{ type: string; id: string }>): Promise<void> {
+    const gone: string[] = [];
+    for (const { type, id } of keys) {
+      const key = recordKey(type, id);
+      if (this.records.delete(key)) gone.push(key);
+      if (type !== "message") continue;
+      // The cascade. Note it runs whether or not the message record itself was present: a body
+      // whose message is already gone is precisely the orphan this must not leave behind.
+      const bodyKey = recordKey("message_body", id);
+      if (this.records.delete(bodyKey)) gone.push(bodyKey);
+    }
+    if (gone.length === 0) return;
+    this.ver++;
+    await this.purge(gone);
+  }
+
   async resetForBootstrap(): Promise<void> {
     this.records.clear();
     this.meta.clear();
@@ -235,5 +293,8 @@ export class MemoryMirrorStore extends BaseMirrorStore {
   }
   protected async wipe(): Promise<void> {
     /* in-memory only */
+  }
+  protected async purge(): Promise<void> {
+    /* in-memory only — the base class already dropped the records from the map */
   }
 }

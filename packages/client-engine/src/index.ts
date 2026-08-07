@@ -47,6 +47,7 @@ export {
   type SyncChange,
   type SyncEntityType,
   type SyncResponse,
+  type SyncSnapshotPage,
   type TagDTO,
   type TriageItemDTO,
   type TriageState,
@@ -140,5 +141,9 @@ export {
   type EngineOptions,
   type MutationResult,
   type MutationStatus,
+  // The cold-start capability an adapter WRAPPER has to forward by hand. Exported so a wrapper can
+  // name the type rather than re-derive it — see `SnapshotCapableAdapter` in engine.ts.
+  type SnapshotFn,
+  type StorePolicy,
   type WakeSignalSource,
 } from "./engine.js";

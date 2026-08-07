@@ -299,6 +299,23 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     await txDone(tx);
   }
 
+  /**
+   * The persisted half of {@link BaseMirrorStore.prune}: `delete`, not a tombstone `put`.
+   *
+   * ONE transaction over `entities` alone. It deliberately does not open `meta`: the cursor lives
+   * there, and a prune that could not touch it even by mistake is a stronger statement than one
+   * that merely does not. If this transaction aborts the rows come back on the next `load()`,
+   * which is the harmless direction — the pass simply runs again after the next drain.
+   */
+  protected async purge(keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+    const db = await this.open();
+    const tx = db.transaction([ENTITIES], "readwrite");
+    const entities = tx.objectStore(ENTITIES);
+    for (const key of keys) entities.delete(key);
+    await txDone(tx);
+  }
+
   protected async wipe(): Promise<void> {
     const db = await this.open();
     const tx = db.transaction([ENTITIES, META], "readwrite");

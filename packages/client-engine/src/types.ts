@@ -109,6 +109,51 @@ export interface SyncResponse {
   serverTime: ISODateTime;
 }
 
+/**
+ * ONE PAGE OF `GET /sync/snapshot` — the cold-start path that replaces `since=0`.
+ *
+ * ## WHY THIS EXISTS AND IS NOT JUST `/sync?since=0`
+ *
+ * `since=0` replays the WHOLE change log: every create, every subsequent update, every move, in
+ * the order they happened, so a mailbox that has been organized for a year costs the client every
+ * intermediate state of every row it will end up holding exactly once. A snapshot is the CURRENT
+ * state instead — one `op:"create"` per live row, nothing superseded — read at a single
+ * consistent point, which is what {@link asOfSeq} names.
+ *
+ * ## THE THREE PROPERTIES A CONSUMER MAY RELY ON
+ *
+ *  1. **Every page reads the SAME point.** `asOfSeq` is identical on page 1 and page 9; it is not
+ *     "where we got to". So a delta drain resuming at `asOfSeq` after the last page misses
+ *     nothing, whatever happened on the server while the pages were being fetched.
+ *  2. **Page 1 is all live state plus the newest page of messages**, and later pages are messages
+ *     only, newest-first. A client that stops early therefore has a coherent — if short — mailbox
+ *     rather than an arbitrary slice of one.
+ *  3. **`nextCursor` is opaque and `null` on the last page.** It is the server's paging token, not
+ *     a `/sync` cursor, and must never be written to the mirror as one.
+ *
+ * ## `window` IS INFORMATIONAL, DELIBERATELY
+ *
+ * It reports the retention window the server paged with. The client does NOT adopt it as its
+ * storage policy: `EngineOptions.storePolicy` defaults to `full`, and a desktop install whose
+ * whole point is that the mail is on the device must not become prunable because a server said so
+ * in a response body. Reading it here and acting on it there would be exactly that.
+ */
+export interface SyncSnapshotPage {
+  /**
+   * The sequence number the whole snapshot was read at. The client commits `String(asOfSeq)` as
+   * its `/sync` cursor — and only with the LAST page (contract §3.3): a crash mid-snapshot must
+   * leave the cursor at "0" so the next start re-snapshots rather than resuming from a point it
+   * never fully applied.
+   */
+  asOfSeq: number;
+  /** Live rows as full DTOs. Always `op:"create"`, always `seq === asOfSeq`. */
+  changes: SyncChange[];
+  /** The server's opaque paging token; `null` ⇒ this was the last page. */
+  nextCursor: string | null;
+  /** What the server paged with. Informational — see the note above. */
+  window: { days: number; minRows: number };
+}
+
 // ── entity DTO mirrors ─────────────────────────────────────────────────────
 
 export interface SensitivityFlags {
