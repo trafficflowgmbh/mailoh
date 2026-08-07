@@ -149,6 +149,41 @@
   gap: 8px;
 }
 
+/* One grid cell = one attachment, which is the tile (save) and, where looking is possible,
+   a small eye laid over its trailing edge. The eye is a SIBLING of the tile rather than a
+   child, because a button inside a button is invalid and the press would be ambiguous; this
+   wrapper is what lets the two sit in one rectangle regardless. */
+.att-item { position: relative; display: flex; min-width: 0; }
+.att-item > .att-tile { flex: 1; min-width: 0; }
+/* Room for the eye, so a long filename never runs underneath it. Only when there IS one. */
+.att-item[data-peek] > .att-tile { padding-right: 42px; }
+
+/* Quieter than the tile it sits on: no ground of its own until it is pointed at, because the
+   tile is the verb and this is the aside. */
+.att-peek {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  transform: translateY(-50%);
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  color: var(--ink3);
+  border-radius: 8px;
+  background: transparent;
+  transition: background .15s var(--swift), color .15s var(--swift);
+}
+.att-peek:hover { color: var(--ink); background: var(--tint2); }
+.att-peek:active { transform: translateY(-50%) scale(.94); }
+.att-tile[data-state="ready"] + .att-peek:hover { background: var(--tint); }
+/* Mid-fetch the tile is inert and so is this — guarded in the component, not `disabled`. */
+.att-item[data-peek] > .att-tile[data-state="loading"] + .att-peek { color: var(--ink3); cursor: default; }
+.att-item[data-peek] > .att-tile[data-state="loading"] + .att-peek:hover { background: transparent; }
+
 .att-tile {
   display: flex;
   align-items: center;

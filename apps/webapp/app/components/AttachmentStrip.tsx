@@ -34,11 +34,12 @@
  * field renders the type glyph instead, so a tracker can never ride in through this prop
  * (the same posture `no-third-party.test.ts` holds the rest of the app to).
  *
- * COPY LIVES HERE RATHER THAN IN THE TRANSLATION CATALOGUE — for now, and with one exit.
- * These sentences have no keys in `messages/en.json` yet, so they are declared in `COPY`
- * below under the `attachments` namespace they will take there; adding the keys and swapping
- * for `useTranslations("attachments")` is then a one-line change with exactly one place to
- * make it. Same shim-with-one-exit pattern as `ActionBar`'s `copy()`.
+ * COPY IS RENDERED FROM HERE, NOT YET FROM THE TRANSLATION CATALOGUE — with one exit.
+ * Every sentence below already has its key in `messages/en.json`, under the `attachments`
+ * namespace and spelled the same way, so the remaining step is swapping `COPY` for
+ * `useTranslations("attachments")` — one change, in one place. Until then a copy edit has to
+ * land in both, and a new sentence gets its key at the same time as its constant, which is
+ * why each one names its key. Same shim-with-one-exit pattern as `ActionBar`'s `copy()`.
  */
 import type { ReactNode } from "react";
 import "./attachment-strip.css";
@@ -108,7 +109,22 @@ export interface AttachmentStripProps {
    * argument; a rename there and here is owed to whoever next owns the pane.
    */
   items: AttachmentsView;
+  /**
+   * PRESSING A TILE SAVES THE FILE. That is what a person reaches for an attachment to do,
+   * and it is one press whatever the type — no viewer stands between them and the bytes.
+   */
   onOpen(id: string): void;
+  /**
+   * Look at it instead — the small control in the tile's corner, and never the whole tile.
+   * Optional: without it no tile grows one, which is what a surface that can only save wants.
+   */
+  onPreview?(id: string): void;
+  /**
+   * Can THIS file be shown without leaving the page? The strip does not know and must not
+   * guess: the answer decides whether a file is rendered or only saved, and that is a
+   * security question with one owner. Absent, or `false`, means the tile offers saving alone.
+   */
+  canPreview?(item: AttachmentItem): boolean;
   onDownloadAll(): void;
   downloadingAll: boolean;
 }
@@ -120,6 +136,8 @@ const COPY = {
   groupAria: "Attachments",
   downloadAll: "Download all",
   downloadingAll: "Fetching…",
+  /** en.json: "Preview {name}" — the file is named because a strip may hold five of these. */
+  preview: (name: string) => `Preview ${name}`,
   /** en.json: "{size} · in your mailbox" — the true thing: not fetched yet. */
   idle: (size: string) => `${size} · in your mailbox`,
   loading: "Fetching from your mailbox…",
@@ -227,6 +245,14 @@ const GLYPH_TRAY = (
   </svg>
 );
 
+/* An eye: the one shape that reads as "look, don't take" without a word beside it. */
+const GLYPH_EYE = (
+  <svg className="ic" viewBox="0 0 16 16" aria-hidden="true" style={{ width: 14, height: 14 }}>
+    <path d="M1.6 8s2.4-4 6.4-4 6.4 4 6.4 4-2.4 4-6.4 4S1.6 8 1.6 8Z" />
+    <circle cx="8" cy="8" r="1.9" />
+  </svg>
+);
+
 /* ── the leaf: what kind of object this is, at a glance ─────────────────────────────── */
 
 function Leaf({ item }: { item: AttachmentItem }) {
@@ -254,7 +280,26 @@ function Leaf({ item }: { item: AttachmentItem }) {
 
 /* ── one attachment ─────────────────────────────────────────────────────────────────── */
 
-function Tile({ item, onOpen }: { item: AttachmentItem; onOpen: (id: string) => void }) {
+/**
+ * ── TWO VERBS, AND ONLY ONE OF THEM IS THE TILE ──────────────────────────────────────────
+ *
+ * The tile is SAVE. It is the whole rectangle, it is what a press does whatever the file is,
+ * and it is the same act for a PDF as for a zip — the reader does not have to know which
+ * types this app happens to be able to draw before they can have their file.
+ *
+ * LOOK is a second, smaller control in the corner, offered only where looking is possible.
+ * It is a separate `<button>` beside the tile rather than inside it: a button within a button
+ * is invalid, and the browser would give the press to whichever it felt like.
+ */
+function Tile({
+  item,
+  onOpen,
+  onPreview,
+}: {
+  item: AttachmentItem;
+  onOpen: (id: string) => void;
+  onPreview?: (id: string) => void;
+}) {
   const size = formatSize(item.sizeBytes);
   const [stem, ext] = splitName(item.filename);
 
@@ -293,10 +338,13 @@ function Tile({ item, onOpen }: { item: AttachmentItem; onOpen: (id: string) => 
   );
 
   if (item.state === "too_large") {
-    /* Not a button, deliberately: there is nothing pressing it could truthfully do. */
+    /* Not a button, deliberately: there is nothing pressing it could truthfully do. And no
+       look either — the bytes are past the ceiling, so neither verb has an honest version. */
     return (
-      <div className="att-tile" data-state="too_large">
-        {body}
+      <div className="att-item">
+        <div className="att-tile" data-state="too_large">
+          {body}
+        </div>
       </div>
     );
   }
@@ -305,18 +353,35 @@ function Tile({ item, onOpen }: { item: AttachmentItem; onOpen: (id: string) => 
      started. While loading the press is inert (guarded, not `disabled` — `disabled`
      would drop that focus mid-wait). */
   const loading = item.state === "loading";
+  /* Not over a `failed` tile: the whole tile is the retry there, and a second control
+     beside it would offer a look at bytes that are not here. */
+  const peek = item.state === "failed" ? undefined : onPreview;
   return (
-    <button
-      type="button"
-      className="att-tile"
-      data-state={item.state}
-      aria-busy={loading || undefined}
-      aria-disabled={loading || undefined}
-      title={item.state === "failed" ? item.error : undefined}
-      onClick={loading ? undefined : () => onOpen(item.id)}
-    >
-      {body}
-    </button>
+    <div className="att-item" data-peek={peek ? "" : undefined}>
+      <button
+        type="button"
+        className="att-tile"
+        data-state={item.state}
+        aria-busy={loading || undefined}
+        aria-disabled={loading || undefined}
+        title={item.state === "failed" ? item.error : undefined}
+        onClick={loading ? undefined : () => onOpen(item.id)}
+      >
+        {body}
+      </button>
+      {peek ? (
+        <button
+          type="button"
+          className="att-peek"
+          aria-label={COPY.preview(item.filename)}
+          title={COPY.preview(item.filename)}
+          aria-disabled={loading || undefined}
+          onClick={loading ? undefined : () => peek(item.id)}
+        >
+          {GLYPH_EYE}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -368,7 +433,14 @@ function ListState({ sentence, title, working, onRetry }: {
 
 /* ── the strip ──────────────────────────────────────────────────────────────────────── */
 
-export function AttachmentStrip({ items, onOpen, onDownloadAll, downloadingAll }: AttachmentStripProps) {
+export function AttachmentStrip({
+  items,
+  onOpen,
+  onPreview,
+  canPreview,
+  onDownloadAll,
+  downloadingAll,
+}: AttachmentStripProps) {
   switch (items.state) {
     case "unavailable":
       return null;
@@ -394,9 +466,16 @@ export function AttachmentStrip({ items, onOpen, onDownloadAll, downloadingAll }
         />
       );
     case "ready":
-      return items.items.length === 0
-        ? null
-        : <ReadyStrip items={items.items} onOpen={onOpen} onDownloadAll={onDownloadAll} downloadingAll={downloadingAll} />;
+      return items.items.length === 0 ? null : (
+        <ReadyStrip
+          items={items.items}
+          onOpen={onOpen}
+          onPreview={onPreview}
+          canPreview={canPreview}
+          onDownloadAll={onDownloadAll}
+          downloadingAll={downloadingAll}
+        />
+      );
     default: {
       /* EXHAUSTIVE BY CONSTRUCTION. A `default` returning null would be the flattening defect
          rebuilt one branch over: a new list state would render as silence and nobody would
@@ -407,9 +486,11 @@ export function AttachmentStrip({ items, onOpen, onDownloadAll, downloadingAll }
   }
 }
 
-function ReadyStrip({ items, onOpen, onDownloadAll, downloadingAll }: {
+function ReadyStrip({ items, onOpen, onPreview, canPreview, onDownloadAll, downloadingAll }: {
   items: AttachmentItem[];
   onOpen: (id: string) => void;
+  onPreview?: (id: string) => void;
+  canPreview?: (item: AttachmentItem) => boolean;
   onDownloadAll: () => void;
   downloadingAll: boolean;
 }) {
@@ -447,7 +528,15 @@ function ReadyStrip({ items, onOpen, onDownloadAll, downloadingAll }: {
       ) : null}
       <div className="att-grid">
         {items.map((item) => (
-          <Tile key={item.id} item={item} onOpen={onOpen} />
+          <Tile
+            key={item.id}
+            item={item}
+            onOpen={onOpen}
+            /* The look is offered per FILE, not per strip: a message can carry a PDF this app
+               will draw and an SVG it will only ever save, and the second must not grow an eye
+               because the first one did. */
+            onPreview={onPreview && canPreview?.(item) ? onPreview : undefined}
+          />
         ))}
       </div>
     </div>

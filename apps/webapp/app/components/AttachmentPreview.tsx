@@ -1,12 +1,14 @@
 "use client";
 
 /**
- * ═══ QUICK LOOK: A PRESS BECOMES A LOOK, NOT A DOWNLOAD ═══════════════════════════════════
+ * ═══ QUICK LOOK: THE SECOND VERB ══════════════════════════════════════════════════════════
  *
- * The macOS gesture, brought to the web client: press an attachment and it opens INSTANTLY
- * over the current view — no download required to look — dismissed with Space or Esc, moved
- * through with ←/→, a PDF paged with ↑/↓. The bytes are the same on-demand IMAP fetch the
- * strip already makes; the overlay opens at once and fills in when they land.
+ * The macOS gesture, brought to the web client. Pressing an attachment SAVES it — that is the
+ * primary act and the strip's whole tile is it. This is the smaller one beside it: the eye in
+ * a tile's corner opens the file over the current view without downloading anything,
+ * dismissed with Space or Esc, moved through with ←/→, a PDF paged with ↑/↓. The bytes are
+ * the same on-demand IMAP fetch the strip already makes; the overlay opens at once and fills
+ * in when they land, and carries a Download of its own for the reader who now wants the file.
  *
  * ── THE ONE SECURITY RULE, STATED ONCE: ATTACHMENT BYTES NEVER BECOME A DOCUMENT ─────────
  *
@@ -44,6 +46,16 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+/* pdf.js's OWN types, not a hand-written slice of them.
+ *
+ * The slice that used to stand here declared `destroy()` on the document and was reached
+ * through `as unknown as`, so the compiler never compared it with the library. pdf.js puts
+ * `destroy()` on the LOADING TASK — the document proxy has no such method — and the mismatch
+ * therefore surfaced only when a reader closed a PDF preview: the teardown threw
+ * `doc.destroy is not a function` out of an effect cleanup, which React hands to the nearest
+ * error boundary, which replaces the whole app with its error page. Typing this against the
+ * package makes that same mistake a build failure instead. */
+import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import type { AttachmentItem } from "./AttachmentStrip";
 import { useKeyBindings } from "../shell/keymap";
 import "./attachment-preview.css";
@@ -63,12 +75,13 @@ export function previewKind(mimeType: string): PreviewKind {
 }
 
 /**
- * Can this app render the file inline, or is a press only ever a download?
+ * Can this app render the file inline, or can it only ever be saved?
  *
  * The set is exactly the engine's `RENDERABLE_MIME` (the four raster images plus PDF) widened
  * by `text/*`. SVG is deliberately NOT here — it is a document that executes script, and the
  * engine downgrades its blob to `application/octet-stream` for the same reason. `MessagePane`
- * reads this to decide whether a tile press opens this overlay or saves a file.
+ * reads this to decide which tiles are offered a preview control at all; the tiles themselves
+ * download either way, so a `false` here removes a viewer, never the file.
  */
 export function isPreviewable(mimeType: string): boolean {
   return previewKind(mimeType) !== "other";
@@ -157,6 +170,20 @@ async function loadPdfjs(): Promise<PdfjsModule> {
   return pdfjsPromise;
 }
 
+/**
+ * Abort a load and terminate its worker, whatever state it is in.
+ *
+ * `destroy()` lives on the LOADING TASK. The document proxy `task.promise` resolves to has no
+ * such method, so reaching for one there throws — and this is called from an effect cleanup,
+ * where a throw is not a logged mistake but React unmounting the application.
+ */
+function discard(task: PDFDocumentLoadingTask | null): void {
+  if (!task) return;
+  void task.destroy().catch(() => {
+    /* the worker is already gone; that is the state this was asking for */
+  });
+}
+
 /** The longest canvas edge, in CSS px, before a crafted `/MediaBox` demands a gigapixel raster. */
 const MAX_CANVAS_EDGE = 4096;
 /** The width a PDF page renders to before CSS scales it down to the panel. */
@@ -214,12 +241,21 @@ export function AttachmentPreview({
     if (active.state === "idle") ensure(active.id);
   }, [active, canPreview, ensure]);
 
-  /* ── PDF document + page state, owned here so ↑/↓ and the page counter can see it ── */
-  const [pdf, setPdf] = useState<{ id: string; doc: PdfDoc; numPages: number } | null>(null);
+  /* ── PDF document + page state, owned here so ↑/↓ and the page counter can see it ──
+   *
+   * THE LOADING TASK IS KEPT ALONGSIDE THE DOCUMENT, and it is the half that can be torn
+   * down: `getDocument()` returns the task, `task.promise` resolves to the document, and
+   * `task.destroy()` is the only call that aborts the load and terminates the worker. */
+  const [pdf, setPdf] = useState<{
+    id: string;
+    task: PDFDocumentLoadingTask;
+    doc: PDFDocumentProxy;
+    numPages: number;
+  } | null>(null);
   const [page, setPage] = useState(1);
   const [pdfError, setPdfError] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const renderTaskRef = useRef<{ cancel: () => void } | null>(null);
+  const renderTaskRef = useRef<RenderTask | null>(null);
 
   // Load the document when a ready PDF becomes active. The ArrayBuffer is read FRESH here —
   // pdf.js transfers it to its worker and detaches it, so a cached buffer fails the second open.
@@ -231,6 +267,10 @@ export function AttachmentPreview({
     let cancelled = false;
     setPdfError(false);
     (async () => {
+      // Declared out here so every exit — cancelled, thrown, or resolved — can reach the
+      // task it started. A load abandoned without this leaves a worker parsing bytes nobody
+      // will look at.
+      let task: PDFDocumentLoadingTask | null = null;
       try {
         const pdfjs = await loadPdfjs();
         if (!pdfjs.GlobalWorkerOptions.workerSrc) throw new Error("pdf worker unavailable");
@@ -239,18 +279,16 @@ export function AttachmentPreview({
         // `disableStream` keep it from issuing range requests; there is nothing to fetch here
         // anyway (the source is a Blob, and no cMap/font CDN is configured), so opening the
         // document reaches no network.
-        const doc = (await pdfjs.getDocument({
-          data: buf,
-          disableAutoFetch: true,
-          disableStream: true,
-        }).promise) as unknown as PdfDoc;
+        task = pdfjs.getDocument({ data: buf, disableAutoFetch: true, disableStream: true });
+        const doc = await task.promise;
         if (cancelled) {
-          void doc.destroy();
+          discard(task);
           return;
         }
-        setPdf({ id, doc, numPages: doc.numPages });
+        setPdf({ id, task, doc, numPages: doc.numPages });
         setPage(1);
       } catch {
+        discard(task);
         if (!cancelled) setPdfError(true);
       }
     })();
@@ -261,10 +299,13 @@ export function AttachmentPreview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id, active?.state, kind]);
 
-  // Destroy a document when it is replaced or the overlay unmounts — the worker holds it open.
+  // Tear the document down when it is replaced or the overlay unmounts — the worker holds it
+  // open otherwise. This runs on EVERY close, so anything that throws here reaches React's
+  // error boundary and takes the app down with it; `discard` therefore swallows a rejection
+  // from a worker that is already gone rather than leaving it unhandled.
   useEffect(() => {
     return () => {
-      if (pdf) void pdf.doc.destroy();
+      if (pdf) discard(pdf.task);
     };
   }, [pdf]);
 
@@ -292,11 +333,14 @@ export function AttachmentPreview({
         canvas.style.width = `${Math.floor(vp.width)}px`;
         canvas.style.height = `${Math.floor(vp.height)}px`;
         renderTaskRef.current?.cancel();
+        // `canvas: null` with a context is pdf.js's documented way to render into a context the
+        // caller owns; it hands the bytes to a 2D context and never to a document.
         const task = p.render({
+          canvas: null,
           canvasContext: ctx,
           viewport: vp,
           ...(dpr !== 1 ? { transform: [dpr, 0, 0, dpr, 0, 0] } : {}),
-        }) as unknown as { promise: Promise<void>; cancel: () => void };
+        });
         renderTaskRef.current = task;
         await task.promise;
       } catch {
@@ -603,23 +647,3 @@ const FILE_GLYPH = (
     <path d="M4.3 2.2h4.5l3 3v8.6H4.3z" /><path d="M8.8 2.2v3h3" />
   </svg>
 );
-
-/* ── the minimal slice of pdf.js this file touches, typed so the rest can stay `unknown` ── */
-
-interface PdfViewport {
-  width: number;
-  height: number;
-}
-interface PdfPage {
-  getViewport(opts: { scale: number }): PdfViewport;
-  render(opts: {
-    canvasContext: CanvasRenderingContext2D;
-    viewport: PdfViewport;
-    transform?: number[];
-  }): { promise: Promise<void>; cancel: () => void };
-}
-interface PdfDoc {
-  numPages: number;
-  getPage(n: number): Promise<PdfPage>;
-  destroy(): Promise<void>;
-}

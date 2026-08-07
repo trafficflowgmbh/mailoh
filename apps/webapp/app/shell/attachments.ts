@@ -1,13 +1,13 @@
 "use client";
 
 /**
- * ═══ THE LAST TEN CENTIMETRES: A PRESS BECOMES A PREVIEW, OR A FILE ═══════════════════════
+ * ═══ THE LAST TEN CENTIMETRES: A PRESS BECOMES A FILE ═════════════════════════════════════
  *
- * A press USED to be one thing — a download. It is now two, and which one is decided one
- * layer up, in `MessagePane`, from the attachment's declared type: a type this app can render
- * (image, PDF, text) opens the Quick-Look overlay through `openAttachmentPreview`; everything
- * else still becomes a file through {@link AttachmentsChrome.open} below. The overlay carries a
- * Download of its own, so the file is never more than one further press away.
+ * Pressing an attachment saves it, whatever it is, through {@link AttachmentsChrome.open}
+ * below. Looking at it first is a SEPARATE, smaller control offered only on the types this
+ * app can draw — the strip's own eye, wired one layer up in `MessagePane` to
+ * `openAttachmentPreview`. That overlay fetches through {@link AttachmentsChrome.ensure} and
+ * carries a Download of its own, so both directions cost one press from either surface.
  *
  * The engine holds every attachment's state, mints the Blob URL and RETAINS the typed bytes;
  * `AttachmentStrip` draws it. Neither of them puts a file on somebody's disk, and neither of
@@ -73,10 +73,9 @@ export interface AttachmentsChrome {
    */
   itemsOf(messageId: string): AttachmentsView;
   /**
-   * Fetch (if needed) and SAVE one attachment — the DOWNLOAD path. It backs the overlay's own
-   * Download button and the tile press for a type this app will not render (a docx, a zip, an
-   * SVG — SVG deliberately, it is a document that executes script). The preview path does not
-   * go through here; it goes through {@link ensure}.
+   * Fetch (if needed) and SAVE one attachment — the DOWNLOAD path, and the primary one. It
+   * backs every tile press in the strip and the overlay's own Download button. The preview
+   * path does not go through here; it goes through {@link ensure}.
    */
   open(messageId: string, attachmentId: string): void;
   /**
