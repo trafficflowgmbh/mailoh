@@ -791,6 +791,15 @@ export function mailIsLight(bg: Rgb | null): boolean {
   return bg === null || relativeLuminance(bg) > LIGHT_LUMINANCE;
 }
 
+/**
+ * A colour this file computed, as CSS. Alpha is dropped deliberately — this is only ever used
+ * to paint the frame's PAPER, which is the bottom-most surface and has nothing to blend with.
+ */
+export function cssColor(c: Rgb): string {
+  const n = (v: number): number => Math.round(Math.min(Math.max(v, 0), 255));
+  return `rgb(${n(c.r)},${n(c.g)},${n(c.b)})`;
+}
+
 // ── the sanitizer ──────────────────────────────────────────────────────────────────────
 
 export interface SanitizeOptions {
@@ -1234,7 +1243,16 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
    :root rather than html on purpose: a sender's html,body{height:300vh!important} is equal
    specificity and LATER in the document, so it used to win outright. Chrome, not theory. */
 :root,:root>body{height:auto !important}
-body{margin:0;padding:16px;background:#fff;color:#1b1b1b;
+/* THE PAPER. --ohmail-paper is the mail's OWN declared background when it has one (see
+   effectiveBackground, and buildMailDocument, which is what sets the variable); #fff is the
+   default every renderer has always used for mail that declares nothing.
+   It matters most for a mail this viewer declines to invert. A sender's dark design usually
+   lives on an inner wrapper table, not on a body element the sanitizer keeps — so the frame's
+   own white paper showed around and beneath it, and a dark newsletter read as a white card.
+   The inverted path overrides this below with #e4e4e4, which is chosen to invert to the app's
+   own dark panel; specificity is what keeps the two apart, so the paper applies exactly when
+   the filter does not. */
+body{margin:0;padding:16px;background:var(--ohmail-paper,#fff);color:#1b1b1b;
   font:15px/1.62 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   overflow-wrap:break-word}
 img{border:0}
@@ -1333,10 +1351,14 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
  */
 export function buildMailDocument(
   bodyHtml: string,
-  opts: { imagesLoaded?: boolean; dark?: boolean } = {},
+  opts: { imagesLoaded?: boolean; dark?: boolean; paper?: Rgb | null } = {},
 ): string {
+  // The paper rides on the ROOT ELEMENT and is independent of `dark`, so the light and dark
+  // builds of the same message still differ by the attribute alone — which is the equality
+  // `message-body.test.ts` pins and the reason the live flip can be a `toggleAttribute`.
+  const paper = opts.paper ? ` style="--ohmail-paper:${cssColor(opts.paper)}"` : "";
   return [
-    `<!doctype html><html${opts.dark === true ? " data-ohmail-dark=\"1\"" : ""}><head><meta charset="utf-8">`,
+    `<!doctype html><html${opts.dark === true ? " data-ohmail-dark=\"1\"" : ""}${paper}><head><meta charset="utf-8">`,
     `<meta http-equiv="Content-Security-Policy" content="${frameCsp(opts.imagesLoaded === true)}">`,
     // Belongs to the same promise as the CSP: if a consented image is ever fetched through
     // the proxy, not even the path of the page the reader is on travels with it.
@@ -1539,7 +1561,7 @@ export function MessageBody({
   const mail = useMemo(() => {
     if (!html) return null;
     if (!mounted || !sanitizerAvailable()) return { state: "unsupported" as const };
-    const { html: clean, blocked, sheets, oversize, light } = sanitizeMailHtml(html, {
+    const { html: clean, blocked, sheets, oversize, light, background } = sanitizeMailHtml(html, {
       imageProxy: proxy,
     });
     // A message too large to neutralise renders as TEXT, with a reason. Never as a blank
@@ -1560,7 +1582,13 @@ export function MessageBody({
       // a dep — rebuilding the srcdoc on a theme change would re-parse and re-measure the whole
       // mail, which is exactly what the attribute mechanism exists to avoid. A rebuild driven
       // by a real dep (html/proxy/mount) reads the current value here, so the two never diverge.
-      doc: buildMailDocument(clean, { imagesLoaded: proxy != null, dark: darkWanted && light }),
+      doc: buildMailDocument(clean, {
+        imagesLoaded: proxy != null,
+        dark: darkWanted && light,
+        // The mail's own paper, so a message this viewer declines to invert does not sit on a
+        // white sheet it never asked for. Ignored whenever the filter is on — see FRAME_CSS.
+        paper: background,
+      }),
       blocked,
       sheets,
     };
