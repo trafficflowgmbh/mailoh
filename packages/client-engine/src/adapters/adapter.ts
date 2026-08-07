@@ -1,5 +1,5 @@
 import type { ServerSearchWire } from "../engine.js";
-import type { EngineMutation, MessageBodyWire, SyncChange, SyncResponse } from "../types.js";
+import type { EngineMutation, MessageBodyWire, SyncChange, SyncResponse, UnsubscribeResult } from "../types.js";
 
 /**
  * ONE interface, two implementations (FixturesAdapter for ?demo/UI tests,
@@ -86,6 +86,17 @@ export interface EngineAdapter {
    * never be conflated — one is a missing capability, the other is a real result.
    */
   searchServer?(query: string, opts: { limit?: number }): Promise<ServerSearchWire | null>;
+
+  /**
+   * `POST /messages/:id/unsubscribe` — RFC 8058 one-click, performed SERVER-SIDE (the reader's
+   * IP and reading time never reach the sender). Optional for the reason `searchServer` is:
+   * absence is a real answer. The FixturesAdapter has no server and must issue zero requests
+   * (invariant #6), so it keeps NOT having this, and a surface reads its absence as "this client
+   * cannot unsubscribe" — offering no control rather than a dead one. A refusal THROWS (carrying
+   * the server's sentence); a 2xx resolves the outcome. The URL is never a parameter — the server
+   * reads it from the message's stored headers, which is what keeps this off the SSRF surface.
+   */
+  unsubscribe?(messageId: string): Promise<UnsubscribeResult>;
 
   // ── attachments ──────────────────────────────────────────────────────────
   //

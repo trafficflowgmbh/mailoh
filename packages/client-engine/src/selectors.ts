@@ -141,17 +141,23 @@ export function bodyOf(
   // html; and `loading`/`failed` have no body to describe. Only `ready` has a document, so
   // only `ready` may report one — otherwise a surface could render a stale frame underneath
   // a "still loading" line.
+  // `unsubscribe`/`unsubscribeUrl` follow the same contract as `html` ({@link MessageBody}): a
+  // posture only exists on a hydrated `ready` body, so every other branch reports the honest
+  // absence — `"no_header"` (offers no route) and `null` (no link). The demo's rows carry no
+  // headers, a snippet has not been fetched, and loading/failed have no body to describe.
   if (m.body !== undefined) {
-    return { text: m.body, state: "full", html: null, loadedRemoteContent: false };
+    return { text: m.body, state: "full", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null };
   }
   const rec = reader.get<MessageBodyRecord>("message_body", m.id);
-  if (!rec) return { text: m.snippet, state: "snippet", html: null, loadedRemoteContent: false };
+  if (!rec) return { text: m.snippet, state: "snippet", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null };
   if (rec.state === "ready") {
     return {
       text: rec.text,
       state: "full",
       html: rec.html ?? null,
       loadedRemoteContent: rec.loadedRemoteContent === true,
+      unsubscribe: rec.unsubscribe ?? "no_header",
+      unsubscribeUrl: rec.unsubscribeUrl ?? null,
     };
   }
   // Loading and failed both keep the snippet on screen — it is the only text there is — and
@@ -161,6 +167,8 @@ export function bodyOf(
     state: rec.state === "loading" ? "loading" : "failed",
     html: null,
     loadedRemoteContent: false,
+    unsubscribe: "no_header",
+    unsubscribeUrl: null,
   };
 }
 
@@ -374,6 +382,11 @@ function heldOf(reader: EntityReader, m: EngineMessage, now: Date): ScreenerHeld
     // has run — a consent decision is never rendered against a stale frame under a snippet.
     html: body.html,
     loadedRemoteContent: body.loadedRemoteContent,
+    // The unsubscribe posture rides the body the preview already hydrates on selection — so the
+    // screened-out / spam previews can offer a way out with zero extra requests. `no_header`
+    // until the body is `full`, exactly like `html`.
+    unsubscribe: body.unsubscribe,
+    unsubscribeUrl: body.unsubscribeUrl,
     ...(m.trackerNote ? { trackerNote: m.trackerNote } : {}),
   };
 }

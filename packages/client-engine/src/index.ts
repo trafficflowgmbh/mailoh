@@ -50,6 +50,9 @@ export {
   type TagDTO,
   type TriageItemDTO,
   type TriageState,
+  type UnsubscribeHeaderState,
+  type UnsubscribeRefusal,
+  type UnsubscribeResult,
   type WaterlineMeta,
 } from "./types.js";
 

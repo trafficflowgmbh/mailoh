@@ -916,6 +916,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const remoteImages = useRemoteImages({ onFailed: (message) => toast(message) });
 
   /**
+   * The Screener's unsubscribe passthrough (C) — `engine.unsubscribe`, or ABSENT on the demo.
+   *
+   * Withheld when `demo`, so a screened-out / spam preview offers no unsubscribe control on a
+   * client with no server (`engine.unsubscribe` would answer `null` anyway — the FixturesAdapter
+   * serves none — and an undefined callback is what keeps the control from rendering at all,
+   * the same posture `remoteImages` takes). A refusal REJECTS with the server's own sentence,
+   * which the view renders verbatim rather than re-deriving.
+   */
+  const onUnsubscribe = useMemo(
+    () => (demo ? undefined : (id: string) => engine.unsubscribe(id)),
+    [demo, engine],
+  );
+
+  /**
    * THE OHBOX'S SPLIT-PANE SELECTION IS THE INTENT.
    *
    * Selecting a row IS opening the message here — the reading column renders it in full
@@ -2753,6 +2767,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 /* The reading pane's remote-image consent chrome, so a held preview blocks
                    and gates images exactly as the pane does. Absent on the demo. */
                 remoteImages={remoteImages}
+                /* Unsubscribe, server-side, for the screened-out / spam previews. Absent on
+                   the demo — the control is simply not offered where nothing can serve it. */
+                onUnsubscribe={onUnsubscribe}
                 full={screenerFull}
                 onFull={setScreenerFull}
               />

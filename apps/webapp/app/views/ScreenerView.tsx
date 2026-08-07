@@ -10,9 +10,15 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import type { BodyState, ScreenerSenderDTO } from "@ohmail/client-engine";
+import type {
+  BodyState,
+  ScreenerSenderDTO,
+  UnsubscribeHeaderState,
+  UnsubscribeResult,
+} from "@ohmail/client-engine";
 import {
   Button,
+  Chip,
   DecisionBar,
   DECISION_DONE_LABEL,
   DECISION_KEY,
@@ -26,6 +32,7 @@ import {
   type DecisionDestination,
   type DecisionScope,
 } from "@ohmail/ui";
+import { messageOf } from "../api-client";
 import { avatarHue } from "../shell/format";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
@@ -176,6 +183,7 @@ export function ScreenerView({
   onSelect,
   hydrateBody,
   remoteImages,
+  onUnsubscribe,
   full,
   onFull,
 }: {
@@ -203,6 +211,12 @@ export function ScreenerView({
   onSelect: (segment: ScreenerSegmentId, id: string | null) => void;
   /** Ask for one held message's body. `retry` marks a human asking again. */
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
+  /**
+   * Unsubscribe one held message's sender, server-side. ABSENT on a client with no server (the
+   * demo, a test) — the screened-out / spam previews then offer no unsubscribe control rather
+   * than a dead one. A refusal rejects with the server's own sentence.
+   */
+  onUnsubscribe?: (id: string) => Promise<UnsubscribeResult | null>;
   full: boolean;
   onFull: (full: boolean) => void;
 }) {
@@ -233,10 +247,24 @@ export function ScreenerView({
   const scopeOf = (s: ScreenerSenderDTO): DecisionScope =>
     scopes.get(s.id) ?? s.scope ?? "sender";
 
-  // Preview scrolls back to top whenever the subject changes.
+  // Open the preview at the LATEST held message whenever the sender changes. The held mail
+  // renders oldest→newest (see `newestHeld` / the previews), so a fresh render sits at the
+  // top on the oldest — the same top-of-thread problem `MessagePane` fixes for conversations,
+  // and fixed the same way: anchor the LAST `.hmail` by direct `scrollTop` (instant — the
+  // `.scn-read` column, `.read-col` in `message.css`, declares no smooth scroll). Keyed on
+  // `[activeId, segment]` only, so a body hydrating in does not re-anchor a scrolled reader.
   useEffect(() => {
     setChoosing(null);
-    document.querySelector(".view-screener .scn-read")?.scrollTo({ top: 0 });
+    const read = document.querySelector<HTMLElement>(".view-screener .scn-read");
+    if (!read) return;
+    const entries = read.querySelectorAll<HTMLElement>(".hmail");
+    const last = entries[entries.length - 1];
+    if (!last) {
+      read.scrollTo({ top: 0 });
+      return;
+    }
+    read.scrollTop =
+      last.getBoundingClientRect().top - read.getBoundingClientRect().top + read.scrollTop - 14;
   }, [activeId, segment]);
 
   // Mobile full-screen preview hides the dock (prototype scn-full).
@@ -622,6 +650,7 @@ export function ScreenerView({
             }}
             onRetryBody={retryBody}
             remoteImages={remoteImages}
+            onUnsubscribe={onUnsubscribe}
             onBack={() => onFull(false)}
           />
         ) : (
@@ -641,6 +670,7 @@ export function ScreenerView({
             onDelete={() => state.deleteSpam(current as SpamRow)}
             onRetryBody={retryBody}
             remoteImages={remoteImages}
+            onUnsubscribe={onUnsubscribe}
             onBack={() => onFull(false)}
           />
         )}
@@ -678,6 +708,98 @@ function heldRemoteProps(
   };
 }
 
+/**
+ * THE UNSUBSCRIBE CONTROL FOR ONE HELD MESSAGE (C).
+ *
+ * Rendered only in the screened-out and spam previews — the two piles whose held mail sits in a
+ * reject folder the server will act on — and only once the body has hydrated to `full`, because
+ * the posture is derived from the sender's headers and "we have not asked yet" (`no_header` on a
+ * snippet) must not read as "there is no way out".
+ *
+ *  · `one_click`     — one explicit press IS the consent (the remote-images precedent: a control
+ *                      that names the act needs no second dialog). The POST is server-side and
+ *                      SSRF-gated, the URL never leaves the server, and `unsubscribe_records`
+ *                      makes it at-most-once, so a repeat press is safe. The returned result is
+ *                      rendered verbatim; a refusal arrives as a throw carrying the server's own
+ *                      sentence.
+ *  · `not_one_click` — no one-click route, but the sender publishes an https page: a plain
+ *                      outbound link the reader opens themselves, named as leaving to the sender.
+ *  · `mailto_only`   — the one refusal we owe an explanation: a route exists and ohmail declines
+ *                      it, because it never sends mail on the user's behalf. Indicator, no action.
+ */
+function HeldUnsubscribe({
+  state,
+  url,
+  onUnsubscribe,
+}: {
+  state: UnsubscribeHeaderState;
+  url: string | null;
+  onUnsubscribe: () => Promise<UnsubscribeResult | null>;
+}) {
+  const t = useTranslations("screener");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  if (state === "no_header") return null;
+
+  if (state === "mailto_only") {
+    return (
+      <p className="hm-unsub note" role="status">
+        {t("unsubMailtoOnly")}
+      </p>
+    );
+  }
+
+  if (state === "not_one_click") {
+    if (!url) return null;
+    return (
+      <p className="hm-unsub">
+        <Chip icon="door">{t("unsubOffered")}</Chip>
+        <a className="hm-unsub-link" href={url} target="_blank" rel="noreferrer">
+          {t("unsubExternal")}
+        </a>
+      </p>
+    );
+  }
+
+  // one_click
+  const run = async () => {
+    if (busy || result) return;
+    setBusy(true);
+    try {
+      const res = await onUnsubscribe();
+      setResult(
+        res && res.refusal === "already_recorded"
+          ? t("unsubAlready")
+          : res && res.posted
+            ? t("unsubSent")
+            : t("unsubDone"),
+      );
+    } catch (err) {
+      // The server's own sentence — never a re-derived one (the same discipline `remoteImages`
+      // keeps). A refused unsubscribe is a real, actionable fact only the server can phrase.
+      setResult(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <p className="hm-unsub">
+      <Chip icon="door">{t("unsubOffered")}</Chip>
+      {result ? (
+        <span className="hm-unsub-result" role="status">
+          {result}
+        </span>
+      ) : (
+        <Button variant="ghost" disabled={busy} onClick={run}>
+          {busy ? t("unsubSending") : t("unsubscribe")}
+        </Button>
+      )}
+    </p>
+  );
+}
+
 function HeldMail({
   from,
   address,
@@ -690,6 +812,9 @@ function HeldMail({
   imageProxy,
   onLoadRemote,
   onRetry,
+  unsubscribe,
+  unsubscribeUrl,
+  onUnsubscribe,
   trackerNote,
   dull,
 }: {
@@ -714,6 +839,12 @@ function HeldMail({
   onLoadRemote?: () => void;
   /** Ask for this held message's body again. Rendered only in the `failed` state. */
   onRetry?: () => void;
+  /** This message's unsubscribe posture, from its hydrated body. Absent ⇒ no control. */
+  unsubscribe?: UnsubscribeHeaderState;
+  /** The sender's https unsubscribe page, for `not_one_click` only. */
+  unsubscribeUrl?: string | null;
+  /** Unsubscribe THIS message, server-side. Absent (the demo, waiting preview) ⇒ no control. */
+  onUnsubscribe?: () => Promise<UnsubscribeResult | null>;
   trackerNote?: string;
   dull?: boolean;
 }) {
@@ -784,6 +915,12 @@ function HeldMail({
             </Button>
           ) : null}
         </p>
+      ) : null}
+      {/* The unsubscribe control (C): only once the body is hydrated (`full`), so the posture is
+          real, and only where a server can act on it (`onUnsubscribe` present — absent on the
+          demo and in the waiting preview). */}
+      {bodyState === "full" && onUnsubscribe && unsubscribe ? (
+        <HeldUnsubscribe state={unsubscribe} url={unsubscribeUrl ?? null} onUnsubscribe={onUnsubscribe} />
       ) : null}
     </article>
   );
@@ -899,6 +1036,7 @@ function ScreenedPreview({
   onAllow,
   onRetryBody,
   remoteImages,
+  onUnsubscribe,
   onBack,
 }: {
   sender: ScreenerSenderDTO;
@@ -908,6 +1046,7 @@ function ScreenedPreview({
   onAllow: (dest: "ohbox" | "reads") => void;
   onRetryBody: (id: string) => void;
   remoteImages?: RemoteImagesChrome;
+  onUnsubscribe?: (id: string) => Promise<UnsubscribeResult | null>;
   onBack: () => void;
 }) {
   const t = useTranslations("screener");
@@ -957,6 +1096,9 @@ function ScreenedPreview({
             html={h.html}
             bodyState={h.bodyState}
             onRetry={() => onRetryBody(h.id)}
+            unsubscribe={h.unsubscribe}
+            unsubscribeUrl={h.unsubscribeUrl}
+            onUnsubscribe={onUnsubscribe ? () => onUnsubscribe(h.id) : undefined}
             trackerNote={h.trackerNote}
             dull
             {...heldRemoteProps(remoteImages, h)}
@@ -977,6 +1119,7 @@ function SpamPreview({
   onDelete,
   onRetryBody,
   remoteImages,
+  onUnsubscribe,
   onBack,
 }: {
   row: SpamRow;
@@ -988,6 +1131,7 @@ function SpamPreview({
   onDelete: () => void;
   onRetryBody: (id: string) => void;
   remoteImages?: RemoteImagesChrome;
+  onUnsubscribe?: (id: string) => Promise<UnsubscribeResult | null>;
   onBack: () => void;
 }) {
   const t = useTranslations("screener");
@@ -1047,6 +1191,9 @@ function SpamPreview({
             html={h.html}
             bodyState={h.bodyState}
             onRetry={() => onRetryBody(h.id)}
+            unsubscribe={h.unsubscribe}
+            unsubscribeUrl={h.unsubscribeUrl}
+            onUnsubscribe={onUnsubscribe ? () => onUnsubscribe(h.id) : undefined}
             trackerNote={h.trackerNote}
             dull
             {...heldRemoteProps(remoteImages, h)}

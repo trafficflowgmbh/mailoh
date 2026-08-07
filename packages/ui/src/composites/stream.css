@@ -47,16 +47,30 @@
    gradient are otherwise the prototype's. */
 .scast.short.pend .sc-x{display:flex}
 .scast.short.pend .sc-fade{display:none}
+/* The pill sits under the clamp with a negative top margin, which reads well behind the
+   fade of a collapsed card. Where the fade is OFF — an expanded card, or a short-and-pending
+   one — that overlap crowds the text above it, so give the pill its own breathing room. */
+.scast.open .sc-x,
+.scast.short.pend .sc-x{margin-top:6px;margin-bottom:18px}
 /* ── the rendered-message viewer ──────────────────────────────────────────────────────
-   An OPEN card whose caller supplied a `bodySlot` swaps its clamped text preview for the
-   sanitized html viewer (the one the reading pane uses). The clamp, the fade and the
-   short-card pill-hiding all lift here: the viewer is an iframe that sizes itself, so the
-   card must neither measure nor clip it, and an open card must always stay closable. Placed
-   after the `.short` rules above so equal-specificity `.sc-x`/`.sc-fade` overrides win. */
-.scast.viewer .sc-clip{max-height:none;overflow:visible}
-.scast.viewer .sc-fade{display:none}
-.scast.viewer .sc-x{display:flex}
+   A card whose caller supplied a `bodySlot` renders the sanitized html viewer (the one the
+   reading pane uses) in BOTH states: COLLAPSED it stays clamped at 348 with the fade and the
+   pill, so every card in the stream is one uniform height however tall the mail; OPEN it
+   unclamps. The unclamp/fade-off/pill-force rules are therefore scoped to `.scast.viewer.open`
+   — a collapsed viewer keeps the base clamp. Placed after the `.short` rules above so
+   equal-specificity `.sc-x`/`.sc-fade` overrides win. */
+.scast.viewer.open .sc-clip{max-height:none;overflow:visible}
+.scast.viewer.open .sc-fade{display:none}
+.scast.viewer.open .sc-x{display:flex}
+/* Only pad the LOADING state, never a real short mail: a card waiting for its viewer reserves
+   a little height so the rendered message does not pop the stream when it lands. A hydrated
+   one-paragraph mail keeps its natural height. */
+.scast.pend .sc-clip{min-height:132px}
 .sc-viewer{padding:6px 22px 18px}
+/* The reading pane's "remote image / stylesheet blocked" bar is noise in the collapsed skim —
+   a per-card status line the reader is not yet reading. It returns the moment the card is
+   expanded (a full reading context), and is untouched everywhere else the viewer renders. */
+.scast:not(.open) .mb-bar{display:none}
 .stream .waterline{max-width:620px;margin:0 auto;padding:4px 12px 22px}
 .stream .tail-row{max-width:620px;margin:0 auto}
 @media (prefers-reduced-motion: reduce){

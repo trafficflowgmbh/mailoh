@@ -76,6 +76,15 @@ export interface UseSeenOnScrollOptions {
 export interface SeenObserver {
   /** Re-scan the scroller for [data-unseen] elements (call after re-render). */
   observe: () => void;
+  /**
+   * Has a HUMAN driven this scroller since it mounted (wheel, touch, or a scroll key)?
+   *
+   * The same authority the IntersectionObserver commit sits behind, exposed so a second
+   * seen-marking path — `StreamShell`'s dwell timer — can share it rather than reinvent it.
+   * A programmatic `scrollTo`/`scrollIntoView` produces none of those inputs, so it never
+   * flips this true, which is what keeps a jump from writing `\Seen` to the user's own IMAP.
+   */
+  userHasDriven: () => boolean;
 }
 
 export function useSeenOnScroll({
@@ -120,7 +129,13 @@ export function useSeenOnScroll({
           }
         }
       },
-      { root: el, rootMargin, threshold: [0, 0.99] },
+      // A LADDER OF THRESHOLDS, not just [0, 0.99]. The commit condition (bottom above the
+      // shrunk root's bottom) is only ever CHECKED when the observer fires, and it fires on a
+      // ratio CROSSING. A tall card (450–500px) in a root shrunk to its top third (~340px) can
+      // never reach ratio 0.99, so with only [0, 0.99] it fired solely at ratio→0 as it left
+      // the TOP fully off-screen — the last screenful, which never exits the top, never marked.
+      // The intermediate rungs give it a crossing to fire on while its bottom is still on screen.
+      { root: el, rootMargin, threshold: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99] },
     );
     ioRef.current = io;
     for (const n of el.querySelectorAll(selector)) io.observe(n);
@@ -142,5 +157,7 @@ export function useSeenOnScroll({
     for (const n of el.querySelectorAll(selector)) io.observe(n);
   }, [root, selector]);
 
-  return { observe };
+  const userHasDriven = useCallback(() => userDrove.current, []);
+
+  return { observe, userHasDriven };
 }

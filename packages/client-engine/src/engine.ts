@@ -10,6 +10,7 @@ import {
   type EngineMessage,
   type EngineMutation,
   type MessageBodyRecord,
+  type UnsubscribeResult,
 } from "./types.js";
 
 /**
@@ -725,6 +726,20 @@ export class OhmailEngine {
     return request;
   }
 
+  /**
+   * Unsubscribe this message's sender (RFC 8058 one-click, performed server-side). A passthrough
+   * to the adapter, because there is nothing to reconcile into the mirror — the effect lives at a
+   * third party, and the record of "we already asked" is the SERVER's `unsubscribe_records`
+   * table, not a client entity. Returns `null` when the adapter serves no unsubscribe (the
+   * FixturesAdapter — the demo, a test with no API), so a surface offers no control rather than a
+   * dead one. A refusal REJECTS with the server's own sentence (`MutationRejectedError`), which
+   * is the string the surface renders.
+   */
+  async unsubscribe(messageId: string): Promise<UnsubscribeResult | null> {
+    if (!this.adapter.unsubscribe) return null;
+    return this.adapter.unsubscribe(messageId);
+  }
+
   private async fetchBodyInto(messageId: string): Promise<void> {
     await this.putBody(messageId, {
       messageId, state: "loading", text: "", html: null, loadedRemoteContent: false,
@@ -766,6 +781,11 @@ export class OhmailEngine {
               text: wire.text,
               html: wire.html ?? null,
               loadedRemoteContent: wire.loadedRemoteContent === true,
+              // The unsubscribe posture rides the same ready record. `HttpAdapter.fetchBody`
+              // already normalised the wire (default `"no_header"` / `null`); `?? …` here keeps
+              // a bare test double or the FixturesAdapter — which answer `{ text }` — honest.
+              unsubscribe: wire.unsubscribe ?? "no_header",
+              unsubscribeUrl: wire.unsubscribeUrl ?? null,
             },
       );
     } catch (err) {

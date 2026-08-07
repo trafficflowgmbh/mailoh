@@ -61,6 +61,24 @@ body.reading .shell {
   min-height: 0;
 }
 
+/* EDGE-TO-EDGE READING STREAMS on desktop. The reading stream is one continuous scroll of
+   floating cards, not a lifted panel, so the `.deck`'s 16px frame reads as an odd gap above and
+   below it. Zeroing the deck padding is wrong — it slams every lift-shadowed panel in every other
+   view against the frame — so only the stream reclaims it: negative top/bottom margins pull it
+   over the deck padding (the grid cell stretches to absorb them, and `.stage`/`.view`/`.deck`
+   keep `overflow: visible` so panel shadows in other views still breathe). `padding-top: 18px`
+   holds the first card exactly where it sits today — the stream's own 2px plus the deck's 16px —
+   and `padding-bottom` stays the 132px dock clearance. The ≤900px block (further down) and
+   `.read-col` are untouched. */
+@media (min-width: 901px) {
+  .view-reads .stream,
+  .view-receipts .stream {
+    margin-top: -16px;
+    margin-bottom: -16px;
+    padding-top: 18px;
+  }
+}
+
 /* main stage — overflow stays visible so panel shadows can breathe past
    the grid cell; all real clipping happens inside the scrollers */
 .stage {
@@ -812,6 +830,33 @@ body.reading .shell {
 }
 .hm-state.warn {
   color: var(--accent);
+}
+/* The unsubscribe control (C): a chip naming the offer beside the action — a button that POSTs
+   one-click, or a link out to the sender's own page. Quiet, sat below the mail like `.hm-state`,
+   never competing with the decision bar above the preview. */
+.hm-unsub {
+  margin: 12px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.hm-unsub.note {
+  color: var(--ink3);
+  max-width: 62ch;
+  line-height: 1.6;
+}
+.hm-unsub-link {
+  color: var(--ink2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.hm-unsub-link:hover {
+  color: var(--ink);
+}
+.hm-unsub-result {
+  color: var(--ink3);
 }
 /* spam-grade mail renders quieter and duller — less light, less ink */
 .hmail.dull {

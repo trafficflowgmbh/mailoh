@@ -5,7 +5,7 @@
  * from-line, subject, chips (routing rationale, tracker shield, tags,
  * add-affordance), body or the protected-OTP block, attachment, actions.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, Icon, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
@@ -464,6 +464,8 @@ export function MessagePane({
   /** Hydration state copy, shared with the Reads/Receipts cards and the Screener preview. */
   const tb = useTranslations("body");
   const addRef = useRef<HTMLSpanElement>(null);
+  /** The conversation stack, so the pane can open at the LATEST message — see below. */
+  const convRef = useRef<HTMLDivElement>(null);
   const isProtected = message.protected != null;
   const mine = tagsOfMessage(message, tags);
   const [panel, setPanel] = useState<BarPanel | null>(null);
@@ -506,6 +508,58 @@ export function MessagePane({
    * stored body (invariant #1). This slice changed what the SCREEN shows and nothing else.
    */
   const showConversation = conversation.length > 0;
+
+  /**
+   * OPEN A THREAD AT ITS LATEST MESSAGE — instant, no animation.
+   *
+   * A conversation renders oldest→newest (`ConversationEntries` above/below the focused
+   * message), so a fresh render sits at the TOP, on the oldest mail, and the reader has to
+   * scroll down to reach what just arrived. This puts the newest on screen the moment the
+   * pane paints.
+   *
+   * The FOCUS is NOT remapped — `message` stays the id that was opened (ActionBar, reply,
+   * read-state and selection all key on it). The anchor is purely a scroll position: the LAST
+   * `[data-conv-id]` element in the stack, which is the newest sibling (or the focused message
+   * itself when it is the newest).
+   *
+   * `scrollTop` is assigned DIRECTLY rather than via `scrollIntoView`, for two reasons: it
+   * moves ONE scroller instead of every scrollable ancestor, and it is instant regardless of
+   * `scroll-behavior` — neither `.read-col` (`message.css`) nor `.reader` (`reader.css`)
+   * declares `smooth`, but a direct assignment does not depend on that staying true. The walk
+   * to the nearest scrollable ancestor is inlined (its shape copied from `MessageBody.tsx`'s
+   * `scrollAncestors`) rather than imported, to keep this pane off the sanitizer module.
+   *
+   * `useLayoutEffect` so the position is set before first paint; keyed on
+   * `[message.id, showConversation]` ONLY — the conversation list is complete at first render,
+   * and a dependency on body-state or contents would re-anchor on every hydration delta and
+   * yank a reader who had scrolled up.
+   */
+  useLayoutEffect(() => {
+    if (!showConversation) return;
+    const conv = convRef.current;
+    if (!conv) return;
+    const entries = conv.querySelectorAll<HTMLElement>("[data-conv-id]");
+    const last = entries[entries.length - 1];
+    if (!last) return;
+    let scroller: HTMLElement | null = last.parentElement;
+    while (scroller) {
+      const oy = getComputedStyle(scroller).overflowY;
+      if (
+        (oy === "auto" || oy === "scroll" || oy === "overlay") &&
+        scroller.scrollHeight > scroller.clientHeight
+      ) {
+        break;
+      }
+      scroller = scroller.parentElement;
+    }
+    if (!scroller) return;
+    scroller.scrollTop =
+      last.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop -
+      14;
+  }, [message.id, showConversation]);
+
   /**
    * The from-line count. Real on Cloud now; the fixture fallback stays because the demo
    * world sets `threadId: null` on every row (`fixtures-adapter.ts`) and carries a curated
@@ -731,7 +785,7 @@ export function MessagePane({
       {showConversation ? (
         // `role="group"` because `aria-label` on a bare div is ignored, and a landmark
         // (`<section>`) would be too loud for one part of one message.
-        <div className="conv" role="group" aria-label={tc("conversationAria")}>
+        <div className="conv" role="group" aria-label={tc("conversationAria")} ref={convRef}>
           <ConversationHead count={conversation.length} />
           <ConversationEntries
             messages={conversation.filter((m) => before(m, message))}

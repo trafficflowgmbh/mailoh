@@ -107,31 +107,58 @@ export function StreamCard({
   const clipRef = useRef<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLElement | null>(null);
 
+  /**
+   * A card that renders the html viewer, in EITHER state. It renders collapsed too — clamped
+   * at the same 348 with the fade and pill on — so the stream is a uniform height however tall
+   * the mail is; `.scast.viewer.open` in `stream.css` unclamps it. A text-only card (no slot)
+   * is untouched. Named `showViewer` because it is what keys the measurement effect below.
+   */
+  const showViewer = bodySlot != null;
+  /**
+   * `short` is a measured fact about the TEXT preview, and it hides the pill and the fade
+   * (`.scast.short` in `stream.css`). A viewer card must show neither hiding — it always has
+   * more than its clamp reveals and must always stay expandable — so the `short` path is
+   * skipped whenever a slot is present, which is exactly what gating on `!showViewer` does.
+   */
+  const isShort = short && !showViewer;
+
   // Clamp decisions need real layout — measure only once the card is
   // actually visible (offsetHeight > 0), like the prototype.
   useLayoutEffect(() => {
-    const card = cardRef.current;
     const clip = clipRef.current;
-    if (!card || !clip || card.offsetHeight === 0) return;
-    // The open viewer sizes ITSELF (an iframe measured to its content), so it is never
-    // clamp-measured: recomputing `short` from the viewer's height could hide the very
-    // collapse pill an open card needs. `short` keeps its last text measurement instead.
-    if (open && bodySlot != null) return;
+    if (!clip) return;
+    /**
+     * A VIEWER CARD IS NEVER CLAMP-MEASURED AND NEVER `short`.
+     *
+     * The html viewer (an iframe) sizes itself, and its two clamp states are pure CSS
+     * (collapsed 348, `.scast.viewer.open` unclamped). So JS only clears any inline `max-height`
+     * pin a text-phase toggle left on the clip — INCLUDING the snippet-height pin of a card
+     * expanded BEFORE its body hydrated, which would otherwise beat
+     * `.scast.viewer.open .sc-clip{max-height:none}` and clip the viewer at two lines (defect
+     * this fixes). Forcing the pinned start to register first lets `max-height` TRANSITION to
+     * the CSS target on collapse rather than snap from a keyword. Clearing a style needs no
+     * layout, so this branch runs under jsdom, where the guard reads the emptied string.
+     */
+    if (showViewer) {
+      void clip.offsetHeight;
+      clip.style.maxHeight = "";
+      return;
+    }
+    const card = cardRef.current;
+    if (!card || card.offsetHeight === 0) return;
     setShort(clip.scrollHeight <= clampHeight + 28); // no point clamping a few lines
     /**
-     * RE-PIN AN OPEN CARD WHEN ITS TEXT CHANGES.
+     * RE-PIN AN OPEN TEXT CARD WHEN ITS CONTENT CHANGES.
      *
      * `toggle` opens by pinning `max-height` to the content height MEASURED AT THAT MOMENT.
      * Before hydration that moment holds a two-line snippet, so an expand-then-fill card
      * would clip the fetched body at the snippet's height — the pill would work, the request
      * would succeed, and the mail would still be one line. `scrollHeight` ignores the
-     * constraint, so re-reading it here is enough.
+     * constraint, so re-reading it here is enough. (A card that hydrated into a `bodySlot`
+     * took the viewer branch above and unclamps in CSS instead.)
      */
     if (open) clip.style.maxHeight = `${clip.scrollHeight}px`;
-  }, [clampHeight, body, open, bodySlot]);
-
-  /** An open card showing its `bodySlot` — the viewer replaces the clamped text preview. */
-  const showViewer = open && bodySlot != null;
+  }, [clampHeight, body, open, showViewer]);
 
   /**
    * THE BODY IS NOT (YET) THE WHOLE MESSAGE.
@@ -149,14 +176,19 @@ export function StreamCard({
     const clip = clipRef.current;
     // `short` alone used to gate this, so a pill made reachable by `pending` would have been
     // a button that did nothing when clicked. A card WITH a `bodySlot` always has more to
-    // show than its preview (the rendered html), so it opens even when the preview is short.
-    if (short && !pending && bodySlot == null) return;
+    // show than its clamped preview (the rest of the rendered html), so it opens even when the
+    // preview is short — `isShort` is already false for it.
+    if (isShort && !pending) return;
     const next = !open;
     if (clip) {
-      if (next) {
-        // A viewer is unclamped in CSS (`.scast.viewer .sc-clip`); pinning a fixed pixel
-        // height here would clip an iframe that has not measured its content yet.
-        clip.style.maxHeight = bodySlot != null ? "" : `${clip.scrollHeight}px`;
+      if (showViewer) {
+        // The `open` class flip is what changes a viewer's CSS clamp target, and it lands on
+        // the NEXT render — so pin the current height as the animation's start and let the
+        // layout effect clear it AFTER the flip. Clearing here (the text path below) would run
+        // against the pre-flip class and animate nothing: the collapse-doesn't-animate defect.
+        clip.style.maxHeight = `${clip.scrollHeight}px`;
+      } else if (next) {
+        clip.style.maxHeight = `${clip.scrollHeight}px`;
       } else {
         clip.style.maxHeight = `${clip.scrollHeight}px`;
         void clip.offsetHeight;
@@ -170,7 +202,7 @@ export function StreamCard({
   const chunks = body.split("[[img]]");
   const cls = [
     "scast",
-    short ? "short" : null,
+    isShort ? "short" : null,
     pending ? "pend" : null,
     open ? "open" : null,
     showViewer ? "viewer" : null,
@@ -200,8 +232,9 @@ export function StreamCard({
       </div>
       <div className="sc-clip" ref={clipRef}>
         {showViewer ? (
-          // The rendered message, unclamped. The preview text is set aside, not stacked
-          // above it — one copy of the message on screen, the same rule the reading pane keeps.
+          // The rendered message. The text preview is set aside, not stacked above it — one
+          // copy of the message on screen, the same rule the reading pane keeps. Collapsed it
+          // is clamped at 348 (base `.sc-clip`); expanding it unclamps via `.scast.viewer.open`.
           <div className="sc-viewer">{bodySlot}</div>
         ) : (
           chunks.map((chunk, i) => (

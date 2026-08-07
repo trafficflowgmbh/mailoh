@@ -208,6 +208,51 @@ export function isProtectedMessage(
 // ── message bodies ─────────────────────────────────────────────────────────
 
 /**
+ * What a message's `List-Unsubscribe` / `-Post` headers offer, as the Cloud API reports it on
+ * the body fetch (§8). MIRRORS core's `UnsubscribeHeaderState` without importing it — this
+ * package speaks the wire vocabulary only.
+ *
+ *  · `one_click`     — RFC 8058 one-click; the server can POST it on the user's behalf.
+ *  · `not_one_click` — an https unsubscribe page exists, but not one-click; open it in a browser.
+ *  · `mailto_only`   — only a `mailto:` route, which ohmail never sends on the user's behalf.
+ *  · `no_header`     — no unsubscribe route at all. Also the FORWARD-COMPATIBLE DEFAULT: an older
+ *                      server that does not send the field is read as offering none (§8).
+ */
+export type UnsubscribeHeaderState = "one_click" | "no_header" | "mailto_only" | "not_one_click";
+
+/**
+ * Why an unsubscribe was refused, mirroring the server's `UnsubscribeRefusal`. Only
+ * `"already_recorded"` arrives on a 2xx {@link UnsubscribeResult}; the rest are carried by a
+ * thrown `MutationRejectedError` with the server's own sentence (the same shape every refused
+ * mutation takes), so a surface renders that message rather than mapping these itself.
+ */
+export type UnsubscribeRefusal =
+  | "not_actionable"
+  | "author_failed_authentication"
+  | "no_header"
+  | "mailto_only"
+  | "not_one_click"
+  | "already_recorded";
+
+/**
+ * What `POST /messages/:id/unsubscribe` answered on a 2xx. A refusal (409) is NOT this — it is a
+ * throw carrying the server's sentence, exactly as `fetchBody`'s 402 is. So the only outcomes
+ * here are a genuine send (`posted: true`, `refusal: null`) and "this list was already left"
+ * (`posted: false`, `refusal: "already_recorded"`), which is not a failure. Fields beyond these
+ * are read leniently and unknown ones ignored (§8).
+ */
+export interface UnsubscribeResult {
+  messageId: string;
+  /** Did the server actually make the one-click request to the sender? */
+  posted: boolean;
+  /** The sender's HTTP status, or `null` when nothing was sent. */
+  status: number | null;
+  refusal: UnsubscribeRefusal | null;
+  /** What the headers offered, independent of whether the server acted. */
+  header: UnsubscribeHeaderState;
+}
+
+/**
  * `GET /messages/:id/body`, as much of it as this client reads.
  *
  * The endpoint answers `{messageId, text, html, headers, loadedRemoteContent}`.
@@ -256,6 +301,17 @@ export interface MessageBodyWire {
    * `false` is the default and the state every message starts in.
    */
   loadedRemoteContent: boolean;
+  /**
+   * The sender's unsubscribe posture, DERIVED server-side from the raw headers (which the client
+   * never receives). Absent on an older server → the reader defaults it to `"no_header"` (§8).
+   */
+  unsubscribe: UnsubscribeHeaderState;
+  /**
+   * The sender's own https unsubscribe page, sent ONLY for `unsubscribe === "not_one_click"`;
+   * `null` otherwise. Never a one-click POST token (the server owns that). Absent on an older
+   * server → `null` (§8).
+   */
+  unsubscribeUrl: string | null;
 }
 
 /**
@@ -317,6 +373,13 @@ export interface MessageBodyRecord {
   /** The reader's remote-content decision, as the server last stated it. Optional for the
    *  same reason `html` is: a record written before those fields were read carries neither. */
   loadedRemoteContent?: boolean;
+  /**
+   * The sender's unsubscribe posture on this hydrated body. Optional for the same reason `html`
+   * is: a record persisted before this field was read carries neither, and `bodyOf` reads it with
+   * `?? "no_header"`. `null`/absent on every non-`ready` record. */
+  unsubscribe?: UnsubscribeHeaderState;
+  /** The sender's https unsubscribe page, for `unsubscribe === "not_one_click"` only; else null. */
+  unsubscribeUrl?: string | null;
   /** Why the fetch failed, for the console — never rendered to the user. */
   error?: string;
 }
@@ -356,6 +419,14 @@ export interface MessageBody {
   html: string | null;
   /** Whether the reader has consented to remote content for this message. */
   loadedRemoteContent: boolean;
+  /**
+   * The sender's unsubscribe posture. `"no_header"` for every state but `full` (nothing to say
+   * before the body is hydrated), and the honest default for an older server. A surface offers an
+   * action only for `one_click` / `not_one_click`.
+   */
+  unsubscribe: UnsubscribeHeaderState;
+  /** The sender's https unsubscribe page, for `not_one_click` only; `null` otherwise. */
+  unsubscribeUrl: string | null;
 }
 
 export interface RuleDTO {
@@ -450,6 +521,14 @@ export interface ScreenerHeldMail {
   html?: string | null;
   /** Whether the reader has consented to remote content for THIS held message. */
   loadedRemoteContent?: boolean;
+  /**
+   * The sender's unsubscribe posture on THIS held message, from its hydrated body. The Screener's
+   * screened-out and spam previews render an unsubscribe control from it (one-click acts via the
+   * route, not-one-click links out). Absent on a fixture row and until the body is `full`, which
+   * is why it is optional and defaulted to `"no_header"` where read. */
+  unsubscribe?: UnsubscribeHeaderState;
+  /** The sender's https unsubscribe page, for `not_one_click` only; else null/absent. */
+  unsubscribeUrl?: string | null;
   trackerNote?: string;
 }
 

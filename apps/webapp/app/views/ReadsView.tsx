@@ -132,18 +132,26 @@ export function ReadsView({
   }, [cur]);
 
   /**
-   * BECOMING CURRENT IS THE INTENT.
+   * BECOMING CURRENT IS ONE OF TWO EXPLICIT-INTENT FETCHES; NEITHER IS THE PILE.
    *
    * The card under the cursor is the one being read — put there by a click, by j/k, or by
-   * the scroll-spy as somebody scrolls the stream — so that is where the body is asked for.
-   * It is also what breaks a circle: a card holding only a snippet measures short, and
-   * before `bodyState` existed a short card hid its Expand pill, so "hydrate on expand"
-   * alone would have had no first move.
+   * the scroll-spy as somebody scrolls the stream — so that is where the body is asked for
+   * here. It also breaks a circle: a card holding only a snippet measures short, and before
+   * `bodyState` existed a short card hid its Expand pill, so "hydrate on expand" alone would
+   * have had no first move.
    *
-   * ONE id, never the pile. `partition.fresh` plus `partition.seen` is the whole of Reads,
+   * The SECOND trigger is `StreamShell`'s `onNear` (wired to `hydrateBody` below): a card that
+   * has come within a viewport's lookahead of the fold, so the sanitized html viewer is ready
+   * as it scrolls in rather than the raw text dump the stream showed until this slice. That is
+   * what makes Reads read like mail; without it the cards render `body.text` because the html
+   * part is never fetched.
+   *
+   * NEITHER FETCHES THE PILE. `partition.fresh` plus `partition.seen` is the whole of Reads,
    * and a mount that fetched all of it would be a pile-wide prefetch billed per message for
-   * mail nobody looked at — GOALS #11's posture is explicit-intent fetches, and a cursor
-   * landing on a card is the smallest honest unit of that.
+   * mail nobody looked at — which GOALS #10 forbids (no API cost without revenue behind it).
+   * Its posture is explicit-intent fetches, and a card the reader has reached — as the cursor
+   * or as lookahead — is the smallest honest unit of that. Both paths go through the same
+   * idempotent, single-flight `hydrateBody`, so the two triggers never double-spend.
    *
    * Keyed on `current` rather than on the version, so a delta landing mid-read does not
    * re-ask; `hydrateBody` would short-circuit anyway, and depending on the mirror here would
@@ -297,7 +305,9 @@ export function ReadsView({
             </span>
           ))}
         </ListRows>
-        {partition.waterline ? <Waterline meta={partition.waterline.meta} /> : null}
+        {partition.waterline ? (
+          <Waterline label={t("waterline")} meta={partition.waterline.meta} />
+        ) : null}
         <ListRows>{partition.seen.map(row)}</ListRows>
         <div className="tail-row">{t("tail")}</div>
       </ListPane>
@@ -307,6 +317,10 @@ export function ReadsView({
         ariaLabel={t("streamAria")}
         onCurrentChange={onCur}
         onSeen={seenMark}
+        /* The viewport-intent body fetch (B.3): a card nearing the fold hydrates so its
+           rendered viewer is ready as it arrives. `hydrateBody` is idempotent + single-flight,
+           so it composes with the current-card fetch above without double-spending. */
+        onNear={hydrateBody}
         contentKey={all.map((m) => m.id).join(",")}
       >
         <div className="stream-top">
@@ -323,7 +337,9 @@ export function ReadsView({
           <span>{t("hintSeen")}</span>
         </div>
         {partition.fresh.map(card)}
-        {partition.waterline ? <Waterline meta={partition.waterline.meta} /> : null}
+        {partition.waterline ? (
+          <Waterline label={t("waterline")} meta={partition.waterline.meta} />
+        ) : null}
         {partition.seen.map(card)}
         <div className="tail-row">{t("streamTail")}</div>
       </StreamShell>
