@@ -347,57 +347,64 @@ final class SourceSelectionTests: XCTestCase {
         XCTAssertEqual(composed["OHMAIL_IMAP_HOST"], "imap.example.org")
     }
 
-    // MARK: - Door two — the cloud viewer
+    // MARK: - Door two — the cloud sidecar behind the same pipe
 
-    /// **THE CLOUD BRANCH-WALK.** A cloud door never spawns the engine and never reaches the invented
-    /// world — signed in or not, at every engine status the supervisor could publish.
+    /// **THE CLOUD BRANCH-WALK, AFTER THE SUPERSEDE.** Signed in, the cloud door spawns the engine and
+    /// reads it like door one — its surface is the local truth table over `configured: true`, at every
+    /// status — and it NEVER reaches the invented world. Not signed in, it is the sign-in sequence:
+    /// `.setup`, starting nothing.
     ///
-    /// This is the assertion the third branch exists for, the door-two counterpart of
-    /// `testAConfiguredLaunchNeverReachesTheInventedWorld`. Mutating `resolve` so the cloud branch
-    /// returns `spawnEngine: true` — the one-organizer violation (GOALS #2) — turns the first assertion
-    /// red; returning `.fixtures` or `.engine` there turns the others red.
-    func testACloudDoorNeverSpawnsAndNeverReachesTheEngineOrTheSampleWorld() {
-        for signedIn in [true, false] {
-            for status in Self.everyStatus {
-                let selection = SourceSelection.resolve(
-                    door: .cloud, cloudSignedIn: signedIn,
-                    configured: false, engine: Self.hasEngine, status: status, flags: Self.live)
-                XCTAssertFalse(selection.spawnEngine,
-                               "the cloud door spawned the engine (signedIn \(signedIn), \(describe(status)))")
-                XCTAssertNotEqual(selection.source, .engine, "the cloud door reached the local engine")
-                XCTAssertNotEqual(selection.source, .fixtures, "the cloud door reached the sample world")
-                if signedIn {
-                    XCTAssertEqual(selection.source, .cloud)
-                    XCTAssertEqual(selection.surface, .mail)
-                } else {
-                    XCTAssertNil(selection.source, "a cloud sign-in in progress named a source")
-                    XCTAssertEqual(selection.surface, .setup)
-                }
+    /// The earlier rule (the cloud door never spawns) was the one-organizer guarantee (GOALS #2)
+    /// enforced HERE. Enforcement moved into the sidecar — the cloud branch opens no IMAP and holds no
+    /// lease — so spawning here is safe now. What this pins instead: a signed-in cloud door is
+    /// `decide(configured: true)` exactly, and fixtures are unreachable from it either way. Returning
+    /// `.fixtures` from the cloud branch, or diverging from the local truth table, turns this red.
+    func testACloudDoorSignedInReadsLikeDoorOneAndNeverReachesTheSampleWorld() {
+        for status in Self.everyStatus {
+            let signedIn = SourceSelection.resolve(
+                door: .cloud, cloudSignedIn: true,
+                configured: false, engine: Self.hasEngine, status: status, flags: Self.live)
+            let asLocal = SourceSelection.decide(
+                configured: true, engine: Self.hasEngine, status: status, flags: Self.live)
+            XCTAssertEqual(signedIn, asLocal,
+                           "a signed-in cloud door diverged from the local truth table at \(describe(status))")
+            XCTAssertNotEqual(signedIn.source, .fixtures,
+                              "the cloud door reached the sample world at \(describe(status))")
+            if case .serving = status {
+                XCTAssertEqual(signedIn.source, .engine, "a serving cloud door did not read the engine")
+                XCTAssertTrue(signedIn.spawnEngine, "a serving cloud door did not spawn the engine")
             }
+
+            // Not signed in: the sign-in sequence, and it starts nothing — the sidecar has no session
+            // to run against yet.
+            let signedOut = SourceSelection.resolve(
+                door: .cloud, cloudSignedIn: false,
+                configured: false, engine: Self.hasEngine, status: status, flags: Self.live)
+            XCTAssertEqual(signedOut.surface, .setup)
+            XCTAssertNil(signedOut.source, "a cloud sign-in in progress named a source")
+            XCTAssertFalse(signedOut.spawnEngine, "the cloud sign-in sequence spawned the engine")
         }
     }
 
-    /// The cloud door outranks a serving engine — the door is the determination, not the engine's
-    /// readiness. Defensive: a cloud install has no `EngineConfig`, but the branch must not rely on it.
-    func testACloudDoorOutranksAConfiguredServingEngine() {
+    /// The signed-in cloud door spawns the engine and reads `.engine` at serving — the door now routes
+    /// through the sidecar over the same pipe as door one, so a serving cloud install draws its mail.
+    func testACloudDoorSignedInSpawnsTheEngineAndReadsItAtServing() {
         let selection = SourceSelection.resolve(
             door: .cloud, cloudSignedIn: true,
-            configured: true, engine: Self.hasEngine, status: .serving(mailboxID: "m"), flags: Self.live)
-        XCTAssertEqual(selection.source, .cloud)
-        XCTAssertFalse(selection.spawnEngine)
+            configured: false, engine: Self.hasEngine, status: .serving(mailboxID: "m"), flags: Self.live)
+        XCTAssertEqual(selection.source, .engine)
+        XCTAssertTrue(selection.spawnEngine, "the signed-in cloud door did not spawn the sidecar")
+        XCTAssertEqual(selection.surface, .mail)
     }
 
-    /// **THE LOCAL DOOR NEVER NAMES THE CLOUD SOURCE**, and its decision is `decide` verbatim — door
-    /// one keeps every property its own tests pin, so the composition root never builds a
-    /// `CloudRequester` for it.
-    func testTheLocalDoorNeverNamesTheCloudSourceAndMatchesDecide() {
+    /// **THE LOCAL DOOR IS `decide` VERBATIM.** Door one keeps every property its own tests pin — the
+    /// chosen-door wrapper changes nothing for it, signed-in state included (a local door ignores it).
+    func testTheLocalDoorMatchesDecide() {
         for door in [OnboardingDoor.local, nil] {
             for status in Self.everyStatus {
                 let resolved = SourceSelection.resolve(
                     door: door, cloudSignedIn: false,
                     configured: true, engine: Self.hasEngine, status: status, flags: Self.live)
-                XCTAssertNotEqual(resolved.source, .cloud,
-                                  "the local door named the cloud source at \(describe(status))")
                 let decided = SourceSelection.decide(
                     configured: true, engine: Self.hasEngine, status: status, flags: Self.live)
                 XCTAssertEqual(resolved, decided,

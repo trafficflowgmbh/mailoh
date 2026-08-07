@@ -221,41 +221,50 @@ public struct SourceSelection: Equatable, Sendable {
 
 /// What holds the mail.
 ///
-/// Three cases and no fourth, so that "which source did the composition root pick" is a value a test
-/// can read rather than a fact it has to infer from what ended up on screen.
+/// Two cases and no third, so that "which source did the composition root pick" is a value a test can
+/// read rather than a fact it has to infer from what ended up on screen.
 public enum MailSourceKind: Equatable, Sendable {
     /// The invented world. Reachable only from the `--demo` branch above.
     case fixtures
-    /// The local engine's mirror of the real mailbox — door one.
+    /// The engine's mirror of the real mailbox, read over the pipe. **Both doors land here** — door
+    /// one's local organizer and door two's cloud sidecar speak the same routes over the same
+    /// transport, through the one ``EngineSource`` and the one projection. There is no separate cloud
+    /// source: the door only changes which engine is behind the pipe.
     case engine
-    /// The hosted mailbox, read over HTTPS — door two. A viewer: it never spawns the engine.
-    case cloud
 }
 
 public extension SourceSelection {
 
     /// THE DECISION, WITH THE CHOSEN DOOR ON TOP OF IT.
     ///
-    /// ``decide(configured:engine:status:flags:)`` is door one and the demo — the local engine's whole
-    /// truth table, unchanged. This wraps it with door two, and the ordering is the invariant:
+    /// ``decide(configured:engine:status:flags:)`` is the local engine's whole truth table. This wraps
+    /// it with the chosen door, and the ordering is the invariant:
     ///
     ///  1. **`--demo` first, always.** It is asked before the door so the sample world means the same
-    ///     thing on every machine, and it reaches neither the engine nor the cloud requester — the one
-    ///     door to the invented world stays the flag and nothing else.
-    ///  2. **The cloud door never spawns the engine.** Signed in, it is a viewer over `CloudRequester`;
-    ///     not signed in, it is the sign-in sequence. `spawnEngine` is `false` in BOTH — this is the
-    ///     GOALS #2 one-organizer guarantee made structural, and mutating it to `true` here is what
-    ///     `SourceSelectionTests` walks this branch to catch. A cloud install has no `EngineConfig`, no
-    ///     IMAP client and no `ohmail/_meta` write path; the worker owns the `cloud` lease.
-    ///  3. **The local door is `decide` verbatim**, so door one keeps every property its own tests pin,
-    ///     and a local install never names `.cloud` — the composition root reads that and never builds
-    ///     a `CloudRequester` for it.
+    ///     thing on every machine, and it starts nothing — the one door to the invented world stays the
+    ///     flag and nothing else.
+    ///  2. **The cloud door, once signed in, spawns the engine like door one.** It runs the SIDECAR in
+    ///     cloud mode behind the same pipe, so `decide(configured: true, …)` drives the surface off the
+    ///     engine's status: a signed-in cloud door is `.engine` + `spawnEngine: true` at `serving`, and
+    ///     an opening or failed one says so in the same sentences door one uses. Before sign-in it is
+    ///     the sign-in sequence — `.setup`, and it starts nothing, because the sidecar has no session to
+    ///     run against until sign-in produces one.
+    ///
+    ///     **This SUPERSEDES the earlier "the cloud door never spawns the engine" rule.** That rule was
+    ///     the one-organizer guarantee (GOALS #2) enforced HERE, by withholding the spawn, because at
+    ///     the time nothing else could enforce it. Enforcement has since moved into the sidecar, where
+    ///     it is structural rather than conventional: the cloud branch opens no IMAP — it REFUSES to
+    ///     start if any `OHMAIL_IMAP_*` is set — holds no `ohmail/_meta` write path, and the worker owns
+    ///     the `cloud` lease, all proven by the import census over `cloud-engine.ts` and the IMAP canary.
+    ///     So spawning the sidecar here cannot make a second organizer; the safe branch is chosen by
+    ///     construction on the engine's side now, not by refusing to start it on this one.
+    ///  3. **The local door is `decide` verbatim**, so door one keeps every property its own tests pin.
     ///
     /// - Parameters:
     ///   - door: which way this install organizes, or `nil` before the chooser is answered. Sticky per
     ///     install — the choice is persisted and survives relaunch.
-    ///   - cloudSignedIn: whether a hosted session has been established this launch. Door two's
-    ///     `.mail` is reachable only once it has — before that the sign-in sequence stands, the same
+    ///   - cloudSignedIn: whether a hosted session has been established this launch. The cloud door's
+    ///     mailbox is reachable only once it has — before that the sign-in sequence stands, the same
     ///     way door one's password step sits ahead of the mailbox.
     static func resolve(door: OnboardingDoor?, cloudSignedIn: Bool,
                         configured: Bool, engine: EngineInstall,
@@ -265,13 +274,17 @@ public extension SourceSelection {
             return decide(configured: configured, engine: engine, status: status, flags: flags)
         }
         if door == .cloud {
-            // DOOR TWO. A viewer, and structurally unable to organize: no engine, ever.
-            if cloudSignedIn {
-                return SourceSelection(surface: .mail, source: .cloud, spawnEngine: false)
+            // Not signed in yet — the sign-in sequence, drawn by the setup surface. It starts nothing:
+            // the sidecar has no hosted session to run against until sign-in produces one.
+            guard cloudSignedIn else {
+                return SourceSelection(surface: .setup, source: nil, spawnEngine: false)
             }
-            // Not signed in yet — the sign-in sequence, drawn by the setup surface. No engine, no
-            // fixtures. Never delegated to `decide`, which could spawn: a cloud install must not.
-            return SourceSelection(surface: .setup, source: nil, spawnEngine: false)
+            // Signed in: the sidecar runs in cloud mode behind the same pipe door one uses. A cloud
+            // install stores no local mailbox, so it counts as `configured` here by virtue of the
+            // session, and the engine's status drives the surface from this point exactly as door one's
+            // does. The one-organizer invariant is the sidecar's now (see the note above), so this
+            // spawns and reads `.engine` like any local install.
+            return decide(configured: true, engine: engine, status: status, flags: flags)
         }
         // DOOR ONE (or no door chosen yet): the local engine's decision, exactly as before.
         return decide(configured: configured, engine: engine, status: status, flags: flags)

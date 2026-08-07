@@ -65,7 +65,11 @@ public final class EngineBridge {
     ///   already in it, because the default **mints** a key into the login keychain the first time
     ///   it is read — which is correct for a launch and is not something a test may do to the
     ///   machine it runs on.
-    public func start(environment: [String: String] = ProcessInfo.processInfo.environment,
+    /// - Parameter mode: whether this starts the local organizer or the hosted-mirror sidecar. The
+    ///   `overlay` for cloud carries ``ENGINE_MODE_VAR`` so the child takes the matching branch; the
+    ///   two are set together at the composition root and the plan checks the mode's own required set.
+    public func start(mode: EngineMode = .local,
+                      environment: [String: String] = ProcessInfo.processInfo.environment,
                       overlay: [(name: String, value: String)] = [],
                       keys: KeyProvider = KeyProviderDefault()) {
         guard engine == nil else { return }
@@ -74,6 +78,7 @@ public final class EngineBridge {
         for (name, value) in Self.admissible(overlay) { composed[name] = value }
 
         let plan = EngineProcess.plan(
+            mode: mode,
             environment: composed,
             // The same directory the install check looked in, spelled once — see
             // `EngineProcess.bundledEngineDirectory`. Two spellings would be a shell that decides

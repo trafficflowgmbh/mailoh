@@ -42,12 +42,6 @@ public final class AppRootModel {
     /// why this returns an optional rather than a source.
     public typealias EngineSourceFactory = @MainActor (EngineBridge) -> (any MailSource)?
 
-    /// How a cloud-backed mail source is built from a signed-in transport — door two's analogue of
-    /// ``EngineSourceFactory``. Injected for the same reason: the projection is separable work, and a
-    /// test substitutes a stub source without a network. The shipped default drives ``EngineSource``
-    /// over the ``CloudRequester`` in **incremental** mode (§cursor persistence over HTTPS).
-    public typealias CloudSourceFactory = @MainActor (CloudRequester) -> (any MailSource)?
-
     public let flags: LaunchFlags
     public let engine = EngineBridge()
 
@@ -56,7 +50,6 @@ public final class AppRootModel {
     /// Door two's sign-in — password + TOTP against the hosted API. A dependency, so a test drives the
     /// success and failure paths without a socket.
     private let cloudSignIn: CloudSignInService
-    private let makeCloudSource: CloudSourceFactory
     /// Whether this build carries an engine — **read off the bundle once, at launch.**
     ///
     /// Read once for the same reason `configured` is: a SwiftUI body runs whenever anything it reads
@@ -121,6 +114,12 @@ public final class AppRootModel {
     /// once it has, the same way door one's password step sits ahead of the mailbox.
     public var cloudSignedIn: Bool { cloudRequester != nil }
 
+    /// The cloud mirror's live reachability, as `/health` last reported it. `nil` before the first
+    /// poll — treated as online, so the read-only chrome only appears once the mirror has actually said
+    /// it is offline, never on the first frame before anything is known. Cloud-only: door one's local
+    /// mirror is always reachable in this sense.
+    private(set) var cloudOnline: Bool?
+
     private(set) var inSetup = false
     /// Whether ``saveMailbox(_:)`` has written a configuration during this run of setup. The step
     /// after it waits for the engine, which is why setup outlives the moment `configured` flips.
@@ -142,11 +141,7 @@ public final class AppRootModel {
                 keys: KeyProvider = KeyProviderDefault(),
                 install: EngineInstall? = nil,
                 engineSource: @escaping EngineSourceFactory = { _ in nil },
-                cloudSignIn: CloudSignInService = CloudSignIn(),
-                cloudSource: @escaping CloudSourceFactory = { requester in
-                    EngineSource(requester: requester, token: Secret(""),
-                                 baseURL: cloudAPIBaseURL, incremental: true)
-                }) {
+                cloudSignIn: CloudSignInService = CloudSignIn()) {
         self.flags = flags
         self.store = store
         self.inheritedEnvironment = environment
@@ -156,7 +151,6 @@ public final class AppRootModel {
         self.keys = keys
         self.makeEngineSource = engineSource
         self.cloudSignIn = cloudSignIn
-        self.makeCloudSource = cloudSource
         let stored = try? store.load()
         self.config = stored
         self.configured = stored != nil
@@ -169,6 +163,7 @@ public final class AppRootModel {
         self.cloudRequester = nil
         self.submittingCloud = false
         self.cloudProblem = nil
+        self.cloudOnline = nil
         self.inSetup = false
         self.savedMailbox = false
         self.setupFailure = nil
@@ -227,7 +222,14 @@ public final class AppRootModel {
     // MARK: - Lifetime
 
     /// Start whatever the decision calls for. Idempotent; `EngineBridge` refuses a second start.
+    ///
+    /// **Door one's start only.** The cloud door starts its engine from ``submitCloudSignIn(email:password:code:)``,
+    /// with the hosted session's own environment — begin runs at `onAppear`, before any sign-in, so a
+    /// cloud install has nothing to start here yet, and starting the local engine for it would spawn a
+    /// mode-`local` child with no mailbox. Skipped explicitly rather than left to idempotence, so the
+    /// intent is on the page.
     public func begin() {
+        guard door != .cloud else { return }
         guard selection.spawnEngine else { return }
         engine.start(environment: inheritedEnvironment, overlay: overlay, keys: keys)
     }
@@ -237,6 +239,78 @@ public final class AppRootModel {
     /// The stored configuration, on the engine's own variable names. Empty until there is one.
     var overlay: [(name: String, value: String)] {
         config.map(EngineEnvironment.overlay(for:)) ?? []
+    }
+
+    /// Start the sidecar in cloud mode against a freshly signed-in session.
+    ///
+    /// The tokens the hosted sign-in set as cookies are lifted from the jar here and handed to the
+    /// engine's environment on this first launch; the sidecar seals them under the per-install key and
+    /// later launches carry only the key. The address is the email the person signed in as — what the
+    /// sidecar seeds its local world with (`OHMAIL_MAILBOX_ADDRESS`). Same start path as door one, with
+    /// `mode: .cloud` so the plan checks the cloud variables and the child takes the cloud branch.
+    func startCloudEngine(address: String, requester: CloudRequester) {
+        engine.start(mode: .cloud, environment: inheritedEnvironment,
+                     overlay: Self.cloudOverlay(address: address, requester: requester), keys: keys)
+    }
+
+    /// The cloud engine's environment: the mode selector, the hosted API, the address, and the
+    /// first-launch tokens read out of the sign-in jar. Static and pure, so a test can assert the exact
+    /// pairs without a running engine.
+    ///
+    /// The tokens are secrets that DO travel in the child's environment — the sidecar's own contract on
+    /// first launch, and the opposite of the IMAP password, which is never composed into a launch. A
+    /// token missing from the jar is simply omitted; the plan then reports it as `.notConfigured` by
+    /// name rather than starting a sidecar that cannot pull.
+    static func cloudOverlay(address: String, requester: CloudRequester) -> [(name: String, value: String)] {
+        var pairs: [(name: String, value: String)] = [
+            (ENGINE_MODE_VAR, "cloud"),
+            (CLOUD_URL_VAR, cloudAPIBaseURL.absoluteString),
+            (EngineEnvironment.addressVar, address),
+        ]
+        if let access = cloudCookieValue("tf_session", session: requester.session, baseURL: cloudAPIBaseURL) {
+            pairs.append((CLOUD_ACCESS_TOKEN_VAR, access))
+        }
+        if let refresh = cloudCookieValue("tf_refresh", session: requester.session, baseURL: cloudAPIBaseURL) {
+            pairs.append((CLOUD_REFRESH_TOKEN_VAR, refresh))
+        }
+        return pairs
+    }
+
+    // MARK: - The cloud mirror's reachability
+
+    /// What the mail surface shows above the deck: the offline read-only line when the cloud mirror has
+    /// gone unreachable, otherwise the engine's own notice. Door one never shows the offline line —
+    /// its mirror is local.
+    public var mailNotice: EngineNoticeText? {
+        if door == .cloud, cloudOnline == false { return Self.offlineNotice }
+        return engine.notice
+    }
+
+    /// Poll `/health` over the pipe and record whether the cloud mirror is reachable. A no-op off the
+    /// cloud door or before the engine has a transport. The sidecar's `503 offline_read_only` is the
+    /// real backstop for writes; this only drives the chrome and the client-side gate.
+    public func refreshCloudOnline() async {
+        guard let transport = engine.transport else { return }
+        await refreshCloudOnline(using: transport)
+    }
+
+    /// The pollable core, taking the requester so a test drives it without a running engine.
+    func refreshCloudOnline(using requester: any EngineRequesting) async {
+        guard door == .cloud else { return }
+        let base = (engine.ready?.baseURL).flatMap { URL(string: $0) } ?? URL(string: "http://sidecar")!
+        guard let url = URL(string: "/health", relativeTo: base) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        guard let (http, data) = try? await requester.send(request) else { return }
+        if let online = Self.parseOnline(status: http.statusCode, body: data) { cloudOnline = online }
+    }
+
+    /// `{ "online": Bool }` off a 2xx `/health`. `nil` for anything else — a non-2xx or an unreadable
+    /// body leaves the last known value standing rather than flipping the chrome on a transient miss.
+    static func parseOnline(status: Int, body: Data) -> Bool? {
+        guard (200..<300).contains(status),
+              let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return nil }
+        return object["online"] as? Bool
     }
 
     /// Build the source the decision names — **the only construction of either one in the app.**
@@ -257,14 +331,18 @@ public final class AppRootModel {
             // a pre-filled search, a name to suggest for VIP — and it is the default because the
             // preview was the only thing there was. Handing it to a real account would put a
             // stranger's half-written message in somebody's compose window.
-            mail = AppState(source: source, chrome: Self.noChrome)
-        case .cloud:
-            // Door two: the hosted mailbox, driven through the signed-in transport. The requester is
-            // only ever non-nil on a cloud install that has signed in, so this branch is unreachable
-            // for local and demo — which is the "local never constructs the requester" invariant read
-            // from the one place that could break it. Same real-account chrome as the engine branch.
-            guard let requester = cloudRequester, let source = makeCloudSource(requester) else { return }
-            mail = AppState(source: source, chrome: Self.noChrome)
+            //
+            // The cloud door reads the SAME source over the SAME pipe as door one; the only difference
+            // is the read-only gate, which refuses writes while the mirror is offline so the reader
+            // gets an immediate answer rather than a round trip to the sidecar's 503. Door one's local
+            // mirror is never offline in that sense, so it takes the source unwrapped.
+            let gated: any MailSource = door == .cloud
+                ? OfflineGate(source, isOffline: { [weak self] in
+                    guard let self else { return false }
+                    return self.cloudOnline == false
+                })
+                : source
+            mail = AppState(source: gated, chrome: Self.noChrome)
         }
         mailKind = kind
     }
@@ -307,14 +385,15 @@ public final class AppRootModel {
         self.cloudProblem = nil
     }
 
-    /// Sign in to ohmail Cloud — password, then the TOTP code — and, on success, drive the mailbox
-    /// through the hosted transport.
+    /// Sign in to ohmail Cloud — password, then the TOTP code — and, on success, start the cloud
+    /// sidecar against the hosted session.
     ///
     /// The three outcomes are the ruling's requirement that a failed door two is a NAMED state and
     /// never `.fixtures`: a rejection (wrong password or code) shows beside the fields and the form
-    /// stands; an unreachable host is a degraded panel with a sentence; a success builds the viewer.
+    /// stands; an unreachable host is a degraded panel with a sentence; a success starts the engine.
     /// The requester is stored here and nowhere else, which is what keeps a local install from ever
-    /// holding one.
+    /// holding one — and it survives only so the shell can lift the session tokens for the sidecar's
+    /// environment.
     public func submitCloudSignIn(email: String, password: String, code: String) async {
         cloudProblem = nil
         guard !submittingCloud else { return }
@@ -326,9 +405,11 @@ public final class AppRootModel {
             cloudRequester = requester
             cloudProblem = nil
             setupFailure = nil
-            // The decision now names `.cloud`; build the viewer inline rather than waiting on a
-            // surface change, exactly as `saveMailbox` starts the engine the moment it is configured.
-            materialize()
+            // Start the sidecar in cloud mode the moment the session exists, exactly as `saveMailbox`
+            // starts the local engine the moment the mailbox is configured. The surface then follows
+            // the engine's status — opening, then serving — and `materialize` builds the source once it
+            // is; the decision now names `.engine`, not a separate cloud source.
+            startCloudEngine(address: email, requester: requester)
         case .rejected(let why):
             cloudProblem = why
         case .unavailable(let why):
@@ -553,6 +634,14 @@ public final class AppRootModel {
         detail: "Every message here was written for the preview. No mailbox is open and no engine "
             + "is running.")
 
+    /// The cloud mirror is unreachable. The mail already pulled is on disk and stays readable; what
+    /// stops is writing, until the connection is back. Said plainly rather than hidden, because a
+    /// control that silently does nothing is worse than one that says why.
+    static let offlineNotice = EngineNoticeText(
+        title: "Offline · read only",
+        detail: "ohmail can't reach your mailbox right now. You can read what's here; changes are "
+            + "paused until the connection is back.")
+
     static func couldNotFinish(_ why: String) -> EngineNoticeText {
         EngineNoticeText(title: "Set up could not finish.", detail: why)
     }
@@ -595,7 +684,9 @@ public enum EngineEnvironment {
     public static let hostVar = "OHMAIL_IMAP_HOST"
     public static let portVar = "OHMAIL_IMAP_PORT"
     public static let userVar = "OHMAIL_IMAP_USER"
-    public static let addressVar = "OHMAIL_MAILBOX_ADDRESS"
+    /// The one name shared with cloud mode — the mailbox address is not IMAP-specific. Spelled once, in
+    /// the engine module, so the local overlay and the cloud overlay cannot drift on it.
+    public static let addressVar = MAILBOX_ADDRESS_VAR
     /// Implicit TLS. The engine reads this as "anything that is not the string `0`", so the false
     /// case has to be spelled exactly — an empty value would mean secure.
     public static let secureVar = "OHMAIL_IMAP_SECURE"
@@ -623,5 +714,46 @@ public enum EngineEnvironment {
             pairs.append((smtpSecureVar, (config.smtpSecure ?? true) ? "1" : "0"))
         }
         return pairs
+    }
+}
+
+/// A read-only shell over the cloud mirror while it is offline — the client-side half of "read only".
+///
+/// Every ``MailIntent`` is a write (a mark-as-read, a Screener decision, a triage move, an undo of one
+/// of those), so when the mirror is offline this refuses `apply` outright, with a sentence the reader
+/// sees, and forwards everything else — the world, bodies, sync state — untouched. Reads keep working
+/// against what the mirror already holds.
+///
+/// **The sidecar's `503 offline_read_only` is still the backstop.** This is the UX: it turns a write
+/// that would round-trip to a 503 into an immediate, plain answer, and it is applied only for the
+/// cloud door — door one's local mirror is never offline in this sense. `isOffline` is read live, so
+/// the gate opens again the moment `/health` reports the mirror is back.
+@MainActor
+final class OfflineGate: MailSource {
+    private let wrapped: any MailSource
+    private let isOffline: @MainActor () -> Bool
+
+    init(_ wrapped: any MailSource, isOffline: @escaping @MainActor () -> Bool) {
+        self.wrapped = wrapped
+        self.isOffline = isOffline
+    }
+
+    func openingWorld() -> MailWorld { wrapped.openingWorld() }
+
+    @discardableResult
+    func start(sink: any MailSourceSink) -> SyncState { wrapped.start(sink: sink) }
+
+    func bodyState(for id: String, in place: Place) -> BodyState { wrapped.bodyState(for: id, in: place) }
+    func requestBody(for id: String, in place: Place) { wrapped.requestBody(for: id, in: place) }
+
+    @discardableResult
+    func apply(_ intent: MailIntent) -> IntentOutcome {
+        guard !isOffline() else {
+            return .refused(SourceFailure(
+                kind: .network,
+                reason: "You're offline. ohmail is read-only until your connection is back.",
+                isRetryable: true))
+        }
+        return wrapped.apply(intent)
     }
 }

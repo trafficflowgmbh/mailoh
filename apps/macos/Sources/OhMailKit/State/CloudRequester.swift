@@ -61,6 +61,25 @@ func cloudCSRFToken(session: URLSession, baseURL: URL) -> String? {
         .first { $0.name == "tf_csrf" }?.value
 }
 
+/// A named cookie's value from a session's jar, lifted so the shell can hand the hosted session to the
+/// engine it spawns — the tokens the sign-in set as cookies become ``CLOUD_ACCESS_TOKEN_VAR`` /
+/// ``CLOUD_REFRESH_TOKEN_VAR`` on that engine's first launch.
+///
+/// **Read from the FULL jar, not `cookies(for:)`.** `tf_session` is scoped to `/` but `tf_refresh` is
+/// path-scoped to `/auth/refresh`, so a domain+path query at the base URL returns the first and drops
+/// the second. Matching by name across every stored cookie, filtered to the host, finds both. HttpOnly
+/// is a browser-DOM restriction; the native cookie store exposes these to the app that owns it.
+func cloudCookieValue(_ name: String, session: URLSession, baseURL: URL) -> String? {
+    let host = baseURL.host
+    return session.configuration.httpCookieStorage?.cookies?
+        .first { cookie in
+            guard cookie.name == name else { return false }
+            guard let host else { return true }
+            let domain = cookie.domain.hasPrefix(".") ? String(cookie.domain.dropFirst()) : cookie.domain
+            return host == domain || host.hasSuffix("." + domain)
+        }?.value
+}
+
 /// Whether a method mutates, and therefore carries the CSRF header. The read routes the viewer uses —
 /// `/sync`, `/mailboxes`, a body fetch — do not; `PATCH /messages` (mark-seen) and `/auth/refresh` do.
 func cloudMethodMutates(_ method: String?) -> Bool {

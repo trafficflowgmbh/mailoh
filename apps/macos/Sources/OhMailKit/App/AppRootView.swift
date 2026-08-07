@@ -27,7 +27,11 @@ public struct AppRootView: View {
                 mailSurface(AppRootModel.demoNotice)
 
             case .mail:
-                mailSurface(root.engine.notice)
+                mailSurface(root.mailNotice)
+                    // The cloud mirror's reachability drives the offline read-only chrome. Bound to
+                    // this surface's lifetime, so it stops when the mailbox is not on screen and is a
+                    // no-op off the cloud door.
+                    .task { await pollCloudHealth() }
 
             case .setup:
                 SetupView(step: root.setupStep,
@@ -61,6 +65,17 @@ public struct AppRootView: View {
         // The engine changes state on its own thread and hops to this actor; every one of those
         // hops can be the moment a source becomes buildable.
         .onChange(of: root.surface) { _, _ in root.materialize() }
+    }
+
+    /// Poll `/health` while the cloud mailbox is on screen. Off the cloud door this returns at once;
+    /// the model's own guard means door one never sends the probe. The five-second cadence is a
+    /// reachability hint, not a heartbeat — the sidecar's 503 is what actually stops a write offline.
+    private func pollCloudHealth() async {
+        guard root.door == .cloud else { return }
+        while !Task.isCancelled {
+            await root.refreshCloudOnline()
+            try? await Task.sleep(for: .seconds(5))
+        }
     }
 
     @ViewBuilder

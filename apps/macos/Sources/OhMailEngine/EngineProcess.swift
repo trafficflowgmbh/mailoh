@@ -66,6 +66,24 @@ public let DATA_DIR_VAR = "OHMAIL_DATA_DIR"
 /// The per-install key-encryption key. Composed from ``KeyProvider``, not read for the child.
 public let KEK_VAR = "OHMAIL_KEK"
 
+/// Selects the engine's branch. `cloud` runs the hosted-mirror sidecar; anything else runs the local
+/// organizer. Read by the engine from its environment — see `apps/sidecar/src/main.ts`.
+public let ENGINE_MODE_VAR = "OHMAIL_MODE"
+
+/// The hosted API the cloud mirror pulls from.
+public let CLOUD_URL_VAR = "OHMAIL_CLOUD_URL"
+
+/// The mailbox address the install is signed in as. The local overlay sets this too
+/// (``EngineEnvironment/addressVar``); cloud mode requires it to seed the local world.
+public let MAILBOX_ADDRESS_VAR = "OHMAIL_MAILBOX_ADDRESS"
+
+/// The first-launch hosted session tokens. **These are secrets that DO travel in the child's
+/// environment** — unlike a mailbox password, which is sealed instead. That asymmetry is the
+/// sidecar's own contract (`cloud-engine.ts`): on the first launch of a session the shell hands the
+/// tokens over, the engine seals them under ``KEK_VAR``, and every later launch carries only the key.
+public let CLOUD_ACCESS_TOKEN_VAR = "OHMAIL_CLOUD_ACCESS_TOKEN"
+public let CLOUD_REFRESH_TOKEN_VAR = "OHMAIL_CLOUD_REFRESH_TOKEN"
+
 /// What the shell refuses to spawn the engine without. Naming them beats starting a process whose
 /// only outcome is a failed start or an install that can never store a credential.
 ///
@@ -84,6 +102,36 @@ public let KEK_VAR = "OHMAIL_KEK"
 /// process state on every launch, which is exactly what sealing it removed. The engine still accepts
 /// one if the environment happens to carry it, and this shell never composes it.
 public let requiredEngineVars = ["OHMAIL_IMAP_HOST", "OHMAIL_IMAP_USER", KEK_VAR]
+
+/// What the shell refuses to spawn the CLOUD sidecar without.
+///
+/// Cloud mode opens no IMAP — it mirrors a hosted account — so the IMAP variables above are wrong for
+/// it, and the sidecar in fact REFUSES to start if any `OHMAIL_IMAP_*` is set (the one-organizer
+/// invariant made structural over there). What it needs instead is the hosted API, the address to
+/// seed its local world, the first-launch tokens, and the key it seals them under. The tokens are on
+/// this list because a first launch with neither a sealed pair nor an environment token is a sidecar
+/// that starts and then cannot pull; naming them here fails fast with the same `.notConfigured`
+/// sentence a missing mailbox gets.
+public let requiredCloudEngineVars = [CLOUD_URL_VAR, MAILBOX_ADDRESS_VAR,
+                                      CLOUD_ACCESS_TOKEN_VAR, CLOUD_REFRESH_TOKEN_VAR, KEK_VAR]
+
+/// Which engine the shell is starting. The local organizer, or the hosted-mirror sidecar.
+///
+/// It selects the required-variable set the plan checks; the child reads its own branch from
+/// ``ENGINE_MODE_VAR`` in the environment the overlay carries, and the two are set together at the
+/// one call site so they cannot disagree.
+public enum EngineMode: Equatable, Sendable {
+    case local
+    case cloud
+
+    /// The variables the plan refuses to spawn without, for this mode.
+    var requiredVars: [String] {
+        switch self {
+        case .local: return requiredEngineVars
+        case .cloud: return requiredCloudEngineVars
+        }
+    }
+}
 
 /// The five durations and the one count the supervisor's behaviour is defined by, in one place so a
 /// test can watch a five-second grace period expire without taking five seconds.
@@ -338,6 +386,7 @@ public final class EngineProcess: @unchecked Sendable {
     /// Keychain is the store and an environment variable must not be able to silently displace it;
     /// with ``KeyProviderDefault`` in place the environment is still how a developer runs an engine.
     public static func plan(
+        mode: EngineMode = .local,
         environment env: [String: String],
         executableDirectory exeDir: URL?,
         dataDirectoryFallback fallback: URL?,
@@ -367,7 +416,7 @@ public final class EngineProcess: @unchecked Sendable {
         let kek = present(stored) ?? present(env[KEK_VAR])
 
         var missing: [String] = []
-        for name in requiredEngineVars {
+        for name in mode.requiredVars {
             let supplied = name == KEK_VAR ? kek : present(env[name])
             if supplied == nil { missing.append(name) }
         }

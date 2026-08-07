@@ -40,17 +40,14 @@ final class AppRootTests: XCTestCase {
                        // A stub that never touches the network. The shipped default is the REAL
                        // `CloudSignIn()`, which would dial `api.ohmail.app`; every test drives door two
                        // through an injected outcome instead.
-                       cloudSignIn: CloudSignInService = StubCloudSignIn(outcome: .unavailable("no network in tests")),
-                       // The cloud source is a stub too, so a signed-in test builds a viewer without an
-                       // `EngineSource` over a live `URLSession`.
-                       cloudSource: @escaping AppRootModel.CloudSourceFactory = { _ in EmptySource() })
+                       cloudSignIn: CloudSignInService = StubCloudSignIn(outcome: .unavailable("no network in tests")))
         -> AppRootModel {
         AppRootModel(flags: LaunchFlags(demo: demo), store: store,
                      // Empty, which is what a bundle opened from the Finder inherits. The stored
                      // mailbox is the only thing that can make a launch startable, which is the
                      // point of the composition.
                      environment: [:], keys: NoKeys(), install: install, engineSource: engineSource,
-                     cloudSignIn: cloudSignIn, cloudSource: cloudSource)
+                     cloudSignIn: cloudSignIn)
     }
 
     /// A cloud sign-in that answers a preset outcome without a socket.
@@ -59,10 +56,16 @@ final class AppRootTests: XCTestCase {
         func signIn(email: String, password: String, code: String) async -> CloudSignInOutcome { outcome }
     }
 
-    /// A throwaway hosted transport, for a `.connected` outcome whose requester the stub source
-    /// ignores. Constructing it dials nothing — the session only speaks when a source drains it.
-    private func stubCloudRequester() -> CloudRequester {
-        CloudRequester(urlSession: makeCloudURLSession())
+    /// A throwaway hosted transport for a `.connected` outcome. Constructing it dials nothing; the
+    /// session's jar carries the tokens the shell lifts into the cloud sidecar's environment.
+    private func stubCloudRequester(session: String = "sess-abc", refresh: String = "ref-xyz") -> CloudRequester {
+        let urlSession = makeCloudURLSession()
+        let jar = urlSession.configuration.httpCookieStorage
+        jar?.setCookie(HTTPCookie(properties: [
+            .domain: "api.ohmail.app", .path: "/", .name: "tf_session", .value: session])!)
+        jar?.setCookie(HTTPCookie(properties: [
+            .domain: "api.ohmail.app", .path: "/auth/refresh", .name: "tf_refresh", .value: refresh])!)
+        return CloudRequester(urlSession: urlSession)
     }
 
     private static let mailbox = EngineConfig(host: "imap.example.org", port: 993,
@@ -354,37 +357,66 @@ final class AppRootTests: XCTestCase {
         root.end()
     }
 
-    /// **A CLOUD SIGN-IN BUILDS A VIEWER AND SPAWNS NO ENGINE.**
+    /// **A CLOUD SIGN-IN SPAWNS THE CLOUD SIDECAR.**
     ///
-    /// The one-organizer half of door two (GOALS #2): a signed-in cloud install draws the mailbox, its
-    /// source is `.cloud`, and no engine was ever started. `begin()` is called because the shape that
-    /// would undo this is a cloud install that spawns anyway.
-    func testACloudSignInBuildsAViewerAndStartsNoEngine() async {
+    /// The rewire (this slice): the cloud door now runs the sidecar in cloud mode behind the same pipe
+    /// as door one, so a signed-in cloud install spawns the engine and reads `.engine`. Enforcement of
+    /// the one-organizer invariant moved into the sidecar, so this is safe. `begin()` is called first to
+    /// prove it does NOT start anything for the cloud door — the start belongs to sign-in. With no
+    /// durable key the spawn lands on `.notConfigured`, which is enough to see that a start happened and
+    /// that the door routes to `.engine`; the serving path is the integration test below.
+    func testACloudSignInSpawnsTheCloudEngine() async {
         let root = model(cloudSignIn: StubCloudSignIn(outcome: .connected(stubCloudRequester())))
         root.chooseDoor(.cloud)
         root.begin()
-        XCTAssertNil(root.engine.status, "a cloud install started the local engine")
+        XCTAssertNil(root.engine.status, "the cloud door started the engine before sign-in")
 
-        await root.submitCloudSignIn(email: "a@b.c", password: "pw", code: "123456")
+        await root.submitCloudSignIn(email: "me@ohmail.app", password: "pw", code: "123456")
 
         XCTAssertTrue(root.cloudSignedIn, "the session was not established")
-        XCTAssertEqual(root.selection.source, .cloud)
-        XCTAssertFalse(root.selection.spawnEngine, "the cloud viewer spawned an engine")
-        XCTAssertNotNil(root.mail, "the viewer was not built")
-        XCTAssertEqual(root.surface, .mail)
-        XCTAssertNil(root.engine.status, "signing in to cloud started the local engine")
+        XCTAssertNotNil(root.engine.status, "the cloud sign-in did not start the sidecar")
+        XCTAssertTrue(root.selection.spawnEngine, "the signed-in cloud door does not spawn")
+        XCTAssertNotEqual(root.selection.source, .fixtures)
         XCTAssertNoFixtureMail(root)
         root.end()
     }
 
-    /// A rejection — a wrong password or code — is shown beside the fields, and the window builds
-    /// nothing and never falls back to the sample world.
+    /// **THE CLOUD DOOR, ALL THE WAY TO SERVING, READS THE ENGINE LIKE DOOR ONE.** A stand-in engine
+    /// announces itself; the signed-in cloud install then names `.engine`, draws `.mail`, and builds no
+    /// sample world — the same harness `testAServingEngineWithAProjectionBuildsThatProjection` uses, on
+    /// the cloud door.
+    func testACloudSignInSpawnsAServingSidecarAndReadsItLikeDoorOne() async throws {
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: Self.node),
+                          "node is not installed; the stand-in engine is written in it, as the real one is")
+        let engine = try writeServingEngine()
+        let root = AppRootModel(
+            flags: LaunchFlags(demo: false), store: store,
+            environment: [ENGINE_PATH_VAR: engine.path], keys: HasKey(),
+            engineSource: { _ in EmptySource() },
+            cloudSignIn: StubCloudSignIn(outcome: .connected(stubCloudRequester())))
+        defer { root.end() }
+        root.chooseDoor(.cloud)
+        await root.submitCloudSignIn(email: "me@ohmail.app", password: "pw", code: "123456")
+        try await waitForServing(root)
+
+        XCTAssertEqual(root.selection.source, .engine, "the signed-in cloud door did not read the engine")
+        XCTAssertTrue(root.selection.spawnEngine)
+        root.materialize()
+        XCTAssertNotNil(root.mail, "a serving cloud sidecar built no world")
+        XCTAssertEqual(root.surface, .mail)
+        XCTAssertNoFixtureMail(root)
+    }
+
+    /// A rejection — a wrong password or code — is shown beside the fields, the window builds nothing,
+    /// never falls back to the sample world, and starts NO engine (the sidecar is spawned on success
+    /// only).
     func testACloudRejectionShowsAProblemNotTheSampleWorld() async {
         let root = model(cloudSignIn: StubCloudSignIn(outcome: .rejected("That code wasn't accepted.")))
         root.chooseDoor(.cloud)
         await root.submitCloudSignIn(email: "a@b.c", password: "pw", code: "000000")
 
         XCTAssertFalse(root.cloudSignedIn, "a rejected sign-in established a session")
+        XCTAssertNil(root.engine.status, "a rejected sign-in started the sidecar")
         XCTAssertNil(root.mail, "a rejected sign-in built a world")
         XCTAssertNoFixtureMail(root)
         XCTAssertEqual(root.setupStep, .cloudSignIn(problem: "That code wasn't accepted."))
@@ -393,13 +425,14 @@ final class AppRootTests: XCTestCase {
     }
 
     /// An unreachable host is a NAMED degraded panel, not the sample world and not a wrong-password
-    /// message: nothing the person typed was wrong.
+    /// message: nothing the person typed was wrong, and no engine was started.
     func testACloudUnavailableHostIsNamedNotTheSampleWorld() async {
         let root = model(cloudSignIn: StubCloudSignIn(outcome: .unavailable("Couldn't reach ohmail Cloud.")))
         root.chooseDoor(.cloud)
         await root.submitCloudSignIn(email: "a@b.c", password: "pw", code: "123456")
 
         XCTAssertFalse(root.cloudSignedIn)
+        XCTAssertNil(root.engine.status, "an unreachable host started the sidecar")
         XCTAssertNil(root.mail)
         XCTAssertNoFixtureMail(root)
         guard case .failed(let notice) = root.setupStep else {
@@ -409,16 +442,90 @@ final class AppRootTests: XCTestCase {
         root.end()
     }
 
+    /// **THE CLOUD OVERLAY CARRIES THE MODE, THE API, THE ADDRESS, AND THE JAR'S TOKENS — AND NO IMAP.**
+    ///
+    /// This is the environment the sidecar is spawned with. `tf_session` and `tf_refresh` are lifted
+    /// from the sign-in jar (the path-scoped refresh cookie included), and the presence of any
+    /// `OHMAIL_IMAP_*` here would make the sidecar refuse to start — so there is none.
+    func testTheCloudOverlayCarriesTheModeUrlAddressAndTokensFromTheJar() {
+        let overlay = Dictionary(uniqueKeysWithValues: AppRootModel
+            .cloudOverlay(address: "me@ohmail.app", requester: stubCloudRequester(session: "sess-1", refresh: "ref-1"))
+            .map { ($0.name, $0.value) })
+        XCTAssertEqual(overlay["OHMAIL_MODE"], "cloud")
+        XCTAssertEqual(overlay["OHMAIL_CLOUD_URL"], "https://api.ohmail.app")
+        XCTAssertEqual(overlay["OHMAIL_MAILBOX_ADDRESS"], "me@ohmail.app")
+        XCTAssertEqual(overlay["OHMAIL_CLOUD_ACCESS_TOKEN"], "sess-1", "the access token was not lifted from tf_session")
+        XCTAssertEqual(overlay["OHMAIL_CLOUD_REFRESH_TOKEN"], "ref-1",
+                       "the path-scoped tf_refresh cookie was not found")
+        for name in overlay.keys {
+            XCTAssertFalse(name.hasPrefix("OHMAIL_IMAP_"), "the cloud overlay carried an IMAP variable: \(name)")
+        }
+    }
+
     /// **LOCAL NEVER CONSTRUCTS THE CLOUD REQUESTER.** The other half of the per-mode privacy
-    /// invariant (GOALS #5): a full door-one launch holds no hosted transport and never names `.cloud`.
+    /// invariant (GOALS #5): a full door-one launch holds no hosted transport.
     func testALocalInstallNeverConstructsTheCloudRequester() throws {
         try store.save(Self.mailbox)
         let root = model()
         root.chooseDoor(.local)
         XCTAssertFalse(root.cloudSignedIn, "a local install has a cloud session")
         XCTAssertNil(root.cloudRequester, "a local install constructed a cloud requester")
-        XCTAssertNotEqual(root.selection.source, .cloud, "a local install named the cloud source")
         root.end()
+    }
+
+    // MARK: - Offline read-only chrome (the cloud mirror's reachability)
+
+    /// **THE OFFLINE READ-ONLY LINE APPEARS ONLY ONCE `/health` SAYS THE MIRROR IS OFFLINE**, and it is
+    /// a cloud-only affordance. Online — or before the first poll — the mail surface shows the engine's
+    /// own notice, not the offline one.
+    func testTheCloudOfflineNoticeTracksHealth() async {
+        let root = model()
+        root.chooseDoor(.cloud)
+        XCTAssertNil(root.cloudOnline, "reachability is unknown before the first poll")
+        XCTAssertNil(root.mailNotice, "the offline line showed before anything said the mirror was offline")
+
+        await root.refreshCloudOnline(using: HealthRequester(online: true))
+        XCTAssertEqual(root.cloudOnline, true)
+        XCTAssertNil(root.mailNotice, "an online cloud mirror showed the read-only chrome")
+
+        await root.refreshCloudOnline(using: HealthRequester(online: false))
+        XCTAssertEqual(root.cloudOnline, false)
+        XCTAssertEqual(root.mailNotice, AppRootModel.offlineNotice, "an offline mirror did not show the read-only line")
+        root.end()
+    }
+
+    /// The health parse only flips the chrome on a readable 2xx `online` flag; a non-2xx or junk body
+    /// leaves the last value standing rather than blinking the state on a transient miss.
+    func testParseOnlineReadsTheHealthFlagAndIgnoresJunk() {
+        XCTAssertEqual(AppRootModel.parseOnline(status: 200, body: Data(#"{"online":true}"#.utf8)), true)
+        XCTAssertEqual(AppRootModel.parseOnline(status: 200, body: Data(#"{"online":false}"#.utf8)), false)
+        XCTAssertNil(AppRootModel.parseOnline(status: 503, body: Data(#"{"online":true}"#.utf8)),
+                     "a non-2xx must not flip the chrome")
+        XCTAssertNil(AppRootModel.parseOnline(status: 200, body: Data("not json".utf8)))
+        XCTAssertNil(AppRootModel.parseOnline(status: 200, body: Data("{}".utf8)))
+    }
+
+    /// **THE CLIENT-SIDE GATE: WRITES ARE REFUSED WHILE OFFLINE AND FORWARDED WHEN ONLINE.** Reads pass
+    /// through in both states. The gate reads its offline flag live, so it opens again the moment the
+    /// mirror is back — the sidecar's 503 stays the backstop this only sits in front of.
+    func testTheOfflineGateRefusesWritesWhenOfflineAndForwardsWhenOnline() {
+        let inner = RecordingSource()
+        var offline = false
+        let gate = OfflineGate(inner, isOffline: { offline })
+
+        _ = gate.apply(.markSeen(message: "m1"))
+        XCTAssertEqual(inner.applied, ["m1"], "an online write was not forwarded")
+
+        offline = true
+        guard case .refused(let failure) = gate.apply(.markSeen(message: "m2")) else {
+            return XCTFail("an offline write was not refused")
+        }
+        XCTAssertEqual(failure.kind, .network)
+        XCTAssertEqual(inner.applied, ["m1"], "an offline write reached the source")
+
+        offline = false
+        _ = gate.apply(.markSeen(message: "m3"))
+        XCTAssertEqual(inner.applied, ["m1", "m3"], "the gate did not reopen when the mirror came back")
     }
 
     /// The chosen door is sticky per install: a later launch resumes at it rather than re-asking.
@@ -780,4 +887,31 @@ private final class EmptySource: MailSource {
     func bodyState(for id: String, in place: Place) -> BodyState { .notFetched }
     func requestBody(for id: String, in place: Place) {}
     @discardableResult func apply(_ intent: MailIntent) -> IntentOutcome { .applied(IntentAck()) }
+}
+
+/// Records the mark-seen ids it is handed, so the offline gate's forwarding can be watched rather than
+/// inferred.
+@MainActor
+private final class RecordingSource: MailSource {
+    private(set) var applied: [String] = []
+    func openingWorld() -> MailWorld { MailWorld() }
+    @discardableResult func start(sink: any MailSourceSink) -> SyncState { .idle(lastCompleted: nil) }
+    func bodyState(for id: String, in place: Place) -> BodyState { .notFetched }
+    func requestBody(for id: String, in place: Place) {}
+    @discardableResult func apply(_ intent: MailIntent) -> IntentOutcome {
+        if case .markSeen(let id) = intent { applied.append(id) }
+        return .applied(IntentAck())
+    }
+}
+
+/// Answers `/health` with a canned reachability flag, for driving `refreshCloudOnline` without a
+/// running engine.
+private struct HealthRequester: EngineRequesting {
+    let online: Bool
+    func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
+        let body = Data("{\"online\":\(online)}".utf8)
+        let http = HTTPURLResponse(url: request.url ?? URL(string: "http://sidecar")!,
+                                   statusCode: 200, httpVersion: nil, headerFields: nil)!
+        return (http, body)
+    }
 }
