@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged over the Info.plist Tauri generates for the macOS bundle. It sets ONE key, and that key is
+  the difference between an update every existing macOS user can take and one none of them can.
+
+  ── THE STRANDING, AND WHY A CONSTANT FIXES IT ─────────────────────────────────────────────
+
+  macOS shipped a different application until now — a SwiftUI client with the same bundle identifier
+  (io.ohmail.desktop) and Sparkle as its updater. Sparkle decides whether a feed item is newer by
+  comparing the appcast's `sparkle:version` against the INSTALLED app's CFBundleVersion, and that
+  client stamped CFBundleVersion with a monotonic build number: `git rev-list --count HEAD` over the
+  published repository. The releases that exist carry 251 (v0.5.0) through 291 (v0.6.1).
+
+  Tauri, left alone, writes CFBundleVersion from the config's `version` — so this app would announce
+  itself as `0.7.0`. Sparkle would compare 0.7.0 against 291, read the handover as a DOWNGRADE, and
+  refuse it. Not loudly: every installed macOS copy would simply keep reporting itself up to date,
+  for ever, with no error anywhere and nothing on screen to say why. That is the single worst outcome
+  available in this release, because it is silent and it is permanent.
+
+  So CFBundleVersion is pinned to an integer far above any build number that was ever published. It
+  is not a version anybody reads: CFBundleShortVersionString stays `0.7.0` and is what the app, the
+  appcast's display title and every download page show.
+
+  ── WHY IT NEVER HAS TO CHANGE AGAIN ───────────────────────────────────────────────────────
+
+  It is load-bearing for exactly one transition. Once a Mac has taken the handover it is running this
+  app, and this app does not use Sparkle at all — it checks `latest.json` and compares its own
+  compiled-in `0.7.0` against the feed's semver, never looking at CFBundleVersion. So the constant
+  can stay where it is release after release; holding it still is what keeps the ONE comparison that
+  matters unambiguous, and bumping it would only invite the mistake of bumping it wrongly.
+
+  The floor is asserted where it is used, in `release-feeds.yml`: the appcast job refuses to publish
+  an item whose sparkle:version is not an integer above the last Swift build number, so a plist that
+  loses this key fails the release instead of stranding the people it was written for.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleVersion</key>
+	<string>100000</string>
+</dict>
+</plist>

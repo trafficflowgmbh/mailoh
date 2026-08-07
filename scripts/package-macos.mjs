@@ -597,7 +597,7 @@ say(`  ohmail-engine → Contents/MacOS/; node_modules + drizzle → Contents/`)
  * ``EngineProcess.resolveNode`` prefers it, so a Finder launch never depends on the user's PATH.
  *
  * UNIVERSAL: `build/vendor/node` is `lipo`'d from the official arm64 and x64 macOS builds, matching
- * the shell's own two slices. `scripts/vendor-node-macos.mjs` produces it — a script rather than a
+ * the shell's own two slices. `scripts/vendor-node.mjs` produces it — a script rather than a
  * paragraph of shell, because a build step only a person can follow is a step CI cannot, and an app
  * assembled by hand is not the one a tag describes. It verifies both archives against the release's
  * published checksums before combining them. The arm64 slice is what runs on Apple silicon; the x64
@@ -613,7 +613,7 @@ if (!fs.existsSync(VENDOR_NODE)) {
   die(`the vendored Node runtime is missing: ${path.relative(REPO, VENDOR_NODE)}.\n` +
       `  Fetch it — the script verifies both official builds against the release checksums and\n` +
       `  lipo's them into one universal binary:\n\n` +
-      `    node scripts/vendor-node-macos.mjs`);
+      `    node scripts/vendor-node.mjs`);
 }
 const nodeArchs = (capture("lipo", ["-archs", VENDOR_NODE]) || "").split(/\s+/).filter(Boolean);
 for (const a of ARCHS.split(/\s+/).filter(Boolean)) {
