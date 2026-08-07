@@ -10,7 +10,7 @@ A native SwiftUI client for macOS and a Tauri shell for Windows and Linux.
 Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/badge/download-v0.6.0-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.6.0)
+[![latest release](https://img.shields.io/badge/download-v0.5.0-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.5.0)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -45,9 +45,9 @@ push. It is a commercial service with a codebase of its own, built by the same
 people, and the desktop app neither asks for it nor needs it.
 [Desktop or Cloud](#desktop-or-cloud) is the full comparison, prices included.
 
-## The current release — v0.6.0
+## The current release — v0.5.0
 
-**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.6.0)**
+**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.5.0)**
 `ohmail.dmg` for macOS, an `.msi` and an NSIS `-setup.exe` for Windows, an
 `.AppImage` and a `.deb` for Linux. Every file was built by GitHub Actions from
 the tree this tag points at, and the run that made them prints the SHA-256 of
@@ -184,8 +184,8 @@ what the run made.
 | Platform | Artifacts | Runner |
 |---|---|---|
 | **macOS** | `ohmail.dmg` (universal, arm64 + x86_64, **engine-bearing**), `ohmail.app.zip`, the full screenshot set | `macos-15` |
-| **Windows** | `ohmail_0.6.0_x64_en-US.msi`, `ohmail_0.6.0_x64-setup.exe` (NSIS) | `windows-latest` |
-| **Linux** | `ohmail_0.6.0_amd64.AppImage`, `ohmail_0.6.0_amd64.deb` | `ubuntu-latest` |
+| **Windows** | `ohmail_0.5.0_x64_en-US.msi`, `ohmail_0.5.0_x64-setup.exe` (NSIS) | `windows-latest` |
+| **Linux** | `ohmail_0.5.0_amd64.AppImage`, `ohmail_0.5.0_amd64.deb` | `ubuntu-latest` |
 
 **Nothing here is signed**, on any platform. Code-signing certificates cost money
 ohmail has not spent yet. We would rather say that plainly than have you discover
@@ -232,15 +232,14 @@ Requires Windows 10 or newer, plus the WebView2 runtime as described above.
 > **The AppImage needs the executable bit**, which GitHub's artifact zip does not
 > preserve:
 > ```bash
-> chmod +x ohmail_0.6.0_amd64.AppImage && ./ohmail_0.6.0_amd64.AppImage
+> chmod +x ohmail_0.5.0_amd64.AppImage && ./ohmail_0.5.0_amd64.AppImage
 > ```
 > If it exits immediately on a distribution that has not enabled unprivileged
 > user namespaces, run it with `--appimage-extract-and-run`.
 
-The `.deb` installs with `sudo apt install ./ohmail_0.6.0_amd64.deb` and pulls in
-WebKitGTK. It is **not** in any repository, and a `.deb` install cannot replace
-itself in place, so it does not auto-update — the AppImage is the Linux build that
-applies its own updates, from the same signed feed the app checks.
+The `.deb` installs with `sudo apt install ./ohmail_0.5.0_amd64.deb` and pulls in
+WebKitGTK. It is **not** in any repository, so it will never auto-update — and
+there is no update checker in this build at all.
 
 To uninstall it: `sudo apt remove ohmail`. The Debian package name, the binary at
 `/usr/bin/ohmail`, the icon and the launcher entry are all the same word.

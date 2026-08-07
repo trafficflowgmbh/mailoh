@@ -16,31 +16,6 @@ are still an interface preview. See [Status](README.md#status--read-this-first).
 The engine port to the Windows and Linux shell, so they connect too. See
 [Roadmap](README.md#roadmap) and issue #1.
 
-## [0.6.0] — 2026-08-07
-
-**Read your mail offline on macOS.** Sign in to ohmail Cloud and the app runs the mail engine
-locally, mirroring your account's message text to the Mac and keeping it readable when the network
-drops. Reading works offline; anything that needs the server — remote media, moving or marking
-mail, editing a rule — is unavailable until you reconnect, and then the local copy catches up. The
-hosted account stays the master, and only one organizer is ever active for a mailbox at a time.
-
-**A prompt to turn on FileVault.** Because message text now lands on disk, the first Cloud sign-in
-checks whether full-disk encryption is on and offers to open the setting if it isn't.
-
-**Cc and Bcc.** Compose carries carbon and blind-carbon recipients end to end; Bcc rides the
-envelope only and never appears in the delivered headers.
-
-**A calmer message viewer.** Reads, Receipts and History open in one viewer, with an optional
-two-pane list-and-reader in History, a dark reading mode for the message body you can override per
-message, and tag pages that read in place.
-
-**Ask-me-when resurfacing.** Snooze a message to tomorrow, next week, or a day you pick.
-
-**Sharper screening.** A DKIM failure counts against a message only when the signature is aligned
-with the sender, so an unrelated mailing-list signature no longer demotes legitimate mail.
-
-The Windows and Linux builds remain a fixtures-only preview of the interface.
-
 ## [0.5.0] — 2026-08-07
 
 **Signed auto-update.** The app checks for updates and installs them on your word, with the
