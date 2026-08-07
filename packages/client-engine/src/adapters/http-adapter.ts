@@ -33,6 +33,34 @@
 
 export type FetchLike = (url: string, init?: unknown) => Promise<unknown>;
 
+/**
+ * The server's own message-list vocabulary, and the table that joins it to the client's.
+ *
+ * BOTH ARE RE-EXPORTED BY THE PACKAGE BARREL, which is the only reason they are here. In the
+ * mirror this file IS `adapters/http-adapter.ts`, so `export { SERVER_VIEW_OF, type
+ * ServerMessageView } from "./adapters/http-adapter.js"` has to resolve to something — and it
+ * resolves to a symbol, not just a module. A missing export is a mirror-only typecheck failure
+ * that the private tree cannot see, because `tsc` here reads the real file.
+ *
+ * `Record<string, …>` and NOT `Record<OhmailView, …>`: this file imports nothing, deliberately
+ * (see the header — it is published to two different paths, so any relative import is wrong at
+ * one of them), so the client's view union is not nameable here. The exhaustiveness that type
+ * buys is a property of the real table; nothing in this build reads this one, because there is
+ * no server to translate a view for.
+ */
+export type ServerMessageView =
+  | "imbox" | "feed" | "paper_trail" | "screened" | "quarantine"
+  | "new_for_you" | "previously_seen";
+
+export const SERVER_VIEW_OF: Record<string, ServerMessageView | null> = {
+  ohbox: "imbox",
+  reads: "feed",
+  receipts: "paper_trail",
+  screened: "screened",
+  spam: "quarantine",
+  screener: null,
+};
+
 export interface HttpAdapterOptions {
   baseUrl?: string;
   fetch?: FetchLike;

@@ -848,6 +848,48 @@ describe("the UI bundle's build config", () => {
     }
   });
 
+  it("the stub declares every SYMBOL the barrel re-exports from http-adapter", () => {
+    /**
+     * THE SAME GAP AS THE TEST ABOVE, ONE LEVEL OUT — and it shipped a red CI before this existed.
+     *
+     * The test above compares METHODS against `EngineAdapter`. It says nothing about the other
+     * things the module exports, and the package barrel re-exports several of them by name. When
+     * `SERVER_VIEW_OF` and `ServerMessageView` were added to the real adapter and re-exported, the
+     * stub did not gain them — so in the mirror the barrel named two symbols its
+     * `http-adapter.ts` did not have, and all three platform build jobs failed on
+     * `TS2305: Module … has no exported member`.
+     *
+     * Nothing here could see it. `pnpm typecheck` resolves the REAL file; the publisher's import
+     * gate resolves MODULES and has no opinion about symbols; and the desktop bundle never touches
+     * the module at all, because Vite aliases it away. The first honest signal was a public CI run.
+     *
+     * So the barrel's own re-export list is the oracle: every name it takes from
+     * `./adapters/http-adapter.js` must be exported by this file. Red by deleting either symbol
+     * from the stub, or by adding a re-export to the barrel without mirroring it.
+     */
+    const barrel = fs.readFileSync(
+      path.resolve(APP, "../../packages/client-engine/src/index.ts"),
+      "utf8",
+    );
+    const block = /export\s*\{([^}]*)\}\s*from\s*"\.\/adapters\/http-adapter\.js";/.exec(barrel);
+    expect(block, "could not find the barrel's http-adapter re-export block").not.toBeNull();
+    const names = block![1]
+      .split(",")
+      .map((x) => x.replace(/\/\/.*$/gm, "").trim())
+      .filter(Boolean)
+      .map((x) => x.replace(/^type\s+/, "").trim())
+      .filter((x) => /^[A-Za-z_$][\w$]*$/.test(x));
+    // The harness bites only if it found something to compare.
+    expect(names.length).toBeGreaterThanOrEqual(4);
+    expect(names).toContain("SERVER_VIEW_OF");
+
+    const stub = read("src/no-http-adapter.ts");
+    for (const name of names) {
+      expect(stub, `no-http-adapter.ts does not export ${name}, which the barrel re-exports`)
+        .toMatch(new RegExp(`^export (?:type |const |class |interface |function )?${name}\\b`, "m"));
+    }
+  });
+
   it("emits origin-agnostic relative URLs", () => {
     expect(vite).toMatch(/base: "\.\/"/);
   });
