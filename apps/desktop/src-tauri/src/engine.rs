@@ -2037,9 +2037,16 @@ fn install_key() -> Result<String, String> {
 
 // ── What the window may ask ──────────────────────────────────────────────────────────────────
 //
-// Four commands, and they are the only thing the webview can call. `engine_status` is what a surface
+// Six commands, and they are the only thing the webview can call. `engine_status` is what a surface
 // renders; `engine_request` is the bridge the client engine's `fetch` goes down; `engine_configure`
-// and `engine_logout` are the two that change which door this install came in by.
+// and `engine_logout` are the two that change which door this install came in by. `notify` and
+// `set_badge` are the two pieces of native chrome the WINDOW drives rather than the shell: what
+// counts as unread is a question about mail, which the client answers and this process has no
+// opinion on.
+//
+// They live in this file for the reason everything else that reaches the webview does: "the
+// capability is all in one module, and that module is not compiled into the published build" is a
+// statement worth keeping true of a file list rather than of a set of `#[cfg]`s spread about.
 //
 // THE SESSION TOKEN IS NOT AMONG THEM. `engine_status` does not carry it and `engine_request` adds
 // it on this side, so the page holds no credential — which is also what lets the unmodified client
@@ -2156,36 +2163,121 @@ fn engine_request(
     Ok(tauri::ipc::Response::new(out))
 }
 
+/// One notice in the operating system's own notification centre.
+///
+/// ── WHY THE WINDOW ASKS AND THE SHELL SPEAKS ────────────────────────────────────────────────
+///
+/// The page cannot post a notification: its CSP and the offline guard leave it no way to ask for
+/// the permission, and it has no bundle identity for the platform to attribute one to. This
+/// process has both. The division is the honest one — the client knows a message arrived, and the
+/// shell knows how this operating system tells somebody about it.
+///
+/// The webview is granted THIS command and NOT the notification plugin's own permissions, which
+/// is the difference between "the window may ask for one notice with a title and a body" and "the
+/// window may drive the notification API". The plugin is reached only from here.
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn notify<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    use tauri_plugin_notification::{NotificationExt, PermissionState};
+    // ASK ONCE, AND ONLY WHEN THE ANSWER IS NOT ALREADY KNOWN. A permission prompt on every
+    // notification is the behaviour that gets an app's notifications turned off for good; a
+    // refusal is reported and never retried in a loop.
+    match app.notification().permission_state() {
+        Ok(PermissionState::Granted) => {}
+        Ok(_) => match app.notification().request_permission() {
+            Ok(PermissionState::Granted) => {}
+            Ok(_) => return Err("notifications are turned off for ohmail on this computer".into()),
+            Err(err) => return Err(format!("this computer would not say whether ohmail may post notifications ({err})")),
+        },
+        Err(err) => return Err(format!("this computer would not say whether ohmail may post notifications ({err})")),
+    }
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|err| format!("the notification could not be shown ({err})"))
+}
+
+/// How many pieces of mail the dock or taskbar icon says are waiting. Zero removes the badge.
+///
+/// The COUNT is the window's, deliberately: what is unread is a fact about mail, and this process
+/// has no reader of the mirror and no business acquiring one. All it does is put the number the
+/// client already renders in the rail onto the icon.
+///
+/// Windows has no badge count — it carries an overlay icon instead — so the call is a no-op there
+/// rather than an error. A platform that cannot show a badge is not a failure the window should
+/// have to handle, and reporting one would put an error in front of somebody over decoration.
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn set_badge<R: tauri::Runtime>(app: tauri::AppHandle<R>, count: u32) -> Result<(), String> {
+    use tauri::Manager;
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    // `None` and `Some(0)` both remove it; `None` is the spelling that says so.
+    let value = if count == 0 { None } else { Some(i64::from(count)) };
+    match window.set_badge_count(value) {
+        Ok(()) => Ok(()),
+        Err(err) if cfg!(windows) => {
+            log_line(format_args!("this platform has no badge count ({err})"));
+            Ok(())
+        }
+        Err(err) => Err(format!("the badge could not be set ({err})")),
+    }
+}
+
 /// The window's grant, and the whole of it.
 ///
 /// Added at runtime rather than as a file in `capabilities/`, because a file there is compiled into
 /// EVERY build: the preview would carry a grant for commands it does not have, and "the window can
 /// call nothing" would become a claim about a permission list rather than about the binary. This
 /// string is in a module the preview does not compile.
+///
+/// `core:event:allow-listen` is the one runtime permission on the list, and it is one direction
+/// only: the window may HEAR what the shell emits — which is how a chosen menu item reaches the
+/// frontend's navigation — and has no matching `allow-emit`, so it cannot make the shell hear
+/// anything. That asymmetry is what a menu wants, and granting the pair would have been the easy
+/// thing to write.
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, and sign out of it. Nothing else: no filesystem, no shell, no network, and no Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, and listen for the shell's own events. Nothing else: no filesystem, no shell, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "core:event:allow-listen"]
 }"#;
 
-/// Register the four commands. Called from `main.rs` under the same feature.
+/// Register the six commands. Called from `main.rs` under the same feature.
 ///
 /// It lives here rather than there so that `main.rs` contains no `invoke_handler` at all — the
 /// published shell's "registers no commands" is then a property of a file that is always compiled,
 /// rather than of a branch inside one.
+///
+/// ONE `invoke_handler`, and it has to be: a second call REPLACES the first rather than adding to
+/// it, so a command registered anywhere else would take every command here out of the build.
 #[cfg(feature = "local-engine")]
 pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder.invoke_handler(tauri::generate_handler![
-        engine_status,
-        engine_request,
-        engine_configure,
-        engine_logout
-    ])
+    builder
+        // The notification plugin, registered HERE rather than in `main.rs`, so it is in the
+        // engine-bearing build and out of the preview's dependency graph entirely — the preview
+        // has no mail and therefore nothing to announce. The webview is granted the `notify`
+        // command above and none of this plugin's own permissions.
+        .plugin(tauri_plugin_notification::init())
+        .invoke_handler(tauri::generate_handler![
+            engine_status,
+            engine_request,
+            engine_configure,
+            engine_logout,
+            notify,
+            set_badge
+        ])
 }
 
-/// Hand the shell to the window, and grant the window the four commands.
+/// Hand the shell to the window, and grant the window the six commands.
 #[cfg(feature = "local-engine")]
 pub fn manage(app: &tauri::App, shell: Arc<Shell>) {
     use tauri::Manager;

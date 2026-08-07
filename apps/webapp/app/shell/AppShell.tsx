@@ -353,6 +353,8 @@ export function AppShell({
   billingSection,
   securitySection,
   aboutSection,
+  desktopSection,
+  onUnread,
 }: {
   demo: boolean;
   resolveOwner?: OwnerResolver;
@@ -383,6 +385,39 @@ export function AppShell({
    * from `GET /mailboxes`, which this shared shell may not call. Absent ⇒ the demo body.
    */
   aboutSection?: ReactNode;
+  /**
+   * THE PANE THAT ONLY A SHELL WITH A NATIVE PROCESS BEHIND IT CAN HAVE.
+   *
+   * Which door this install came in by, which mailbox it opens, and the three actions that
+   * change either. Every one of those is a call to the desktop shell — a native command or a
+   * request down the pipe it holds — so the code cannot live here: this file is compiled into
+   * the desktop app and into a browser tab, and the browser tab has no shell to call. Injected
+   * for the same reason {@link accountSection} is, and it is the mirror image of that one:
+   * absent on the web because there is no shell, where Account is absent on the desktop
+   * because there is no account.
+   *
+   * It carries its own `label`, like the sent-mail review's entry does, because the words
+   * belong to the desktop's vocabulary and this shared file does not own them.
+   *
+   * NOT gated on `demo`, unlike the four panes above it, and that is the whole difference:
+   * the desktop shell runs the client in demo mode today, so a `demo ? undefined : …` here
+   * would withhold the pane from the one surface it exists for.
+   */
+  desktopSection?: { label: string; node: ReactNode };
+  /**
+   * HOW MANY PIECES OF MAIL ARE WAITING FOR YOU — published, for a surface outside the page.
+   *
+   * The number the Ohbox's rail row already shows, handed out so a shell that has a dock icon
+   * can put it on one. It is deliberately that number and not a sum of every count in the rail:
+   * the Screener's waiting senders are people to decide about rather than mail to read, and a
+   * badge that counted them would ask for attention the product spent two years learning not to
+   * ask for.
+   *
+   * A callback and not a return value, because the only consumer is a native shell and the shell
+   * is not in this tree. Absent everywhere else, which is every browser tab — nothing on the web
+   * has an icon to write on.
+   */
+  onUnread?: (unread: number) => void;
 }) {
   return (
     <EngineProvider demo={demo} resolveOwner={resolveOwner}>
@@ -397,6 +432,8 @@ export function AppShell({
             billingSection={billingSection}
             securitySection={securitySection}
             aboutSection={aboutSection}
+            desktopSection={desktopSection}
+            onUnread={onUnread}
           />
         </MailStateHost>
       </KeymapProvider>
@@ -440,12 +477,14 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection }: {
+function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, onUnread }: {
   accountSection?: ReactNode;
   mailboxSection?: ReactNode;
   billingSection?: ReactNode;
   securitySection?: ReactNode;
   aboutSection?: ReactNode;
+  desktopSection?: { label: string; node: ReactNode };
+  onUnread?: (unread: number) => void;
 }) {
   const demo = useDemoMode();
   const t = useTranslations();
@@ -2263,6 +2302,18 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     return list;
   }, [t, tags, selectedOhbox, toggleTag, theme, onMessageAction, startFR]);
 
+  /**
+   * THE ONE NUMBER A NATIVE SHELL IS TOLD — see `AppShell`'s `onUnread`.
+   *
+   * Published from the same value the Ohbox's rail row renders, so the dock icon and the rail
+   * can never disagree about how much is waiting. In an effect rather than during render because
+   * the consumer is outside React: it puts a badge on a window, and doing that while rendering is
+   * a side effect in the middle of one.
+   */
+  useEffect(() => {
+    onUnread?.(ohbox.newForYou.length);
+  }, [onUnread, ohbox.newForYou.length]);
+
   /* ── the rail ── */
   const railGroups: RailGroup[] = useMemo(
     () => [
@@ -2924,6 +2975,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                    session `?demo=1` does not have. */
                 securitySection={demo ? undefined : securitySection}
                 accountSection={demo ? undefined : accountSection}
+                /* NOT demo-gated, and that is deliberate — see `AppShell`'s prop. The desktop
+                   shell runs this client in demo mode, so gating this the way the four panes
+                   above are gated would remove the pane from the only surface that has one. A
+                   browser tab passes nothing, so `?demo=1` on the web still has no such pane. */
+                desktopSection={desktopSection}
                 /* Same rule: `?demo=1` has no session, so "connect a mailbox" there would
                    be a form posting to a server this tab is not talking to. The demo keeps
                    the fixture list, which is the honest thing for it to show. */

@@ -1,0 +1,272 @@
+/** @vitest-environment jsdom */
+import { afterEach, describe, expect, it } from "vitest";
+import * as React from "react";
+import { createRoot, type Root } from "react-dom/client";
+
+import {
+  MENU_NAVIGATE_EVENT,
+  MENU_VIEWS,
+  badgeCount,
+  notify,
+  onMenuNavigate,
+  setBadge,
+  viewOfMenuPayload,
+} from "../src/native.js";
+import { DesktopSettings } from "../src/DesktopSettings.js";
+import type { EngineStatus } from "../src/bridge-fetch.js";
+
+/**
+ * THE NATIVE CHROME AND THE INSTALL PANE, driven rather than described.
+ *
+ * Three claims are checked here that nothing else can see:
+ *
+ *  1. the menu's event drives the SAME navigation the client's own keyboard drives, and a payload
+ *     this bundle does not recognise drives nothing;
+ *  2. the dock badge is the count the client publishes, floored and clamped in one place;
+ *  3. "Sign out" actually calls `engine_logout`. That one is the reason this file mounts React at
+ *     all: a settings pane whose button looks right and calls nothing is precisely the failure
+ *     shape the shared `SettingsView` had for tag rename before it was wired, and no amount of
+ *     source-text assertion distinguishes a wired button from a decorative one.
+ */
+
+/* React's own `act`, taken off the namespace rather than from `react-dom/test-utils` — the
+   latter is deprecated in React 18.3 and warns on import. The flag is what stops every render
+   below printing "the current testing environment is not configured to support act(...)". */
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
+
+type Invoke = (command: string, payload?: Record<string, unknown>) => Promise<unknown>;
+
+interface Host {
+  __TAURI_INTERNALS__?: {
+    invoke: Invoke;
+    transformCallback: (cb: (payload: unknown) => void, once?: boolean) => number;
+  };
+}
+
+const host = globalThis as unknown as Host;
+
+interface Asked {
+  command: string;
+  payload?: Record<string, unknown>;
+}
+
+/**
+ * A stand-in shell that records what it was asked and replays whatever it registered as an event
+ * listener. `transformCallback` is the runtime's own handle-minting call; the fake keeps the
+ * function so a test can fire the event the real shell would emit.
+ */
+function shellAnswering(answer: (asked: Asked) => unknown = () => undefined) {
+  const asked: Asked[] = [];
+  const callbacks = new Map<number, (payload: unknown) => void>();
+  let next = 1;
+  host.__TAURI_INTERNALS__ = {
+    invoke: async (command, payload) => {
+      asked.push({ command, payload });
+      return answer({ command, payload });
+    },
+    transformCallback: (cb) => {
+      const id = next++;
+      callbacks.set(id, cb);
+      return id;
+    },
+  };
+  return {
+    asked,
+    /** Deliver an event the way the runtime does — the payload wrapped in its envelope. */
+    emit(event: string, payload: unknown) {
+      const listen = asked.find(
+        (a) => a.command === "plugin:event|listen" && a.payload?.event === event,
+      );
+      if (!listen) throw new Error(`nothing is listening for ${event}`);
+      callbacks.get(listen.payload!.handler as number)!({ event, id: 1, payload });
+    },
+  };
+}
+
+afterEach(() => {
+  delete host.__TAURI_INTERNALS__;
+});
+
+describe("the menu's navigation", () => {
+  it("drives the client's own routing, and nothing else", async () => {
+    const shell = shellAnswering();
+    const went: string[] = [];
+    await onMenuNavigate((view) => went.push(view));
+
+    const listen = shell.asked.find((a) => a.command === "plugin:event|listen")!;
+    expect(listen.payload!.event).toBe(MENU_NAVIGATE_EVENT);
+    expect(listen.payload!.target).toEqual({ kind: "Any" });
+
+    shell.emit(MENU_NAVIGATE_EVENT, "screener");
+    expect(went).toEqual(["screener"]);
+  });
+
+  /**
+   * A NAME THIS BUNDLE DOES NOT KNOW DOES NOTHING.
+   *
+   * The shell and the window are two artifacts and can be one version apart. Navigating to a view
+   * the client has never heard of would land on its fallback route, which reads as the menu item
+   * going to the wrong place — worse than the item doing nothing, because it looks deliberate.
+   */
+  it("refuses a view it does not recognise rather than falling back", async () => {
+    const shell = shellAnswering();
+    const went: string[] = [];
+    await onMenuNavigate((view) => went.push(view));
+
+    shell.emit(MENU_NAVIGATE_EVENT, "somewhere-else");
+    shell.emit(MENU_NAVIGATE_EVENT, "");
+    shell.emit(MENU_NAVIGATE_EVENT, null);
+    shell.emit(MENU_NAVIGATE_EVENT, 3);
+    expect(went).toEqual([]);
+  });
+
+  it("reads the payload in both shapes the runtime delivers", () => {
+    expect(viewOfMenuPayload("ohbox")).toBe("ohbox");
+    expect(viewOfMenuPayload({ payload: "ohbox" })).toBe("ohbox");
+    expect(viewOfMenuPayload({ payload: "nope" })).toBeNull();
+    expect(viewOfMenuPayload(undefined)).toBeNull();
+  });
+
+  it("knows the five places the menu lists and no more", () => {
+    expect([...MENU_VIEWS]).toEqual(["ohbox", "reads", "receipts", "screener", "triage"]);
+  });
+
+  /** Outside the app there is no menu — and no failure either. */
+  it("is silent when there is no shell to listen to", async () => {
+    await expect(onMenuNavigate(() => undefined)).resolves.toBeUndefined();
+    await expect(notify("t", "b")).resolves.toBeUndefined();
+    await expect(setBadge(3)).resolves.toBeUndefined();
+  });
+});
+
+describe("the badge and the notification", () => {
+  it("floors and clamps the count in one place", () => {
+    expect(badgeCount(0)).toBe(0);
+    expect(badgeCount(-4)).toBe(0);
+    expect(badgeCount(2.7)).toBe(2);
+    expect(badgeCount(Number.NaN)).toBe(0);
+    expect(badgeCount(11)).toBe(11);
+  });
+
+  it("sends the clamped count to the shell, not the raw one", async () => {
+    const shell = shellAnswering();
+    await setBadge(-1);
+    expect(shell.asked).toEqual([{ command: "set_badge", payload: { count: 0 } }]);
+  });
+
+  it("hands the notification's words over whole", async () => {
+    const shell = shellAnswering();
+    await notify("ohmail", "One new message for you.");
+    expect(shell.asked).toEqual([
+      { command: "notify", payload: { title: "ohmail", body: "One new message for you." } },
+    ]);
+  });
+});
+
+describe("Settings → this install", () => {
+  const h = React.createElement;
+  let hostEl: HTMLDivElement;
+  let root: Root;
+
+  const SERVING: EngineStatus = {
+    state: "serving",
+    mode: "local",
+    address: "mila@example.com",
+    mailboxId: "mbx-1",
+    credentialState: "ready",
+  };
+
+  const mount = async (status: EngineStatus, onStatus: (s: EngineStatus) => void = () => {}) => {
+    hostEl = document.createElement("div");
+    document.body.append(hostEl);
+    root = createRoot(hostEl);
+    await act(async () => {
+      root.render(
+        h(DesktopSettings, {
+          status,
+          onStatus,
+          onSwitchDoor: () => {},
+          onSignIn: () => {},
+        }),
+      );
+    });
+  };
+
+  const click = async (label: string) => {
+    const button = [...hostEl.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === label,
+    );
+    if (!button) throw new Error(`no button labelled "${label}" — found: ${
+      [...hostEl.querySelectorAll("button")].map((b) => b.textContent).join(" | ")
+    }`);
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  };
+
+  afterEach(async () => {
+    await act(() => root.unmount());
+    hostEl.remove();
+  });
+
+  it("shows the door, the mailbox and the login state", async () => {
+    await mount(SERVING);
+    const text = hostEl.textContent ?? "";
+    expect(text).toContain("mila@example.com");
+    expect(text).toContain("On this Mac");
+    expect(text).toContain("Signed in");
+  });
+
+  it("names the OTHER door when the install came in by it", async () => {
+    await mount({ ...SERVING, mode: "cloud", credentialState: "absent" });
+    const text = hostEl.textContent ?? "";
+    expect(text).toContain("ohmail Cloud");
+    expect(text).toContain("Signed out");
+    // A cloud install that has lost its session is offered the way back.
+    expect([...hostEl.querySelectorAll("button")].map((b) => b.textContent)).toContain("Sign in");
+  });
+
+  it("does not offer a hosted sign-in on a local install", async () => {
+    await mount({ ...SERVING, credentialState: "absent" });
+    expect([...hostEl.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Sign in");
+  });
+
+  /**
+   * THE GUARD THIS FILE EXISTS FOR. "Sign out" asks first, and then calls the command — not a
+   * toast, not local state, not a reload.
+   */
+  it("asks once, then actually calls engine_logout", async () => {
+    const shell = shellAnswering(({ command }) =>
+      command === "engine_logout" ? { state: "not_configured", mode: null, missing: ["config.json"] } : undefined,
+    );
+    let landed: EngineStatus | null = null;
+    await mount(SERVING, (s) => { landed = s; });
+
+    await click("Sign out");
+    // The first press is the question, and nothing has been asked of the shell yet.
+    expect(shell.asked).toHaveLength(0);
+    expect(hostEl.textContent).toContain("Sign out of this mailbox?");
+    // …and it says what stays, which is the thing somebody is actually asking.
+    expect(hostEl.textContent).toMatch(/copy of your mail already on this Mac stays/);
+    expect(hostEl.textContent).toMatch(/Nothing is removed from your mail server/);
+
+    await click("Sign out");
+    expect(shell.asked.map((a) => a.command)).toEqual(["engine_logout"]);
+    expect(landed).toEqual({ state: "not_configured", mode: null, missing: ["config.json"] });
+  });
+
+  it("keeps the mailbox when the question is declined", async () => {
+    const shell = shellAnswering();
+    await mount(SERVING);
+    await click("Sign out");
+    await click("Cancel");
+    expect(shell.asked).toHaveLength(0);
+    expect(hostEl.textContent).not.toContain("Sign out of this mailbox?");
+  });
+
+  it("says what a door switch costs before it is taken", async () => {
+    await mount(SERVING);
+    expect(hostEl.textContent).toMatch(/frozen where it is rather than deleted/);
+  });
+});

@@ -29,6 +29,12 @@ fn main() {
             "engine_request",
             "engine_configure",
             "engine_logout",
+            // The two pieces of native chrome the WINDOW drives: what is unread is a fact about
+            // mail, so the client decides and the shell performs. Declared here like the four
+            // above, because a command absent from this list has no `allow-…` permission for the
+            // capability to reference and the app panics on launch rather than at compile time.
+            "notify",
+            "set_badge",
         ]));
     }
     tauri_build::try_build(attributes).expect("ohmail: failed to build the Tauri context");

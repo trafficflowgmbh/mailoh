@@ -201,12 +201,13 @@ describe("tauri.conf.json", () => {
 
 describe("capabilities", () => {
   /**
-   * STILL EMPTY, INCLUDING AFTER THE ENGINE'S LIFECYCLE LANDED.
+   * STILL EMPTY, INCLUDING NOW THAT THE ENGINE BUILD'S WINDOW HEARS EVENTS.
    *
-   * Owning a child process is a Rust-side concern; capabilities gate what the WEBVIEW may call,
-   * and the webview still calls nothing. The permission that would let a surface hear about the
-   * engine — `core:event:allow-listen` — belongs to the slice that builds the surface, because a
-   * permission granted in advance is one the app carries for as long as it is published.
+   * A file in `capabilities/` is compiled into EVERY build, so anything written here would be
+   * carried by the published preview — whose window calls nothing and listens to nothing. The
+   * engine build's grant is a runtime one (`LOCAL_ENGINE_CAPABILITY` in `engine.rs`), which lives
+   * in a module the preview does not compile, and `core:event:allow-listen` arrived there with the
+   * surface that needed it rather than in advance.
    */
   it("grant the webview nothing", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/capabilities"));
@@ -235,20 +236,32 @@ describe("the Rust side", () => {
     expect(main).not.toMatch(/reqwest|hyper|tokio::net/);
   });
 
-  it("depends on tauri plus exactly the two updater plugins, defaults minus compression", () => {
+  it("depends on tauri plus exactly three plugins, only two of which ship, defaults minus compression", () => {
     expect(cargo).toMatch(/^tauri = \{ version = "2", default-features = false, features = \[$/m);
     // Uncompressed embedding is what makes `strings <installer> | grep http`
     // a real audit rather than a look at a brotli blob.
     expect(cargo).not.toMatch(/"compression"/);
-    // The plugins are an ALLOW-LIST, not "none": the auto-updater added exactly
-    // two, and a THIRD `tauri-plugin-` appearing must fail this until someone
-    // decides it belongs. Scanned over the runtime `[dependencies]` only —
+    // The plugins are an ALLOW-LIST, not "none": a FOURTH `tauri-plugin-` appearing must fail
+    // this until someone decides it belongs. Scanned over the runtime `[dependencies]` only —
     // `[dev-dependencies]` never ship in the binary.
     const depsStart = cargo.indexOf("[dependencies]");
     const devStart = cargo.indexOf("[dev-dependencies]");
     const runtime = cargo.slice(depsStart, devStart >= 0 ? devStart : undefined);
     const plugins = [...runtime.matchAll(/^(tauri-plugin-[a-z-]+)\b/gm)].map((m) => m[1]).sort();
-    expect(plugins).toEqual(["tauri-plugin-dialog", "tauri-plugin-updater"]);
+    expect(plugins).toEqual([
+      "tauri-plugin-dialog",
+      "tauri-plugin-notification",
+      "tauri-plugin-updater",
+    ]);
+    /* AND THE THIRD IS NOT IN THE PUBLISHED BUILD. The notification centre is reached only from
+       the engine build's `notify` command, so it is optional and enabled by `local-engine` — the
+       preview has no mail and nothing to announce. Asserting the plugin list alone would have let
+       an unconditional dependency in under a name that looks the same in a diff. */
+    expect(cargo).toMatch(/^tauri-plugin-notification = \{ version = "2", optional = true \}$/m);
+    for (const shipped of ["tauri-plugin-dialog", "tauri-plugin-updater"]) {
+      expect(runtime, `${shipped} must stay unconditional — it ships in every build`)
+        .toMatch(new RegExp(`^${shipped} = "2"$`, "m"));
+    }
     // No HAND-ROLLED HTTP client is declared. `tauri-plugin-updater` pulls
     // `reqwest` in transitively — that is the one HTTP client in the binary, and
     // it is reached only from `updater.rs` — but nothing here declares one.
@@ -264,7 +277,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these seven files and no others", () => {
+  it("is these nine files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // Which door this install came in by, and the environment each one composes. Compiled only
@@ -275,9 +288,40 @@ describe("the Rust side", () => {
       "engine.rs",
       "engine_tests.rs",
       "main.rs",
+      // The menu bar — the one piece of interface this process draws, and the ONLY file that may
+      // install one: a menu goes in through `Builder::setup`, and a second `setup` on the same
+      // builder replaces the first with nothing failing to say so. It is always compiled; its
+      // navigation submenu is not, because only the engine build's window may hear the event.
+      "menu.rs",
+      "menu_tests.rs",
       "updater.rs",
       "updater_tests.rs",
     ]);
+  });
+
+  /**
+   * ONE OWNER FOR THE MENU BAR, AND ONE FOR THE COMMAND TABLE.
+   *
+   * Both `Builder::setup` and `Builder::invoke_handler` REPLACE what was there rather than adding
+   * to it, so a second caller of either silently deletes the first — a menu that never appears, or
+   * every command in the app failing to resolve. Neither shows up as a compile error and neither
+   * shows up in a diff of the file that lost. `on_menu_event` is the one that genuinely appends,
+   * which is why the updater still handles its own item from its own module.
+   */
+  it("installs one menu and registers one command table", () => {
+    const files = ["main.rs", "menu.rs", "updater.rs", "engine.rs"].map((f) =>
+      read(`src-tauri/src/${f}`),
+    );
+    const count = (needle: RegExp) =>
+      files.reduce((n, src) => n + [...src.matchAll(needle)].length, 0);
+    expect(count(/\.setup\(/g), "more than one Builder::setup — one of them is being discarded")
+      .toBe(1);
+    expect(count(/\.invoke_handler\(/g), "more than one invoke_handler — one table is being discarded")
+      .toBe(1);
+    expect(count(/app\.set_menu\(/g), "more than one file installs a menu bar").toBe(1);
+    // …and the ones that survive are the ones intended to.
+    expect(read("src-tauri/src/menu.rs")).toMatch(/app\.set_menu\(/);
+    expect(read("src-tauri/src/engine.rs")).toMatch(/\.invoke_handler\(/);
   });
 
   /**
@@ -300,7 +344,9 @@ describe("the Rust side", () => {
     // updater's `plugins` config as a `serde_json::Value`, so the crate references
     // serde_json in every build now and it is a direct, non-optional dependency.
     // It compiles nothing new — tauri already pulls it — so the graph is unchanged.
-    expect(cargo).toMatch(/^local-engine = \["dep:keyring", "dep:getrandom"\]$/m);
+    expect(cargo).toMatch(
+      /^local-engine = \["dep:keyring", "dep:getrandom", "dep:tauri-plugin-notification"\]$/m,
+    );
     expect(cargo).toMatch(/^serde_json = "1"$/m);
     // The keystore dependencies stay optional: the preview has no business being
     // linked against the OS keystore at all — it stores nothing, so it needs
@@ -328,13 +374,31 @@ describe("the Rust side", () => {
    * naming its `allow-…` permission cannot be resolved — so neither `cargo check` nor `cargo test`
    * can see it. The set equality below is the only thing that does.
    */
-  it("declares and registers its four commands only in the local build", () => {
+  it("declares and registers its six commands only in the local build", () => {
     const build = read("src-tauri/build.rs");
     const engine = read("src-tauri/src/engine.rs");
-    const COMMANDS = ["engine_status", "engine_request", "engine_configure", "engine_logout"];
+    const COMMANDS = [
+      "engine_status",
+      "engine_request",
+      "engine_configure",
+      "engine_logout",
+      // The two the WINDOW drives rather than the shell — a notice in the operating system's
+      // notification centre, and the count on the dock icon.
+      "notify",
+      "set_badge",
+    ];
 
     expect(build).toMatch(/CARGO_FEATURE_LOCAL_ENGINE/);
-    const declared = [...build.matchAll(/"(engine_[a-z_]+)"/g)].map((m) => m[1]!);
+    /* THE NAMES ARE READ OFF THE `commands(&[…])` CALL, NOT MATCHED BY SHAPE.
+       This used to scan build.rs for `"engine_…"` literals, which is a filter and not a census:
+       the two commands added with the native chrome are not named `engine_*`, so a pattern like
+       that would have declared the set equal while silently ignoring both — and a command missing
+       from build.rs has no `allow-…` permission for the capability to reference, which panics on
+       launch and is invisible to `cargo check` and `cargo test` alike. */
+    const list = /\.commands\(&\[([^\]]*)\]\)/s.exec(build)?.[1] ?? "";
+    const declared = [...list.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]!);
+    expect(declared.length, "build.rs declares no commands at all — the harness found nothing")
+      .toBe(COMMANDS.length);
     expect(declared.sort(), "build.rs declares a different set from the one below").toEqual(
       [...COMMANDS].sort(),
     );
@@ -342,7 +406,9 @@ describe("the Rust side", () => {
     for (const command of COMMANDS) {
       // Defined, registered, and granted — the three places a name has to appear, and the ones a
       // half-added command is missing from.
-      expect(engine, `${command} is not defined`).toContain(`fn ${command}(`);
+      // `[<(]` because two of them are generic over the runtime: a command taking an `AppHandle`
+      // has to name the runtime it belongs to, or the handler cannot be built for one.
+      expect(engine, `${command} is not defined`).toMatch(new RegExp(`fn ${command}[<(]`));
       expect(engine, `${command} is not registered`).toMatch(
         new RegExp(`generate_handler!\\[[^\\]]*${command}`, "s"),
       );
@@ -350,6 +416,18 @@ describe("the Rust side", () => {
         `allow-${command.replace(/_/g, "-")}`,
       );
     }
+
+    /* THE ONE RUNTIME PERMISSION, AND ONLY THE ONE. The window may HEAR the shell's events —
+       which is how a chosen menu item reaches the frontend's navigation — and has no matching
+       `allow-emit`, so it cannot make the shell hear anything. Granting the pair is the easy
+       thing to write and would have handed the page a way to fire the app's own events. */
+    expect(engine).toContain("core:event:allow-listen");
+    expect(engine).not.toContain("core:event:allow-emit");
+    /* And no OTHER core permission crept in beside it. A capability is a list somebody edits,
+       and `core:` is the prefix that grants the runtime's own APIs — the filesystem, the shell,
+       the window, the updater — none of which this window has any business reaching. */
+    const core = [...engine.matchAll(/"(core:[a-z-]+:[a-z-]+)"/g)].map((m) => m[1]!);
+    expect(core).toEqual(["core:event:allow-listen"]);
 
     // Nothing in `main.rs`, still. The registration is a call into `engine.rs`, which the default
     // build does not compile — so "the published shell registers no commands" stays a fact about a
@@ -559,10 +637,16 @@ describe("the auto-updater", () => {
 
   it("triggers only from the native menu, never the webview", () => {
     expect(updater).toMatch(/CHECK_FOR_UPDATES_ID/);
-    expect(updater).toMatch(/Check for Updates/);
     expect(updater).toMatch(/on_menu_event/);
-    // The capability grant to the window stays empty — asserted in "capabilities"
-    // above; the updater is Rust-side and the webview gains no updater permission.
+    // The ITEM is built by `menu.rs`, which owns the whole bar; this module owns its id and the
+    // handler. Both halves are asserted, because either one alone can be true while the other is
+    // not — an id nothing builds a menu item for is a command with no trigger at all.
+    const menu = read("src-tauri/src/menu.rs");
+    expect(menu).toMatch(/updater::CHECK_FOR_UPDATES_ID/);
+    expect(menu).toMatch(/Check for Updates/);
+    // The webview gains no updater permission and no way to ask for a check: the runtime
+    // capability lists the six commands and `core:event:allow-listen`, and nothing else.
+    expect(read("src-tauri/src/engine.rs")).not.toMatch(/updater/);
   });
 
   it("reaches the network only through the plugin — no hand-rolled socket", () => {
@@ -578,6 +662,63 @@ describe("the auto-updater", () => {
     // false. The exhaustive boundary table lives in updater_tests.rs (Rust).
     expect(updater).toMatch(/pub fn should_offer\(/);
     expect(updater).toMatch(/candidate > installed/);
+  });
+});
+
+describe("the menu bar", () => {
+  /**
+   * THE MENU NAVIGATES BY EMITTING, NOT BY DRIVING THE PAGE.
+   *
+   * A chosen item emits one event carrying a view id, and the frontend calls the same navigation
+   * function its rail and its keyboard call. The alternative — the shell setting the window's
+   * location — would be a second implementation of routing, written in a language that cannot see
+   * the client's own rules about where a view lives, and it would go wrong silently the first
+   * time a route changed shape.
+   */
+  it("navigates by emitting a view id, and grants the window no way to emit back", () => {
+    const menu = read("src-tauri/src/menu.rs");
+    expect(menu).toMatch(/MENU_NAVIGATE_EVENT: &str = "menu:navigate"/);
+    expect(menu).toMatch(/app\.emit\(MENU_NAVIGATE_EVENT, view\)/);
+    // No script evaluation and no window location: the shell says where, never how.
+    expect(menu).not.toMatch(/eval_script|set_url|window\.location/);
+
+    // The frontend listens for the SAME name and refuses a payload it does not recognise.
+    const native = read("src/native.ts");
+    expect(native).toMatch(/MENU_NAVIGATE_EVENT = "menu:navigate"/);
+    expect(native).toMatch(/plugin:event\|listen/);
+    expect(native).not.toMatch(/plugin:event\|emit/);
+
+    /* THE FIVE VIEWS, THE SAME FIVE, IN THE SAME ORDER, IN BOTH LANGUAGES. There is no artifact a
+       Rust binary and a TypeScript bundle can share one list from, so the two are written down
+       twice and compared here — the only place that can see both. Drift is otherwise silent:
+       the item emits a name the window does not recognise and simply does nothing. */
+    const inRust = [...menu.matchAll(/\("([a-z]+)", "[^"]*", "CmdOrCtrl\+\d"\)/g)].map((m) => m[1]);
+    const inTs = /MENU_VIEWS = \[([^\]]*)\]/.exec(native)?.[1] ?? "";
+    const listed = [...inTs.matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
+    expect(inRust.length, "no view rows found in menu.rs — the harness matched nothing").toBe(5);
+    expect(listed).toEqual(inRust);
+  });
+
+  /**
+   * THE NAVIGATION SUBMENU IS IN THE ENGINE BUILD ONLY, AND THE EDIT MENU IS IN BOTH.
+   *
+   * They are gated differently on purpose. A View item is only useful to a window that is allowed
+   * to hear the event, and the preview's window is allowed nothing — five items that do nothing is
+   * worse than no menu. The Edit items are the platform's own and reach the webview through the
+   * operating system rather than through a permission, so the preview gets them too; without them
+   * ⌘C does not work on a Mac, in either build.
+   */
+  it("gates the View submenu on the feature and never the Edit one", () => {
+    const menu = read("src-tauri/src/menu.rs");
+    const views = menu.indexOf("pub const VIEWS");
+    expect(views).toBeGreaterThan(0);
+    expect(menu.slice(0, views)).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*$/m);
+    // The platform's editing items are built unconditionally.
+    const edit = /SubmenuBuilder::new\(app, "Edit"\)([\s\S]*?)\.build\(\)\?/.exec(menu)?.[1] ?? "";
+    for (const item of ["undo", "redo", "cut", "copy", "paste", "select_all"]) {
+      expect(edit, `the Edit menu has no ${item}`).toContain(`.${item}()`);
+    }
+    expect(edit).not.toMatch(/cfg\(feature/);
   });
 });
 
@@ -679,7 +820,38 @@ describe("the UI bundle's build config", () => {
   it("renders the same shell the web client does — no desktop fork", () => {
     const main = read("src/main.tsx");
     expect(main).toMatch(/from "\.\.\/\.\.\/webapp\/app\/shell\/AppShell"/);
+    // The preview's mount, unchanged. The engine build wraps the SAME shell in `DesktopGate`,
+    // which is a gate around it rather than a fork of it — the branch is on the build-time
+    // literal, so the preview's bundle contains neither the gate nor anything it reaches.
     expect(main).toMatch(/<AppShell demo \/>/);
+    expect(main).toMatch(/__OHMAIL_LOCAL_ENGINE__ \? <DesktopGate \/> : <AppShell demo \/>/);
+    // …and the gate mounts the shared shell too, rather than a screen of its own.
+    expect(read("src/DesktopGate.tsx")).toMatch(/from "\.\.\/\.\.\/webapp\/app\/shell\/AppShell"/);
+  });
+
+  /**
+   * THE DESKTOP'S SETTINGS PANE IS A NODE THE SHELL HANDS IN, NOT A FLAG THE SHELL READS.
+   *
+   * `SettingsView` is compiled into a browser tab as well as into this app, and every control in
+   * that pane is a call to a native shell the browser tab does not have. So the shared view takes
+   * a node and this app supplies one — the same seam the hosted client uses for its Account and
+   * Security panes. The consequence worth asserting is the structural one: on the web there is no
+   * pane because there is nothing to render, not because a boolean is false.
+   */
+  it("hands the desktop pane in as a node, and names none of it in the shared view", () => {
+    const settings = fs.readFileSync(
+      path.resolve(APP, "../webapp/app/views/SettingsView.tsx"),
+      "utf8",
+    );
+    // The nav entry and the pane are both conditional on the node being supplied.
+    expect(settings).toMatch(/desktopSection \? \[\["desktop", desktopSection\.label\]/);
+    expect(settings).toMatch(/pane === "desktop" \? desktopSection\?\.node : null/);
+    // And the shared file knows nothing about how any of it works.
+    expect(settings).not.toMatch(/engine_logout|engineLogout|invoke\(|__TAURI/);
+
+    // The node itself lives here, where the shell is.
+    const pane = read("src/DesktopSettings.tsx");
+    expect(pane).toMatch(/engineLogout/);
   });
 
   it("keeps the document CSP in step with the webview CSP", () => {

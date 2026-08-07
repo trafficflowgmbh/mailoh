@@ -12,6 +12,14 @@
  * build the Cloud adapter is aliased out of this bundle entirely (see
  * `no-http-adapter.ts`), and in the local-engine build the shell it renders is
  * still the preview until the surface that consumes the bridge lands.
+ *
+ * ── TWO MOUNTS, ONE OF WHICH IS COMPILED AWAY ──────────────────────────────
+ *
+ * The engine-bearing build wraps the same shell in `DesktopGate`, which asks
+ * the native shell what the engine is doing and shows the door chooser, an
+ * honest notice, or the client. `__OHMAIL_LOCAL_ENGINE__` is a literal at build
+ * time, so the preview keeps exactly the mount it has always had and the gate
+ * and everything it reaches are not in that bundle at all.
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -23,6 +31,7 @@ import messages from "../../webapp/messages/en.json";
 import "../../webapp/app/app.css";
 
 import { connectLocalEngine } from "./bridge-fetch.js";
+import { DesktopGate } from "./DesktopGate.js";
 import { installOfflineGuard } from "./offline-guard.js";
 
 installOfflineGuard();
@@ -38,10 +47,12 @@ installOfflineGuard();
    rather than merely skipped: grep the preview's output for `engine_request`
    and there is nothing to find.
 
-   What it does NOT do yet is render against it — `AppShell` below is still the
-   preview. Connecting the transport and moving the surface onto it are separate
-   changes on purpose: this one can be verified on its own, and it is the half
-   with the security properties. */
+   What it does NOT do yet is render the MAIL against it — the surface below is
+   still the preview's. Connecting the transport and moving the mail onto it are
+   separate changes on purpose: this one can be verified on its own, and it is
+   the half with the security properties. What the gate below DOES render live is
+   everything about the install itself — which door, which mailbox, and the
+   actions that change either. */
 if (__OHMAIL_LOCAL_ENGINE__) {
   void connectLocalEngine().then(
     (status) => console.info(`ohmail: local engine — ${status.state}`),
@@ -72,7 +83,7 @@ createRoot(root).render(
     >
       <ThemeProvider storageKey="ohmail.theme">
         <ToastHost>
-          <AppShell demo />
+          {__OHMAIL_LOCAL_ENGINE__ ? <DesktopGate /> : <AppShell demo />}
         </ToastHost>
       </ThemeProvider>
     </IntlProvider>

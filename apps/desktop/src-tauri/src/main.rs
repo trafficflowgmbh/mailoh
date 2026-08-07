@@ -17,6 +17,14 @@
 // the PROCESS gains exactly one deliberate, consented request. `updater.rs`
 // carries the reasoning; `attach` here is the only place it is hooked up.
 //
+// ── THE ONE PIECE OF INTERFACE THIS PROCESS DRAWS ─────────────────────────────
+//
+// The menu bar (`menu.rs`), because it cannot be anything else: it belongs to the
+// operating system, and its accelerators have to work before the page has focus.
+// Everything else a person sees is React inside the webview. The bar has exactly
+// one owner, and that is not an aesthetic preference — a menu is installed from
+// `Builder::setup`, and a second `setup` REPLACES the first silently.
+//
 // ── THE ONE THING THIS FILE DOES BEYOND OPENING A WINDOW ──────────────────────
 //
 // Under the `local-engine` feature — OFF by default, and off in every build
@@ -45,6 +53,7 @@
 mod config;
 #[cfg(feature = "local-engine")]
 mod engine;
+mod menu;
 mod updater;
 
 fn main() {
@@ -55,9 +64,14 @@ fn main() {
     {
         builder = engine::attach(builder);
     }
-    // The auto-updater: the two plugins, the native "Check for Updates…" menu and
-    // its event handler. Always compiled — it ships in the published binary.
+    // The auto-updater: the two plugins and the handler for its menu item. Always
+    // compiled — it ships in the published binary.
     builder = updater::attach(builder);
+    // The menu bar, and the ONE `setup` that installs it. It goes on after the
+    // updater because it names that module's item id; the order of the two calls
+    // is otherwise immaterial, since `on_menu_event` appends and `setup` is only
+    // used here. See `menu.rs` for why a second `setup` would be a silent bug.
+    builder = menu::attach(builder);
 
     let app = builder
         .build(tauri::generate_context!())

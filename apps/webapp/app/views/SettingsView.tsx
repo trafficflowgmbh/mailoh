@@ -37,7 +37,7 @@ import {
 import { hueOf } from "../shell/format";
 import { RulesView, type RuleOutcome } from "./RulesView";
 
-type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "billing" | "tags" | "rules" | "about" | "security" | "account";
+type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "billing" | "tags" | "rules" | "about" | "security" | "account" | "desktop";
 
 /**
  * The notification channels, and why this list is here rather than in the fixtures.
@@ -215,6 +215,7 @@ export function SettingsView({
   autoSuggestSection,
   screeningSection,
   dormancySection,
+  desktopSection,
 }: {
   /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
   notifications: NotificationsMeta | null;
@@ -358,6 +359,20 @@ export function SettingsView({
    * no account).
    */
   dormancySection?: ReactNode;
+  /**
+   * WHICH DOOR THIS INSTALL CAME IN BY — the desktop app's own pane, injected.
+   *
+   * The mirror image of {@link accountSection}. That one is absent on the desktop because a
+   * standalone install has no account; this one is absent everywhere else because a browser
+   * tab has no native shell to ask. Every control in it — sign out, switch door, sign in
+   * again — is a call to that shell, so the node is built where the shell is and this file
+   * names none of it.
+   *
+   * It carries its own `label`, like {@link seedSection}, and for the same reason: the words
+   * ("On this Mac", "ohmail Cloud") belong to the desktop's vocabulary, which the shared
+   * `settings` namespace does not own. Absent ⇒ no nav entry and no pane, structurally.
+   */
+  desktopSection?: { label: string; node: ReactNode };
 }) {
   const t = useTranslations("settings");
   /** The `tag` namespace owns what a tag IS; `settings` owns this pane's chrome. */
@@ -391,6 +406,11 @@ export function SettingsView({
     // leading to an empty list on an account that HAS rules is the defect, not the fix.
     ...(rules ? [["rules", t("rules")] as [PaneId, string]] : []),
     ["tags", t("tags")],
+    // THIS INSTALL. Present only in a build that has a native shell behind it, which is the
+    // desktop app — a browser tab passes no node and gets no entry. It opens the account
+    // administration group because on that surface it IS the account: the door, the mailbox
+    // and the sign-out live here rather than in the three panes below, which need a server.
+    ...(desktopSection ? [["desktop", desktopSection.label] as [PaneId, string]] : []),
     // Account administration. Only where there is something to bill: Desktop is free and standalone,
     // and a Subscription pane there would offer to sell what the tier already gives away.
     ...(billingSection ? [["billing", t("billing")] as [PaneId, string]] : []),
@@ -593,6 +613,9 @@ export function SettingsView({
           {pane === "about" ? aboutSection : null}
           {pane === "security" ? securitySection : null}
           {pane === "account" ? accountSection : null}
+          {/* No `SettingsSection` wrapper here: the node brings its own, because it renders
+              several sections (the connection, then the actions) rather than one list. */}
+          {pane === "desktop" ? desktopSection?.node : null}
         </div>
       </div>
     </section>

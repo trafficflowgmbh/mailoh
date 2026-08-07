@@ -30,14 +30,17 @@ path = "src/main.rs"
 # It is not dead code: `cargo test --features local-engine` is what proves the
 # lifecycle, and those tests start real processes.
 default = []
-local-engine = ["dep:keyring", "dep:getrandom"]
+local-engine = ["dep:keyring", "dep:getrandom", "dep:tauri-plugin-notification"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# Tauri 2's default feature set MINUS `compression`, plus exactly two plugins:
-# the auto-updater and the native dialog it prompts through. Nothing else.
+# Tauri 2's default feature set MINUS `compression`, plus exactly two plugins in
+# the published build: the auto-updater and the native dialog it prompts through.
+# Nothing else. A third — the notification centre — is declared further down and
+# is OPTIONAL, compiled in only with `local-engine`, so the preview's dependency
+# graph and the `strings` audit below are unchanged by it.
 #
 # Dropping brotli costs about a quarter of a megabyte in the installer and buys
 # the thing this product is actually selling: a binary anyone can audit without
@@ -140,6 +143,27 @@ keyring = { version = "4", optional = true }
 # shell ever mints. Already in the dependency graph — `tauri` depends on it —
 # so the feature adds no third-party code to audit here either.
 getrandom = { version = "0.3", optional = true }
+
+# THE PLATFORM'S OWN NOTIFICATION CENTRE, and nothing more than that.
+#
+# A mail app is expected to be able to say "there is something new" through the
+# operating system rather than only inside its own window. The webview cannot:
+# its CSP leaves it no way to request the permission, and it has no bundle
+# identity for the platform to attribute a notice to. This process has both, so
+# the frontend asks for one notice — a title and a body — through a command, and
+# this crate is what shows it.
+#
+# Optional, and enabled only by `local-engine`, for the same reason the keystore
+# is: the published preview has no mail and therefore nothing to announce, so its
+# dependency graph and its `strings` audit are unchanged. The webview is granted
+# this shell's own `notify` command and NONE of this plugin's permissions, which
+# is the difference between "the window may ask for one notice" and "the window
+# may drive the notification API".
+#
+# MIT OR Apache-2.0, as is everything it pulls in — nothing here is copyleft and
+# nothing may be, since this binary is conveyed under GPL-3.0 and an AGPL
+# dependency in the shared half would force publishing the hosted service too.
+tauri-plugin-notification = { version = "2", optional = true }
 
 [dev-dependencies]
 # The signature-verification biting test signs nothing at test time — it verifies

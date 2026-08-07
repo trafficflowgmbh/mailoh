@@ -29,13 +29,15 @@
 //!     install, because an updater is a remote-code path and the comparison is
 //!     ours to get right.
 //!
+//! The menu item that triggers it is built by `menu.rs`, which owns the whole bar;
+//! this module owns its id, the handler for it, and everything below that.
+//!
 //! The feed itself (`latest.json` and the signed artifacts it points at) is
 //! produced and published by the release pipeline — this module is only the
 //! client's side of that contract. The feed schema it expects is tauri's own:
 //! `{ "version", "notes", "pub_date", "platforms": { "<target>-<arch>":
 //! { "signature", "url" } } }`.
 
-use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_updater::UpdaterExt;
@@ -43,10 +45,17 @@ use tauri_plugin_updater::UpdaterExt;
 /// The id the menu item carries and the menu-event handler matches on.
 pub const CHECK_FOR_UPDATES_ID: &str = "check-for-updates";
 
-/// Register the updater and the dialog it prompts through, wire the menu-event
-/// handler, and install the native menu once the app is up. Called from
-/// `main.rs` in EVERY build — the updater ships in the published binary, unlike
-/// the feature-gated engine.
+/// Register the updater, the dialog it prompts through, and the handler for its
+/// menu item. Called from `main.rs` in EVERY build — the updater ships in the
+/// published binary, unlike the feature-gated engine.
+///
+/// THE MENU ITSELF IS NOT BUILT HERE ANY MORE, and the move was forced rather
+/// than tidied: a menu is installed from `Builder::setup`, and a second `setup`
+/// on the same builder REPLACES the first with nothing failing to say so. Once
+/// the app grew a second menu (navigation, under the engine feature) two files
+/// installing menus would have meant one of them silently winning. `menu.rs`
+/// owns the bar and contributes this item by id; `on_menu_event` genuinely
+/// appends, so the handler below is still this module's own.
 pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -60,26 +69,6 @@ pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
                 check(app.clone(), true);
             }
         })
-        .setup(|app| {
-            install_menu(app.handle())?;
-            Ok(())
-        })
-}
-
-/// Build and install the native menu carrying "Check for Updates…". A single
-/// application submenu, enough to expose the command and quit; the shell has no
-/// other menu commands.
-fn install_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let check_item =
-        MenuItemBuilder::with_id(CHECK_FOR_UPDATES_ID, "Check for Updates…").build(app)?;
-    let app_menu = SubmenuBuilder::new(app, "ohmail")
-        .item(&check_item)
-        .separator()
-        .item(&PredefinedMenuItem::quit(app, None)?)
-        .build()?;
-    let menu = MenuBuilder::new(app).item(&app_menu).build()?;
-    app.set_menu(menu)?;
-    Ok(())
 }
 
 /// Check the pinned feed and, if there is a newer signed release, notify and —

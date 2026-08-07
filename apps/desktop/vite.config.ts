@@ -68,6 +68,11 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // desktop shell renders all three; without them the binary shows `reply.send` where a
   // word belongs, which is exactly the failure the abort below exists to prevent — and
   // `desktop-messages.test.ts` caught the omission rather than a user finding it.
+  // `providerPicker` arrived with the desktop's own door chooser: the provider tiles are the
+  // shared client's control, moved into `app/shell` so all three "connect a mailbox" surfaces
+  // render one list rather than three copies of it. Two strings — the field's label and the
+  // subtitle on the generic IMAP entry.
+  "providerPicker",
   "reply", "ribbon", "screener", "screening", "search", "session", "settings",
   // `sync` is the shell's failing-sync strip. The desktop compiles it and
   // can never render it (a fixtures engine is permanently settled), but the guard compares
