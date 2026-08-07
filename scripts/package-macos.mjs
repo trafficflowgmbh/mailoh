@@ -1131,7 +1131,7 @@ const cstringStrings = (thinBin) => {
   if (run("segedit", [thinBin, "-extract", "__TEXT", "__cstring", out], { tolerate: true }) === null) return null;
   return capture("strings", ["-a", out]);
 };
-const arches = (capture("lipo", ["-archs", MACHO]) ?? "").trim().split(/\s+/).filter(Boolean);
+/* `arches` is the same lipo read already taken for the architecture check above; reuse it. */
 let embedded = "";
 if (arches.length > 1) {
   for (const a of arches) {
