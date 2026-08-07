@@ -1,17 +1,60 @@
-import { and, asc, eq, gt, inArray } from "drizzle-orm";
-import { changeLog, minRetainedSeq, type EntityType } from "@trafficflow/db";
-import type { ServiceContext } from "./context.js";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import {
+  approvals, changeLog, drafts, messageStates, messages, minRetainedSeq, routingDecisions, rules,
+  tags, type EntityType,
+} from "@trafficflow/db";
+import type { Db, ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
-import { materialize, materializeMessages } from "./dto/materialize.js";
-import type { ChangeOp, Folder, SyncChange, SyncResponse } from "./dto/types.js";
+import {
+  approvalRowToDTO, draftRowToDTO, materialize, materializeMessages, materializeMessagesInOrder,
+  materializeThreads, messageStateRowToDTO, routingDecisionRowToDTO, ruleRowToDTO, tagRowToDTO,
+} from "./dto/materialize.js";
+import type {
+  ChangeOp, Folder, SnapshotResponse, SnapshotWindow, SyncChange, SyncResponse,
+} from "./dto/types.js";
 
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 2000;
+
+/**
+ * The bootstrap window, SERVED in every snapshot response so no client hardcodes it.
+ * See {@link SnapshotWindow} for what the two numbers mean together.
+ */
+export const SNAPSHOT_WINDOW: SnapshotWindow = { days: 90, minRows: 5000 };
+
+const DAY_MS = 86_400_000;
 
 export interface GetChangesOptions {
   since?: string;
   limit?: number;
   types?: EntityType[];
+}
+
+export interface GetSnapshotOptions {
+  /** The opaque `nextCursor` of the previous page. Absent ⇒ page 1. */
+  cursor?: string;
+  /** Messages per page. Clamped to [1, {@link MAX_LIMIT}]. */
+  limit?: number;
+}
+
+/**
+ * The decoded snapshot cursor: the point in time the whole snapshot reads at, plus where in the
+ * newest-first message stream this page resumes.
+ *
+ * `date`/`id` are the keyset — the LAST row of the previous page, not an offset. An OFFSET would
+ * make every page a different consistent point in the presence of concurrent ingest, which is
+ * the one thing a bootstrap cannot afford: a row inserted at the front shifts every subsequent
+ * offset by one and a message is skipped for ever. A keyset walks a fixed ordering, so an insert
+ * at the front (which is where new mail lands, being the newest) is simply not in the window —
+ * and the delta from `asOfSeq` delivers it, which is exactly right.
+ */
+interface SnapshotCursor {
+  asOfSeq: bigint;
+  /** The previous page's last `messages.date` as epoch ms; `null` ⇒ the undated tail. */
+  date: number | null;
+  id: string;
+  /** Messages emitted by every page so far — the `minRows` floor is cumulative. */
+  emitted: number;
 }
 
 /**
@@ -36,6 +79,90 @@ export class SyncService {
     } catch {
       throw new ServiceError("cursor_expired", 410, "sync cursor is malformed or expired; re-bootstrap with since=0");
     }
+  }
+
+  /** Opaque base64url of the snapshot's consistent point plus this page's keyset position. */
+  encodeSnapshotCursor(c: SnapshotCursor): string {
+    const payload = { v: 1, s: c.asOfSeq.toString(10), d: c.date, i: c.id, n: c.emitted };
+    return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  }
+
+  /**
+   * Inverse of {@link encodeSnapshotCursor}. A cursor we cannot parse is a 410 for the same
+   * reason the delta's is: the client's recovery is to start the snapshot again from page 1,
+   * which costs a bootstrap and always heals, whereas guessing a position would silently serve
+   * a window with a hole in it.
+   */
+  decodeSnapshotCursor(cursor: string): SnapshotCursor {
+    try {
+      const raw: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+      if (typeof raw !== "object" || raw === null) throw new Error("not an object");
+      const { v, s, d, i, n } = raw as Record<string, unknown>;
+      if (v !== 1) throw new Error("unknown cursor version");
+      if (typeof s !== "string" || !/^\d+$/.test(s)) throw new Error("bad asOfSeq");
+      if (typeof i !== "string" || i === "") throw new Error("bad keyset id");
+      if (typeof n !== "number" || !Number.isInteger(n) || n < 0) throw new Error("bad emitted count");
+      if (d !== null && (typeof d !== "number" || !Number.isFinite(d))) throw new Error("bad keyset date");
+      return { asOfSeq: BigInt(s), date: d as number | null, id: i, emitted: n };
+    } catch {
+      throw new ServiceError(
+        "cursor_expired", 410,
+        "snapshot cursor is malformed or expired; restart the snapshot with no cursor",
+      );
+    }
+  }
+
+  /**
+   * THE ACCOUNT'S HIGH-WATER **COMMITTED** SEQ — and the whole of invariant #4 lives here.
+   *
+   * ── WHAT MUST BE TRUE ────────────────────────────────────────────────────────────────────
+   *
+   * A snapshot that reports `asOfSeq = N` must have seen every change up to and including N,
+   * because the client sets its delta cursor to N and will therefore never be told about
+   * anything ≤ N again. Report a seq the projection did not actually cover and that row is
+   * permanently missing from the mirror — silently, and only for the account that was being
+   * written to at that instant.
+   *
+   * ── WHY `max(change_log.seq)` IS THAT VALUE, AND `account_sync_state.next_seq` IS NOT ─────
+   *
+   * `allocateSeqRange` takes the account's `account_sync_state` ROW LOCK and holds it to COMMIT
+   * (`packages/db/src/change-log.ts`). So seq N's transaction commits strictly BEFORE N+1 is
+   * even allocated, and `change_log` rows therefore become visible in seq order. Under READ
+   * COMMITTED that gives the property this whole endpoint rests on: **if a reader can see seq N,
+   * every seq below N is already committed and visible to it too.** No gap can be open beneath a
+   * seq we can observe. That is the same discipline `getChanges` relies on when it takes the max
+   * seq of the page it returned as the client's next cursor — this is not a second mechanism,
+   * it is the same one read from the same table.
+   *
+   * The counter is deliberately NOT the source. `next_seq` names the last seq ALLOCATED, and
+   * `greatest(next_seq, max(seq))` can leave it above the log after a restore. A snapshot that
+   * took its `asOfSeq` from the counter would hand the client a cursor pointing past changes the
+   * projection never saw and the delta will never resend, which is exactly the hole described
+   * above. Reading the log instead can only ever be CONSERVATIVE — a seq is re-delivered, the
+   * client's older-or-equal guard absorbs it — and conservative is the safe direction.
+   *
+   * ── AND WHY NO LOCK IS TAKEN HERE ────────────────────────────────────────────────────────
+   *
+   * Taking the counter row lock for a read would serialize every snapshot request against every
+   * writer on the account, for no gain: the ordering guarantee above is already established by
+   * the writers' lock. A read that adds its own lock buys nothing and blocks ingest.
+   *
+   * ── THE ORDERING CONSTRAINT ON THE CALLER ────────────────────────────────────────────────
+   *
+   * This must run BEFORE any entity is read. Read it first and every row projected afterwards is
+   * at least as new as `asOfSeq`, so anything newer arrives again through the delta and the
+   * client's seq guard lets it win. Read it AFTER, and the projection can be OLDER than the
+   * cursor it ships with — the stale row is never re-sent and the mirror is wrong for ever.
+   * `sync-snapshot-seq.pg.test.ts` drives exactly that race on real Postgres; PGlite is single
+   * connection and cannot see it.
+   */
+  private async highWaterSeq(db: Db, accountId: string): Promise<bigint> {
+    const rows = await db
+      .select({ max: sql<string | null>`max(${changeLog.seq})` })
+      .from(changeLog)
+      .where(eq(changeLog.accountId, accountId));
+    const m = rows[0]?.max;
+    return m == null ? 0n : BigInt(m);
   }
 
   async getChanges(ctx: ServiceContext, opts: GetChangesOptions = {}): Promise<SyncResponse> {
@@ -134,6 +261,187 @@ export class SyncService {
       cursor: this.encodeCursor(cursorSeq),
       hasMore: rows.length === limit,
       serverTime: ctx.now().toISOString(),
+    };
+  }
+
+  /**
+   * `GET /sync/snapshot` — THE BOOTSTRAP READER.
+   *
+   * A first-run client used to reach its mirror by replaying `change_log` from seq 0, which is
+   * every change that ever happened to the account rather than the state it is in: a message
+   * created, updated, moved and re-triaged is four pages' worth of wire to arrive at one row.
+   * This reads the LIVE TABLES instead, so the cost is the size of the mailbox and not the size
+   * of its history.
+   *
+   * ── WHAT EACH PAGE CARRIES ───────────────────────────────────────────────────────────────
+   *
+   * Page 1 carries ALL of the account's live small state — every rule, every message_state,
+   * every PENDING routing decision, every approval, every draft, every tag — plus the newest
+   * page of messages. The small state is not paged because paging it would mean a client that
+   * stopped after page 1 holds a partial rule set, and a partial rule set is worse than none:
+   * the UI would show routing that does not match what the server does. Tags are there for the
+   * same reason read one step further on — messages carry tag ids, so a late tag list is a rail
+   * that boots empty beside mail already pointing into it.
+   *
+   * EVERY page — page 1 included — additionally carries the THREADS its own messages name. That
+   * is a different rule from the one above and deliberately so: threads are keyed to the message
+   * window rather than to the account, so the two cannot disagree about what the client holds.
+   * See the emit site for why cross-page duplicates are accepted rather than tracked.
+   *
+   * `folder` is in the {@link EntityType} union and is deliberately absent from the reads below.
+   * Nothing in the product records a `folder` change and `materialize` has no case for one, so
+   * there is no live folder row to project — including a query for it would be a query that can
+   * only ever return nothing.
+   *
+   * ── THE WINDOW ───────────────────────────────────────────────────────────────────────────
+   *
+   * Messages are bounded by {@link SNAPSHOT_WINDOW}: paging continues while the last row read is
+   * inside the recency floor, and keeps going past it until the volume floor is met. Both
+   * numbers are returned in every response so the client states the truth about what it has
+   * without carrying a copy of them.
+   *
+   * ── WHY EVERY ROW IS `op: "create"` AT `seq = asOfSeq` ───────────────────────────────────
+   *
+   * See {@link SnapshotResponse}: it makes the client's existing apply path — and specifically
+   * its older-or-equal seq guard — correct for a snapshot with no new code on that side.
+   *
+   * Account scoping is `ctx.accountId` on every predicate, exactly as `getChanges` does it, and
+   * the message projection is `materializeMessages` — the same batched three-table read the
+   * delta uses — so redaction and sensitivity cannot fork between bootstrap and tail.
+   */
+  async getSnapshot(ctx: ServiceContext, opts: GetSnapshotOptions = {}): Promise<SnapshotResponse> {
+    const { db, accountId } = ctx;
+    const limit = Math.min(Math.max(1, opts.limit ?? DEFAULT_LIMIT), MAX_LIMIT);
+    const cursor = opts.cursor && opts.cursor !== "" ? this.decodeSnapshotCursor(opts.cursor) : null;
+
+    // INVARIANT #4 — BEFORE ANY ENTITY READ. See `highWaterSeq` for what depends on this line
+    // running first and nothing depending on it running at all if a cursor already fixed the point.
+    const asOfSeq = cursor ? cursor.asOfSeq : await this.highWaterSeq(db, accountId);
+    const seq = Number(asOfSeq);
+
+    const changes: SyncChange[] = [];
+    const emit = (type: EntityType, id: string, entity: unknown, updatedAt: string): void => {
+      changes.push({ type, op: "create", id, seq, updatedAt, entity });
+    };
+
+    if (cursor === null) {
+      // ── Page 1: the live state, one query per type, projected by the SAME functions the
+      //    per-row `materialize` path uses. The entity id is the ROW id in every case — a
+      //    `message_state` DTO carries `messageId` and not its own, and the client keys on the
+      //    change's id, which is what the delta's `change_log.entity_id` holds.
+      const ruleRows = await db.select().from(rules).where(eq(rules.accountId, accountId));
+      for (const r of ruleRows) emit("rule", r.id, ruleRowToDTO(r), r.updatedAt.toISOString());
+
+      const stateRows = await db.select().from(messageStates)
+        .where(eq(messageStates.accountId, accountId));
+      for (const s of stateRows) {
+        emit("message_state", s.id, messageStateRowToDTO(s), s.updatedAt.toISOString());
+      }
+
+      // PENDING decisions only. A decided one is history — it is what `change_log` is for — and
+      // an account that has been ingesting for months holds one row per message, which would
+      // make "the live state" unbounded and page 1 unservable.
+      const decisionRows = await db.select().from(routingDecisions).where(and(
+        eq(routingDecisions.accountId, accountId),
+        eq(routingDecisions.status, "pending_approval"),
+      ));
+      for (const d of decisionRows) {
+        emit("routing_decision", d.id, routingDecisionRowToDTO(d), d.updatedAt.toISOString());
+      }
+
+      const approvalRows = await db.select().from(approvals).where(eq(approvals.accountId, accountId));
+      for (const a of approvalRows) emit("approval", a.id, approvalRowToDTO(a), a.updatedAt.toISOString());
+
+      const draftRows = await db.select().from(drafts).where(eq(drafts.accountId, accountId));
+      for (const d of draftRows) emit("draft", d.id, draftRowToDTO(d), d.updatedAt.toISOString());
+
+      // TAGS ARE LIVE STATE, IN FULL, AND ON PAGE 1. A tag is identity — a name and a hue — and
+      // the client renders its rail by filtering the tag list against each message's `labels`.
+      // Ship a tag late and the rail boots EMPTY while messages already carry ids pointing into
+      // it, which reads as "my tags are gone" rather than as "still loading". The set is small
+      // and bounded by what a person typed, so there is nothing to page.
+      const tagRows = await db.select().from(tags).where(eq(tags.accountId, accountId));
+      for (const t of tagRows) emit("tag", t.id, tagRowToDTO(t), t.updatedAt.toISOString());
+    }
+
+    // ── The message window: newest first, keyset-paged on (date desc nulls last, id desc).
+    //
+    // `nulls last` is written out rather than left to the default because Postgres puts NULLs
+    // FIRST for a DESC sort, which would open the newest-first window with the undated rows —
+    // the least useful mail in the mailbox leading the bootstrap. The keyset predicate below
+    // mirrors that ordering exactly, including its treatment of the undated tail; a predicate
+    // that disagreed with its ORDER BY would skip rows silently rather than fail.
+    const keyset = cursor === null
+      ? undefined
+      : cursor.date === null
+        // Already in the undated tail: only undated rows remain, ordered by id desc.
+        ? and(isNull(messages.date), lt(messages.id, cursor.id))
+        : or(
+          lt(messages.date, new Date(cursor.date)),
+          and(eq(messages.date, new Date(cursor.date)), lt(messages.id, cursor.id)),
+          isNull(messages.date),
+        );
+
+    const where = keyset
+      ? and(eq(messages.accountId, accountId), keyset)
+      : eq(messages.accountId, accountId);
+
+    const rows = await db
+      .select({ id: messages.id, date: messages.date })
+      .from(messages)
+      .where(where)
+      .orderBy(sql`${messages.date} desc nulls last`, desc(messages.id))
+      .limit(limit);
+
+    const pageMessages = await materializeMessagesInOrder(db, accountId, rows.map((r) => r.id));
+    for (const dto of pageMessages) emit("message", dto.id, dto, dto.updatedAt);
+
+    // ── THREADS RIDE WITH THE PAGE THAT REFERENCES THEM ──────────────────────────────────────
+    //
+    // Not the thread table: a thread whose every message is outside the window would be a header
+    // over messages the client does not have, and the full table is unbounded exactly where the
+    // message window is bounded. So each page carries the threads ITS OWN messages name, which
+    // keeps the two window-coherent by construction — a client that stops paging holds threads
+    // for precisely the mail it holds.
+    //
+    // DUPLICATES ACROSS PAGES ARE ACCEPTED AND ARE NOT A DEFECT. A thread straddling a page
+    // boundary is named by both pages, and the cursor cannot carry the emitted thread ids to
+    // prevent it — that set grows without bound and the cursor is a URL. It costs nothing to
+    // allow: both copies are `op:"create"` at the SAME `seq = asOfSeq`, so the client's
+    // older-or-equal guard makes the second one a no-op on a store that already has the first.
+    // This is the same property that makes re-reading a whole page free, used deliberately.
+    //
+    // Within ONE page they ARE deduped, because that is free — `materializeThreads` takes a
+    // unique id set, so twenty messages of one thread cost one thread DTO and not twenty.
+    const threadIds = [...new Set(
+      pageMessages.map((m) => m.threadId).filter((id): id is string => id != null),
+    )];
+    for (const dto of (await materializeThreads(db, accountId, threadIds)).values()) {
+      emit("thread", dto.id, dto, dto.updatedAt);
+    }
+
+    const emitted = (cursor?.emitted ?? 0) + rows.length;
+    const last = rows[rows.length - 1];
+    const cutoff = ctx.now().getTime() - SNAPSHOT_WINDOW.days * DAY_MS;
+    // Inside the recency floor ⇒ keep going. Past it ⇒ keep going only until the volume floor is
+    // met. An undated row is past the floor by construction (it sorts into the tail), so it can
+    // only be carried by the volume arm.
+    const withinWindow = last?.date != null && last.date.getTime() >= cutoff;
+    const hasMore = rows.length === limit && last !== undefined
+      && (withinWindow || emitted < SNAPSHOT_WINDOW.minRows);
+
+    return {
+      asOfSeq: seq,
+      changes,
+      nextCursor: hasMore
+        ? this.encodeSnapshotCursor({
+          asOfSeq,
+          date: last.date ? last.date.getTime() : null,
+          id: last.id,
+          emitted,
+        })
+        : null,
+      window: SNAPSHOT_WINDOW,
     };
   }
 }

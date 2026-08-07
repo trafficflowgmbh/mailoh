@@ -13,13 +13,104 @@ import type {
 
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
 
-function stateRowToDTO(r: typeof messageStates.$inferSelect): MessageStateDTO {
+/**
+ * ── THE ROW → DTO PROJECTIONS ARE EXPORTED, AND THAT IS THE POINT OF THEM ────────────────────
+ *
+ * Every `materializeX` below is "one `select` by id, then project". `SyncService.getChanges`
+ * needs the by-id half because it starts from a `change_log` row; `SyncService.getSnapshot`
+ * needs to read a whole table at once and must NOT pay one round trip per row (an account that
+ * has run the consent seed holds one rule per correspondent — thousands of them, and an N+1
+ * there is the same shape as the outage `materializeMessages` was written to end).
+ *
+ * So the projection is a separate, pure function per type and the by-id reader calls it. Both
+ * callers therefore produce the identical DTO by construction rather than by inspection — the
+ * same reason `messageRowToDTO` was extracted when the batch message path landed. A snapshot
+ * that projected its own rules would be a second definition of what a rule looks like on the
+ * wire, and the two would drift on the first field either side added.
+ */
+export function messageStateRowToDTO(r: typeof messageStates.$inferSelect): MessageStateDTO {
   return {
     messageId: r.messageId,
     state: r.state as TriageState,
     bubbleUpAt: iso(r.bubbleUpAt),
     setAt: r.setAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
+  };
+}
+
+export function routingDecisionRowToDTO(r: typeof routingDecisions.$inferSelect): RoutingDecisionDTO {
+  return {
+    id: r.id,
+    accountId: r.accountId,
+    messageId: r.messageId,
+    inputProvenance: r.inputProvenance as RoutingDecisionDTO["inputProvenance"],
+    matchedRuleId: r.matchedRuleId ?? null,
+    destination: r.destination as Folder,
+    confidence: r.confidence ?? null,
+    rationale: r.rationale ?? null,
+    spam: r.spam,
+    status: r.status as RoutingDecisionDTO["status"],
+    createdAt: r.createdAt.toISOString(),
+    updatedAt: r.updatedAt.toISOString(),
+  };
+}
+
+export function approvalRowToDTO(a: typeof approvals.$inferSelect): ApprovalDTO {
+  return {
+    id: a.id,
+    kind: a.kind as ApprovalDTO["kind"],
+    messageId: a.messageId ?? null,
+    proposed: { action: a.action, summary: a.summary, payload: a.payload ?? null },
+    routingDecisionId: a.routingDecisionId ?? null,
+    confidence: a.confidence ?? null,
+    expiresAt: (iso(a.expiresAt) ?? a.createdAt.toISOString()),
+    status: a.status as ApprovalDTO["status"],
+    createdAt: a.createdAt.toISOString(),
+    updatedAt: a.updatedAt.toISOString(),
+  };
+}
+
+export function ruleRowToDTO(r: typeof rules.$inferSelect): RuleDTO {
+  return {
+    id: r.id,
+    kind: r.kind as RuleDTO["kind"],
+    match: r.match,
+    destination: r.destination as Folder,
+    priority: r.priority,
+    provenance: r.provenance as RuleDTO["provenance"],
+    enabled: r.enabled,
+    stats: { hits: r.hits, lastHitAt: iso(r.lastHitAt), demotions: r.demotions },
+    createdAt: r.createdAt.toISOString(),
+    updatedAt: r.updatedAt.toISOString(),
+  };
+}
+
+export function draftRowToDTO(d: typeof drafts.$inferSelect): DraftDTO {
+  return {
+    id: d.id,
+    mailboxId: d.mailboxId,
+    threadId: d.threadId ?? null,
+    inReplyToMessageId: d.inReplyToMessageId ?? null,
+    subject: d.subject,
+    body: d.body,
+    html: d.html ?? null,
+    to: (d.to as EmailAddress[]) ?? [],
+    cc: (d.cc as EmailAddress[]) ?? [],
+    bcc: (d.bcc as EmailAddress[]) ?? [],
+    rationale: d.rationale ?? null,
+    status: d.status as DraftStatus,
+    createdAt: d.createdAt.toISOString(),
+    updatedAt: d.updatedAt.toISOString(),
+  };
+}
+
+export function tagRowToDTO(t: typeof tags.$inferSelect): TagDTO {
+  return {
+    id: t.id,
+    name: t.name,
+    hue: t.hue,
+    createdAt: t.createdAt.toISOString(),
+    updatedAt: t.updatedAt.toISOString(),
   };
 }
 
@@ -65,7 +156,7 @@ function messageRowToDTO(
     hasAttachments: m.hasAttachments,
     attachmentCount: m.attachmentCount,
     sensitivity,
-    triage: st ? stateRowToDTO(st) : null,
+    triage: st ? messageStateRowToDTO(st) : null,
     // The tag ids on this message. This was a hardcoded `[]` in an early build until the tags
     // backend landed, which is what made the built tag UI inert in production: the
     // client filters `tags` by `m.labels.includes(tag.id)`, so an always-empty array meant no
@@ -130,6 +221,27 @@ export async function materializeMessages(
   return out;
 }
 
+/**
+ * The same four queries as {@link materializeMessages}, in the caller's order.
+ *
+ * `materializeMessages` is keyed by id and therefore says nothing about sequence, which is
+ * exactly right for `getChanges` (the `change_log` page already carries the order). A snapshot
+ * page IS an ordered window — newest first, keyset-paged — so it needs the DTOs back in the
+ * order it asked for them. Ids the account does not own are absent from the map and are simply
+ * skipped here, which preserves the batch's account filter rather than re-implementing it.
+ */
+export async function materializeMessagesInOrder(
+  db: Db, accountId: string, ids: readonly string[],
+): Promise<MessageDTO[]> {
+  const byId = await materializeMessages(db, accountId, ids);
+  const out: MessageDTO[] = [];
+  for (const id of ids) {
+    const dto = byId.get(id);
+    if (dto) out.push(dto);
+  }
+  return out;
+}
+
 export async function materializeMessage(db: Db, accountId: string, id: string): Promise<MessageDTO | null> {
   return (await materializeMessages(db, accountId, [id])).get(id) ?? null;
 }
@@ -137,25 +249,27 @@ export async function materializeMessage(db: Db, accountId: string, id: string):
 export async function materializeMessageState(db: Db, accountId: string, id: string): Promise<MessageStateDTO | null> {
   const [st] = await db.select().from(messageStates)
     .where(and(eq(messageStates.id, id), eq(messageStates.accountId, accountId))).limit(1);
-  return st ? stateRowToDTO(st) : null;
+  return st ? messageStateRowToDTO(st) : null;
 }
 
-export async function materializeThread(db: Db, accountId: string, id: string): Promise<ThreadDTO | null> {
-  const [t] = await db.select().from(threads)
-    .where(and(eq(threads.id, id), eq(threads.accountId, accountId))).limit(1);
-  if (!t) return null;
-
-  const msgs = await db.select().from(messages)
-    .where(and(eq(messages.accountId, accountId), eq(messages.threadId, id)))
-    .orderBy(asc(messages.date));
-
+/**
+ * One thread row + ITS messages (date-ascending) + the folder_state of the first of them → DTO.
+ *
+ * `msgs` must already be ordered oldest-first and must be exactly this thread's messages: the DTO
+ * publishes `messageIds` in that order and derives `unreadCount` and `folder` from it. Both
+ * readers below hand it the same shape, which is the point of it being a function.
+ */
+export function threadRowsToDTO(
+  t: typeof threads.$inferSelect,
+  msgs: readonly (typeof messages.$inferSelect)[],
+  firstFolderState: typeof folderState.$inferSelect | undefined,
+): ThreadDTO {
   let folder: Folder = "INBOX";
-  if (msgs[0]) {
-    const [fs] = await db.select().from(folderState).where(eq(folderState.messageId, msgs[0].id)).limit(1);
-    const loc = (msgs[0].nativeLocator as { folder?: string } | null) ?? null;
-    folder = (fs?.desiredFolder ?? loc?.folder ?? "INBOX") as Folder;
+  const first = msgs[0];
+  if (first) {
+    const loc = (first.nativeLocator as { folder?: string } | null) ?? null;
+    folder = (firstFolderState?.desiredFolder ?? loc?.folder ?? "INBOX") as Folder;
   }
-
   return {
     id: t.id,
     accountId: t.accountId,
@@ -170,60 +284,93 @@ export async function materializeThread(db: Db, accountId: string, id: string): 
   };
 }
 
+export async function materializeThread(db: Db, accountId: string, id: string): Promise<ThreadDTO | null> {
+  const [t] = await db.select().from(threads)
+    .where(and(eq(threads.id, id), eq(threads.accountId, accountId))).limit(1);
+  if (!t) return null;
+
+  const msgs = await db.select().from(messages)
+    .where(and(eq(messages.accountId, accountId), eq(messages.threadId, id)))
+    .orderBy(asc(messages.date));
+
+  const [fs] = msgs[0]
+    ? await db.select().from(folderState).where(eq(folderState.messageId, msgs[0].id)).limit(1)
+    : [undefined];
+
+  return threadRowsToDTO(t, msgs, fs);
+}
+
+/**
+ * Materialize MANY threads in THREE queries, whatever the count.
+ *
+ * `materializeThread` is three round trips for ONE thread, and a full snapshot page can reference
+ * hundreds of them — well over a thousand sequential round trips, which is the exact shape of the
+ * outage `materializeMessages` was written to end. This is the same fix for the same reason: a
+ * page of forty threads costs what a page of one costs.
+ *
+ * The message read is a SINGLE `inArray` over the surviving thread ids ordered date-ascending,
+ * then grouped in Postgres's returned order — so each thread's slice is date-ascending exactly as
+ * the per-id reader's own `orderBy` produces, and the shared projection cannot see a difference.
+ *
+ * `accountId` is on the `threads` predicate AND on the `messages` predicate, so a thread id from
+ * another account is filtered before it is assembled and cannot pull that account's messages into
+ * a DTO. `folder_state` is keyed by the first message of each SURVIVING thread, never by caller
+ * input. A missing id is simply absent from the map — the same signal the per-id reader gives by
+ * returning null.
+ */
+export async function materializeThreads(
+  db: Db, accountId: string, ids: readonly string[],
+): Promise<Map<string, ThreadDTO>> {
+  const out = new Map<string, ThreadDTO>();
+  if (ids.length === 0) return out;
+
+  const unique = [...new Set(ids)];
+  const tRows = await db.select().from(threads)
+    .where(and(inArray(threads.id, unique), eq(threads.accountId, accountId)));
+  if (tRows.length === 0) return out;
+
+  const owned = tRows.map((t) => t.id);
+  const mRows = await db.select().from(messages)
+    .where(and(eq(messages.accountId, accountId), inArray(messages.threadId, owned)))
+    .orderBy(asc(messages.date));
+
+  const msgsBy = new Map<string, (typeof messages.$inferSelect)[]>();
+  for (const m of mRows) {
+    const key = m.threadId!;
+    const list = msgsBy.get(key);
+    if (list) list.push(m);
+    else msgsBy.set(key, [m]);
+  }
+
+  const firstIds = owned.map((id) => msgsBy.get(id)?.[0]?.id).filter((v): v is string => v != null);
+  const fsRows = firstIds.length > 0
+    ? await db.select().from(folderState).where(inArray(folderState.messageId, firstIds))
+    : [];
+  const fsBy = new Map(fsRows.map((r) => [r.messageId, r]));
+
+  for (const t of tRows) {
+    const msgs = msgsBy.get(t.id) ?? [];
+    out.set(t.id, threadRowsToDTO(t, msgs, msgs[0] ? fsBy.get(msgs[0].id) : undefined));
+  }
+  return out;
+}
+
 export async function materializeRoutingDecision(db: Db, accountId: string, id: string): Promise<RoutingDecisionDTO | null> {
   const [r] = await db.select().from(routingDecisions)
     .where(and(eq(routingDecisions.id, id), eq(routingDecisions.accountId, accountId))).limit(1);
-  if (!r) return null;
-  return {
-    id: r.id,
-    accountId: r.accountId,
-    messageId: r.messageId,
-    inputProvenance: r.inputProvenance as RoutingDecisionDTO["inputProvenance"],
-    matchedRuleId: r.matchedRuleId ?? null,
-    destination: r.destination as Folder,
-    confidence: r.confidence ?? null,
-    rationale: r.rationale ?? null,
-    spam: r.spam,
-    status: r.status as RoutingDecisionDTO["status"],
-    createdAt: r.createdAt.toISOString(),
-    updatedAt: r.updatedAt.toISOString(),
-  };
+  return r ? routingDecisionRowToDTO(r) : null;
 }
 
 export async function materializeApproval(db: Db, accountId: string, id: string): Promise<ApprovalDTO | null> {
   const [a] = await db.select().from(approvals)
     .where(and(eq(approvals.id, id), eq(approvals.accountId, accountId))).limit(1);
-  if (!a) return null;
-  return {
-    id: a.id,
-    kind: a.kind as ApprovalDTO["kind"],
-    messageId: a.messageId ?? null,
-    proposed: { action: a.action, summary: a.summary, payload: a.payload ?? null },
-    routingDecisionId: a.routingDecisionId ?? null,
-    confidence: a.confidence ?? null,
-    expiresAt: (iso(a.expiresAt) ?? a.createdAt.toISOString()),
-    status: a.status as ApprovalDTO["status"],
-    createdAt: a.createdAt.toISOString(),
-    updatedAt: a.updatedAt.toISOString(),
-  };
+  return a ? approvalRowToDTO(a) : null;
 }
 
 export async function materializeRule(db: Db, accountId: string, id: string): Promise<RuleDTO | null> {
   const [r] = await db.select().from(rules)
     .where(and(eq(rules.id, id), eq(rules.accountId, accountId))).limit(1);
-  if (!r) return null;
-  return {
-    id: r.id,
-    kind: r.kind as RuleDTO["kind"],
-    match: r.match,
-    destination: r.destination as Folder,
-    priority: r.priority,
-    provenance: r.provenance as RuleDTO["provenance"],
-    enabled: r.enabled,
-    stats: { hits: r.hits, lastHitAt: iso(r.lastHitAt), demotions: r.demotions },
-    createdAt: r.createdAt.toISOString(),
-    updatedAt: r.updatedAt.toISOString(),
-  };
+  return r ? ruleRowToDTO(r) : null;
 }
 
 /**
@@ -235,23 +382,7 @@ export async function materializeRule(db: Db, accountId: string, id: string): Pr
 export async function materializeDraft(db: Db, accountId: string, id: string): Promise<DraftDTO | null> {
   const [d] = await db.select().from(drafts)
     .where(and(eq(drafts.id, id), eq(drafts.accountId, accountId))).limit(1);
-  if (!d) return null;
-  return {
-    id: d.id,
-    mailboxId: d.mailboxId,
-    threadId: d.threadId ?? null,
-    inReplyToMessageId: d.inReplyToMessageId ?? null,
-    subject: d.subject,
-    body: d.body,
-    html: d.html ?? null,
-    to: (d.to as EmailAddress[]) ?? [],
-    cc: (d.cc as EmailAddress[]) ?? [],
-    bcc: (d.bcc as EmailAddress[]) ?? [],
-    rationale: d.rationale ?? null,
-    status: d.status as DraftStatus,
-    createdAt: d.createdAt.toISOString(),
-    updatedAt: d.updatedAt.toISOString(),
-  };
+  return d ? draftRowToDTO(d) : null;
 }
 
 /**
@@ -271,14 +402,7 @@ export async function materializeDraft(db: Db, accountId: string, id: string): P
 export async function materializeTag(db: Db, accountId: string, id: string): Promise<TagDTO | null> {
   const [t] = await db.select().from(tags)
     .where(and(eq(tags.id, id), eq(tags.accountId, accountId))).limit(1);
-  if (!t) return null;
-  return {
-    id: t.id,
-    name: t.name,
-    hue: t.hue,
-    createdAt: t.createdAt.toISOString(),
-    updatedAt: t.updatedAt.toISOString(),
-  };
+  return t ? tagRowToDTO(t) : null;
 }
 
 export function materialize(db: Db, accountId: string, type: EntityType, id: string): Promise<unknown | null> {

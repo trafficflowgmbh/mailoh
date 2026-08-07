@@ -544,3 +544,48 @@ export interface SyncResponse {
   hasMore: boolean;
   serverTime: ISODateTime;
 }
+
+/**
+ * How far back the snapshot reaches, SERVED rather than agreed.
+ *
+ * The client needs the numbers to say "this is everything since March" and to decide when to
+ * fall back to the delta replay, and a constant compiled into the client is a constant that
+ * disagrees with the server the first time either moves. So the server states its own window in
+ * every response and the client reads it.
+ *
+ * `days` is the recency floor; `minRows` is the volume floor. A snapshot serves whichever is
+ * LARGER — every message of the last `days`, and never fewer than `minRows` of them when the
+ * mailbox has that many. A quiet mailbox therefore still bootstraps into something usable, and a
+ * busy one is not truncated at ninety days minus one message.
+ */
+export interface SnapshotWindow {
+  days: number;
+  minRows: number;
+}
+
+/**
+ * `GET /sync/snapshot` — the bootstrap reader.
+ *
+ * ── WHY THIS REUSES `SyncChange` INSTEAD OF HAVING A SHAPE OF ITS OWN ─────────────────────────
+ *
+ * The client's apply path is the thing worth protecting. It already takes `SyncChange[]`, sorts
+ * by seq, upserts on (type,id) and refuses an older-or-equal seq; a bespoke snapshot shape would
+ * need a second apply path, and two apply paths over one store is how a mirror ends up holding a
+ * state neither path can explain. So a snapshot row is a `SyncChange` with `op: "create"` and the
+ * full DTO — a create is exactly what a bootstrap means — and the client changes nothing.
+ *
+ * EVERY row carries `seq = asOfSeq`, and that is what makes the older-or-equal guard correct for
+ * free: a delta change that comes later has `seq > asOfSeq` and therefore wins, while a re-read
+ * of the same snapshot page has `seq == asOfSeq` and is ignored. There is no per-row seq to
+ * invent, and inventing one would be a claim about ordering the snapshot does not make.
+ *
+ * `nextCursor` is `null` when the snapshot is complete. It is opaque and encodes `asOfSeq`
+ * alongside the keyset position, so every page of one snapshot reads the same consistent point
+ * and the client's post-bootstrap delta cursor is that same `asOfSeq` whichever page it stopped on.
+ */
+export interface SnapshotResponse {
+  asOfSeq: number;
+  changes: SyncChange[];
+  nextCursor: string | null;
+  window: SnapshotWindow;
+}

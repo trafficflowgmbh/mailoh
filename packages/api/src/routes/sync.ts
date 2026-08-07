@@ -38,4 +38,37 @@ export const syncRoutes: Route[] = [
       return jsonResponse(result);
     },
   },
+  /**
+   * The bootstrap reader. `SyncService.getSnapshot` documents the shape and the
+   * consistency argument; this handler does nothing but parse two query parameters.
+   *
+   * `cost: "read"` for the same reason `GET /sync` is: it selects rows already stored for the
+   * caller's own account, writes nothing, opens no socket and calls no model. It reads MORE of
+   * them than most routes do — that is what a bootstrap is — and `cost` classifies what a
+   * handler CAUSES, not how much of the caller's own data it returns. `GET /consent/seed` is
+   * already the precedent for that reading (see the census in `spend-gate.test.ts`).
+   *
+   * The account comes from `serviceContext(deps, req)`, i.e. the session, exactly as `/sync`
+   * does. There is no account parameter to get wrong.
+   *
+   * Two segments, so it can never shadow or be shadowed by `/sync` — the router matches on
+   * segment count first.
+   */
+  {
+    method: "GET",
+    pattern: "/sync/snapshot",
+    cost: "read",
+    handler: async (req, deps) => {
+      const url = new URL(req.url);
+      const cursor = url.searchParams.get("cursor") ?? undefined;
+      const limitRaw = url.searchParams.get("limit");
+      const limit = limitRaw != null && limitRaw !== "" ? Number(limitRaw) : undefined;
+
+      const result = await sync(deps).getSnapshot(serviceContext(deps, req), {
+        ...(cursor ? { cursor } : {}),
+        ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
+      });
+      return jsonResponse(result);
+    },
+  },
 ];
