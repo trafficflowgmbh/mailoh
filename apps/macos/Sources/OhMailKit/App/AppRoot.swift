@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import OhMailEngine
 
 /// THE COMPOSITION ROOT — the one object allowed to decide what the app is showing, and the only
@@ -50,6 +51,9 @@ public final class AppRootModel {
     /// Door two's sign-in — password + TOTP against the hosted API. A dependency, so a test drives the
     /// success and failure paths without a socket.
     private let cloudSignIn: CloudSignInService
+    /// Whether the disk is encrypted at rest, asked on the first Cloud sign-in. Injected so a test can
+    /// drive the nudge without shelling out to `fdesetup` on the machine it runs on.
+    private let fileVault: FileVaultProbe
     /// Whether this build carries an engine — **read off the bundle once, at launch.**
     ///
     /// Read once for the same reason `configured` is: a SwiftUI body runs whenever anything it reads
@@ -120,6 +124,10 @@ public final class AppRootModel {
     /// mirror is always reachable in this sense.
     private(set) var cloudOnline: Bool?
 
+    /// Whether the "turn on FileVault" nudge is up. Raised once on a Cloud sign-in when the disk is not
+    /// encrypted and the nudge has not already been dismissed; the dismissal is remembered on disk.
+    private(set) var showFileVaultNudge = false
+
     private(set) var inSetup = false
     /// Whether ``saveMailbox(_:)`` has written a configuration during this run of setup. The step
     /// after it waits for the engine, which is why setup outlives the moment `configured` flips.
@@ -141,7 +149,8 @@ public final class AppRootModel {
                 keys: KeyProvider = KeyProviderDefault(),
                 install: EngineInstall? = nil,
                 engineSource: @escaping EngineSourceFactory = { _ in nil },
-                cloudSignIn: CloudSignInService = CloudSignIn()) {
+                cloudSignIn: CloudSignInService = CloudSignIn(),
+                fileVault: FileVaultProbe = SystemFileVaultProbe()) {
         self.flags = flags
         self.store = store
         self.inheritedEnvironment = environment
@@ -151,6 +160,7 @@ public final class AppRootModel {
         self.keys = keys
         self.makeEngineSource = engineSource
         self.cloudSignIn = cloudSignIn
+        self.fileVault = fileVault
         let stored = try? store.load()
         self.config = stored
         self.configured = stored != nil
@@ -164,6 +174,7 @@ public final class AppRootModel {
         self.submittingCloud = false
         self.cloudProblem = nil
         self.cloudOnline = nil
+        self.showFileVaultNudge = false
         self.inSetup = false
         self.savedMailbox = false
         self.setupFailure = nil
@@ -410,6 +421,8 @@ public final class AppRootModel {
             // the engine's status — opening, then serving — and `materialize` builds the source once it
             // is; the decision now names `.engine`, not a separate cloud source.
             startCloudEngine(address: email, requester: requester)
+            // The mirror lands in plaintext on this disk; if FileVault is off, say so, once.
+            await maybeNudgeFileVault()
         case .rejected(let why):
             cloudProblem = why
         case .unavailable(let why):
@@ -417,6 +430,35 @@ public final class AppRootModel {
             // local start uses, so the two doors fail in one voice.
             setupFailure = Self.couldNotFinish(why)
         }
+    }
+
+    // MARK: - The FileVault nudge
+
+    /// Raise the "turn on FileVault" nudge on a first Cloud sign-in, when the disk is not encrypted.
+    ///
+    /// Asked only after a successful sign-in, and only when the nudge has not already been dismissed —
+    /// so it is a one-time prompt, not something that greets every launch. An `unknown` answer (the
+    /// tool would not run, or said something unreadable) does NOT nudge: a prompt on a state we could
+    /// not read is worse than none.
+    private func maybeNudgeFileVault() async {
+        guard !store.loadFileVaultNudgeDismissed() else { return }
+        if await fileVault.status() == .off { showFileVaultNudge = true }
+    }
+
+    /// Dismiss the nudge and remember it, so a later launch's sign-in does not raise it again.
+    public func dismissFileVaultNudge() {
+        showFileVaultNudge = false
+        try? store.saveFileVaultNudgeDismissed()
+    }
+
+    /// Open the system's FileVault settings and dismiss the nudge. The deep link is best-effort — if
+    /// the scheme is unavailable the open does nothing, which is why this dismisses regardless. It
+    /// lives on the model rather than in the sheet because a view reaches no system service directly.
+    public func openFileVaultSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?FileVault") {
+            NSWorkspace.shared.open(url)
+        }
+        dismissFileVaultNudge()
     }
 
     /// What the form opens on for a chosen provider.

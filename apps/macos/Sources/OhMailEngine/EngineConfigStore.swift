@@ -139,4 +139,34 @@ public struct EngineConfigStore: Sendable {
             try FileManager.default.removeItem(at: doorURL)
         }
     }
+
+    // MARK: - The FileVault nudge
+
+    /// `filevault.json`, beside the mailbox configuration.
+    ///
+    /// Records only that the person has dismissed the "turn on FileVault" nudge, so a Cloud sign-in
+    /// does not raise it again on every launch. It lives here rather than in `UserDefaults` for the
+    /// same reason the door does — "quit ohmail and remove that folder" clears it too.
+    public var fileVaultURL: URL { directory.appendingPathComponent("filevault.json") }
+
+    private struct FileVaultRecord: Codable { var nudgeDismissed: Bool }
+
+    /// Whether the FileVault nudge has been dismissed. A missing, corrupt or hand-edited file reads as
+    /// "not dismissed", so the nudge is shown rather than swallowed by a bad read.
+    public func loadFileVaultNudgeDismissed() -> Bool {
+        guard let data = FileManager.default.contents(atPath: fileVaultURL.path),
+              let record = try? JSONDecoder().decode(FileVaultRecord.self, from: data) else { return false }
+        return record.nudgeDismissed
+    }
+
+    public func saveFileVaultNudgeDismissed() throws {
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        let data = try JSONEncoder().encode(FileVaultRecord(nudgeDismissed: true))
+        let temporary = directory.appendingPathComponent("filevault.json.\(UUID().uuidString)")
+        try data.write(to: temporary, options: [.atomic])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
+        _ = try FileManager.default.replaceItemAt(fileVaultURL, withItemAt: temporary)
+    }
 }

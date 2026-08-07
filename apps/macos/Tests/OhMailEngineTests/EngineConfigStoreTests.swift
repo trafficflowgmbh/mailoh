@@ -117,6 +117,26 @@ final class EngineConfigStoreTests: XCTestCase {
         XCTAssertNil(store.loadDoor())
     }
 
+    // MARK: - The FileVault nudge dismissal
+
+    func testTheFileVaultNudgeDismissalDefaultsToFalseAndIsRemembered() throws {
+        let store = EngineConfigStore(directory: directory)
+        XCTAssertFalse(store.loadFileVaultNudgeDismissed(), "a fresh install must not report the nudge dismissed")
+        try store.saveFileVaultNudgeDismissed()
+        XCTAssertTrue(store.loadFileVaultNudgeDismissed())
+        // A second launch reading the same directory still sees it dismissed.
+        XCTAssertTrue(EngineConfigStore(directory: directory).loadFileVaultNudgeDismissed())
+    }
+
+    /// A hand-edited or truncated file reads as "not dismissed" — the nudge is shown rather than
+    /// swallowed by a bad read.
+    func testACorruptFileVaultFileReadsAsNotDismissed() throws {
+        let store = EngineConfigStore(directory: directory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("not json".utf8).write(to: store.fileVaultURL)
+        XCTAssertFalse(store.loadFileVaultNudgeDismissed())
+    }
+
     func testTheDoorFileIsOwnerReadableOnly() throws {
         let store = EngineConfigStore(directory: directory)
         try store.saveDoor(.local)

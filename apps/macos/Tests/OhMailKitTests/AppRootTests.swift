@@ -40,20 +40,29 @@ final class AppRootTests: XCTestCase {
                        // A stub that never touches the network. The shipped default is the REAL
                        // `CloudSignIn()`, which would dial `api.ohmail.app`; every test drives door two
                        // through an injected outcome instead.
-                       cloudSignIn: CloudSignInService = StubCloudSignIn(outcome: .unavailable("no network in tests")))
+                       cloudSignIn: CloudSignInService = StubCloudSignIn(outcome: .unavailable("no network in tests")),
+                       // Unknown by default, so no test raises the FileVault nudge unless it asks to —
+                       // and never shells out to `fdesetup` on the machine running the suite.
+                       fileVault: FileVaultProbe = StubFileVault(result: .unknown))
         -> AppRootModel {
         AppRootModel(flags: LaunchFlags(demo: demo), store: store,
                      // Empty, which is what a bundle opened from the Finder inherits. The stored
                      // mailbox is the only thing that can make a launch startable, which is the
                      // point of the composition.
                      environment: [:], keys: NoKeys(), install: install, engineSource: engineSource,
-                     cloudSignIn: cloudSignIn)
+                     cloudSignIn: cloudSignIn, fileVault: fileVault)
     }
 
     /// A cloud sign-in that answers a preset outcome without a socket.
     private struct StubCloudSignIn: CloudSignInService {
         let outcome: CloudSignInOutcome
         func signIn(email: String, password: String, code: String) async -> CloudSignInOutcome { outcome }
+    }
+
+    /// A FileVault probe that answers a preset status without running `fdesetup`.
+    private struct StubFileVault: FileVaultProbe {
+        let result: FileVaultStatus
+        func status() async -> FileVaultStatus { result }
     }
 
     /// A throwaway hosted transport for a `.connected` outcome. Constructing it dials nothing; the
@@ -528,6 +537,62 @@ final class AppRootTests: XCTestCase {
         XCTAssertEqual(inner.applied, ["m1", "m3"], "the gate did not reopen when the mirror came back")
     }
 
+    // MARK: - The FileVault nudge (first Cloud sign-in, plaintext mirror)
+
+    /// **A CLOUD SIGN-IN ON A MAC WITH FILEVAULT OFF RAISES THE NUDGE.** The mirror lands in plaintext,
+    /// so a disk that is not encrypted at rest is the one case worth a word.
+    func testACloudSignInNudgesWhenFileVaultIsOff() async {
+        let root = model(cloudSignIn: StubCloudSignIn(outcome: .connected(stubCloudRequester())),
+                         fileVault: StubFileVault(result: .off))
+        root.chooseDoor(.cloud)
+        await root.submitCloudSignIn(email: "me@ohmail.app", password: "pw", code: "123456")
+        XCTAssertTrue(root.showFileVaultNudge, "FileVault was off and the nudge did not appear")
+        root.end()
+    }
+
+    /// FileVault on — nothing to say, no nudge. And an `unknown` answer is treated the same: a prompt
+    /// on a status that could not be read is worse than none.
+    func testACloudSignInDoesNotNudgeWhenFileVaultIsOnOrUnknown() async {
+        for status in [FileVaultStatus.on, .unknown] {
+            let root = model(cloudSignIn: StubCloudSignIn(outcome: .connected(stubCloudRequester())),
+                             fileVault: StubFileVault(result: status))
+            root.chooseDoor(.cloud)
+            await root.submitCloudSignIn(email: "me@ohmail.app", password: "pw", code: "123456")
+            XCTAssertFalse(root.showFileVaultNudge, "FileVault \(status) raised the nudge")
+            root.end()
+        }
+    }
+
+    /// A FAILED sign-in never nudges — the prompt belongs to a session that was actually established.
+    func testAFailedCloudSignInDoesNotNudge() async {
+        let root = model(cloudSignIn: StubCloudSignIn(outcome: .rejected("nope")),
+                         fileVault: StubFileVault(result: .off))
+        root.chooseDoor(.cloud)
+        await root.submitCloudSignIn(email: "me@ohmail.app", password: "pw", code: "000000")
+        XCTAssertFalse(root.showFileVaultNudge, "a rejected sign-in raised the FileVault nudge")
+        root.end()
+    }
+
+    /// **THE DISMISSAL IS REMEMBERED ACROSS LAUNCHES.** Dismissed once, a later launch's sign-in — same
+    /// disk, still FileVault-off — does not raise it again. The two models read the same store.
+    func testADismissedFileVaultNudgeStaysDismissed() async {
+        let first = model(cloudSignIn: StubCloudSignIn(outcome: .connected(stubCloudRequester())),
+                          fileVault: StubFileVault(result: .off))
+        first.chooseDoor(.cloud)
+        await first.submitCloudSignIn(email: "me@ohmail.app", password: "pw", code: "123456")
+        XCTAssertTrue(first.showFileVaultNudge)
+        first.dismissFileVaultNudge()
+        XCTAssertFalse(first.showFileVaultNudge, "dismissing did not close the nudge")
+        first.end()
+
+        let relaunch = model(cloudSignIn: StubCloudSignIn(outcome: .connected(stubCloudRequester())),
+                             fileVault: StubFileVault(result: .off))
+        relaunch.chooseDoor(.cloud)
+        await relaunch.submitCloudSignIn(email: "me@ohmail.app", password: "pw", code: "123456")
+        XCTAssertFalse(relaunch.showFileVaultNudge, "a dismissed nudge came back on the next launch")
+        relaunch.end()
+    }
+
     /// The chosen door is sticky per install: a later launch resumes at it rather than re-asking.
     /// Reconsidering clears it, so neither an unfinished door one nor door two is a trap.
     func testTheChosenDoorIsStickyAcrossLaunches() {
@@ -812,6 +877,7 @@ final class AppRootTests: XCTestCase {
                 step: .password, problem: "The mail server rejected that login."))),
             ("setup · failed", AnyView(setupView(
                 step: .failed(AppRootModel.couldNotFinish("This install has no durable key."))))),
+            ("filevault nudge", AnyView(FileVaultNudge(onOpenSettings: {}, onDismiss: {}))),
         ]
 
         // The detector bites: a panel-sized canvas with nothing on it is rejected by the very

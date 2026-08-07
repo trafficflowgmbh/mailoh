@@ -65,6 +65,14 @@ public struct AppRootView: View {
         // The engine changes state on its own thread and hops to this actor; every one of those
         // hops can be the moment a source becomes buildable.
         .onChange(of: root.surface) { _, _ in root.materialize() }
+        // The FileVault nudge, raised once on a Cloud sign-in when the disk is not encrypted. Closing
+        // it by any route dismisses it for good — the model remembers.
+        .sheet(isPresented: Binding(get: { root.showFileVaultNudge },
+                                    set: { shown in if !shown { root.dismissFileVaultNudge() } })) {
+            FileVaultNudge(onOpenSettings: { root.openFileVaultSettings() },
+                           onDismiss: { root.dismissFileVaultNudge() })
+                .blancTheme()
+        }
     }
 
     /// Poll `/health` while the cloud mailbox is on screen. Off the cloud door this returns at once;
