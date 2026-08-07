@@ -711,7 +711,7 @@
     "door": "ohmail <k>answers the door for you</k>: first-time senders <k>wait at the Screener</k> until you let them in, and everything you said yes to is organized in place — <k>real folders</k> on the mailboxes you already own. <o>Leave anytime</o>; your mailbox stays organized.",
     "ctaGet": "Get ohmail.",
     "ctaDemo": "Try the demo",
-    "note": "Free on macOS, Windows and Linux — a local-first mail client on the mailboxes you already own · Cloud from $9/mo, 14 days free · any IMAP mailbox"
+    "note": "Free on macOS — a local-first mail client on the mailboxes you already own · Windows and Linux are an interface preview today · Cloud from $9/mo, 14 days free · any IMAP mailbox"
   },
   "demo": {
     "heading": "This is not a screenshot.",
@@ -796,7 +796,7 @@
     "pointOtpTitle": "Codes are sacred",
     "pointOtp": "When mail carries a verification code or login link, it is never sent to AI, never forwarded, and stored redacted — structurally, with no setting to turn it off.",
     "pointByoTitle": "Your key, your machine — or ours",
-    "pointByo": "The desktop app runs against your own server — your mail stays on your machine, with no ohmail server in the loop. Pointing its AI at your own API key or a local model is coming next, not wired yet. On Cloud: a monthly bag of AI actions is included, and mail keeps flowing rules-only when it runs out.",
+    "pointByo": "On macOS the desktop app runs against your own server — your mail stays on your machine, with no ohmail server in the loop. Pointing its AI at your own API key or a local model is coming next, not wired yet. On Cloud: a monthly bag of AI actions is included, and mail keeps flowing rules-only when it runs out.",
     "illusRules": "Rules · most mail",
     "illusAi": "AI · proposals"
   },
@@ -866,14 +866,14 @@
     "desktopStatus": "standalone",
     "desktopPrice": "Free",
     "desktopTerm": "fully yours · forever",
-    "desktopStatusNote": "No telemetry, no analytics. It is a real mail client: it connects to your own IMAP server and organises your mailbox on your machine, with no ohmail server in the loop — and it can optionally sign in to ohmail Cloud if you want one. Every build makes one signed update check; nothing else leaves your machine on its own.",
-    "desktopA": "macOS, Windows and Linux",
+    "desktopStatusNote": "No telemetry, no analytics. On macOS it is a real mail client: it connects to your own IMAP server and organises your mailbox on your machine, with no ohmail server in the loop — and it can optionally sign in to ohmail Cloud if you want one. Every build makes one signed update check; nothing else leaves your machine on its own.",
+    "desktopA": "macOS, and an interface preview on Windows and Linux",
     "desktopB": "Fully standalone — no account needed",
     "desktopC": "All processing on your machine",
     "desktopD": "Reads offline — your mail is already there",
     "desktopE": "No artificial limits — everything included",
     "desktopCta": "Download ohmail",
-    "desktopCtaNote": "Free on macOS, Windows and Linux — pick your platform below.",
+    "desktopCtaNote": "Free — pick your platform below. macOS is the complete app; Windows and Linux are an interface preview.",
     "cloudName": "ohmail Cloud",
     "cloudOptional": "optional",
     "cloudShared": "Your mail on the web, and organized while you sleep. The web app, push, always-on processing, AI included — with the mobile apps to follow.",
@@ -899,7 +899,7 @@
   },
   "downloads": {
     "title": "Take it with you.",
-    "sub": "One app, three platforms. Free, no account, and it runs on your own machine — sync, rules and search all local, on the mailboxes you already own.",
+    "sub": "One app, three platforms. Free, no account, and it runs on your own machine — sync, rules and search all local, on the mailboxes you already own. That is the macOS build today; Windows and Linux download and open as an interface preview.",
     "apple": "macOS",
     "linux": "Linux",
     "windows": "Windows",
@@ -909,6 +909,8 @@
     "linuxFormatAlt": "or the .deb",
     "windowsFormat": "Installer · 64-bit",
     "yours": "Looks like your system",
+    "stageComplete": "The complete app — it connects to the mailboxes you already own.",
+    "stagePreview": "Interface preview — it opens a sample mailbox, not yours. The full app is being finished.",
     "firstRun": "The macOS and Windows builds are not signed by Apple or Microsoft yet, so the first launch asks you to confirm it once. Nothing in the app phones home except one signed update check.",
     "cloudLine": "Prefer nothing to install? The web app is live and opens in a browser — it is part of Cloud, along with push and always-on processing. The mobile apps follow.",
     "all": "All releases, notes and checksums"
@@ -933,7 +935,7 @@
     "leaveHey": "Mail exports as one MBOX file; the organization stays behind",
     "leaveOverlays": "Some of it syncs back as labels; the rest stays behind",
     "offlineCrit": "Offline & local",
-    "offlineUs": "The desktop app runs fully on your machine — macOS, Windows and Linux — and reads with the wifi off",
+    "offlineUs": "Runs fully on your machine and reads with the wifi off — the macOS build today; Windows and Linux are an interface preview",
     "offlineHey": "Native apps, but the service is cloud-only",
     "offlineOverlays": "Native apps; processing in their cloud",
     "aiCrit": "AI",
@@ -949,7 +951,7 @@
     "title": "Where your mail lives.",
     "sub": "The honest answer is different per tier — so here it is, per tier.",
     "desktopTerm": "Desktop",
-    "desktopBody": "Desktop is built so your mail never touches our servers: sync, rules and search all run on your machine. The app is a real mail client — it connects to your own IMAP server and organizes your mailbox locally, with no ohmail server in the loop — and that is how it works on macOS, Windows and Linux alike. Your mail is stored on your own disk, so it is there to read whether or not you have a network.",
+    "desktopBody": "Desktop is built so your mail never touches our servers: sync, rules and search all run on your machine. The app is a real mail client — it connects to your own IMAP server and organizes your mailbox locally, with no ohmail server in the loop — and that is how the macOS build works today. The Windows and Linux builds download and run, but they are an interface preview: they open a sample mailbox and cannot reach yours yet, and the complete app is being finished. Your mail is stored on your own disk, so it is there to read whether or not you have a network.",
     "desktopNote": "Desktop-only is meant to be a complete way to use ohmail, forever — no account, no cloud, nothing of yours on our side, and not a trial version of anything. If you would rather have a hosted account, the same app can sign in to Cloud instead; that is a choice you make in the app, not a different download.",
     "cloudTerm": "Cloud",
     "cloudOptional": "optional",
@@ -978,17 +980,17 @@
     "q2": "Can I leave?",
     "a2": "Anytime. Your mail never needs exporting — the originals live on your own server, in ordinary folders ohmail created in place, and nothing we do touches them. Be clear about what Cloud holds, though: a full copy of that mail — bodies, headers, subjects and senders — alongside your rules, tags and notes, because that is what makes search and push work. All of it is deleted with your account.",
     "q3": "Where does the AI run?",
-    "a3": "On Cloud: on our servers, within your included actions — that is the part being wired for the beta, and so far a live model has run in production exactly once, on the founder's own mailbox. On Desktop the plan is that you point it wherever you like — your own API key, or a local model so nothing leaves your machine; the app already runs locally against your own server on all three platforms, and that AI choice is coming next rather than today. Either way, rules with no AI at all run first and are meant to handle most mail — and you can switch the AI off entirely without losing a single feature that files your mail.",
+    "a3": "On Cloud: on our servers, within your included actions — that is the part being wired for the beta, and so far a live model has run in production exactly once, on the founder's own mailbox. On Desktop the plan is that you point it wherever you like — your own API key, or a local model so nothing leaves your machine; the app already runs locally against your own server on macOS — the Windows and Linux builds are an interface preview for now — and that AI choice is coming next rather than today. Either way, rules with no AI at all run first and are meant to handle most mail — and you can switch the AI off entirely without losing a single feature that files your mail.",
     "q4": "What exactly is an AI action?",
     "a4": "One unit of AI work: a Screener suggestion for a new sender, a summary, a drafted reply. When your monthly actions run out, mail keeps flowing rules-only until the next cycle. There are no overage charges — ever.",
     "q5": "Do you read my mail?",
-    "a5": "Not as a matter of practice, and our admin tools do not display message content — every response the console can produce is checked by a test that writes a marker into every text column of every table and fails if any of it reaches a staff response. The database itself does not yet refuse those columns to staff tooling: the column-restricted role that would enforce this below the application is built and tested but not yet live, and we will not claim it until it is. The honest fine print: Cloud mail is stored unencrypted at the application level and is not end-to-end encrypted, so someone with production database access could technically read it; that access is held by very few people, and the product privacy policy will spell out who and under what conditions when it publishes, before the first real mailbox connects. On Desktop the question doesn't arise — your mail never reaches our servers at all: on macOS, Windows and Linux the app runs as a real mail client against your own server. Separately, nobody else gets to watch you read either: remote images never load on their own, so a spy pixel cannot fire, and ohmail records who tried.",
+    "a5": "Not as a matter of practice, and our admin tools do not display message content — every response the console can produce is checked by a test that writes a marker into every text column of every table and fails if any of it reaches a staff response. The database itself does not yet refuse those columns to staff tooling: the column-restricted role that would enforce this below the application is built and tested but not yet live, and we will not claim it until it is. The honest fine print: Cloud mail is stored unencrypted at the application level and is not end-to-end encrypted, so someone with production database access could technically read it; that access is held by very few people, and the product privacy policy will spell out who and under what conditions when it publishes, before the first real mailbox connects. On Desktop the question doesn't arise — your mail never reaches our servers at all: on macOS the app runs as a real mail client against your own server, and the Windows and Linux builds are an interface preview that never touches a mailbox of yours. Separately, nobody else gets to watch you read either: remote images never load on their own, so a spy pixel cannot fire, and ohmail records who tried.",
     "q6": "Which providers work?",
     "a6": "Any IMAP mailbox: your own domain at Metanet or Infomaniak, iCloud, Gmail, Outlook, a self-hosted server. If it speaks IMAP, ohmail organizes it in place. Native Exchange sync over Microsoft Graph is on the roadmap; today Microsoft 365 connects over IMAP like everything else.",
     "q7": "Is there a trial for Cloud?",
     "a7": "Yes — 14 days, no card. It is the whole product except the managed AI actions: rules, sync, push and the web app all run, and the included AI actions begin when a subscription does. Desktop needs no trial at all; it is simply free.",
     "q8": "Desktop or Cloud — what’s the real difference?",
-    "a8": "The same model, the same vocabulary, and deliberately not the same privacy posture — that is the honest difference. Desktop is free and fully standalone: all processing local, no account, no artificial limits. On macOS, Windows and Linux alike it is a real mail client — it connects to your own IMAP server and organizes your mailbox on your machine, and because your mail is on your own disk it is there to read with the network down. Your own AI key or a local model is still to come. Cloud adds the web app, push notifications, always-on processing while your computer sleeps, and AI included from $9 a month — and it holds a copy of your mail on our servers to do that. The same download does either one; which door you take is a choice inside the app. Both are open today."
+    "a8": "The same model, the same vocabulary, and deliberately not the same privacy posture — that is the honest difference. Desktop is free and fully standalone: all processing local, no account, no artificial limits. On macOS it is a real mail client — it connects to your own IMAP server and organizes your mailbox on your machine, and because your mail is on your own disk it is there to read with the network down. The Windows and Linux builds install and open today, but they are an interface preview: a sample mailbox, no engine behind it, and the complete app is being finished. Your own AI key or a local model is still to come. Cloud adds the web app, push notifications, always-on processing while your computer sleeps, and AI included from $9 a month — and it holds a copy of your mail on our servers to do that. The same download does either one; which door you take is a choice inside the app. Both are open today."
   },
   "signup": {
     "title": "Keep me posted",
@@ -1030,7 +1032,7 @@
   },
   "siteMeta": {
     "title": "ohmail — Consent-first email on your own mailboxes.",
-    "description": "The last mail client you will ever need. The Screener holds first-time senders until you decide; everything you said yes to is organized in place — real folders on your real server. The desktop app is free on macOS, Windows and Linux and runs entirely on your own machine; Cloud from $9/mo adds the web app and push, with a 14-day trial and no card.",
+    "description": "The last mail client you will ever need. The Screener holds first-time senders until you decide; everything you said yes to is organized in place — real folders on your real server. The desktop app is free and runs entirely on your own machine: complete on macOS, an interface preview on Windows and Linux. Cloud from $9/mo adds the web app and push, with a 14-day trial and no card.",
     "ogAlt": "ohmail — consent-first email on your own mailboxes"
   },
   "siteScreener": {
