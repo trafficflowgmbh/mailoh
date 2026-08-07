@@ -1195,8 +1195,9 @@ export function MessageBody({
       blocked,
       sheets,
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `dark` is applied live via
-    // toggleAttribute, never by rebuilding the frame; see the note above.
+    // `dark` is intentionally omitted — it is applied live via toggleAttribute, never by
+    // rebuilding the frame; see the note on `doc` above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [html, proxy, mounted]);
 
   /**
