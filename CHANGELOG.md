@@ -16,6 +16,25 @@ are still an interface preview. See [Status](README.md#status--read-this-first).
 The engine port to the Windows and Linux shell, so they connect too. See
 [Roadmap](README.md#roadmap) and issue #1.
 
+## [0.5.0] — 2026-08-07
+
+**Signed auto-update.** The app checks for updates and installs them on your word, with the
+downloaded payload cryptographically verified before it runs — Sparkle (Ed25519) on macOS,
+minisign on Windows and Linux. The signing keypair is independent of any OS code-signing
+certificate, so the update is verified even though the apps themselves are unsigned. "Check
+for Updates…" is a native menu item; the app never reaches the network from its interface.
+
+**Two-door onboarding on macOS.** Set up a mailbox one of two ways: pick a mail provider and
+use an app password (presets for common providers), or sign in to ohmail Cloud and read your
+mail over HTTPS. The Cloud credential lives only in memory for the session.
+
+**Local send.** The macOS engine sends over SMTP using the same login it opened IMAP with —
+one credential per mailbox.
+
+**A quieter window on macOS** — the title bar merges into the app's surface — and a
+**network-egress allow-list** that restricts the app's outbound connections to a named,
+disclosed set of hosts.
+
 ## [0.4.0-preview] — 2026-08-06
 
 **macOS is now a working mail client.** The `.dmg` carries the local mail engine,

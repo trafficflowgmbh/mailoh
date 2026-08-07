@@ -10,7 +10,7 @@ A native SwiftUI client for macOS and a Tauri shell for Windows and Linux.
 Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/badge/download-v0.4.0--preview-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.4.0-preview)
+[![latest release](https://img.shields.io/badge/download-v0.5.0-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.5.0)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -45,9 +45,9 @@ push. It is a commercial service with a codebase of its own, built by the same
 people, and the desktop app neither asks for it nor needs it.
 [Desktop or Cloud](#desktop-or-cloud) is the full comparison, prices included.
 
-## The current release — v0.4.0-preview
+## The current release — v0.5.0
 
-**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.4.0-preview)**
+**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.5.0)**
 `ohmail.dmg` for macOS, an `.msi` and an NSIS `-setup.exe` for Windows, an
 `.AppImage` and a `.deb` for Linux. Every file was built by GitHub Actions from
 the tree this tag points at, and the run that made them prints the SHA-256 of
@@ -76,12 +76,12 @@ to a mailbox: the engine is macOS-only for now, and the shell forbids network ac
 at the webview level. The port is
 [issue #1](https://github.com/trafficflowhq/ohmail/issues/1).
 
-**What is new since v0.3.0-preview:** the macOS build ships the mail engine and
-connects to a real mailbox, where every earlier build was an interface preview on a
-fixture. The engine is built from this repository's own source on the release runner,
-embedded in the app beside a vendored Node, and the packaging job boots the assembled
-bundle to prove it starts before the `.dmg` is uploaded. [CHANGELOG.md](CHANGELOG.md)
-has the detail.
+**What is new since v0.4.0-preview:** the app now checks for updates and installs them on
+your word, with the downloaded payload cryptographically verified before it runs — Sparkle on
+macOS, minisign on Windows and Linux. macOS gains two-door onboarding (set up a mailbox with a
+provider app password, or sign in to ohmail Cloud and read your mail over HTTPS), local SMTP
+send, a title bar merged into the window, and a network-egress allow-list.
+[CHANGELOG.md](CHANGELOG.md) has the detail.
 
 v0.1.0-preview shipped under the earlier name `mailoh` and its files are still
 named that way; they were not relabelled, because renaming a released file
@@ -184,8 +184,8 @@ what the run made.
 | Platform | Artifacts | Runner |
 |---|---|---|
 | **macOS** | `ohmail.dmg` (universal, arm64 + x86_64, **engine-bearing**), `ohmail.app.zip`, the full screenshot set | `macos-15` |
-| **Windows** | `ohmail_0.4.0_x64_en-US.msi`, `ohmail_0.4.0_x64-setup.exe` (NSIS) | `windows-latest` |
-| **Linux** | `ohmail_0.4.0_amd64.AppImage`, `ohmail_0.4.0_amd64.deb` | `ubuntu-latest` |
+| **Windows** | `ohmail_0.5.0_x64_en-US.msi`, `ohmail_0.5.0_x64-setup.exe` (NSIS) | `windows-latest` |
+| **Linux** | `ohmail_0.5.0_amd64.AppImage`, `ohmail_0.5.0_amd64.deb` | `ubuntu-latest` |
 
 **Nothing here is signed**, on any platform. Code-signing certificates cost money
 ohmail has not spent yet. We would rather say that plainly than have you discover
@@ -232,12 +232,12 @@ Requires Windows 10 or newer, plus the WebView2 runtime as described above.
 > **The AppImage needs the executable bit**, which GitHub's artifact zip does not
 > preserve:
 > ```bash
-> chmod +x ohmail_0.4.0_amd64.AppImage && ./ohmail_0.4.0_amd64.AppImage
+> chmod +x ohmail_0.5.0_amd64.AppImage && ./ohmail_0.5.0_amd64.AppImage
 > ```
 > If it exits immediately on a distribution that has not enabled unprivileged
 > user namespaces, run it with `--appimage-extract-and-run`.
 
-The `.deb` installs with `sudo apt install ./ohmail_0.4.0_amd64.deb` and pulls in
+The `.deb` installs with `sudo apt install ./ohmail_0.5.0_amd64.deb` and pulls in
 WebKitGTK. It is **not** in any repository, so it will never auto-update — and
 there is no update checker in this build at all.
 
