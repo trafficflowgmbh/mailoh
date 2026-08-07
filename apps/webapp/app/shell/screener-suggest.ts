@@ -40,13 +40,25 @@ import { ApiError, apiConfigured, screener as screenerApi, type ScreenerSuggestW
 /**
  * One sender's suggestion, in the vocabulary the rows already speak.
  *
- * `dest` is `ohbox` or `screened` and never anything else, because those are the only two
- * outcomes `POST /screener/:id` has: a yes files to INBOX, a no to `ohmail/Screened`. The
- * server's own answer is that same yes/no, so nothing is lost in the mapping — and inventing
- * a finer destination here would produce a chip promising a filing the wire cannot perform.
+ * `ohbox` and `screened` are the only two outcomes `POST /screener/:id` has — a yes files to
+ * INBOX, a no to `ohmail/Screened` — so no finer destination may appear here: a chip promising a
+ * filing the wire cannot perform is a lie the button would have to keep.
+ *
+ * `screener` is the third, and it is NOT a filing: it is "leave this one where it already is",
+ * which is what the server's `hold` means and what `OhmailView` has always called this pile. It
+ * is here because the alternative — collapsing it into one of the two real ones — is the defect
+ * this type used to carry. The comment above this interface used to read "the server's own
+ * answer is that same yes/no, so nothing is lost in the mapping". The server's answer was
+ * six-valued and the collapse behind it was a denylist, so `ohmail/Screener` fell through into
+ * `ohbox` — and that is the classifier's OWN label for a first-contact stranger, which is what
+ * every row in this queue is, so it was the answer that arrived most often. The surface showed
+ * "Ohbox" over a rationale asking for a human.
+ *
+ * A row carrying `screener` is decidable by a PERSON and never by a bulk control: applying it
+ * would move nothing and grant nothing, so it is not an outcome to offer.
  */
 export interface SenderSuggestion {
-  dest: "ohbox" | "screened";
+  dest: "ohbox" | "screened" | "screener";
   confidence: number;
   rationale: string;
 }
@@ -773,18 +785,24 @@ export function batchSizes(available: number, maxPerRequest: number): number[] {
 }
 
 /**
- * The server's yes/no, as a destination.
+ * The server's answer, as a destination — or as the absence of one.
  *
  * `no` is `screened` and not `spam`: a screened-out sender's mail goes to `ohmail/Screened`
  * and stays reversible, which is what the endpoint does. Reading a low-confidence "no" as
  * spam would quarantine a stranger on the model's word.
+ *
+ * SWITCHED, not a ternary. This was `decision === "yes" ? "ohbox" : "screened"`, which is the
+ * shape that turns a new wire value into a silent DECLINE — every `hold` the server started
+ * sending would have filed the sender to `ohmail/Screened` with no line of code changed and no
+ * test to notice. An exhaustive switch makes the server's third answer a compile error here
+ * instead.
  */
-function toSuggestion(a: { decision: "yes" | "no"; confidence: number; rationale: string }): SenderSuggestion {
-  return {
-    dest: a.decision === "yes" ? "ohbox" : "screened",
-    confidence: a.confidence,
-    rationale: a.rationale,
-  };
+function toSuggestion(a: { decision: "yes" | "no" | "hold"; confidence: number; rationale: string }): SenderSuggestion {
+  const dest: SenderSuggestion["dest"] =
+    a.decision === "yes" ? "ohbox"
+      : a.decision === "no" ? "screened"
+        : "screener";
+  return { dest, confidence: a.confidence, rationale: a.rationale };
 }
 
 /** What one completed purchase actually did, said in numbers. */

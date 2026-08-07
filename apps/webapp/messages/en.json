@@ -328,6 +328,8 @@
     "hintAccept": "accept suggestion",
     "hintPreview": "selecting a row previews the held mail",
     "aiSuggests": "AI suggests",
+    "aiHolds": "AI did not place this sender — that one is yours",
+    "aiHoldChip": "Needs you",
     "aiWhy": "“{why}”",
     "heldCaption": "{count} held messages — all shown · first contact {time}",
     "heldCaptionAll": "{count, plural, one {1 held message — all shown} other {# held messages — all shown}}",

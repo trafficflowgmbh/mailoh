@@ -346,7 +346,14 @@ export function ScreenerView({
    * "file to Ohbox" wearing the label "accept the suggested destination". The five
    * destination keys (o/r/c/n/x) are unaffected — those name what they do.
    */
-  const suggested = decidable ? (current as ScreenerSenderDTO).ai : null;
+  const suggested = (() => {
+    const ai = decidable ? (current as ScreenerSenderDTO).ai : null;
+    // `screener` names no filing — it is the server's `hold`, the model declining to place this
+    // sender. Enter means "accept THE SUGGESTION", and there is none to accept, so the binding is
+    // absent exactly as it is on a row nobody bought advice for. Returning it here would put the
+    // string "screener" through `decideCurrent` as one of the five destinations, which it is not.
+    return ai && ai.dest !== "screener" ? ai : null;
+  })();
 
   const keys: KeyBinding[] = [
     {
@@ -453,7 +460,12 @@ export function ScreenerView({
           aiSuggestion={
             w.ai
               ? {
-                  destLabel: DECISION_DONE_LABEL[w.ai.dest as keyof typeof DECISION_DONE_LABEL] ?? w.ai.dest,
+                  // `screener` is in no `DECISION_DONE_LABEL` — the five there are the five a
+                  // decision can FILE to, and this is the one that files nothing. The
+                  // `?? w.ai.dest` fallback would print the raw view key "screener" in the row.
+                  destLabel: w.ai.dest === "screener"
+                    ? t("aiHoldChip")
+                    : DECISION_DONE_LABEL[w.ai.dest as keyof typeof DECISION_DONE_LABEL] ?? w.ai.dest,
                   confidence: w.ai.confidence,
                 }
               : undefined
@@ -984,15 +996,30 @@ function WaitingPreview({
         {sender.ai ? (
           <div className="scn-why">
             <Icon name="spark" />
-            <span>
-              {t("aiSuggests")}{" "}
-              <b>
-                {DECISION_DONE_LABEL[sender.ai.dest as keyof typeof DECISION_DONE_LABEL] ??
-                  sender.ai.dest}
-              </b>{" "}
-              <span className="conf num">{sender.ai.confidence.toFixed(2)}</span> —{" "}
-              <span className="why">{t("aiWhy", { why: sender.ai.rationale })}</span>
-            </span>
+            {/* A `hold` gets its own SENTENCE and not a third capsule in the first one.
+                "AI suggests <b>X</b>" is a claim that X is where this mail goes, and the whole
+                defect being fixed here was that sentence naming a destination the model had
+                explicitly declined to choose. There is no wording of "suggests" that is true
+                of a non-answer, so the verb changes. The confidence and the rationale stay —
+                the account paid for them, and the model IS 0.92 sure this is a stranger for a
+                person to place. */}
+            {sender.ai.dest === "screener" ? (
+              <span>
+                {t("aiHolds")}{" "}
+                <span className="conf num">{sender.ai.confidence.toFixed(2)}</span> —{" "}
+                <span className="why">{t("aiWhy", { why: sender.ai.rationale })}</span>
+              </span>
+            ) : (
+              <span>
+                {t("aiSuggests")}{" "}
+                <b>
+                  {DECISION_DONE_LABEL[sender.ai.dest as keyof typeof DECISION_DONE_LABEL] ??
+                    sender.ai.dest}
+                </b>{" "}
+                <span className="conf num">{sender.ai.confidence.toFixed(2)}</span> —{" "}
+                <span className="why">{t("aiWhy", { why: sender.ai.rationale })}</span>
+              </span>
+            )}
           </div>
         ) : (
           <div className="scn-why scn-why-none">

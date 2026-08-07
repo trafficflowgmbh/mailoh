@@ -41,8 +41,11 @@ export interface ScreenerItem {
   subject: string;
   snippet: string;
   receivedAt: ISODateTime;
-  aiSuggestion: {                 // AI Yes/No pre-suggestion (reuses the injected classifier)
-    decision: "yes" | "no";
+  aiSuggestion: {                 // AI pre-suggestion (reuses the injected classifier)
+    // `hold` ⇒ the model declined to place this sender, so the decision belongs to the person
+    // reading the Screener. A surface may show it; a BULK control may never act on it. See
+    // `screener-service.ts`'s SCREEN_DISPOSITION for why this is three-valued and not two.
+    decision: "yes" | "no" | "hold";
     confidence: number;           // 0..1
     rationale: string;
   } | null;                       // null while unclassified / when AI is unavailable

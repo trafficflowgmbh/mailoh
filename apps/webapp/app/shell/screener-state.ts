@@ -465,9 +465,12 @@ export function useScreenerState(
   const visibleWaiting = waiting.filter((x) => !s.pending.has(x.id) || s.out.has(x.id));
   const undecided = waiting.filter((x) => !s.pending.has(x.id));
   const waitingCount = undecided.length;
-  // Counted over the SAME set the bulk would act on, so the control can never appear for
-  // rows that are already on their way out.
-  const suggestedCount = undecided.filter((x) => x.ai != null).length;
+  // Counted over the SAME set the bulk would act on — including the `hold` exclusion, which is
+  // why this predicate must stay a copy of `applyAll`'s and not merely of "has a suggestion".
+  // A queue whose every suggestion is a `hold` offers no button at all, which is honest: there
+  // is nothing to apply, and a button reading "Apply all (83)" that moved nothing would be the
+  // inert-button lie `ScreenerView.tsx` already refuses.
+  const suggestedCount = undecided.filter((x) => x.ai != null && x.ai.dest !== "screener").length;
   /**
    * The buy list, from the SAME set and in the SAME order.
    *
@@ -543,7 +546,7 @@ export function useScreenerState(
    */
   const applyAll = (scopeOf: (x: ScreenerSenderDTO) => DecisionScope) =>
     bulk(
-      (x) => x.ai!.dest as DecisionDestination,
+      (x) => x.ai!.dest as DecisionDestination,   // `hold` is excluded by the predicate below
       scopeOf,
       (snaps) => {
         const n = (d: DecisionDestination) => snaps.filter((x) => x.dest === d).length;
@@ -556,7 +559,13 @@ export function useScreenerState(
         ].filter(Boolean);
         return t("toastBulkDecided", { count: snaps.length, parts: parts.join(" · ") });
       },
-      (x) => x.ai != null,
+      // `dest !== "screener"` is the second half of the same rule the paragraph above states, and
+      // it is load-bearing rather than defensive: the server's `hold` arrives here as `screener`,
+      // which means the classifier declined to place this sender and left the choice to the
+      // person working the queue. Acting on it in bulk is a consent gate granting consent — the
+      // very thing removing the fallback was meant to end. Without this the cast above would send
+      // the string "screener" to `decide` as a `DecisionDestination`, which is not one of the five.
+      (x) => x.ai != null && x.ai.dest !== "screener",
     );
 
   const markAllSpam = (scopeOf: (x: ScreenerSenderDTO) => DecisionScope) =>

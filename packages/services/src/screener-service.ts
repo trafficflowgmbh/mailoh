@@ -17,7 +17,9 @@ import {
  * compile in a deployment where no gate and no ledger exist. */
 import type { AiCreditGate } from "@trafficflow/db";
 import type { AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy } from "@trafficflow/core/mail";
-import { applyReconcileAction, effectForDestination, resolveOhboxPolicy } from "@trafficflow/core/mail";
+import {
+  applyReconcileAction, effectForDestination, rationaleHoldsAtGate, resolveOhboxPolicy,
+} from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -228,7 +230,12 @@ export interface ScreenerSuggestBody {
 export interface ScreenerSuggestion {
   sender: string;
   messageId: string;
-  decision: "yes" | "no";
+  /**
+   * `hold` is the model declining to place this sender — see {@link SCREEN_DISPOSITION}. It is
+   * advice a surface may show and a BULK control may never act on; it names no destination
+   * because the wire still has only the two `POST /screener/:id` can perform.
+   */
+  decision: "yes" | "no" | "hold";
   confidence: number;
   rationale: string;
 }
@@ -1004,7 +1011,7 @@ export class ScreenerReadService {
     for (const r of rows) {
       if (out.has(r.messageId)) continue;
       out.set(r.messageId, {
-        decision: screenedOut(r.destination, r.spam, ohboxPolicy) ? "no" : "yes",
+        decision: suggestionDecision(r.destination, r.spam, r.rationale ?? "", ohboxPolicy),
         confidence: r.confidence ?? 0,
         rationale: r.rationale ?? "",
       });
@@ -1208,7 +1215,7 @@ export class ScreenerService extends ScreenerReadService {
       suggestions.push({
         sender,
         messageId: r.messageId,
-        decision: screenedOut(result.destination, result.spam, ohboxPolicy) ? "no" : "yes",
+        decision: suggestionDecision(result.destination, result.spam, result.rationale, ohboxPolicy),
         confidence: result.confidence,
         rationale: result.rationale,
       });
@@ -1312,12 +1319,50 @@ interface ClassifierResultLike {
 }
 
 /**
- * The Yes/No reading of a classifier verdict, UNDER THE ACCOUNT'S OHBOX POSTURE — ONE definition,
- * written once and read at both the fresh (`suggest`) and the stored (`storedSuggestions`) sites so
- * a bought suggestion cannot read "no" when fresh and "yes" on the next page load.
+ * ── WHAT EACH ROUTING DESTINATION MEANS TO THE SCREENER ──────────────────────────────────────
  *
- * The two hard "no"s are posture-independent: spam, or a destination the model itself put beyond
- * the gate (`ohmail/Screened` / `ohmail/Quarantine`).
+ * `Record<Destination, …>` and NOT a lookup with a default, because the default is what broke.
+ * Adding a folder to the `Destination` union without deciding what it means for a stranger at the
+ * gate is now a COMPILE error rather than a silent "yes".
+ *
+ * THE DEFECT THIS REPLACES, in full, because the shape recurs: this collapse used to be a
+ * predicate called `screenedOut` — a DENYLIST that named spam, `ohmail/Screened` and
+ * `ohmail/Quarantine` and answered `false` (⇒ admit to the Ohbox) for everything else.
+ * `ohmail/Screener` was not on that list. But `ohmail/Screener` is what the taxonomy DEFINES as
+ * the right answer for a first-contact sender, and every row this service reasons about is a
+ * first-contact sender — so the model's "hold this one for a human" was both the most common
+ * answer and the one the mapping got wrong: it was read as "admit them". A stored suggestion of
+ * `ohmail/Screener` rendered as "Ohbox", with the model's own hold-this rationale printed
+ * underneath it, at whatever confidence the model had reported. With "Apply all" that is a consent
+ * gate granting consent in bulk — the same inversion `screener-state.ts#applyAll` documents having
+ * already been fixed once at the surface, reached the second time through the mapping instead of
+ * through a fallback.
+ *
+ * A denylist is the wrong shape for a question whose safe answer is "don't act".
+ */
+const SCREEN_DISPOSITION: Record<Destination, ScreenerSuggestion["decision"]> = {
+  "INBOX": "yes",
+  "ohmail/Reads": "yes",        // posture may tighten this to "no" — see below
+  "ohmail/Receipts": "yes",     // idem
+  "ohmail/Screened": "no",
+  "ohmail/Quarantine": "no",
+  // NOT "no". The model declined to place this sender, it did not decline the sender. Turning that
+  // into a decline would auto-screen-out real first-contact people on the same bulk control that
+  // used to auto-admit them — a different wrong answer, not a fix.
+  "ohmail/Screener": "hold",
+};
+
+/**
+ * The Yes/No/Hold reading of a classifier verdict, UNDER THE ACCOUNT'S OHBOX POSTURE — ONE
+ * definition, written once and read at both the fresh (`suggest`) and the stored
+ * ({@link ScreenerReadService.storedSuggestions}) sites so a bought suggestion cannot read one way
+ * when fresh and another on the next page load. That shared-ness is also what makes this fix
+ * retroactive: the 83 rows already on disk are re-read through it and answer "hold" with no
+ * backfill.
+ *
+ * **"hold" is advice with no action attached.** It is not a third destination — the wire still has
+ * only the two outcomes `POST /screener/:id` can perform — it is the model saying the decision is
+ * the account owner's. A surface may show it; a BULK control may never act on it.
  *
  * **POSTURE TIGHTENS "YES".** Under `people_only` the account keeps its Ohbox for real people and
  * the service mail it actually acts on, so a first-contact sender the model files into an AUTOMATED
@@ -1327,12 +1372,27 @@ interface ClassifierResultLike {
  * the Screener, or a denial. The LENIENT default — `people_and_replied`, which every NULL preference
  * resolves to via {@link resolveOhboxPolicy} — demotes nobody, so Reads/Receipts stay "yes" exactly
  * as before this posture existed, and an account that never set a posture classifies as it did.
+ *
+ * **THE RATIONALE IS CROSS-CHECKED AGAINST THE FIELD.** A reply whose prose concludes "hold at the
+ * Screener" while its `destination` names a folder past the gate is downgraded to "hold" rather
+ * than acted on ({@link rationaleHoldsAtGate}). Two channels carry the answer and only one is
+ * schema-checked; when they disagree, the one that costs a human glance wins over the one that
+ * writes an allow rule.
  */
-function screenedOut(destination: string, spam: boolean, ohboxPolicy: OhboxPolicy): boolean {
-  if (spam || destination === "ohmail/Screened" || destination === "ohmail/Quarantine") return true;
+function suggestionDecision(
+  destination: string, spam: boolean, rationale: string, ohboxPolicy: OhboxPolicy,
+): ScreenerSuggestion["decision"] {
+  // Spam is the model's own hard "no" and outranks everything, including the label.
+  if (spam) return "no";
+  // A label outside the taxonomy is not advice. `coerceClassifierResult` already maps an unknown
+  // one to the gate, but this is read from a STORED row too — a column, written by a past version
+  // or a hand-run migration, is a `string` and this must be total over strings, not over the union.
+  const disposition = SCREEN_DISPOSITION[destination as Destination] ?? "hold";
+  if (disposition !== "yes") return disposition;
+  if (rationaleHoldsAtGate(rationale)) return "hold";
   if (ohboxPolicy === "people_only"
-    && (destination === "ohmail/Reads" || destination === "ohmail/Receipts")) return true;
-  return false;
+    && (destination === "ohmail/Reads" || destination === "ohmail/Receipts")) return "no";
+  return "yes";
 }
 
 /**

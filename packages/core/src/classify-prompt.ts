@@ -163,6 +163,49 @@ export function classifyUserPayload(input: ClassifierInput): ClassifyUserPayload
 }
 
 /**
+ * ── THE GATE-CONTRADICTION CHECK ─────────────────────────────────────────────────────────────
+ *
+ * True when the prose CONCLUDES "hold this at the Screener". It exists because a routing answer
+ * has two channels — the structured `destination` and the one-line `rationale` — and only the
+ * first is machine-checked. A reply whose rationale reasons its way to the gate while the field
+ * names a folder past it is not advice anybody should act on; it is a coin toss with a sentence
+ * attached.
+ *
+ * **The asymmetry is deliberate and it is the whole design.** A false positive here costs a
+ * suggestion that reads "this one needs you" — which, for a queue whose every row is a
+ * first-contact stranger, is the status quo and costs one human glance. A false negative admits
+ * a stranger to the Ohbox and writes them an allow rule. So the check fires on the plain
+ * presence of the gate's own name, and buys its narrowness back with a negation guard rather
+ * than by hedging: "not a Screener case" and "no Screener hold needed" are the shapes an INBOX
+ * verdict actually uses to mention the gate, and they do not fire.
+ *
+ * `screener` is the one word in this taxonomy with no ordinary mail meaning — nothing else in a
+ * rationale is called a screener — which is why this is a keyword check and not a family
+ * classifier over all six labels. `reads` is a verb, `inbox` appears in half the sentences a
+ * model writes about mail, and a check built on those would fire on prose that agrees with its
+ * own field.
+ *
+ * **It is NOT applied to routing**, and that is a decision rather than an oversight: routing
+ * files live mail, and a prose heuristic that moved a message out of somebody's Ohbox would be
+ * changing where real mail lands on the strength of a regex. Its one consumer is the Screener's
+ * suggestion path, where the only thing it can change is which of three words a chip shows.
+ */
+const GATE_NAMED = /\bscreener\b/i;
+/**
+ * The gate's name, NEGATED — "not a Screener case", "never past the Screener", "no Screener hold".
+ * Bounded at 40 characters and stopped at a clause break so a negation in one sentence cannot
+ * cancel the gate named in the next.
+ */
+const GATE_NEGATED = /\b(?:not|never|beyond|past|outside|no|without)\b[^.;:]{0,40}?\bscreener\b/i;
+
+/** True ⇒ the rationale's own conclusion is "hold at the gate". See the block above. */
+export function rationaleHoldsAtGate(rationale: string): boolean {
+  if (typeof rationale !== "string") return false;
+  if (!GATE_NAMED.test(rationale)) return false;
+  return !GATE_NEGATED.test(rationale);
+}
+
+/**
  * A model's answer, made safe to act on.
  *
  * A label outside the taxonomy becomes `ohmail/Screener` — the gate, where a person decides —
