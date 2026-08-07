@@ -68,7 +68,7 @@ describe("tauri.conf.json", () => {
     // preview, and reusing the number would leave the two sets of checksums
     // ambiguous about which artifact they describe. A version is how a
     // downloader names what they have.
-    expect(conf.version).toBe("0.6.1");
+    expect(conf.version).toBe("0.7.0");
     expect(conf.identifier).toBe("io.ohmail.desktop");
   });
 
@@ -478,24 +478,42 @@ describe("the Rust side", () => {
   });
 
   /**
-   * The engine's lifecycle owns a child process on a private pipe, one item in the keystore, and
-   * one file.
+   * The engine's lifecycle owns a child process on a private pipe, one item in the keystore, one
+   * file it writes, and two paths it reads the existence of.
    *
-   * It opens no socket — and it still does not PROBE the filesystem, which is why a missing engine
-   * is discovered by trying to start it and reading `NotFound` back rather than by stat'ing a path.
+   * It opens no socket. `std::fs` USED TO BE FORBIDDEN OUTRIGHT HERE, and the allow-list below is
+   * what replaced that; a ban that has to be relaxed is worth nothing, so each entry names the
+   * capability it stands for and anything else fails — a `read_to_string`, a `remove_file`, a
+   * `copy` appearing in this module is new and has to be argued rather than absorbed.
    *
-   * `std::fs` USED TO BE FORBIDDEN OUTRIGHT HERE, and the line below is what replaced that. The
-   * blanket ban stopped being the right assertion when the engine's diagnostics had to survive
-   * being run from a double-click: a packaged app has no readable stderr, so the shell now also
-   * writes them to a log file. A ban that has to be relaxed is worth nothing, so this names the
-   * calls that log file needs and fails on any other — a `read_to_string`, a `remove_file`, a
-   * `copy` appearing in this module is a new capability and has to be argued rather than absorbed.
+   * ── `fs::metadata` IS THE NEWEST ENTRY, AND IT RETIRED A CLAIM THIS TEST USED TO MAKE ──────
+   *
+   * The claim was that the module does not PROBE the filesystem at all: whether the engine existed
+   * was answered by trying to start it and reading `NotFound` back, which is one syscall instead of
+   * two and cannot go stale between the check and the spawn.
+   *
+   * **That answer stopped being available when the spawn stopped being the engine.** The engine is
+   * a Node program, and the shell now resolves a Node runtime and spawns `<node> <engine>` — the
+   * only launch shape that works on Windows, which has no shebang mechanism. So what gets spawned
+   * is the runtime, and the runtime is there; a missing engine would come back as a module error
+   * and a non-zero exit, i.e. as a crash loop against a build that is behaving exactly as intended.
+   * Choosing a runtime has the same shape: "runnable, not merely present" is not a question a spawn
+   * can answer, because a file without the execute bit fails with a permission error rather than
+   * `NotFound` — a different sentence for the same absence.
+   *
+   * So the probe is real, and it is bounded rather than hidden: ONE call, in one function
+   * (`look`), which reports whether a path is a regular file and whether it is executable, and
+   * which every branch of `plan_with` is driven through in the Rust suite. It reads no contents and
+   * it opens nothing.
    */
-  it("touches the filesystem only to write its log", () => {
+  it("touches the filesystem to write its log, and to look at two paths", () => {
     const engine = read("src-tauri/src/engine.rs");
     const allowed = new Set([
       "fs::create_dir_all", // the log directory, on first run
       "fs::rename", // rotation: one generation kept
+      "fs::metadata", // `look`: is the engine there, and is the runtime runnable
+      "fs::Metadata", // …and its type, in the one helper that reads the mode
+      "fs::PermissionsExt", // the execute bit, on Unix
     ]);
     const used = [...engine.matchAll(/\bfs::(\w+)/g)].map((m) => `fs::${m[1]}`);
     // The harness bites only if it found something to classify.
@@ -509,6 +527,14 @@ describe("the Rust side", () => {
     // The one file it opens, and the cap that bounds it.
     expect(engine).toMatch(/LOG_FILE_NAME: &str = "engine\.log"/);
     expect(engine).toMatch(/LOG_MAX_BYTES: u64 = 5 \* 1024 \* 1024/);
+
+    // THE PROBE IS ONE FUNCTION AND IT ONLY ASKS ABOUT THE PATH ITSELF. `metadata` appears exactly
+    // once; a second call site is a second place the module could learn something about the disk,
+    // which is the widening this entry exists to make visible rather than the one call it permits.
+    expect(engine.match(/fs::metadata/g)).toHaveLength(1);
+    expect(engine).toMatch(/pub fn look\(path: &Path\) -> Found/);
+    // It classifies and never reads: nothing here opens a file or lists a directory.
+    expect(engine).not.toMatch(/fs::read|fs::File::open|read_dir/);
   });
 
   /**

@@ -1,6 +1,6 @@
 [package]
 name = "ohmail"
-version = "0.6.1"
+version = "0.7.0"
 description = "ohmail — consent-first email. Windows/Linux preview shell."
 authors = ["TrafficFlow GmbH <support@ohmail.app>"]
 license = "GPL-3.0-or-later"
@@ -88,6 +88,29 @@ tauri-build = { version = "2", features = [] }
 # build nothing spawns a process — the shell's ownership of the local engine's
 # lifetime is behind the `local-engine` feature above, which is off, so
 # `src/engine.rs` is not compiled into the published binary.
+#
+# ── AND WHAT THE ENGINE-BEARING BUILD CHANGES, WHICH IS MORE ─────────────────
+#
+# Everything above describes the DEFAULT build, and it stays exactly true of it.
+# The artifact people download is now the OTHER one — compiled with
+# `local-engine` and bundled with `src-tauri/tauri.engine.conf.json` — and two of
+# its properties are different in ways no amount of careful wording should blur:
+#
+#  · **It connects to a mail server.** That is the product. The connection is
+#    the engine's, over a pipe this process owns, to a host the user typed; no
+#    such host is compiled in and none appears in the `strings` audit above,
+#    which is why that audit is unchanged and still means what it says. What
+#    changed is the claim around it: "it talks to nobody but its update feed" is
+#    true of the preview artifact and false of this one.
+#  · **Its Windows installer can reach the network.** `webviewInstallMode` is
+#    `downloadBootstrapper` in the engine config, against `skip` in the base
+#    one. `skip` was right for a build that drew fixtures and would have been
+#    dishonest to give up; it is wrong for a mail client, whose window IS the
+#    product — on a machine without WebView2, `skip` produces an installer that
+#    completes and an app that cannot start, which is the user's problem on
+#    exactly the machines least able to diagnose it. With the runtime already
+#    present the installer still opens no connection. The README says both
+#    halves; the Windows CI job asserts the bootstrapper is compiled in.
 tauri = { version = "2", default-features = false, features = [
     "wry",
     "common-controls-v6",

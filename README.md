@@ -6,11 +6,11 @@
 
 **Consent-first email, on the mailboxes you already have.**
 
-A native SwiftUI client for macOS and a Tauri shell for Windows and Linux.
+One app, on macOS, Windows and Linux.
 Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/badge/download-v0.6.1-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.6.1)
+[![latest release](https://img.shields.io/badge/download-v0.7.0-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.0)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -30,12 +30,11 @@ and receipts file themselves. It runs on the mailbox you already have — any IM
 provider — and organises it **in place**, in real folders on your real server, so
 leaving costs you nothing.
 
-**This repository is the free ohmail desktop apps** — macOS, Windows and Linux.
-All of them, all of their source, under GPL-3.0. **The macOS build now carries the
-local mail engine and connects to a real mailbox**; the Windows and Linux builds
-are still an interface preview while the engine is ported to their shell — see
-[Status](#status--read-this-first). There is no paid edition of the desktop app,
-no feature held back for one, and no telemetry reporting back on you.
+**This repository is the free ohmail desktop app** — macOS, Windows and Linux,
+all of it, all of its source, under GPL-3.0. **Every build now carries the local
+mail engine and connects to a real mailbox.** There is no paid edition of the
+desktop app, no feature held back for one, and no telemetry reporting back on
+you.
 
 **ohmail Cloud is the optional hosted half, and it is what pays for this one.**
 Your phone cannot hold a connection to your mailbox open all day; something has
@@ -45,43 +44,45 @@ push. It is a commercial service with a codebase of its own, built by the same
 people, and the desktop app neither asks for it nor needs it.
 [Desktop or Cloud](#desktop-or-cloud) is the full comparison, prices included.
 
-## The current release — v0.6.1
+## The current release — v0.7.0
 
-**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.6.1)**
-`ohmail.dmg` for macOS, an `.msi` and an NSIS `-setup.exe` for Windows, an
-`.AppImage` and a `.deb` for Linux. Every file was built by GitHub Actions from
-the tree this tag points at, and the run that made them prints the SHA-256 of
-each one. Nothing is signed on any platform — see the per-platform install notes
-under [Download a build](#download-a-build) before you double-click anything.
+**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.0)**
+`ohmail.dmg` for macOS, an NSIS `-setup.exe` for Windows, an `.AppImage` and a
+`.deb` for Linux. Every file was built by GitHub Actions from the tree this tag
+points at, and the run that made them prints the SHA-256 of each one. Nothing is
+signed on any platform — see the per-platform install notes under
+[Download a build](#download-a-build) before you double-click anything.
 
-**macOS is now a working mail client.** The `.dmg` carries the local mail engine:
-it connects to your own IMAP mail server over TLS, mirrors your mailbox to a local
-database on your Mac, and organises new mail into `ohmail/` folders on the server
-itself — a Screener for first-time senders, Reads, Receipts, and the rest — so the
-filing is visible in every other mail app you own. It asks for your server and
-password on first launch; the password is sealed under a per-install key in your
-login Keychain. In this **local mode** nothing leaves your Mac but the IMAP
-connection to your provider, the signed update check, and — only if you turn it on
-— your own AI key or a local Ollama: no telemetry, no analytics. You can instead
-sign in to **ohmail Cloud** (the optional hosted service) and use the app as a
-viewer of a mailbox Cloud already organises; that mode connects to ohmail.app, and
-your session is held in memory only. To look around **without** connecting
-anything, launch the built-in fixture world instead:
+**Every platform is now a working mail client.** The app carries the local mail
+engine: it connects to your own IMAP mail server over TLS, mirrors your mailbox to
+a database on your computer, and organises new mail into `ohmail/` folders on the
+server itself — a Screener for first-time senders, Reads, Receipts, and the rest —
+so the filing is visible in every other mail app you own. It asks for your server
+and password on first launch; the password is sealed under a per-install key held
+in your operating system's own keystore (Keychain on macOS, Credential Manager on
+Windows, the Secret Service on Linux). In this **local mode** nothing leaves your
+computer but the IMAP connection to your provider, the signed update check, and —
+only if you turn it on — your own AI key or a local Ollama: no telemetry, no
+analytics. You can instead sign in to **ohmail Cloud** (the optional hosted
+service) and use the app as a viewer of a mailbox Cloud already organises; that
+mode connects to ohmail.app, and your session is held in memory only.
 
-    open -a ohmail --args --demo
+**The app carries its own Node runtime.** The mail engine is a Node program, and
+the download contains the official Node build for your platform — verified against
+nodejs.org's own published checksums by the run that made your installer — so
+there is nothing to install first and nothing on your `PATH` for the app to
+depend on.
 
-**Windows and Linux are still an interface preview.** The Tauri shell renders every
-screen of the product on that same small fictional mailbox, but it does not connect
-to a mailbox: the engine is macOS-only for now, and the shell forbids network access
-at the webview level. The port is
-[issue #1](https://github.com/trafficflowhq/ohmail/issues/1).
+**What is new since v0.6.1:** Windows and Linux stop being an interface preview.
+All three platforms now build from one application and ship the same mail engine,
+so the engine's IMAP client, its local mirror and its organising run everywhere
+rather than on macOS alone.
 
-**What is new since v0.4.0-preview:** the app now checks for updates and installs them on
-your word, with the downloaded payload cryptographically verified before it runs — Sparkle on
-macOS, minisign on Windows and Linux. macOS gains two-door onboarding (set up a mailbox with a
-provider app password, or sign in to ohmail Cloud and read your mail over HTTPS), local SMTP
-send, a title bar merged into the window, and a network-egress allow-list.
-[CHANGELOG.md](CHANGELOG.md) has the detail.
+**If you are on macOS and already have ohmail installed**, the update is a
+handover: the app you have is a different program — a native client that shared
+this one's identity — and it will offer you this release through the same update
+prompt it always has. Your mailbox, your settings and your stored password are
+untouched; they live in the same place and the new app reads them.
 
 v0.1.0-preview shipped under the earlier name `mailoh` and its files are still
 named that way; they were not relabelled, because renaming a released file
@@ -90,24 +91,21 @@ the full list.
 
 ## Status — read this first
 
-**macOS is a working mail client; Windows and Linux are still an interface preview.**
-The macOS `.dmg` connects to your IMAP mailbox and organises it in place; the Tauri
-builds render the whole interface on a small fictional mailbox that ships inside the
-app and connect to nothing.
+**All three platforms are a working mail client.** The app connects to your IMAP
+mailbox and organises it in place. It is unsigned on every platform, which is the
+thing to read the install notes about.
 
-| | macOS | Windows / Linux |
-|---|---|---|
-| **Connects to your mailbox** | ✅ Yes. The bundled engine speaks IMAP over TLS, mirrors your mailbox to a local store, and files new mail into `ohmail/` folders on your server. | ❌ Not yet. The shell forbids connections at the webview level (`connect-src 'none'`) and replaces `fetch` / `XMLHttpRequest` / `WebSocket` with functions that throw. |
-| **What it talks to** | Local mode: your IMAP server, the signed update feed, and — only if you turn it on — your own Anthropic key or a local Ollama. Cloud mode: ohmail.app, the hosted service you sign into, as a viewer. No telemetry, no analytics. | Nothing. No network at all. |
-| **Credentials** | Your mail password, sealed under a per-install key in your login Keychain, never written in the clear. | None — there is nothing to sign into. |
-| **Try it without a mailbox** | `open -a ohmail --args --demo` runs the built-in fixture world — no server, no network, no account. | The fixture world is what the app shows. |
-| **Runs, and is worth looking at** | Every surface is real: Ohbox, Screener, Reads, Receipts, triage piles, tags, search, compose, settings — light and dark, down to a 390 pt window, keyboard-first, native SwiftUI. | The same interface, in a locked-down webview. |
-| **Tested** | The interface model, the rules and design tokens, and the engine's sync, lease and organise logic are covered by the test suite; the packaging job boots the shipped bundle to prove it starts; and the release engine was verified connecting to and organising a real IMAP mailbox. | A 31-check render + offline audit over the built bundle, and 14 assertions on the security configuration. |
-| 🔜 Next | A signed, notarised build with a real Apple Developer ID — this one is ad-hoc-signed, so first launch needs the Gatekeeper approval in the install notes. It already updates itself over a signed feed. | The engine port, so the shell connects too — [issue #1](https://github.com/trafficflowhq/ohmail/issues/1). |
+| | What it does |
+|---|---|
+| **Connects to your mailbox** | ✅ Yes, on macOS, Windows and Linux. The bundled engine speaks IMAP over TLS, mirrors your mailbox to a local store, and files new mail into `ohmail/` folders on your server. |
+| **What it talks to** | Local mode: your IMAP server, the signed update feed, and — only if you turn it on — your own Anthropic key or a local Ollama. Cloud mode: ohmail.app, the hosted service you sign into, as a viewer. No telemetry, no analytics. |
+| **Credentials** | Your mail password, sealed under a per-install key in your operating system's keystore, never written in the clear. |
+| **Runs, and is worth looking at** | Every surface is real: Ohbox, Screener, Reads, Receipts, triage piles, tags, search, compose, settings — light and dark, down to a 390 pt window, keyboard-first. |
+| **Tested** | The interface model, the rules and design tokens, and the engine's sync, lease and organise logic are covered by the test suite; every platform's packaging job opens the artifact it just built and starts the engine inside it; and the release engine was verified connecting to and organising a real IMAP mailbox. |
+| 🔜 Next | Signed builds — a real Apple Developer ID and an Authenticode certificate. Today's are unsigned, so first launch needs the approval described in the install notes. The app already updates itself over a signed feed on all three platforms. |
 
-If you came here from [ohmail.app](https://ohmail.app): the macOS build reads and
-organises your mail today. Watch the repository for the Windows and Linux engine, or
-ask us at support@ohmail.app.
+If you came here from [ohmail.app](https://ohmail.app): the build for your platform
+reads and organises your mail today. Questions to support@ohmail.app.
 
 ## What ohmail is
 
@@ -140,7 +138,7 @@ organised.
 
 ## Screenshots
 
-Rendered from this source tree by `swift run OhMail --shot`, unretouched.
+Rendered from this source tree, unretouched.
 
 **Ohbox** — a thread, its rule provenance, the blocked tracking pixel, the tags.
 
@@ -183,9 +181,13 @@ what the run made.
 
 | Platform | Artifacts | Runner |
 |---|---|---|
-| **macOS** | `ohmail.dmg` (universal, arm64 + x86_64, **engine-bearing**), `ohmail.app.zip`, the full screenshot set | `macos-15` |
-| **Windows** | `ohmail_0.6.1_x64_en-US.msi`, `ohmail_0.6.1_x64-setup.exe` (NSIS) | `windows-latest` |
-| **Linux** | `ohmail_0.6.1_amd64.AppImage`, `ohmail_0.6.1_amd64.deb` | `ubuntu-latest` |
+| **macOS** | `ohmail.dmg` (universal, arm64 + x86_64), `ohmail.app.tar.gz` (the update payload) | `macos-15` |
+| **Windows** | `ohmail-windows-setup.exe` (NSIS) | `windows-latest` |
+| **Linux** | `ohmail-linux-x86_64.AppImage`, `ohmail-linux-amd64.deb` | `ubuntu-latest` |
+
+Every one is engine-bearing and carries its own Node runtime. The names are
+stable across releases on purpose, so the download links on the site keep
+working; the version is in the release, not in the filename.
 
 **Nothing here is signed**, on any platform. Code-signing certificates cost money
 ohmail has not spent yet. We would rather say that plainly than have you discover
@@ -213,18 +215,21 @@ Requires macOS 15 (Sequoia) or newer.
 > deploys that way.
 
 > [!IMPORTANT]
-> **The installers do not download WebView2 — and that is deliberate.** Tauri's
-> default is to compile a downloader into the `.msi` and the `.exe` that fetches
-> the runtime from `go.microsoft.com` during installation. We set
-> `webviewInstallMode: skip` and took it out, because an installer that opens a
-> connection makes "it cannot reach the network" a footnote instead of a fact.
-> The trade is that **you must already have WebView2.** Windows 11 has it;
-> so does any Windows 10 that has taken updates since 2021, because Edge
-> installs it. If yours does not, ohmail will not start and will tell you so —
-> install the Evergreen runtime once, from Microsoft:
+> **About WebView2.** ohmail draws its window in Microsoft's WebView2 runtime.
+> If it is already installed — Windows 11 has it, and so does any Windows 10 kept
+> current, because Edge installs it — **the installer makes no network
+> connection.** If it is missing, the installer downloads the runtime from
+> Microsoft and installs it; the app cannot render without it.
+>
+> Earlier, preview-only builds shipped with that downloader deliberately removed
+> (`webviewInstallMode: skip`), because a build that drew nothing but fixtures had
+> no business carrying an installer that could open a connection. A mail client is
+> a different thing: with the downloader removed, a machine without WebView2 gets
+> an installer that completes and an app that will not start. If you would rather
+> install the runtime yourself first, it is here:
 > <https://developer.microsoft.com/microsoft-edge/webview2/>
 
-Requires Windows 10 or newer, plus the WebView2 runtime as described above.
+Requires Windows 10 or newer.
 
 ### Linux
 
@@ -232,12 +237,12 @@ Requires Windows 10 or newer, plus the WebView2 runtime as described above.
 > **The AppImage needs the executable bit**, which GitHub's artifact zip does not
 > preserve:
 > ```bash
-> chmod +x ohmail_0.6.1_amd64.AppImage && ./ohmail_0.6.1_amd64.AppImage
+> chmod +x ohmail-linux-x86_64.AppImage && ./ohmail-linux-x86_64.AppImage
 > ```
 > If it exits immediately on a distribution that has not enabled unprivileged
 > user namespaces, run it with `--appimage-extract-and-run`.
 
-The `.deb` installs with `sudo apt install ./ohmail_0.6.1_amd64.deb` and pulls in
+The `.deb` installs with `sudo apt install ./ohmail-linux-amd64.deb` and pulls in
 WebKitGTK. It is **not** in any repository, and a `.deb` install cannot replace
 itself in place, so it does not auto-update — the AppImage is the Linux build that
 applies its own updates, from the same signed feed the app checks.
@@ -265,55 +270,16 @@ read-only data with no terminator between it and whatever was placed next to it.
 surrounding line for the three that are not URLs at all.
 
 CI runs exactly these greps on every build, prints the complete list in the job
-log, **asserts the count** so that "14 and 15" cannot quietly stop being true,
-and **fails the run** if any URL in the binary points at ohmail or TrafficFlow
-infrastructure. It also fails the Windows job if the `.msi` or the `-setup.exe`
-contains a WebView2 downloader.
+log, and **fails the run** if any URL in the binary points at ohmail or
+TrafficFlow infrastructure other than the one pinned update feed. Your own mail
+server never appears in this list and cannot: it is not compiled in, it is
+whatever you typed, held in your own configuration file.
 
 ## Build it yourself
 
-### macOS
-
-**Requirements:** macOS 15 (Sequoia) or newer, and Xcode for the Swift 6
-toolchain and the macOS SDK (`xcode-select --install` on its own is not enough).
-Built and tested on every push with **Xcode 26.3 / Swift 6.2.4** on macOS 15 —
-that is the combination we can vouch for; Swift 6.0 (Xcode 16) is the language
-mode the package declares and should work, but is not covered by CI.
-
-No dependencies: `Package.swift` declares zero third-party packages, so there is
-nothing to resolve, install or trust.
-
-```bash
-git clone https://github.com/trafficflowhq/ohmail
-cd ohmail
-
-swift build --package-path apps/macos -c release   # ~15 s cold on an M-series Mac
-swift test  --package-path apps/macos              # 269 tests
-swift run   --package-path apps/macos OhMail       # opens the app
-```
-
-Two extra entry points, both used by CI:
-
-```bash
-# Render check: every route × light/dark × 1440 pt and 390 pt, hosted offscreen,
-# rasterised, and audited — including that no message was replaced by a "N more"
-# placeholder. Prints "SMOKE OK (110 checks)" and exits 0.
-swift run --package-path apps/macos OhMail --smoke
-
-# Screenshots of every route, both schemes, both widths, as PNGs.
-swift run --package-path apps/macos OhMail --shot shots
-```
-
-And an installable bundle, which SwiftPM cannot make on its own:
-
-```bash
-./scripts/package-app.sh     # → build/ohmail.app and build/ohmail.dmg
-```
-
-### Windows and Linux
-
-**Requirements:** [Rust](https://rustup.rs) (stable) and Node 22. On Linux also
-the Tauri prerequisites — on Ubuntu 24.04:
+**Requirements:** [Rust](https://rustup.rs) (stable) and Node 22. On macOS also
+the Xcode command line tools. On Linux also the Tauri prerequisites — on Ubuntu
+24.04:
 
 ```bash
 sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
@@ -323,6 +289,12 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
 
 On Windows, the MSVC build tools and WebView2.
 
+### The interface, on its own
+
+The quickest thing to build, and the one that needs nothing but the repository:
+the app around a small fictional mailbox that ships inside it, with no engine and
+no network at all.
+
 ```bash
 cd apps/desktop
 npm install
@@ -331,48 +303,84 @@ npm run smoke         # → SMOKE OK (31 checks) — renders, and proves it is o
 npx tauri build       # → src-tauri/target/release/bundle/…
 ```
 
+### The real thing, with the mail engine in it
+
+Three more steps, because the shipped app carries two things the repository does
+not: the engine built as one file, and a Node runtime to run it with.
+
+```bash
+# The engine, bundled with the pinned esbuild — installed off to one side rather
+# than added to the project, so nothing here depends on a bundler.
+D=$(mktemp -d) && (cd $D && npm install --no-save esbuild@0.24.0)
+OHMAIL_ESBUILD_FROM=$D node scripts/engine-bundle.mjs
+
+# It boots from the layout it ships in — and refuses to when its migration
+# journal is moved away, which is what makes the first half worth anything.
+node scripts/verify-engine-boot.mjs
+
+# The official Node build for this platform, checked against nodejs.org's own
+# SHASUMS256.txt before it is unpacked. A mismatch is a refusal, not a warning.
+node scripts/vendor-node.mjs
+
+# And the app. One command sets all three things that have to agree: the UI
+# bundle with the bridge in it, the Rust feature that owns the engine's
+# lifetime, and the bundler config that puts the engine and the runtime inside
+# the package.
+cd apps/desktop && npm run app:build:engine
+```
+
+The result carries the engine at `engine/bin/ohmail-engine.mjs` and the runtime
+at `runtime/node`, both under the app's own resource directory —
+`Contents/Resources/` inside the macOS bundle, `/usr/lib/ohmail/` from the Linux
+package, beside the executable on Windows. You can check the engine is the one
+this source produces: the build prints its SHA-256, and so does every CI run.
+
 `apps/desktop/README.md` is the long version: why the UI is bundled with Vite
 rather than exported from Next, what each of the three aliases does, and the
 complete capability and CSP set.
 
-### It cannot reach the network
+### What the window itself can reach
 
-Not "does not" — cannot, in three independent ways. The webview's
+**The page reaches nothing directly, in either build.** The webview's
 Content-Security-Policy is `connect-src 'none'`, so `fetch`, XHR, WebSocket and
-EventSource are refused before they are attempted. The page then replaces those
-APIs with functions that throw. And the Cloud sync client is aliased out of the
+EventSource are refused before they are attempted, and the page then replaces
+those APIs with functions that throw. The Cloud sync client is aliased out of the
 bundle at build time — it is not compiled in, and its source is not in this
-repository at all. The Tauri capability list is literally empty
-(`"permissions": []`): the interface can call no Tauri command, touch no file and
-spawn no process.
+repository at all.
 
-**The installers do not either**, which is a separate claim and worth stating
-separately, because it was not true of the first build we made. Tauri ships a
-`downloadBootstrapper` by default: a WiX custom action in the `.msi` and an
-NSISdl step in the `-setup.exe` that fetch the WebView2 runtime from
-`go.microsoft.com` if the machine lacks it. Both are gone —
-`webviewInstallMode: skip`, asserted by CI against the built installers rather
-than trusted from the config — and the cost is that you supply WebView2
-yourself. See the Windows note above.
+**In the interface-only build that is the whole story**, and it is a property of
+the artifact rather than of a branch: its Tauri capability list is literally
+empty (`"permissions": []`), so the page can call no Tauri command, touch no
+file and spawn no process. That build is what you get from `npm run ui:build` +
+`npx tauri build`, and it is what the render check in CI runs against.
+
+**In the build you download, the window can call six commands and nothing else.**
+They are the bridge to the mail engine, a notification, and the icon's badge. Mail
+does not travel over the network from the page — it travels down a pipe to a
+process on the same machine, which is what makes the CSP above compatible with an
+app that reads your mail at all. The engine holds the IMAP connection; the page
+holds no credential, because the shell adds the engine's session token on its own
+side of that pipe.
+
+The one thing the *process* reaches on its own is the update feed, and it does so
+only when you ask or on its daily check — one pinned HTTPS address, with every
+payload cryptographically verified before it may install.
 
 ## Desktop or Cloud
 
 ohmail comes in two halves, and **this repository is the whole of the first
 one**. Here is the honest comparison, including the parts where Desktop wins.
 
-The Desktop column describes what the local engine makes possible. On **macOS** that
-engine now ships and these rows are real; the **Windows and Linux** builds are still
-the interface on a fictional mailbox until the engine is ported to their shell (see
-[Status](#status--read-this-first)). Rows marked 🔜 are the ones the Windows and Linux
-builds are still waiting on.
+The Desktop column describes what the local engine makes possible, and that engine
+now ships on all three platforms — so these rows are real wherever you run it.
 
 |  | **Desktop** — this repository | **Cloud** — optional |
 |---|---|---|
 | **Price** | **Free, forever.** Not a trial, not a freemium tier. | $9 / $15 / $29 per month |
-| **Mailboxes** | As many as you like (🔜 on Windows/Linux) | 5 / 10 / 50 |
-| **Where your mail is processed** | **Your machine. Only.** It never touches our servers — there is no server to touch. (🔜 on Windows/Linux) | EU-hosted: a full copy of your mail, encrypted at rest, **not** end-to-end — solely to serve you, deletable |
+| **Mailboxes** | As many as you like | 5 / 10 / 50 |
+| **Where your mail is processed** | **Your machine. Only.** It never touches our servers — there is no server to touch. | EU-hosted: a full copy of your mail, encrypted at rest, **not** end-to-end — solely to serve you, deletable |
 | **Account** | **None.** Nothing to sign up for, nothing to cancel. | Yes |
-| **AI** | Bring your own Anthropic key, or run a local model such as [Ollama](https://ollama.com) so nothing leaves your machine at all. Ships in the macOS build, off unless you turn it on (🔜 on Windows/Linux). | A monthly allowance of managed AI actions (~2k / 6k / 20k). 🔜 No live model is connected in production yet either; the metering that governs it is. |
+| **AI** | Bring your own Anthropic key, or run a local model such as [Ollama](https://ollama.com) so nothing leaves your machine at all. Off unless you turn it on. | A monthly allowance of managed AI actions (~2k / 6k / 20k). 🔜 No live model is connected in production yet either; the metering that governs it is. |
 | **Web and mobile apps** | — | Yes |
 | **Push notifications** | — | Yes |
 | **Works while your laptop is shut** | — | Yes — mail is screened and filed as it arrives |
@@ -414,35 +422,22 @@ why we built it this way.
 
 ## How it is put together
 
-Two clients, one interface. The macOS app is native SwiftUI; the Windows/Linux
-app is a Rust window around the React implementation of the same design system.
-Neither is a port of the other — they are two renderings of one specification,
-and the parts that could drift (colours, radii, spacing, shadows) are compared
-numerically against the same token file by the Swift test suite.
+One app, three platforms. A Rust window around the React implementation of the
+design system, with a Node mail engine beside it that the window talks to over a
+private pipe — no port, no socket, no listener; the only party that can reach the
+engine is the process holding the pipe.
 
-### macOS — `apps/macos`
+macOS used to be a second, native client written in Swift, and this section used
+to describe both. That client is retired: two renderings of one specification is
+twice the surface for the same product, and every screen it drew now comes from
+the same React sources the other two platforms already used.
 
-7,600 lines of Swift across 30 files plus 1,400 lines of tests, one SwiftPM
-package, no dependencies.
-
-| Target | Kind | What is in it |
-|---|---|---|
-| `OhMailKit` | library | `Theme/` (the design tokens), `Models/`, `Fixtures/`, `State/`, `Views/`, `App/` |
-| `OhMail` | executable | `main.swift` — dispatches `--smoke`, `--shot`, or the app |
-| `OhMailKitTests` | tests | 157 tests: counts and seen-semantics, lossless Screener moves, undo, triage, tags, search, numeric design-token fidelity, source audits, and the no-collapse audit |
-
-One of those 99 reports as *skipped* here, and says why when it does: it compares
-the triage pile's sheet-edge shadow against the original design prototype, which
-is not published. It runs in the monorepo, where it once caught a shadow that had
-drifted from `.10` to `.16` alpha.
-
-### Windows and Linux — `apps/desktop`
-
-Eleven lines of Rust, and a 330 KB bundle.
+### The app — `apps/desktop`
 
 | Piece | What is in it |
 |---|---|
-| `src-tauri/src/main.rs` | the whole Rust side: create the window, run. No commands, no plugins, no `std::fs`, no `std::net`. |
+| `src-tauri/src/main.rs` | opens the window, installs the menu bar, hooks up the updater, and — in the engine-bearing build — owns the engine's lifetime |
+| `src-tauri/src/engine.rs` | the engine's whole life: find a Node runtime, spawn it with the engine, read its frames, and make certain it is gone when the app is. Compiled only with the `local-engine` feature, so the interface-only build does not contain it at all |
 | `src-tauri/tauri.conf.json` | window geometry (clean to 390 px), the CSP, the bundle targets, the `oh.` icon family |
 | `src-tauri/capabilities/main.json` | one file, `"permissions": []` |
 | `src/` | the desktop-specific layer: providers, the pre-paint theme stamp, the offline guard, and the two stubs that stand in for the Cloud sync client and the Cloud API client |

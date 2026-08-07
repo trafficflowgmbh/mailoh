@@ -266,15 +266,36 @@ verification; the cost was a second data directory for the same mailbox and an
 update path that could never hand over between them, which is a permanent fork in
 every path the app touches in exchange for a convenience while testing.
 
-The version is **`0.6.1`**, bare, in every place it is written: `tauri.conf.json`,
+The version is **`0.7.0`**, bare, in every place it is written: `tauri.conf.json`,
 `Cargo.toml`, `Cargo.lock`, `package.json`, and the macOS `Info.plist`. The
 `-preview` suffix earlier builds carried is retired — it marked "this build
 cannot update itself yet", and this build ships the auto-updater, so the claim is
 no longer true. "Beta" is the channel name, not a semver suffix; the MSI bundler
 rejects a pre-release identifier anyway, and the bare number is what reaches the
-installer filenames — `ohmail_0.6.1_amd64.deb`, `ohmail_0.6.1_x64_en-US.msi`.
+installer filenames the bundler emits — which the release then renames in place
+to the stable names the download page links (`ohmail.dmg`,
+`ohmail-linux-amd64.deb`, `ohmail-windows-setup.exe`, …).
 `desktop-shell.test.ts` asserts all five places carry the one number, so bumping
 four of five is red in the monorepo suite.
+
+**`CFBundleVersion` on macOS is the one number that is NOT this version**, and it
+is deliberate. `src-tauri/Info.plist` pins it to a constant far above any build
+number the earlier macOS client published. That client shared this bundle
+identifier and updated through Sparkle, which compares a feed's version against
+the installed `CFBundleVersion` — so a bundle announcing `0.7.0` there would be
+read as a downgrade from a four-digit build number, and every installed copy
+would report itself up to date for ever. Nothing a person sees uses it:
+`CFBundleShortVersionString` is `0.7.0` and is what the app and every download
+page show. The floor is asserted in `release-feeds.yml`, so a plist that loses
+the key fails the release instead of stranding the installs it protects.
+
+**The bundle's own description is per-artifact, and has to be.** `tauri.conf.json`
+still says "interface preview", because that file alone is what `npx tauri build`
+produces and that build genuinely has no engine in it. The engine-bearing artifact
+overrides `shortDescription` and `longDescription` in
+`src-tauri/tauri.engine.conf.json`, where they describe an app that connects to a
+mailbox. One sentence stretched to cover two different programs would be false of
+one of them, and the installers show it to people.
 
 **One word on Linux, everywhere.** The bundler derives the `.deb`'s `Package:`
 field by kebab-casing `productName`, and `productName` is `ohmail`, so the
