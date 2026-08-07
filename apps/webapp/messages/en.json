@@ -1183,7 +1183,7 @@
     "aiLabel": "Managed AI actions",
     "aiSub": "Screener suggestions, drafts and summaries run on our servers.",
     "aiNeedsPlan": "Included from Solo upward. Rules keep working without it.",
-    "aiBetaNote": "No model is connected in production yet, so everything runs on the deterministic rules. This switch is what will turn AI on when it lands.",
+    "aiBetaNote": "Managed AI is connected. This switch turns it off; your rules run either way, and take over when your AI actions run out.",
     "chooseTitle": "Choose a plan",
     "changeTitle": "Change plan",
     "trialNote": "You are on the trial. Pick a plan to continue when it ends — no charge until then.",
