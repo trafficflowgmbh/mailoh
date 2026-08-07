@@ -19,10 +19,14 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
  *    shell, not the network.
  *
  * An environment variable rather than a Vite `mode`, because the Rust half is selected by a Cargo
- * feature (`local-engine`) and the two must be set together: `OHMAIL_LOCAL_ENGINE=1 npm run
- * ui:build` produces the bundle that belongs in a binary built with that feature, and the default
- * produces the one that belongs in a binary built without it. Pairing them the other way gives a
- * window with a bridge and no commands to call, or commands with nothing to call them.
+ * feature (`local-engine`) and the two must be set together: `npm run ui:build:engine` produces
+ * the bundle that belongs in a binary built with that feature, and `npm run ui:build` produces the
+ * one that belongs in a binary built without it. Pairing them the other way gives a window with a
+ * bridge and no commands to call, or commands with nothing to call them.
+ *
+ * The variable is set by the SCRIPT rather than by the caller's shell — see `scripts/build-ui.mjs`
+ * — because `OHMAIL_LOCAL_ENGINE=1 vite build` is POSIX syntax that cmd.exe reads as a program
+ * name, and Windows is one of the platforms this app ships to.
  */
 const LOCAL_ENGINE = process.env.OHMAIL_LOCAL_ENGINE === "1";
 

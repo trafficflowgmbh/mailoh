@@ -20,15 +20,27 @@ path = "src/main.rs"
 #
 # `local-engine` compiles the shell's ownership of the local engine's lifetime:
 # start it with the app, watch it, and make certain it is gone when the app is.
-# It is OFF by default and off in every build published so far, because the
-# published shell contains no engine — and a spawn path inside a binary that has
-# nothing to spawn is a capability carried without being used. With the feature
-# off, `src/engine.rs` is not in the binary at all, so everything the README's
-# "Verify it yourself" section says about this executable is a property of the
-# build rather than of a branch that happened not to be taken.
+# With the feature off, `src/engine.rs` is not in the binary at all, so the
+# interface preview's audit story is a property of the BUILD rather than of a
+# branch that happened not to be taken — a spawn path inside a binary that has
+# nothing to spawn is a capability carried without being used.
 #
-# It is not dead code: `cargo test --features local-engine` is what proves the
-# lifecycle, and those tests start real processes.
+# ── THE FLAG IS PASSED BY THE CALLER, NOT MOVED INTO `default` ───────────────
+#
+# Whichever artifact is being built, the two halves have to be selected
+# together: a binary compiled WITH this feature needs the UI bundle built by
+# `npm run ui:build:engine`, and one compiled without needs `npm run ui:build`.
+# Mixing them gives a window with a bridge and no commands to call, or commands
+# with nothing to call them.
+#
+# Keeping the DEFAULT engine-less is what keeps the preview buildable, testable
+# and inspectable by anyone who clones this — `cargo build` and `npm run
+# ui:build` with nothing set produce the pair the render smoke runs over. A
+# default of `["local-engine"]` would make the demo half reachable only by
+# remembering `--no-default-features`, which is how a split stops being tested.
+#
+# It is not dead code either way: `cargo test --features local-engine` is what
+# proves the lifecycle, and those tests start real processes.
 default = []
 local-engine = ["dep:keyring", "dep:getrandom", "dep:tauri-plugin-notification"]
 
