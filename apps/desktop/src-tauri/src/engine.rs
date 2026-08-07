@@ -32,13 +32,18 @@
 //!     typed once and sealed into the engine's own store under a per-install key, and the
 //!     environment carries the key instead. See {@link REQUIRED_ENGINE_VARS}.
 //!
-//! ── WHAT THIS SHELL DOES NOT DO ────────────────────────────────────────────────────────────
+//! ── THE TWO THINGS THIS SHELL OWNS BESIDES THE PROCESS ─────────────────────────────────────
 //!
-//! It does not own a keystore. The design puts one per-install key in the operating system's
-//! keychain, minted on first run and handed over at spawn; nothing here mints or stores anything,
-//! so the key is read from the environment like the rest. That is a named gap and not an
-//! oversight — but it means a packaged app with an empty environment reports what is missing and
-//! starts nothing, which is the honest behaviour until the keystore exists.
+//! **One item in the operating system's keystore**, and one only: the per-install key the engine
+//! seals the mailbox password under. It is minted on first run and handed over at spawn, so the
+//! password is typed once and the environment carries a key rather than a secret. See the
+//! "one per-install key" section near the bottom of this file.
+//!
+//! **One log file.** The engine writes its diagnostics to its stderr, and a packaged app has no
+//! stderr anybody can read — a double-clicked `.app`, `.exe` or `.desktop` entry has its standard
+//! streams pointed at nothing, so every line this shell and its engine produce is discarded
+//! exactly when somebody most needs to read one. Both therefore also go to a size-capped file
+//! under the platform's own log directory. See [`LogFile`].
 //!
 //! ── WHAT "RUNNING" MEANS ───────────────────────────────────────────────────────────────────
 //!
@@ -60,6 +65,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt;
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
@@ -511,6 +517,25 @@ impl Engine {
     pub fn start(app: &tauri::App) -> Engine {
         use tauri::Manager;
 
+        // THE LOG IS OPENED FIRST, because the states worth reading about are the ones this
+        // function can reach before it has started anything: a keystore that would not answer, an
+        // engine that is not there, a variable nobody set. Opening it later would put exactly the
+        // lines a person needs on a stream a packaged app discards.
+        //
+        // The path comes from the platform rather than from this file — `~/Library/Logs/<id>` on
+        // macOS, `~/.local/share/<id>/logs` on Linux, `%APPDATA%\<id>\logs` on Windows — so the
+        // file is where that platform's users and its crash reporters already look. A failure to
+        // open one is reported and is not fatal: an app that will not start because it could not
+        // open its log has turned a diagnostic into an outage.
+        match app.path().app_log_dir() {
+            Ok(dir) => {
+                if let Err(reason) = install_log_file(dir.join(LOG_FILE_NAME)) {
+                    log_line(format_args!("no log file — {reason}"));
+                }
+            }
+            Err(err) => log_line(format_args!("no log file — this platform named no log directory ({err})")),
+        }
+
         let exe = std::env::current_exe().ok();
         let exe_dir = exe.as_deref().and_then(Path::parent);
         let data_dir = app.path().app_data_dir().ok();
@@ -817,7 +842,7 @@ fn wait_for_exit(inner: &Arc<Inner>, child: &mut Child) -> ExitStatus {
             Err(err) => {
                 // The child cannot be observed. Killing it is the only thing left that keeps the
                 // guarantee this file exists for.
-                let _ = writeln!(io::stderr(), "ohmail engine: cannot observe the engine ({err}); killing it");
+                log_line(format_args!("cannot observe the engine ({err}); killing it"));
                 let _ = child.kill();
                 return child.wait().unwrap_or_else(|_| exit_status_unavailable());
             }
@@ -838,11 +863,10 @@ fn wait_for_exit(inner: &Arc<Inner>, child: &mut Child) -> ExitStatus {
         if let Some(deadline) = deadline {
             if !killed && Instant::now() >= deadline {
                 killed = true;
-                let _ = writeln!(
-                    io::stderr(),
-                    "ohmail engine: still running {}ms after being asked to leave; killing it",
+                log_line(format_args!(
+                    "still running {}ms after being asked to leave; killing it",
                     inner.timings.stop_grace.as_millis()
-                );
+                ));
                 let _ = child.kill();
             }
         }
@@ -1078,7 +1102,7 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
 }
 
 fn fault(inner: &Arc<Inner>, message: String) {
-    let _ = writeln!(io::stderr(), "ohmail engine: {message}");
+    log_line(format_args!("{message}"));
     let mut s = inner.shared.lock().expect("engine state");
     if s.fault.is_none() {
         s.fault = Some(message);
@@ -1270,12 +1294,21 @@ impl Engine {
     }
 }
 
-/// Forward the engine's diagnostics to this process's stderr, verbatim.
+/// Forward the engine's diagnostics to this process's stderr and to the log file, verbatim.
 ///
 /// Verbatim, and not prefixed: the engine emits one JSON object per line through a redacting
-/// logger, and a prefix would make every line unparseable by whatever reads them. The thread's
-/// real job is to keep the pipe drained; a pipe nobody reads fills and blocks the writer, and an
-/// engine blocked on a log line is an engine that has stopped serving mail.
+/// logger, and a prefix would make every line unparseable by whatever reads them. **The redaction
+/// is the engine's, and the file inherits it** — this thread copies bytes and never composes a
+/// line, so there is no place here for a secret to be added to one.
+///
+/// The thread's real job is to keep the pipe drained; a pipe nobody reads fills and blocks the
+/// writer, and an engine blocked on a log line is an engine that has stopped serving mail. The
+/// file is written on this thread for the same reason it is written at all — a queue would be one
+/// more thing to lose on the way to a crash — and a failed write is dropped rather than retried.
+///
+/// A read can land mid-line, and this deliberately does not reassemble: the file is a copy of the
+/// stream, so a chunk boundary inside a JSON object is written exactly where it fell and the next
+/// chunk completes it. Reordering cannot happen — one reader, one writer, in order.
 fn forward_diagnostics(mut stderr: ChildStderr) {
     let mut buf = [0u8; 8 * 1024];
     loop {
@@ -1283,6 +1316,7 @@ fn forward_diagnostics(mut stderr: ChildStderr) {
             Ok(0) => return,
             Ok(n) => {
                 let _ = io::stderr().write_all(&buf[..n]);
+                tee_to_log(&buf[..n]);
             }
             Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
             Err(_) => return,
@@ -1290,12 +1324,134 @@ fn forward_diagnostics(mut stderr: ChildStderr) {
     }
 }
 
-// ── Saying what happened ─────────────────────────────────────────────────────────────────────
+// ── Saying what happened, somewhere it can still be read afterwards ──────────────────────────
+//
+// ── WHY THERE IS A FILE AT ALL ───────────────────────────────────────────────────────────────
+//
+// Every line below used to go to this process's stderr and nowhere else, which is fine for a
+// binary somebody started from a terminal and useless for the way this app is actually opened. A
+// double-clicked bundle inherits no console: on macOS and Linux the streams are pointed at the
+// window server's own sink, on Windows a `windows_subsystem = "windows"` build has no console at
+// all. So the one account of what happened — the engine's own diagnostics, and this shell's
+// account of starting, restarting and giving up — was being written to a stream nobody could
+// read, precisely in the case where somebody needs to read it.
+//
+// ── WHAT MAY BE IN IT ────────────────────────────────────────────────────────────────────────
+//
+// The same thing that was already allowed on stderr, and nothing more. Two rules, both older than
+// this file's log and both unchanged by it: the engine's own logger redacts before a byte reaches
+// its stderr, and on this side nothing formats a [`Secret`] or a [`Launch`]'s environment values —
+// `Secret`'s `Debug` prints `<redacted>` and `Launch`'s prints the NAMES of its variables. A file
+// makes those two rules load-bearing rather than academic, because a line written to a discarded
+// stream is a line nobody could have copied into a bug report.
+
+/// What the log file is called inside the platform's log directory.
+pub const LOG_FILE_NAME: &str = "engine.log";
+
+/// How large the log may grow before the current one is rolled aside.
+///
+/// A judgement about disk rather than about content: five megabytes is a few hundred thousand
+/// lines, which is more than any single session produces and small enough that a machine that has
+/// been running ohmail for a year has not quietly given up a gigabyte to it. Exactly one previous
+/// generation is kept, so the ceiling is ten megabytes and there is no rotation schedule to get
+/// wrong.
+pub const LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
+
+/// The current log file, and how much has been written to it.
+///
+/// The size is tracked rather than stat'ed per line: a `metadata()` call per log line would be a
+/// syscall per line for a number this is the only writer of. It is seeded from the file's real
+/// length on open, so an append to an existing log rotates at the right point rather than five
+/// megabytes later.
+struct LogFile {
+    path: PathBuf,
+    file: File,
+    written: u64,
+}
+
+impl LogFile {
+    fn open(path: PathBuf) -> io::Result<LogFile> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        // APPEND, so a relaunch adds to the account of the last one instead of erasing it. The
+        // rotation below is what bounds the file; truncating on open would bound it by throwing
+        // away the run somebody is most likely to be asking about.
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let written = file.metadata().map(|m| m.len()).unwrap_or(0);
+        Ok(LogFile { path, file, written })
+    }
+
+    /// `engine.log` → `engine.log.old`. One generation, replaced each time.
+    fn previous(&self) -> PathBuf {
+        let mut name = self.path.file_name().unwrap_or_default().to_os_string();
+        name.push(".old");
+        self.path.with_file_name(name)
+    }
+
+    /// Write, rotating first if this would take the file over the cap.
+    ///
+    /// A single write LARGER than the cap is written anyway, over the cap, rather than split or
+    /// dropped: the alternative is a truncated diagnostic, which is the one kind of log line that
+    /// can mislead. The next write rotates it away.
+    fn write(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        if self.written.saturating_add(bytes.len() as u64) > LOG_MAX_BYTES {
+            let _ = self.rotate();
+        }
+        if self.file.write_all(bytes).is_ok() {
+            self.written = self.written.saturating_add(bytes.len() as u64);
+            // Flushed per write, on purpose. The lines that matter most are the last ones before a
+            // crash, and a buffered log loses exactly those.
+            let _ = self.file.flush();
+        }
+    }
+
+    fn rotate(&mut self) -> io::Result<()> {
+        // `rename` replaces an existing `.old` in one step on every platform this ships to, so
+        // there is no window in which neither generation exists.
+        fs::rename(&self.path, self.previous())?;
+        self.file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        self.written = 0;
+        Ok(())
+    }
+}
+
+/// The log file, once the app has told this module where to put one.
+///
+/// A module-level handle because [`log_line`] takes no context and never will: it is called from
+/// the supervisor thread, the reader thread and the app's own thread, and threading a writer
+/// through all three would put the log in every signature in this file. `None` until
+/// [`install_log_file`] succeeds — the tests and the development path run without one, and a
+/// missing log file must never be a reason for the app not to start.
+static LOG: Mutex<Option<LogFile>> = Mutex::new(None);
+
+/// Point the log at a file. Replaces whatever was there.
+fn install_log_file(path: PathBuf) -> Result<(), String> {
+    let log = LogFile::open(path.clone())
+        .map_err(|err| format!("{} could not be opened ({err})", path.display()))?;
+    *LOG.lock().map_err(|_| "the log file's lock is poisoned".to_string())? = Some(log);
+    Ok(())
+}
+
+/// Copy bytes to the log file, if there is one. Never fails, never panics, never blocks the caller
+/// on anything but the one write.
+fn tee_to_log(bytes: &[u8]) {
+    if let Ok(mut guard) = LOG.lock() {
+        if let Some(log) = guard.as_mut() {
+            log.write(bytes);
+        }
+    }
+}
 
 fn log_line(args: fmt::Arguments<'_>) {
-    // `writeln!` and not `eprintln!`: a windowed build may have no stderr at all, and `eprintln!`
+    let line = format!("ohmail engine: {args}\n");
+    // `write!` and not `eprintln!`: a windowed build may have no stderr at all, and `eprintln!`
     // panics when the write fails. A lost log line must never take the app down.
-    let _ = writeln!(io::stderr(), "ohmail engine: {args}");
+    let _ = io::stderr().write_all(line.as_bytes());
+    tee_to_log(line.as_bytes());
 }
 
 fn log_state(state: &EngineState) {
@@ -1379,13 +1535,172 @@ pub const KEK_VAR: &str = "OHMAIL_KEK";
 pub const KEYSTORE_SERVICE: &str = "ohmail";
 pub const KEYSTORE_ENTRY: &str = "install-key";
 
+/// Where the SAME key already lives on a Mac that has run the SwiftUI client.
+///
+/// ── WHY THIS IS NOT A DUPLICATE OF THE CONSTANTS ABOVE ──────────────────────────────────────
+///
+/// The two clients are one product and one install. The macOS client mints its per-install key
+/// under its own bundle identifier and the account name `kek.v1`, and it has been doing so since
+/// before this shell owned a keystore at all — so on a Mac where that client has ever run, the key
+/// that opens the stored mailbox password is at THOSE coordinates and nowhere else.
+///
+/// A build that only ever looked at `ohmail` / `install-key` would find nothing, mint a fresh key,
+/// hand it to the engine, and the engine would report the stored password as unreadable: a
+/// password somebody typed months ago, gone, with nothing on screen able to say why. So the miss
+/// is a reason to look one place further before minting, and that is the whole of this addition.
+///
+/// **The item is copied and never moved.** The macOS client is still installed, still runs, and
+/// still needs it; deleting it would break the app somebody may open five minutes later. Two
+/// readers of one key is exactly the arrangement the design already has — one key per install, not
+/// one per artifact — so the copy is the state this converges on rather than a temporary one.
+#[cfg(target_os = "macos")]
+pub const LEGACY_KEYSTORE_SERVICE: &str = "io.ohmail.desktop";
+#[cfg(target_os = "macos")]
+pub const LEGACY_KEYSTORE_ENTRY: &str = "kek.v1";
+
 /// A 32-byte AES-256 key, lower-case hex. The engine validates the same shape and refuses anything
 /// else, so getting this wrong is a startup failure rather than a mailbox that will not open later.
 fn is_key(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// Read this install's key, or mint it on first run.
+/// What one look in the operating system's keystore found.
+///
+/// Four answers and not two, because "there is no key here" and "there is something here I cannot
+/// read" have opposite consequences: the first is a first run, the second is somebody's sealed
+/// password. Collapsing them is how a migration mints over a credential it should have adopted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Stored {
+    /// A value of the right shape. Usable as-is.
+    Key(String),
+    /// There is an item at those coordinates and it is not a key this app wrote.
+    Foreign,
+    /// Nothing at those coordinates. The keystore itself answered.
+    Empty,
+    /// The keystore would not answer.
+    Refused(String),
+}
+
+/// Decide which key this launch uses, given only the ability to look, to copy and to mint.
+///
+/// Split out from [`install_key`] so the ORDER can be tested without a keychain: the order is the
+/// whole of the correctness here, and on a developer's machine the real keystore holds their real
+/// key, so a test that drove it would either be testing their install or destroying it.
+///
+/// ── THE ORDER, AND WHY EACH STEP IS WHERE IT IS ─────────────────────────────────────────────
+///
+///  1. **This app's own item.** A key here is the answer and nothing else is consulted — a machine
+///     that has already run this build is the ordinary case, and it must not pay for the migration
+///     below on every launch.
+///  2. **A present-but-wrong item refuses, and does not fall through.** Overwriting it would mint a
+///     key that cannot open the credential the previous one sealed, turning a recoverable state
+///     ("re-enter your password") into a silent one. So does looking at the older item instead:
+///     whatever is in this one, something wrote it.
+///  3. **The older item, before minting.** See [`LEGACY_KEYSTORE_SERVICE`]. Copied into this app's
+///     coordinates, never moved, and a copy that fails is logged rather than fatal — the key was
+///     read, it opens the credential, and refusing the launch over a bookkeeping failure would cost
+///     the user a working mailbox to save a syscall on the next launch.
+///  4. **A refusal from the older item stops the launch.** This is the one branch where minting
+///     would be actively harmful: step 1 has already proved the keystore is reachable, so an error
+///     HERE means there is an item that this binary was not allowed to read. Minting over that
+///     silently orphans a sealed password; saying so lets somebody grant the access or delete the
+///     item on purpose.
+///  5. **Only then, a fresh key.**
+fn resolve_install_key(
+    own: &dyn Fn() -> Stored,
+    older: &dyn Fn() -> Stored,
+    adopt: &dyn Fn(&str) -> Result<(), String>,
+    mint: &dyn Fn() -> Result<String, String>,
+) -> Result<String, String> {
+    match own() {
+        Stored::Key(key) => return Ok(key),
+        Stored::Foreign => {
+            return Err(format!(
+                "the {KEYSTORE_SERVICE} key in this computer's keystore is not a key this app wrote. \
+                 Remove the {KEYSTORE_SERVICE} / {KEYSTORE_ENTRY} item and open ohmail again — you will \
+                 be asked for your mailbox password once more, and no mail is affected"
+            ))
+        }
+        Stored::Refused(err) => {
+            return Err(format!("this computer's keystore would not give up this app's key ({err})"))
+        }
+        Stored::Empty => {}
+    }
+
+    match older() {
+        Stored::Key(key) => {
+            if let Err(reason) = adopt(&key) {
+                // Not fatal. The key is in hand and it opens what it opened before; the copy is an
+                // optimisation for later launches, and a launch that works is worth more than one.
+                log_line(format_args!(
+                    "this install's key was read from where an earlier version of ohmail kept it, and \
+                     could not be copied to {KEYSTORE_SERVICE} / {KEYSTORE_ENTRY} ({reason})"
+                ));
+            } else {
+                log_line(format_args!(
+                    "adopted this install's existing key — copied to {KEYSTORE_SERVICE} / {KEYSTORE_ENTRY}, \
+                     and the original was left where it is"
+                ));
+            }
+            Ok(key)
+        }
+        Stored::Refused(err) => Err(format!(
+            "this computer's keystore has a key from an earlier version of ohmail and would not give it \
+             up ({err}). Allow ohmail access to it when asked and open the app again — minting a new key \
+             instead would leave your stored mailbox password unreadable"
+        )),
+        Stored::Foreign | Stored::Empty => mint(),
+    }
+}
+
+/// One look at one keystore item.
+fn look_up(entry: &keyring::Entry) -> Stored {
+    match entry.get_password() {
+        Ok(existing) if is_key(&existing) => Stored::Key(existing),
+        Ok(_) => Stored::Foreign,
+        Err(keyring::Error::NoEntry) => Stored::Empty,
+        Err(err) => Stored::Refused(err.to_string()),
+    }
+}
+
+/// Where the previous generation of this app kept the same key, on the one platform that has one.
+///
+/// `Empty` everywhere else, which is the honest answer: there is nothing to migrate FROM on a
+/// machine where no earlier version ever stored anything.
+#[cfg(target_os = "macos")]
+fn look_up_older() -> Stored {
+    match keyring::Entry::new(LEGACY_KEYSTORE_SERVICE, LEGACY_KEYSTORE_ENTRY) {
+        Ok(entry) => look_up(&entry),
+        Err(err) => Stored::Refused(err.to_string()),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn look_up_older() -> Stored {
+    Stored::Empty
+}
+
+/// Write a key and prove it can be read back.
+///
+/// READ IT BACK BEFORE IT IS USED. A `set` that reports success and a `get` that returns nothing is
+/// a real keystore failure mode, and finding it now costs one syscall — finding it on the next
+/// launch costs the password the user is about to type. Used by both writers below, so the
+/// adopted key gets the same guarantee the minted one always had.
+fn store_and_read_back(entry: &keyring::Entry, key: &str) -> Result<(), String> {
+    entry
+        .set_password(key)
+        .map_err(|err| format!("this computer's keystore would not store a key ({err})"))?;
+    match entry.get_password() {
+        Ok(stored) if stored == key => Ok(()),
+        _ => Err(
+            "this computer's keystore accepted a key and did not give it back, so a password stored \
+             now could not be read after a restart"
+                .to_string(),
+        ),
+    }
+}
+
+/// Read this install's key — adopting the one an earlier version stored, or minting on first run.
 ///
 /// Compiled only under the `local-engine` feature, like everything else in this file — the preview
 /// stores nothing and therefore needs nowhere to store it.
@@ -1393,40 +1708,19 @@ fn install_key() -> Result<String, String> {
     let entry = keyring::Entry::new(KEYSTORE_SERVICE, KEYSTORE_ENTRY)
         .map_err(|err| format!("this computer's keystore could not be opened ({err})"))?;
 
-    match entry.get_password() {
-        Ok(existing) if is_key(&existing) => Ok(existing),
-        // A PRESENT-BUT-WRONG ITEM IS NOT REPLACED, and that is the whole of the reasoning.
-        // Overwriting it would mint a key that cannot open the credential the previous one sealed,
-        // turning a recoverable state ("re-enter your password") into a silent one — the engine
-        // would seal a NEW password under the NEW key and the old row would be unreadable for ever
-        // with nothing to say so. Refusing names the item a person can delete.
-        Ok(_) => Err(format!(
-            "the {KEYSTORE_SERVICE} key in this computer's keystore is not a key this app wrote. \
-             Remove the {KEYSTORE_SERVICE} / {KEYSTORE_ENTRY} item and open ohmail again — you will \
-             be asked for your mailbox password once more, and no mail is affected"
-        )),
-        Err(keyring::Error::NoEntry) => {
+    resolve_install_key(
+        &|| look_up(&entry),
+        &look_up_older,
+        &|key| store_and_read_back(&entry, key),
+        &|| {
             let mut bytes = [0u8; 32];
             getrandom::fill(&mut bytes)
                 .map_err(|err| format!("this computer would not supply random bytes for a new key ({err})"))?;
             let key: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-            entry
-                .set_password(&key)
-                .map_err(|err| format!("this computer's keystore would not store a new key ({err})"))?;
-            // READ IT BACK BEFORE IT IS USED. A `set` that reports success and a `get` that returns
-            // nothing is a real keystore failure mode, and finding it now costs one syscall —
-            // finding it on the next launch costs the password the user is about to type.
-            match entry.get_password() {
-                Ok(stored) if stored == key => Ok(key),
-                _ => Err(
-                    "this computer's keystore accepted a new key and did not give it back, so a \
-                     password stored now could not be read after a restart"
-                        .to_string(),
-                ),
-            }
-        }
-        Err(err) => Err(format!("this computer's keystore would not give up this app's key ({err})")),
-    }
+            store_and_read_back(&entry, &key)?;
+            Ok(key)
+        },
+    )
 }
 
 // ── What the window may ask ──────────────────────────────────────────────────────────────────

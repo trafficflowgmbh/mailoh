@@ -139,8 +139,16 @@ that restores the default is red in the monorepo suite too.
 The permission list is **empty**. Not `core:default`, not a trimmed subset —
 empty. The frontend calls no `invoke`, `withGlobalTauri` is `false`, so the
 webview has no Tauri API to reach for and would be refused if it tried. On the
-Rust side there is no `invoke_handler` and no `std::fs`/`std::net` hand-rolled
-anywhere. There *are* two plugins — `tauri-plugin-updater` and
+Rust side there is no `invoke_handler`, no `std::net` and no socket of any kind.
+
+The one file this binary can open is behind a compile-time feature that is
+**off** in every published build: `src/engine.rs` — the shell's ownership of a
+local mail engine's lifetime — writes that engine's diagnostics to a log file,
+because a double-clicked app has no readable stderr. It is compiled by
+`cargo build --features local-engine` and by nothing else, so in the binary you
+downloaded that module, its keystore access, its two commands and its log are
+not present at all rather than merely unused. There *are* two plugins —
+`tauri-plugin-updater` and
 `tauri-plugin-dialog`, both for the auto-updater — but they are registered
 Rust-side and no capability grants the webview access to either, so the page
 still cannot call them. `assetProtocol` is disabled, `freezePrototype` is on, and
@@ -249,20 +257,22 @@ boundary cases. The missing-pubkey packaging gate has its negative control in
 
 ## Identifiers, names and version
 
-**`io.ohmail.desktop.tauri`**, not `io.ohmail.desktop`. The SwiftUI client
-already claims the latter (`Resources/Info.plist`), and this configuration also
-produces a macOS bundle — that is how the shell is verified locally, since macOS
-cannot cross-compile Windows or Linux installers. Two apps sharing a
-`CFBundleIdentifier` are indistinguishable to LaunchServices, which is exactly
-the collision the fallback exists for.
+**`io.ohmail.desktop`** — the same identifier the SwiftUI client carries in
+`Resources/Info.plist`, deliberately. They are one product with one install, and
+the identifier is not only a name: it is where the app's data directory goes and
+it is what an update is allowed to replace. This configuration carried a
+`.tauri` suffix for a while so that both builds could sit on one Mac during local
+verification; the cost was a second data directory for the same mailbox and an
+update path that could never hand over between them, which is a permanent fork in
+every path the app touches in exchange for a convenience while testing.
 
-The version is **`0.5.0`**, bare, in every place it is written: `tauri.conf.json`,
+The version is **`0.6.1`**, bare, in every place it is written: `tauri.conf.json`,
 `Cargo.toml`, `Cargo.lock`, `package.json`, and the macOS `Info.plist`. The
 `-preview` suffix earlier builds carried is retired — it marked "this build
 cannot update itself yet", and this build ships the auto-updater, so the claim is
 no longer true. "Beta" is the channel name, not a semver suffix; the MSI bundler
 rejects a pre-release identifier anyway, and the bare number is what reaches the
-installer filenames — `ohmail_0.5.0_amd64.deb`, `ohmail_0.5.0_x64_en-US.msi`.
+installer filenames — `ohmail_0.6.1_amd64.deb`, `ohmail_0.6.1_x64_en-US.msi`.
 `desktop-shell.test.ts` asserts all five places carry the one number, so bumping
 four of five is red in the monorepo suite.
 
@@ -307,10 +317,12 @@ deleting the `installOfflineGuard()` call fails 5 of its 31 checks, and replacin
 ```
 apps/desktop/
 ├── index.html            document CSP, favicon, #root
-├── vite.config.ts        the three aliases, base "./", modulePreload off
+├── vite.config.ts        the aliases, base "./", modulePreload off, the two artifacts
 ├── src/
 │   ├── main.tsx          providers + theme stamp + mount AppShell
 │   ├── offline-guard.ts  fetch/XHR/WebSocket/EventSource/sendBeacon → throw
+│   ├── bridge-fetch.ts   the local engine's transport (local-engine builds only)
+│   ├── build-flags.d.ts  the one flag that picks which artifact this is
 │   └── no-http-adapter.ts the Cloud sync client, absent
 ├── scripts/smoke.mjs     the render + offline audit over dist/
 ├── test/                 the config drift guard (runs in the monorepo suite)
@@ -322,6 +334,8 @@ apps/desktop/
     ├── icons/            the "oh." family (.ico, .icns, .png ladder)
     └── src/
         ├── main.rs           the window, and the updater hook-up
+        ├── engine.rs         the local engine's lifetime, bridge and log (feature-gated)
+        ├── engine_tests.rs   the lifecycle and the bridge, against real processes
         ├── updater.rs        the menu item, the feed check, notify-and-install
         └── updater_tests.rs  tampered-payload and downgrade proofs (cargo test)
 ```

@@ -68,8 +68,8 @@ describe("tauri.conf.json", () => {
     // preview, and reusing the number would leave the two sets of checksums
     // ambiguous about which artifact they describe. A version is how a
     // downloader names what they have.
-    expect(conf.version).toBe("0.5.0");
-    expect(conf.identifier).toBe("io.ohmail.desktop.tauri");
+    expect(conf.version).toBe("0.6.1");
+    expect(conf.identifier).toBe("io.ohmail.desktop");
   });
 
   // The version is written in five places and, now that `-preview` is retired,
@@ -108,18 +108,35 @@ describe("tauri.conf.json", () => {
     expect(lock).toContain(`name = "ohmail"\nversion = "${conf.version}"\n`);
   });
 
-  it("does not collide with the SwiftUI client's bundle id", () => {
-    // apps/macos ships io.ohmail.desktop. The Tauri config can also produce a
-    // macOS bundle (it is how this shell is verified locally), and two apps
-    // sharing a CFBundleIdentifier are indistinguishable to LaunchServices.
+  /**
+   * ONE IDENTIFIER FOR ONE APP, AND IT USED TO BE TWO.
+   *
+   * This config carried `io.ohmail.desktop.tauri` — a suffix that existed to keep two builds of
+   * one product distinguishable to LaunchServices while both could be installed. The cost of that
+   * suffix turned out to be larger than the problem it solved, because the identifier is not only
+   * a name:
+   *
+   *  · it is where the app's data directory goes. `app_data_dir()` resolves through it, so the
+   *    suffixed build addressed a DIFFERENT directory from the macOS client's — meaning a user
+   *    with mail in one would find an empty mailbox in the other, and closing that gap would need
+   *    a migration written, tested and kept for ever;
+   *  · it is what an update replaces. An installer that hands over to another build of the same
+   *    app has to be the same app, and two identifiers are two apps.
+   *
+   * So the two agree, deliberately. They are one product with one install, and the local checks
+   * that used to depend on running both at once are not worth a permanent fork in every path the
+   * app touches.
+   */
+  it("shares the SwiftUI client's identifier, because it is the same install", () => {
     const plist = fs.readFileSync(
       path.resolve(APP, "../../public/ohmail/Resources/Info.plist"),
       "utf8",
     );
     const macOsId = /<key>CFBundleIdentifier<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
     expect(macOsId).toBe("io.ohmail.desktop");
-    expect(conf.identifier).not.toBe(macOsId);
-    expect(conf.identifier.startsWith(`${macOsId}.`)).toBe(true);
+    expect(conf.identifier).toBe(macOsId);
+    // …and specifically not the suffixed form, so re-adding the fork has to be argued here.
+    expect(conf.identifier).not.toMatch(/\.tauri$/);
   });
 
   it("embeds a local bundle — never a URL", () => {
@@ -324,12 +341,72 @@ describe("the Rust side", () => {
   });
 
   /**
-   * The engine's lifecycle owns a child process on a private pipe, and one item in the keystore.
+   * THE KEY AN EARLIER VERSION STORED IS COPIED, NEVER MOVED.
    *
-   * It opens no socket and reads no file — including no probe for whether the engine exists, which
-   * is why a missing engine is discovered by trying to start it and reading `NotFound` back. Those
-   * absences are the whole of what the shell claims about itself, and they have to hold in the file
-   * that does the most.
+   * A machine that has run the macOS client already has this install's key, under that client's own
+   * coordinates. The shell adopts it rather than minting a fresh one — a fresh key would leave the
+   * mailbox password sealed months ago unreadable, with nothing on screen able to say why.
+   *
+   * The DELETE is the half that has to be asserted rather than reasoned about: the other client is
+   * still installed and still needs that item, so a migration that tidied up after itself would
+   * break an app somebody may open five minutes later. The ordering and the fallbacks are proven in
+   * Rust (`cargo test --features local-engine`); what this adds is that no delete exists to be
+   * called in the first place.
+   */
+  it("adopts an earlier version's key and never removes it", () => {
+    const engine = read("src-tauri/src/engine.rs");
+    expect(engine).toMatch(/LEGACY_KEYSTORE_SERVICE: &str = "io\.ohmail\.desktop"/);
+    expect(engine).toMatch(/LEGACY_KEYSTORE_ENTRY: &str = "kek\.v1"/);
+    // Those coordinates are the macOS client's own, read from its source rather than remembered.
+    const swift = fs.readFileSync(
+      path.resolve(APP, "../macos/Sources/OhMailEngine/KeychainKeyStore.swift"),
+      "utf8",
+    );
+    expect(swift).toMatch(/defaultService = "io\.ohmail\.desktop"/);
+    expect(swift).toMatch(/defaultAccount = "kek\.v1"/);
+    // Nothing in this module can delete a keystore item.
+    expect(engine).not.toMatch(/delete_credential|delete_password/);
+  });
+
+  /**
+   * The engine's lifecycle owns a child process on a private pipe, one item in the keystore, and
+   * one file.
+   *
+   * It opens no socket — and it still does not PROBE the filesystem, which is why a missing engine
+   * is discovered by trying to start it and reading `NotFound` back rather than by stat'ing a path.
+   *
+   * `std::fs` USED TO BE FORBIDDEN OUTRIGHT HERE, and the line below is what replaced that. The
+   * blanket ban stopped being the right assertion when the engine's diagnostics had to survive
+   * being run from a double-click: a packaged app has no readable stderr, so the shell now also
+   * writes them to a log file. A ban that has to be relaxed is worth nothing, so this names the
+   * calls that log file needs and fails on any other — a `read_to_string`, a `remove_file`, a
+   * `copy` appearing in this module is a new capability and has to be argued rather than absorbed.
+   */
+  it("touches the filesystem only to write its log", () => {
+    const engine = read("src-tauri/src/engine.rs");
+    const allowed = new Set([
+      "fs::create_dir_all", // the log directory, on first run
+      "fs::rename", // rotation: one generation kept
+    ]);
+    const used = [...engine.matchAll(/\bfs::(\w+)/g)].map((m) => `fs::${m[1]}`);
+    // The harness bites only if it found something to classify.
+    expect(used.length).toBeGreaterThan(0);
+    for (const call of used) {
+      expect(allowed, `engine.rs reaches the filesystem through ${call}`).toContain(call);
+    }
+    // The path is the platform's, not this file's invention — and it is a LOG directory, so
+    // nothing here can be pointed at the mail mirror or the user's home by editing a string.
+    expect(engine).toMatch(/app_log_dir\(\)/);
+    // The one file it opens, and the cap that bounds it.
+    expect(engine).toMatch(/LOG_FILE_NAME: &str = "engine\.log"/);
+    expect(engine).toMatch(/LOG_MAX_BYTES: u64 = 5 \* 1024 \* 1024/);
+  });
+
+  /**
+   * The engine's lifecycle owns a child process on a private pipe.
+   *
+   * It opens no socket. That absence is the whole of what the shell claims about itself, and it
+   * has to hold in the file that does the most.
    *
    * `invoke_handler` USED TO BE ON THIS LIST and is deliberately not any more. It was a true
    * statement about a shell that had no engine to talk to; the local build now registers exactly
@@ -339,9 +416,9 @@ describe("the Rust side", () => {
    * command, every capability grant and every keystore call sits behind the feature gate, so the
    * PUBLISHED binary still contains none of them.
    */
-  it("spawns a child and nothing else — no sockets, no filesystem", () => {
+  it("spawns a child and nothing else — no sockets", () => {
     const engine = read("src-tauri/src/engine.rs");
-    expect(engine).not.toMatch(/std::(fs|net)/);
+    expect(engine).not.toMatch(/std::net/);
     expect(engine).not.toMatch(/reqwest|hyper|ureq|curl|TcpStream|TcpListener|UnixStream/);
     // All three streams are pipes. stdin above all: the write end must belong to this process
     // alone, because closing it is how the engine is asked to leave — and because the kernel
@@ -450,6 +527,54 @@ describe("the UI bundle's build config", () => {
     expect(vite).toMatch(/adapters\\\/http-adapter\\\.js\$\/,\s*replacement: r\("\.\/src\/no-http-adapter\.ts"\)/);
     // …and the stub it points at refuses rather than degrades.
     expect(read("src/no-http-adapter.ts")).toMatch(/throw new Error\(REFUSAL\)/);
+  });
+
+  /**
+   * TWO ARTIFACTS FROM ONE DIRECTORY, AND ONE FLAG THAT DECIDES WHICH.
+   *
+   * The preview is what has shipped: fixtures, no engine, the sync client aliased to a stub. The
+   * other carries a mail engine and the bridge the client talks to it through. What must not exist
+   * is a third state — a preview that carries the bridge, or an engine build that carries the stub
+   * — so the alias and the flag the frontend branches on are read from the SAME constant, and this
+   * asserts that rather than trusting it.
+   *
+   * The artifacts themselves are the real evidence and they are checked where they are built: the
+   * preview's bundle contains no `engine_request` and the engine build's does.
+   */
+  it("builds its two artifacts from one flag", () => {
+    expect(vite).toMatch(/const LOCAL_ENGINE = process\.env\.OHMAIL_LOCAL_ENGINE === "1"/);
+    // The stub is aliased in when the flag is OFF, and only then.
+    expect(vite).toMatch(/\.\.\.\(LOCAL_ENGINE\s*\n?\s*\?\s*\[\]/);
+    // The same constant reaches the frontend as a compile-time literal, so the branch the build
+    // did not take is removed rather than skipped.
+    expect(vite).toMatch(/__OHMAIL_LOCAL_ENGINE__: JSON\.stringify\(LOCAL_ENGINE\)/);
+
+    const main = read("src/main.tsx");
+    expect(main).toMatch(/if \(__OHMAIL_LOCAL_ENGINE__\)/);
+    // The preview still installs the offline guard, and so does the other one: `invoke` is not
+    // `fetch`, so the bridge does not need the network APIs back.
+    expect(main).toMatch(/installOfflineGuard\(\)/);
+  });
+
+  /**
+   * THE BRIDGE REACHES THE SHELL AND NOTHING ELSE.
+   *
+   * One command, one direction, and no address anywhere in it: a URL in this file would be the
+   * first thing in either artifact capable of naming a host. The window's whole reach is the two
+   * commands the shell registers, so what this asserts is that the file that uses them uses
+   * nothing else.
+   */
+  it("talks to the shell's commands and opens nothing", () => {
+    const bridge = read("src/bridge-fetch.ts");
+    expect(bridge).toMatch(/const REQUEST_COMMAND = "engine_request"/);
+    expect(bridge).toMatch(/const STATUS_COMMAND = "engine_status"/);
+    // No transport of its own — not a socket, not an events stream, and not `fetch`.
+    expect(bridge).not.toMatch(/\bnew WebSocket\b|\bnew EventSource\b|\bXMLHttpRequest\b/);
+    expect(bridge).not.toMatch(/https?:\/\//);
+    // `fetch` appears only as the NAME of the option it satisfies, never as a call.
+    expect(bridge).not.toMatch(/(?<![\w.])fetch\s*\(/);
+    // The adapter it builds is addressed relative to the engine, so no base URL is composed here.
+    expect(bridge).toMatch(/new HttpAdapter\(\{ baseUrl: "", fetch: bridgeFetch \}\)/);
   });
 
   it("the stub declares EVERY method EngineAdapter requires — the mirror IS this file", () => {

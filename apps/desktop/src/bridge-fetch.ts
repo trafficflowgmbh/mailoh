@@ -1,0 +1,316 @@
+/**
+ * THE BRIDGE: the client engine's `fetch`, pointed at the local mail engine.
+ *
+ * The window renders the same client app.ohmail.app renders, and that app talks to its server
+ * through one function — `HttpAdapterOptions.fetch`. Here that function does not open a socket. It
+ * hands the request to the shell over Tauri's command channel, the shell writes it as a frame down
+ * the engine's stdin, and the answer comes back the same way. Nothing listens on a port, at any
+ * point, in either process.
+ *
+ * ── WHY A COMMAND AND NOT A LOCAL SERVER ────────────────────────────────────────────────────
+ *
+ * A localhost port is reachable by every other program on the machine, and a token that authorises
+ * it has to live somewhere the page can read. The pipe the shell holds is reachable by nothing: it
+ * is a private file descriptor, the engine's credential is added shell-side (see the Rust
+ * `encode_request`), and this file never sees it. That is what lets the UNMODIFIED Cloud client run
+ * against a local engine — it authenticates with nothing, because there is nothing for it to hold.
+ *
+ * ── THE WIRE, WHICH IS THE SHELL'S AND NOT INVENTED HERE ────────────────────────────────────
+ *
+ * `engine_request(method, url, headers, body)` answers with one byte string:
+ *
+ *     [ 4 bytes big-endian: metadata length ][ metadata JSON ][ body bytes ]
+ *
+ * where the metadata is `{ status, statusText, h: [[name, value], …] }`. Bytes rather than JSON
+ * because a mail body is not a JSON string: re-encoding one would cost a copy and a UTF-8
+ * assumption that attachments break. This file's job is to put that back together into a `Response`
+ * the client cannot tell from a network one.
+ *
+ * ── WHAT THE WINDOW STILL CANNOT DO ─────────────────────────────────────────────────────────
+ *
+ * `invoke` is not `fetch`, and the difference is the whole security story. The webview's CSP still
+ * says `connect-src 'none'`, `offline-guard.ts` still replaces every browser API that could leave
+ * the process, and the shell grants the window exactly two commands — ask about the engine, and
+ * send it one request. So the page has no way to address anything but this one bridge, and if
+ * somebody ever forgets to inject this function, `HttpAdapter` falls back to the global `fetch`,
+ * which the guard has replaced with a thrower. A forgotten wire is loud rather than silent.
+ */
+
+import { HttpAdapter } from "@ohmail/client-engine";
+
+/**
+ * The shape `HttpAdapterOptions.fetch` is satisfied by.
+ *
+ * `init` is `unknown` rather than `RequestInit` ON PURPOSE, and it is not laziness. This file is
+ * published beside two different declarations of that option — the real adapter's, which types the
+ * second parameter as `RequestInit`, and the stub the preview build compiles against, which types
+ * it as `unknown`. A function that accepts `unknown` satisfies both; one that accepts `RequestInit`
+ * satisfies only the first, and the other tree fails to compile. The narrowing happens below,
+ * where the fields are actually read.
+ */
+export type BridgeFetch = (url: string, init?: unknown) => Promise<Response>;
+
+/** The two commands the shell registers. Named here so a typo is one place rather than three. */
+const REQUEST_COMMAND = "engine_request";
+const STATUS_COMMAND = "engine_status";
+
+const NO_SHELL =
+  "ohmail Desktop: this window is not running inside the ohmail shell, so there is no local engine " +
+  "to talk to.";
+
+/**
+ * The statuses the Fetch standard forbids a body on.
+ *
+ * `new Response(bytes, { status: 204 })` throws — even for zero bytes, because an empty
+ * `Uint8Array` is still a body. The engine answers 204 to several mutations, so without this the
+ * bridge would turn every successful delete into a transport failure.
+ */
+const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
+
+interface TauriInternals {
+  invoke(command: string, payload?: Record<string, unknown>, options?: unknown): Promise<unknown>;
+}
+
+/**
+ * Tauri's own command channel.
+ *
+ * Reached through the global the runtime injects rather than through `@tauri-apps/api`, which is a
+ * wrapper around this exact property — one dependency, in the bundle and in the published manifest,
+ * for a line that would read the same either way. `withGlobalTauri` is false in this app, so the
+ * friendlier `window.__TAURI__` does not exist; this one always does, because the runtime's own
+ * bootstrap defines it before any bundle script runs.
+ */
+function shell(): TauriInternals {
+  const host = globalThis as { __TAURI_INTERNALS__?: Partial<TauriInternals> };
+  const internals = host.__TAURI_INTERNALS__;
+  if (typeof internals?.invoke !== "function") throw new Error(NO_SHELL);
+  return internals as TauriInternals;
+}
+
+/** Whether this page is running inside the shell at all. */
+export function bridgeAvailable(): boolean {
+  const host = globalThis as { __TAURI_INTERNALS__?: Partial<TauriInternals> };
+  return typeof host.__TAURI_INTERNALS__?.invoke === "function";
+}
+
+/** Whatever the command channel handed back, as bytes. */
+function asBytes(answer: unknown): Uint8Array {
+  if (answer instanceof ArrayBuffer) return new Uint8Array(answer);
+  if (ArrayBuffer.isView(answer)) {
+    return new Uint8Array(answer.buffer, answer.byteOffset, answer.byteLength);
+  }
+  /* The command channel has two transports and they hand back different things: the custom
+     protocol answers with an ArrayBuffer, and the message channel it falls back to under a strict
+     CSP answers with a plain array of byte values, because that path returns through a JSON
+     callback. Both are the same bytes; only the container differs. */
+  if (Array.isArray(answer)) return Uint8Array.from(answer as number[]);
+  throw new Error(
+    `ohmail Desktop: the shell answered ${REQUEST_COMMAND} with something that is not bytes.`,
+  );
+}
+
+/** A request body, as the bytes the command takes. */
+function bodyBytes(body: unknown): number[] {
+  if (body === undefined || body === null || body === "") return [];
+  if (typeof body === "string") return Array.from(new TextEncoder().encode(body));
+  if (body instanceof ArrayBuffer) return Array.from(new Uint8Array(body));
+  if (ArrayBuffer.isView(body)) {
+    return Array.from(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
+  }
+  /* Deliberately a refusal rather than a `String(body)`. A `FormData` or a `ReadableStream`
+     stringified into a request body is a corrupt request that reaches the engine and is answered
+     with a puzzling 4xx; refusing here names the caller instead. Nothing in the client sends
+     either — every body it composes is `JSON.stringify`'d first. */
+  throw new Error("ohmail Desktop: the local engine bridge takes a string or bytes as a body.");
+}
+
+/** Request headers, in the pairs the command takes, from any of the three shapes `fetch` allows. */
+function headerPairs(headers: unknown): [string, string][] {
+  if (!headers) return [];
+  if (typeof (headers as Headers).forEach === "function" && !Array.isArray(headers)) {
+    const out: [string, string][] = [];
+    (headers as Headers).forEach((value, name) => out.push([name, value]));
+    return out;
+  }
+  if (Array.isArray(headers)) {
+    return (headers as [string, string][]).map(([name, value]) => [String(name), String(value)]);
+  }
+  return Object.entries(headers as Record<string, string>).map(([name, value]) => [
+    name,
+    String(value),
+  ]);
+}
+
+/** Response headers, skipping any pair the platform will not accept rather than losing the lot. */
+function toHeaders(pairs: unknown): Headers {
+  const headers = new Headers();
+  if (!Array.isArray(pairs)) return headers;
+  for (const pair of pairs as unknown[]) {
+    if (!Array.isArray(pair) || pair.length < 2) continue;
+    try {
+      headers.append(String(pair[0]), String(pair[1]));
+    } catch {
+      /* A malformed header name must not sink an otherwise good answer. */
+    }
+  }
+  return headers;
+}
+
+interface Meta {
+  status?: number;
+  statusText?: string;
+  h?: unknown;
+}
+
+/** Take the shell's answer apart: the length-prefixed metadata, then the body. */
+function toResponse(bytes: Uint8Array): Response {
+  if (bytes.byteLength < 4) {
+    throw new Error("ohmail Desktop: the shell's answer was too short to be one.");
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const metaLength = view.getUint32(0, false);
+  if (4 + metaLength > bytes.byteLength) {
+    throw new Error("ohmail Desktop: the shell's answer declared more metadata than it carried.");
+  }
+  const meta = JSON.parse(
+    new TextDecoder().decode(bytes.subarray(4, 4 + metaLength)),
+  ) as Meta;
+
+  const status = typeof meta.status === "number" ? meta.status : 0;
+  /* Out of range for `new Response`, which accepts 200..599. A status this shell could not produce
+     means the frame stream disagreed with itself, and a transport error is the honest shape for
+     that — `HttpAdapter` turns a thrown fetch into a retryable failure, where a fabricated 500
+     would look like the engine's own answer. */
+  if (status < 200 || status > 599) {
+    throw new Error(`ohmail Desktop: the local engine answered with status ${status}.`);
+  }
+
+  /* A view, not a copy: this is the whole mail body or attachment, and duplicating every one of
+     them on its way through the bridge would double the peak memory of opening a message. The
+     assertion is a type-level one only — a `Uint8Array` has always been a valid `BodyInit`, but
+     recent DOM libraries parameterise the typed arrays by their backing buffer and accept only the
+     `ArrayBuffer` instantiation, while a view taken from an existing buffer is typed against
+     `ArrayBufferLike`. */
+  const body = bytes.subarray(4 + metaLength) as unknown as BodyInit;
+  return new Response(NULL_BODY_STATUSES.has(status) ? null : body, {
+    status,
+    statusText: typeof meta.statusText === "string" ? meta.statusText : "",
+    headers: toHeaders(meta.h),
+  });
+}
+
+interface BridgeInit {
+  method?: string;
+  headers?: unknown;
+  body?: unknown;
+  signal?: AbortSignal;
+}
+
+/**
+ * One request to the local engine, and the answer as a `Response`.
+ *
+ * ── ABORT IS HONOURED FOR THE CALLER AND NOT FOR THE ENGINE ────────────────────────────────
+ *
+ * The client bounds exactly one call with an `AbortSignal` — the attachment list — and races the
+ * abort against the answer, so an aborted request has to REJECT here or that race never settles.
+ * It does. What it cannot do is cancel the work: the frame protocol carries no cancellation, so the
+ * engine finishes the request and the shell drops the answer. That costs one wasted read and no
+ * correctness — the bounded call is a GET — and saying so beats implying a cancellation that does
+ * not happen.
+ */
+export const bridgeFetch: BridgeFetch = async (url, init) => {
+  const options = (init ?? {}) as BridgeInit;
+  const signal = options.signal;
+  if (signal?.aborted) throw abortError();
+
+  const answer = shell().invoke(REQUEST_COMMAND, {
+    method: (options.method ?? "GET").toUpperCase(),
+    url,
+    headers: headerPairs(options.headers),
+    body: bodyBytes(options.body),
+  });
+
+  const bytes = signal
+    ? await Promise.race([
+        answer,
+        new Promise<never>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(abortError()), { once: true });
+        }),
+      ])
+    : await answer;
+
+  return toResponse(asBytes(bytes));
+};
+
+function abortError(): Error {
+  const err = new Error("ohmail Desktop: the request was aborted.");
+  err.name = "AbortError";
+  return err;
+}
+
+/** What the shell says about the engine. A tagged object; `state` is always there. */
+export interface EngineStatus {
+  state:
+    | "absent"
+    | "not_configured"
+    | "no_key"
+    | "starting"
+    | "serving"
+    | "restarting"
+    | "stopped"
+    | "failed";
+  mailboxId?: string;
+  accountId?: string;
+  userId?: string;
+  baseUrl?: string;
+  credentialState?: "ready" | "absent" | "unreadable" | "unknown";
+  reason?: string;
+  missing?: string[];
+  lookedFor?: string;
+}
+
+/** Ask the shell what the engine is doing. Carries no credential — see the Rust `status_json`. */
+export async function engineStatus(): Promise<EngineStatus> {
+  return (await shell().invoke(STATUS_COMMAND)) as EngineStatus;
+}
+
+/**
+ * The client engine's adapter, wired to the bridge.
+ *
+ * `baseUrl` is empty, so every path stays root-relative — `/sync`, `/messages/…` — which is what
+ * the shell's request encoder expects and what keeps the engine's own base URL a fact the page does
+ * not need to know. It is also why nothing here reads `EngineStatus.baseUrl`.
+ *
+ * The class is the REAL one. In the preview build `vite.config.ts` aliases that module to a stub
+ * whose constructor throws, and nothing in the preview calls this — so a preview that ever reached
+ * for the Cloud protocol would fail loudly at the point of construction rather than open a socket.
+ */
+export function createEngineAdapter(): HttpAdapter {
+  return new HttpAdapter({ baseUrl: "", fetch: bridgeFetch });
+}
+
+let connected: HttpAdapter | null = null;
+
+/**
+ * The adapter this window runs against, or `null` if the bridge was never connected.
+ *
+ * The reader exists because the mount does not consume it yet: this build connects the transport
+ * and the surface that will run on it is a separate change. Holding it here rather than passing it
+ * through `main.tsx` keeps that change to one file.
+ */
+export function localEngineAdapter(): HttpAdapter | null {
+  return connected;
+}
+
+/**
+ * Connect the bridge at boot: ask the shell what the engine is doing, and build the adapter.
+ *
+ * Both halves are the check. The status call proves the window can reach the shell at all; building
+ * the adapter proves this build compiled the real client rather than the preview's stub, because
+ * the stub's constructor throws.
+ */
+export async function connectLocalEngine(): Promise<EngineStatus> {
+  const status = await engineStatus();
+  connected = createEngineAdapter();
+  return status;
+}

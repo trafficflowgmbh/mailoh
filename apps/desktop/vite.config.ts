@@ -7,6 +7,26 @@ import react from "@vitejs/plugin-react";
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 /**
+ * WHICH OF THE TWO ARTIFACTS THIS BUILD IS.
+ *
+ * One directory, two outputs, and the difference is not a runtime switch:
+ *
+ *  · the PREVIEW (default) is what has shipped so far — fixture mail, no engine, no adapter that
+ *    could reach anything. The sync client is aliased to a stub whose constructor throws, and the
+ *    bridge to a local engine is not in the bundle at all;
+ *  · the LOCAL-ENGINE build carries the real client and `src/bridge-fetch.ts`, which is the only
+ *    thing in either output that can address anything outside the page — and it addresses the
+ *    shell, not the network.
+ *
+ * An environment variable rather than a Vite `mode`, because the Rust half is selected by a Cargo
+ * feature (`local-engine`) and the two must be set together: `OHMAIL_LOCAL_ENGINE=1 npm run
+ * ui:build` produces the bundle that belongs in a binary built with that feature, and the default
+ * produces the one that belongs in a binary built without it. Pairing them the other way gives a
+ * window with a bridge and no commands to call, or commands with nothing to call them.
+ */
+const LOCAL_ENGINE = process.env.OHMAIL_LOCAL_ENGINE === "1";
+
+/**
  * The message namespaces the SHELL actually reads — and therefore the only ones
  * that belong in a desktop binary.
  *
@@ -174,6 +194,11 @@ export default defineConfig({
        vs HttpAdapter. Folding it to `undefined` at build time makes the Cloud
        branch statically dead; alias (2) above makes it unreachable regardless. */
     "process.env.NEXT_PUBLIC_API_BASE": "undefined",
+    /* Which artifact this is, as a literal. `main.tsx` branches on it, and the
+       bundler removes the branch it did not take — so the preview does not carry
+       a dormant bridge and the engine build does not carry a dead stub. See
+       `src/build-flags.d.ts` for the declaration the type checker reads. */
+    __OHMAIL_LOCAL_ENGINE__: JSON.stringify(LOCAL_ENGINE),
   },
 
   resolve: {
@@ -200,8 +225,18 @@ export default defineConfig({
       { find: "pdfjs-dist", replacement: r("./src/no-pdfjs.ts") },
 
       /* Anchored at both ends: a RegExp `find` replaces only the matched span,
-         so a pattern that leaves the leading "./" behind yields a broken path. */
-      { find: /^(?:.*\/)?adapters\/http-adapter\.js$/, replacement: r("./src/no-http-adapter.ts") },
+         so a pattern that leaves the leading "./" behind yields a broken path.
+
+         PRESENT IN THE PREVIEW ONLY. The local-engine build needs the real
+         adapter — it is the client that runs against the engine, over the bridge
+         in `src/bridge-fetch.ts` rather than over a socket — so the stub is not
+         aliased in there. Everything the stub's header says about the preview
+         stays exactly as true: that build still has no request builder, no CSRF
+         header and no cursor protocol in it, because that build still has the
+         alias. */
+      ...(LOCAL_ENGINE
+        ? []
+        : [{ find: /^(?:.*\/)?adapters\/http-adapter\.js$/, replacement: r("./src/no-http-adapter.ts") }]),
 
       { find: "@ohmail/tokens/tokens.css", replacement: r("../../packages/tokens/src/tokens.css") },
       { find: "@ohmail/tokens", replacement: r("../../packages/tokens/src/index.ts") },

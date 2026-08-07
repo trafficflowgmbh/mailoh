@@ -5,9 +5,11 @@
   "type": "module",
   "description": "ohmail for Windows and Linux — a Tauri v2 shell around the ohmail client UI, fixtures-only, zero network.",
   "//": "Ranges, not exact pins, and the same ones the rest of the monorepo uses: an exact pin here puts a SECOND copy of @types/react in the workspace, and two React type identities break apps/webapp's typecheck. In the published mirror npm resolves these fresh; every CI run prints what it got.",
+  "//scripts": "TWO ARTIFACTS, ONE DIRECTORY. `ui:build` is the interface preview — fixtures, no engine, the sync client aliased to a stub. `ui:build:engine` is the bundle that belongs in a binary compiled with the Rust `local-engine` feature: it carries the real client and the bridge in src/bridge-fetch.ts. Set the two together or the halves disagree — a window with a bridge and no commands to call, or commands with nothing to call them.",
   "scripts": {
     "ui:dev": "vite",
     "ui:build": "vite build",
+    "ui:build:engine": "OHMAIL_LOCAL_ENGINE=1 vite build",
     "ui:typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
     "tauri": "tauri"

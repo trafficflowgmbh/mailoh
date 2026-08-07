@@ -42,6 +42,11 @@ const note = (what) => { if (log) fs.appendFileSync(log, what + " " + process.pi
 note("start");
 process.on("exit", () => note("exit"));
 
+// One line on stderr, in the shape the real engine's logger emits: a JSON object per line, already
+// redacted by the time it leaves that process. It is here so a test can prove the shell forwards
+// the engine's own diagnostics to the log file rather than only its own account of them.
+process.stderr.write(JSON.stringify({ level: "info", msg: "fake engine up", mode }) + "\n");
+
 function frame(header, body) {
   const h = Buffer.from(JSON.stringify(header), "utf8");
   const b = body ?? Buffer.alloc(0);
@@ -836,4 +841,289 @@ fn a_key_is_sixty_four_hex_characters_and_nothing_else() {
     assert!(!is_key(&"a".repeat(65)));
     assert!(!is_key(&"g".repeat(64)));
     assert!(!is_key(""));
+}
+
+// ── Adopting the key an earlier version of this app stored ──────────────────────────────────
+//
+// The order is the correctness, and it is driven here rather than against a keychain: the real
+// keystore on the machine running these tests holds that person's real key, so a test that used it
+// would either be asserting things about their install or writing over it. `resolve_install_key`
+// exists as a separate function for exactly this reason — everything it can do, it does through the
+// four closures below, and there is no fifth closure that could delete anything.
+
+/// What a run of [`resolve_install_key`] did, in order.
+#[derive(Default)]
+struct Keystore {
+    calls: Mutex<Vec<String>>,
+}
+
+impl Keystore {
+    fn note(&self, what: &str) {
+        self.calls.lock().expect("calls").push(what.to_string());
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.calls.lock().expect("calls").clone()
+    }
+}
+
+fn a_key(seed: char) -> String {
+    seed.to_string().repeat(64)
+}
+
+#[test]
+fn this_apps_own_key_wins_and_nothing_else_is_consulted() {
+    let store = Keystore::default();
+    let key = a_key('a');
+    let got = resolve_install_key(
+        &|| {
+            store.note("own");
+            Stored::Key(key.clone())
+        },
+        &|| {
+            store.note("older");
+            Stored::Key(a_key('b'))
+        },
+        &|_| {
+            store.note("adopt");
+            Ok(())
+        },
+        &|| {
+            store.note("mint");
+            Ok(a_key('c'))
+        },
+    );
+    assert_eq!(got, Ok(key));
+    // Not merely "the right key": the older item is not even READ on the ordinary launch, which is
+    // what keeps a migration from costing a keychain round trip on every start for ever.
+    assert_eq!(store.calls(), vec!["own"]);
+}
+
+#[test]
+fn the_key_an_earlier_version_stored_is_adopted_rather_than_replaced() {
+    // THE DEFECT THIS EXISTS TO PREVENT. Without the older lookup, an install whose key was minted
+    // by the previous version of this app finds nothing, mints a fresh key, and the engine reports
+    // the mailbox password stored months ago as unreadable — with nothing on screen able to say
+    // why.
+    let store = Keystore::default();
+    let existing = a_key('7');
+    let got = resolve_install_key(
+        &|| {
+            store.note("own");
+            Stored::Empty
+        },
+        &|| {
+            store.note("older");
+            Stored::Key(existing.clone())
+        },
+        &|key| {
+            store.note(&format!("adopt {key}"));
+            Ok(())
+        },
+        &|| {
+            store.note("mint");
+            Ok(a_key('c'))
+        },
+    );
+    assert_eq!(got, Ok(existing.clone()), "the launch uses the key that opens the stored password");
+    assert_eq!(
+        store.calls(),
+        vec!["own".to_string(), "older".to_string(), format!("adopt {existing}")],
+        "the older key was read, copied, and nothing was minted"
+    );
+}
+
+#[test]
+fn a_copy_that_fails_does_not_cost_the_launch() {
+    // The key is in hand and it opens what it opened before. Refusing to start over a bookkeeping
+    // failure would trade a working mailbox for a syscall saved on the next launch.
+    let existing = a_key('9');
+    let got = resolve_install_key(
+        &|| Stored::Empty,
+        &|| Stored::Key(existing.clone()),
+        &|_| Err("the keystore is read-only".to_string()),
+        &|| panic!("nothing may be minted once an existing key has been read"),
+    );
+    assert_eq!(got, Ok(existing));
+}
+
+#[test]
+fn nothing_older_and_nothing_of_ours_mints_exactly_one_key() {
+    let store = Keystore::default();
+    let minted = a_key('f');
+    let got = resolve_install_key(
+        &|| {
+            store.note("own");
+            Stored::Empty
+        },
+        &|| {
+            store.note("older");
+            Stored::Empty
+        },
+        &|_| {
+            store.note("adopt");
+            Ok(())
+        },
+        &|| {
+            store.note("mint");
+            Ok(minted.clone())
+        },
+    );
+    assert_eq!(got, Ok(minted));
+    assert_eq!(store.calls(), vec!["own", "older", "mint"]);
+}
+
+#[test]
+fn an_item_of_ours_that_is_not_a_key_refuses_without_looking_further() {
+    // Something wrote it. Minting over it, or quietly using a different key instead, would seal the
+    // next password under a key that does not open the last one.
+    let store = Keystore::default();
+    let got = resolve_install_key(
+        &|| {
+            store.note("own");
+            Stored::Foreign
+        },
+        &|| {
+            store.note("older");
+            Stored::Key(a_key('b'))
+        },
+        &|_| {
+            store.note("adopt");
+            Ok(())
+        },
+        &|| {
+            store.note("mint");
+            Ok(a_key('c'))
+        },
+    );
+    let err = got.expect_err("a foreign item was accepted");
+    assert!(err.contains(KEYSTORE_ENTRY), "the refusal names the item to remove: {err}");
+    assert_eq!(store.calls(), vec!["own"]);
+}
+
+#[test]
+fn an_older_item_that_will_not_be_read_stops_the_launch_rather_than_minting_over_it() {
+    // The one branch where minting is actively harmful. The first lookup already proved the
+    // keystore answers, so an error on the second means there IS an item here that this binary was
+    // not allowed to read — and a fresh key would silently orphan whatever it seals.
+    let got = resolve_install_key(
+        &|| Stored::Empty,
+        &|| Stored::Refused("access denied".to_string()),
+        &|_| Ok(()),
+        &|| panic!("a key was minted over an item that could not be read"),
+    );
+    let err = got.expect_err("a refused older item was ignored");
+    assert!(err.contains("unreadable"), "the refusal says what minting would cost: {err}");
+}
+
+#[test]
+fn an_older_item_of_the_wrong_shape_is_not_adopted() {
+    let store = Keystore::default();
+    let minted = a_key('e');
+    let got = resolve_install_key(
+        &|| Stored::Empty,
+        &|| Stored::Foreign,
+        &|_| {
+            store.note("adopt");
+            Ok(())
+        },
+        &|| {
+            store.note("mint");
+            Ok(minted.clone())
+        },
+    );
+    assert_eq!(got, Ok(minted));
+    assert_eq!(store.calls(), vec!["mint"], "nothing that is not a key is copied anywhere");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn the_older_coordinates_are_the_ones_the_earlier_version_wrote() {
+    // These two strings are the previous version's, not this file's, and a disagreement is a
+    // migration that finds nothing. Asserted so that changing one is a deliberate act with a red
+    // test attached.
+    assert_eq!(LEGACY_KEYSTORE_SERVICE, "io.ohmail.desktop");
+    assert_eq!(LEGACY_KEYSTORE_ENTRY, "kek.v1");
+    // And they are not this app's own, or the "look one place further" would be looking at itself.
+    assert_ne!(LEGACY_KEYSTORE_SERVICE, KEYSTORE_SERVICE);
+}
+
+// ── The log file ────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn the_log_rolls_over_at_the_cap_and_keeps_one_generation() {
+    let f = Fixture::new("rotate");
+    let path = f.dir.join("engine.log");
+    let mut log = LogFile::open(path.clone()).expect("open");
+
+    // Just under the cap, then one more line, so the rotation is caused by the cap rather than by
+    // an arbitrary call.
+    let chunk = vec![b'x'; 64 * 1024];
+    let mut written = 0u64;
+    while written + chunk.len() as u64 <= LOG_MAX_BYTES {
+        log.write(&chunk);
+        written += chunk.len() as u64;
+    }
+    assert!(!f.dir.join("engine.log.old").exists(), "nothing rotated below the cap");
+
+    log.write(b"the line that crosses it\n");
+    let old = f.dir.join("engine.log.old");
+    assert!(old.exists(), "the previous generation was kept");
+    assert_eq!(fs::metadata(&old).expect("old").len(), written, "the whole of it was kept");
+    let current = fs::read_to_string(&path).expect("current");
+    assert_eq!(current, "the line that crosses it\n", "the new file starts with the line that rolled it");
+
+    // A SECOND rotation replaces the one generation rather than accumulating them, so the space
+    // this can take is bounded at two files however long the app runs.
+    log.rotate().expect("the second rotation");
+    assert!(!f.dir.join("engine.log.old.old").exists(), "generations do not accumulate");
+    assert_eq!(
+        fs::read_to_string(&old).expect("old"),
+        "the line that crosses it\n",
+        "the kept generation is the one that was current"
+    );
+    assert_eq!(fs::read_to_string(&path).expect("current"), "", "the new current file starts empty");
+}
+
+#[test]
+fn reopening_a_log_appends_and_rotates_from_the_size_it_found() {
+    let f = Fixture::new("reopen");
+    let path = f.dir.join("engine.log");
+    {
+        let mut log = LogFile::open(path.clone()).expect("open");
+        log.write(b"first run\n");
+    }
+    {
+        let mut log = LogFile::open(path.clone()).expect("reopen");
+        log.write(b"second run\n");
+    }
+    let text = fs::read_to_string(&path).expect("read");
+    assert_eq!(text, "first run\nsecond run\n", "a relaunch adds to the account of the last one");
+}
+
+#[test]
+fn the_shells_lines_and_the_engines_own_diagnostics_both_reach_the_file() {
+    // The two halves of what a person needs and a packaged app throws away: this shell's account of
+    // starting and stopping, and the engine's own JSON lines. And the one thing that must never be
+    // in either — the per-launch session token, which the `ready` frame carries in-band.
+    let f = Fixture::new("logfile");
+    let path = f.dir.join("engine.log");
+    install_log_file(path.clone()).expect("install the log file");
+
+    let engine = Engine::spawn_with(f.launch("serve"), quick());
+    serving(&engine);
+    engine.stop();
+
+    // Uninstalled before the assertions so nothing else in this binary can add to the file while it
+    // is being read.
+    *LOG.lock().expect("log") = None;
+    let text = fs::read_to_string(&path).expect("the log file exists");
+
+    assert!(text.contains("serving mailbox mbx-1"), "this shell's own account is missing: {text}");
+    assert!(text.contains("stopped"), "the stop was not recorded: {text}");
+    assert!(text.contains("fake engine up"), "the engine's own stderr never reached the file: {text}");
+    assert!(
+        !text.contains("tok_"),
+        "the session token reached the log file, which is the one thing it may never do: {text}"
+    );
 }
