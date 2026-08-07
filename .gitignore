@@ -2,6 +2,15 @@
 # packaged artifacts all land here.
 build/
 
+# KEPT AFTER THE SWIFT CLIENT WAS RETIRED, DELIBERATELY. Nothing in this tree produces these
+# any more — they were SwiftPM's build directory and the old client's screenshot output — but
+# a checkout that ever built it still has them on disk, and un-ignoring a directory is how a
+# few thousand files of local build output get swept into a commit by a `git add -A`. Removing
+# an ignore rule is not free; these stay until the clones that have those directories are gone.
+.build/
+.swiftpm/
+shots/
+
 # The app (apps/desktop): npm deps, the UI bundle, Rust output, and the ACL
 # schemas tauri-build regenerates on every compile. The Tauri lockfile is the
 # one npm regenerates in apps/desktop; the ROOT package-lock.json is published
