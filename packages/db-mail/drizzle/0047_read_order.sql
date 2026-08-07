@@ -1,0 +1,72 @@
+-- READ ORDER — WHEN a message stopped being unread, so "Earlier" can be sorted by the order the
+-- reader actually left messages behind instead of by the order the senders happened to send them.
+--
+-- The Ohbox is one list in two groups: "New for you" (unread) and "Earlier" (read). Both were
+-- sorted date-descending, which is right for the first group and wrong for the second. A reader
+-- who opens a message from last Tuesday and then one from this morning has most recently finished
+-- with the Tuesday one — but a date sort files it a week down the list, under mail they read days
+-- ago. "Earlier" is a history of READING, and a history of reading has to be ordered by reading.
+--
+-- ══ WHY A COLUMN AND NOT A DERIVATION ═══════════════════════════════════════════════════════
+--
+-- Two derivations look like they would answer this and neither does:
+--
+--   · `flag_state.updated_at` moves for reasons that have nothing to do with a human — the
+--     reconciler writes that row when it observes the mail server's own `\Seen`, when it retries,
+--     and when it records an unchanged observation. Sorting by it would shuffle the list on a
+--     background pass nobody performed.
+--   · `change_log` is a per-account delta feed that is trimmed; the seq that carried a read is not
+--     guaranteed to still be there, and reconstructing an order from a feed with holes in it
+--     produces a different answer depending on when you ask.
+--
+-- So the fact is stored where the fact is: one nullable timestamp on the message, written by the
+-- same statement that flips `unread`.
+--
+-- ══ NULL IS "BEFORE THIS COLUMN EXISTED", AND IT SORTS LAST ═════════════════════════════════
+--
+-- No backfill. Every message read before this migration has no honest answer for when that
+-- happened, and inventing one — `updated_at`, `date`, `now()` — would put a made-up ordering in
+-- front of a reader who cannot tell it from a real one. NULL says "not known", and the client
+-- sorts every NULL row BELOW every stamped row, in date order among themselves. So the list reads:
+-- what you have most recently finished with, newest first; then, once, the pile as it was before
+-- the product could tell. Interleaving the two by date would be the lie the absent backfill avoids.
+--
+-- Ingest does not stamp it either. A message arrives unread, so the column is NULL at creation for
+-- the same reason it is NULL for legacy rows, and it stays NULL until somebody reads it.
+--
+-- ══ NO INDEX, DELIBERATELY ══════════════════════════════════════════════════════════════════
+--
+-- Nothing queries on this column. The sort happens on the client, over the window of mail the
+-- device already holds, and the server's own paging keyset stays `(date, id)`. Keying the page on
+-- read time would be actively wrong: older mail is appended to the bottom of a list in DATE order,
+-- and a cursor that changed meaning between pages would drop and duplicate rows at the seam. An
+-- index maintained by every read of every message, serving no query, is a write cost with no
+-- reader.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO CHECK, NO LOCKDOWN ═════════════════════════════════════════════
+--
+-- `ADD COLUMN IF NOT EXISTS` with no default and no NOT NULL, so it is a catalog-only change that
+-- rewrites no rows and takes no long lock on the largest table in the schema. A journal replay is
+-- a no-op, which is what a partially-applied window needs. No CHECK: any instant is a legal
+-- answer. `ADD COLUMN` inherits the table's grants, so nothing is owed to the content-blind
+-- operator role — and a read timestamp is not something it gains anything from.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ══════════════════════════════════════════════════════════
+--
+-- Migration → API. The message projection selects WHOLE `messages` rows, so a host deployed ahead
+-- of this migration answers Postgres 42703 on every message list, every delta page and every
+-- snapshot — the whole read surface, not one feature. The health marker
+-- `["messages","last_read_at"]` turns that into a `503 schema_incomplete` that names this file
+-- instead of a 500 nobody can attribute. No worker half: nothing in the sync worker reads or
+-- writes the column.
+--
+-- A CLIENT older than the API is unaffected — it receives a field it ignores and keeps sorting by
+-- date. A client NEWER than the API reads `undefined`, which its sort treats exactly like NULL, so
+-- it degrades to the date order it had before. Neither direction needs the other to ship first.
+--
+-- ROLLBACK is `ALTER TABLE messages DROP COLUMN last_read_at`. It costs the recorded reading
+-- order and nothing else: no mail moves, no read state changes, and `unread` — the fact the
+-- mailbox actually carries — is untouched, because this column is a record OF that flag and never
+-- the source of it.
+
+ALTER TABLE "messages" ADD COLUMN IF NOT EXISTS "last_read_at" timestamp with time zone;

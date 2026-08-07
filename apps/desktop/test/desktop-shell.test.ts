@@ -109,6 +109,47 @@ describe("tauri.conf.json", () => {
   });
 
   /**
+   * THE DESKTOP MAY LAG THE WEB, BUT ONLY WITHIN THE SAME FEATURE RELEASE.
+   *
+   * The web app deploys continuously and the installers are cut by hand, so the two numbers are
+   * genuinely allowed to differ for a while: the workspace can be at `0.7.1` while the shipped
+   * `.dmg` is still `0.7.0`, and forcing them equal would mean re-cutting five files and three
+   * installers for every web fix.
+   *
+   * What is NOT allowed is either of the two ways that freedom turns into a lie:
+   *
+   *  · **The desktop ahead of the workspace.** An installer whose version is a release the
+   *    source tree has not reached names something that does not exist.
+   *  · **A different feature release.** `0.7.x` against `0.8.x` means the two are no longer the
+   *    same product at different patch levels, and a bug report citing "0.7.0" could be about
+   *    either. The patch component is where the drift is allowed to live and nowhere else.
+   *
+   * The comparison is on the ROOT manifest, which is the one place the release number is stated
+   * for the whole workspace — the same file the web build inlines for its About pane, so the
+   * number a person reads there and the number this test compares against cannot diverge.
+   */
+  it("is at or behind the workspace release, within the same feature version", () => {
+    const root = JSON.parse(
+      fs.readFileSync(path.resolve(APP, "../../package.json"), "utf8"),
+    ) as { version?: string };
+    expect(root.version, "the root package.json states no release version").toBeTruthy();
+
+    const parse = (v: string): [number, number, number] => {
+      const parts = v.split(".").map((n) => Number(n));
+      expect(parts, `unparseable version ${v}`).toHaveLength(3);
+      for (const n of parts) expect(Number.isInteger(n), `unparseable version ${v}`).toBe(true);
+      return parts as [number, number, number];
+    };
+
+    const [wMajor, wMinor, wPatch] = parse(root.version!);
+    const [dMajor, dMinor, dPatch] = parse(conf.version);
+
+    expect(`${dMajor}.${dMinor}`, "desktop and workspace are on different feature releases")
+      .toBe(`${wMajor}.${wMinor}`);
+    expect(dPatch, "the desktop is ahead of the workspace release").toBeLessThanOrEqual(wPatch);
+  });
+
+  /**
    * ONE IDENTIFIER FOR ONE APP, AND IT USED TO BE TWO.
    *
    * This config carried `io.ohmail.desktop.tauri` — a suffix that existed to keep two builds of

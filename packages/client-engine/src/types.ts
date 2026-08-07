@@ -217,6 +217,21 @@ export interface EngineMessage extends EngineMessageExtras {
   folder: Folder;
   snippet: string;
   unread: boolean;
+  /**
+   * WHEN THIS MESSAGE STOPPED BEING UNREAD — the order the Ohbox's "Earlier" group is sorted by.
+   *
+   * `null` where it is not known, and **OPTIONAL because the mirror can be older than the field**.
+   * The mirror is persisted on the device: a message row written by a build that predates this
+   * field is `undefined` here, not `null`, and both mean the same thing — no reading time is
+   * recorded. Declaring it required would be a claim about stored data this type cannot make, and
+   * the sort would be reading a value that is genuinely absent. So `absent === null` is the rule
+   * every consumer follows, and it is enforced in one place ({@link ohboxView}'s comparator)
+   * rather than at each read.
+   *
+   * Rows the fixtures world mints leave it absent for the same reason: there is no reading history
+   * in a demo mailbox, and inventing one would put a fabricated order on screen.
+   */
+  lastReadAt?: ISODateTime | null;
   hasAttachments: boolean;
   attachmentCount: number;
   sensitivity: SensitivityFlags;

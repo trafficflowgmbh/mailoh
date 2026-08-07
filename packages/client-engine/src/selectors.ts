@@ -272,11 +272,66 @@ export interface OhboxView {
   previouslySeen: EngineMessage[];
 }
 
+/**
+ * "EARLIER" IS A HISTORY OF READING, SO IT IS ORDERED BY READING.
+ *
+ * `messagesIn` sorts date-descending, which is right for mail that has not been read — the
+ * question there is what arrived — and wrong for mail that has. Someone who reads a message from
+ * last week and then one from this morning has most recently finished with the older one, and a
+ * date sort files it seven days down, under mail they finished with days ago.
+ *
+ * ── EVERY UNSTAMPED ROW SORTS BELOW EVERY STAMPED ONE ─────────────────────────────────────
+ *
+ * `lastReadAt` is absent or null on two kinds of row: mail read before the field existed, and mail
+ * whose read state came from somewhere that could not date it. Neither has an honest position
+ * among the stamped rows, and interleaving them BY DATE would put a message with no recorded
+ * reading time above one with a real one purely because it is newer — a claim about reading order
+ * made out of a send time. So the list is two blocks: what is known, most recently finished first;
+ * then, below it, what is not, newest first. The boundary moves down on its own as mail is
+ * re-read, and it needs no backfill to do it.
+ *
+ * `id` breaks the remaining ties, because a batch marked read in one gesture shares one instant
+ * and a comparator that returned 0 there would leave the browser's sort free to reorder equal rows
+ * differently on each render.
+ */
+/**
+ * The reading instant as a number, or `null` for "not known".
+ *
+ * THREE INPUTS COLLAPSE TO ONE ANSWER and that is the reason this is a function rather than a
+ * `Date.parse` inline in the comparator: the field can be absent (a mirror written before it
+ * existed), explicitly `null` (never read, or read where nothing could date it), or a string that
+ * does not parse. All three mean the same thing to a reader, so they have to mean the same thing
+ * to the sort. Normalising here — instead of handling `null` in the comparator and NaN separately
+ * — is what stops an unparseable stamp from being ranked as a real one against a `null` row, and
+ * keeps it from being read as the epoch, which is a position that looks deliberate and is not.
+ */
+function readTimeOf(m: EngineMessage): number | null {
+  const raw = m.lastReadAt ?? null;
+  if (raw === null) return null;
+  const t = Date.parse(raw);
+  return Number.isNaN(t) ? null : t;
+}
+
+function byLastReadDesc(a: EngineMessage, b: EngineMessage): number {
+  const ta = readTimeOf(a);
+  const tb = readTimeOf(b);
+  if (ta === null || tb === null) {
+    // Not both known: a stamped row always outranks an unstamped one. Both unstamped falls
+    // through to the date order they had before this field existed.
+    if (ta !== tb) return ta === null ? 1 : -1;
+    return byDateDesc(a, b);
+  }
+  if (ta !== tb) return tb - ta;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+}
+
 export function ohboxView(reader: EntityReader): OhboxView {
   const all = messagesIn(reader, FOLDER_OF_VIEW.ohbox);
   return {
+    // Unread mail is ordered by ARRIVAL, unchanged: nothing has been read, so there is no reading
+    // order to use and the question the group answers is what came in.
     newForYou: all.filter((m) => m.unread),
-    previouslySeen: all.filter((m) => !m.unread),
+    previouslySeen: all.filter((m) => !m.unread).sort(byLastReadDesc),
   };
 }
 

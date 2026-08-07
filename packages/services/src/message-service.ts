@@ -301,8 +301,15 @@ export class MessageService {
       let last: bigint | null = null;
 
       if (body.unread !== undefined) {
-        await tx.update(messages).set({ unread: body.unread, updatedAt: ctx.now() })
-          .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
+        await tx.update(messages).set({
+          unread: body.unread,
+          // WHEN reading happened, stamped by the statement that decides THAT it happened.
+          // Marking unread clears it: the message has no reading to be ordered by any more, and
+          // leaving the old instant behind would file a message the user deliberately put back
+          // into "Earlier" as recently finished with. See `messages.lastReadAt`.
+          lastReadAt: body.unread ? null : ctx.now(),
+          updatedAt: ctx.now(),
+        }).where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
         // The read model AND the intent, in the same transaction. Writing only `messages.unread`
         // was the original bug: the flag never reached the mailbox, so it survived nothing.
         await this.upsertDesiredSeen(tx, id, !msg.unread, !body.unread, ctx.now());
@@ -390,8 +397,13 @@ export class MessageService {
       const observedById = new Map(owned.map((m) => [m.id, !m.unread]));
 
       let last: bigint | null = null;
+      // ONE instant for the whole batch, read once HERE rather than per row inside the loop. A
+      // selection marked read in a single gesture is one reading event, so its members must not
+      // spread themselves across the order by however long the transaction took: they tie, and
+      // the sort's own id tiebreak keeps them in a stable order among themselves.
+      const readAt = unread ? null : ctx.now();
       for (const id of ids) {
-        await tx.update(messages).set({ unread, updatedAt: ctx.now() })
+        await tx.update(messages).set({ unread, lastReadAt: readAt, updatedAt: ctx.now() })
           .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
         await this.upsertDesiredSeen(tx, id, observedById.get(id) ?? false, !unread, ctx.now());
         last = await recordChange(tx, {

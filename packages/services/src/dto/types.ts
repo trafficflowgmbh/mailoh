@@ -84,6 +84,20 @@ export interface MessageDTO {
   folder: Folder;
   snippet: string;
   unread: boolean;
+  /**
+   * WHEN THIS MESSAGE STOPPED BEING UNREAD, or `null` if that is not known.
+   *
+   * The order the client's "Earlier" group is sorted by — reading history, ordered by reading,
+   * rather than by the order the senders happened to send. `null` covers two rows that cannot be
+   * told apart and do not need to be: never read, and read before the field existed. Both sort
+   * below every stamped row.
+   *
+   * Projected on EVERY message the API emits — list, single, delta and snapshot alike — because
+   * there is one projection and the sort has to work on a mirror built from any of them. A client
+   * that predates the field ignores it; a client newer than the server reads `undefined` and
+   * treats it exactly like `null`, so neither side has to deploy first.
+   */
+  lastReadAt: ISODateTime | null;
   hasAttachments: boolean;
   attachmentCount: number;
   sensitivity: SensitivityFlags;

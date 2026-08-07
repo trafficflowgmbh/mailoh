@@ -71,6 +71,7 @@ export function OhboxView({
   onSelect,
   onEnterReader,
   onMarkSeen,
+  readerId,
   doorbellInitials,
   doorbellHues,
   doorbellCount,
@@ -100,6 +101,20 @@ export function OhboxView({
   onEnterReader: (messageId: string) => void;
   /** The shell's `mark_seen` mutation — the one read-state writer. */
   onMarkSeen: (ids: string[], unread: boolean) => void;
+  /**
+   * WHICH MESSAGE THE READER SHEET IS SHOWING, or `null` when it is closed.
+   *
+   * This view does not open the sheet and does not read it for anything it renders. It needs the
+   * value for ONE reason: closing the sheet is one of the four ways of LEAVING a message, and
+   * leaving is what commits reading (see the commit below). The sheet belongs to the shell, so
+   * the only way for this view to notice it closing is to be told.
+   *
+   * REQUIRED, with no default, for the reason `settled` and `older` have none: the safe-looking
+   * default is `null`, which reads as "the sheet is never open" — and a mobile reader would then
+   * mark nothing read on close, silently, in exactly the surface where closing the sheet is the
+   * only way to leave a message at all.
+   */
+  readerId: string | null;
   doorbellInitials: string[];
   /** Per-sender tint hues for the doorbell stack, index-aligned with `doorbellInitials`. */
   doorbellHues?: number[];
@@ -271,6 +286,81 @@ export function OhboxView({
   markSeenRef.current = onMarkSeen;
 
   /**
+   * THE MESSAGE `u` JUST PUT BACK TO UNREAD, and why nothing here may undo it.
+   *
+   * Pressing `u` on the row under the cursor marks it unread — and in the split pane the cursor
+   * is still on it, so the dwell below arms and the commit further down would mark it read again.
+   * The mutation fires, the server agrees, and the user's explicit act is reverted by a heuristic
+   * while they watch. That is not subtle; it makes `u` useless in the one view whose keyboard map
+   * advertises it, and the `?` overlay would be documenting a key that does not do what it says.
+   *
+   * An explicit "unread" therefore pins the message until the cursor MOVES. A ref rather than
+   * state: it must be readable in the same commit by code that runs outside a render, and it
+   * should not cause a render of its own.
+   *
+   * KEYED TO `dwellOn`, NOT to `selected`, so that the pin and the machinery it blocks agree on
+   * what "the cursor" means — `selected` also moves when the list re-partitions underneath the
+   * user, which is not a cursor move and must not release a pin. The release itself is an effect
+   * further down, where `dwellOn` exists; the ref is declared HERE because the commit below reads
+   * it and a forward reference into a later `const` is exactly the kind of ordering dependency
+   * this file has already been bitten by once.
+   */
+  const pinnedUnread = useRef<string | null>(null);
+
+  /**
+   * ═══ READING IS COMMITTED ON THE WAY OUT, NOT ON THE WAY IN ═══════════════════════════════
+   *
+   * The message a reader is looking at RIGHT NOW keeps its dot and keeps its place in "New for
+   * you". That is not a delay for its own sake — it is what makes the list stable to read from.
+   * Committing on arrival re-partitions the list under the cursor at the moment attention is on
+   * it: the row you just opened jumps from one group to the other, everything below it slides up,
+   * and the "New" count drops while you are still reading the thing it was counting.
+   *
+   * So arrival ARMS and departure COMMITS. This ref holds the one message that has been read but
+   * not yet left — written by the dwell when its two seconds elapse, and by an explicit open —
+   * and it is spent by {@link commitPendingRead} at each of the four ways out.
+   *
+   * A ref rather than state, for the same two reasons `pinnedUnread` is one: the commit paths run
+   * outside React's render (a timer, a document event, an unmount cleanup) and must see the value
+   * as it is at that instant, and arming must not cost a render of the list it is trying not to
+   * disturb.
+   *
+   * At most ONE message is ever owed. Reading is a cursor, not a set: arriving somewhere new is
+   * itself a departure from the last place, so the previous debt is settled before a new one is
+   * taken on and this can never become a queue that a reload would drop.
+   */
+  const pendingRead = useRef<string | null>(null);
+
+  /**
+   * SPEND THE DEBT — and re-judge it at the moment of spending, never at the moment of arming.
+   *
+   * The world moves between arming and leaving: the message can be filed or moved out of the
+   * Ohbox, another device or a `⇧I` can already have marked it read, or `u` can have pinned it
+   * unread on purpose. All three are checked HERE, against the list as it is now, because a check
+   * performed when the debt was taken on would be answering a question about a mailbox that no
+   * longer exists.
+   *
+   * It clears the ref FIRST and unconditionally. Two of the four departure triggers can fire in
+   * the same tick (closing the reader on a phone unmounts nothing, but leaving the view while a
+   * sheet is up closes both), and a debt spent twice is two `mark_seen` dispatches for one
+   * reading — one request too many, and on a slow network a visible flicker as the second answer
+   * lands. Idempotent by construction rather than by the writer being asked to de-duplicate.
+   *
+   * Reads ONLY refs, so it is safe to call from a cleanup with an empty dependency array and from
+   * a `pagehide` listener registered once. That is deliberate: a callback with dependencies would
+   * make the unmount commit depend on the last render having the right closure, which is exactly
+   * the class of bug the dwell's own dependency array was rewritten to remove.
+   */
+  const commitPendingRead = useCallback(() => {
+    const id = pendingRead.current;
+    pendingRead.current = null;
+    if (id == null) return;
+    if (pinnedUnread.current === id) return;
+    if (!allRef.current.find((m) => m.id === id)?.unread) return;
+    markSeenRef.current([id], false);
+  }, []);
+
+  /**
    * THE CURSOR THE USER PUT HERE — and the only value in this file that can arm the dwell.
    *
    * `selectedId` cannot answer this question, and that is what shipped the runaway. It
@@ -290,11 +380,19 @@ export function OhboxView({
    */
   const [dwellOn, setDwellOn] = useState<string | null>(null);
 
-  /** Move the cursor because the USER moved it — j, k, and a click on an unselected row. */
+  /**
+   * Move the cursor because the USER moved it — j, k, and a click on an unselected row.
+   *
+   * DEPARTURE #1 of four. Landing on a different message is leaving the one before it, and it is
+   * the trigger that fires in ordinary use: read something, press j, and the row you were on
+   * moves to "Earlier" as you go. A move onto the SAME id is not a departure and settles nothing,
+   * which is why the debt is spent only when the ids differ.
+   */
   const selectByUser = useCallback((id: string) => {
+    if (pendingRead.current !== id) commitPendingRead();
     setDwellOn(id);
     onSelect(id);
-  }, [onSelect]);
+  }, [onSelect, commitPendingRead]);
 
   /**
    * Opening a message IS reading it — Enter, a second click on the selected row, mobile tap.
@@ -312,40 +410,35 @@ export function OhboxView({
    * `selectedOhbox`, swapped to a message the user had not opened — which from the outside
    * looks like the view deciding to load the latest mail on its own.
    *
-   * And an open SUPERSEDES a dwell: the commit has already happened, so the timer armed by
-   * whichever click selected this row has nothing left to do.
+   * And an open SUPERSEDES a dwell: reading is established the moment the message is opened, so
+   * the timer armed by whichever click selected this row has nothing left to decide.
+   *
+   * WHAT IT DOES NOT DO IS DISPATCH. Opening ARMS the read; leaving commits it. An open that
+   * marked the message read on the spot would re-partition the list under the reader at the exact
+   * moment they turned their attention to the message — the row leaving "New for you" while it is
+   * the thing being looked at. So this records the debt and the four departure paths spend it.
+   * The message keeps its dot and its place for as long as it is the one on screen.
    */
   const open = useCallback((m: EngineMessage) => {
     setDwellOn(null);
     onSelect(m.id);
-    if (m.unread) onMarkSeen([m.id], false);
+    if (m.unread) {
+      if (pendingRead.current !== m.id) commitPendingRead();
+      pendingRead.current = m.id;
+    }
     onEnterReader(m.id);
-  }, [onSelect, onMarkSeen, onEnterReader]);
+  }, [onSelect, onEnterReader, commitPendingRead]);
 
   /**
-   * THE MESSAGE `u` JUST PUT BACK TO UNREAD, and why the dwell must not undo it.
-   *
-   * Pressing `u` on the row under the cursor marks it unread — and in the split pane the
-   * cursor is still on it, so the 2 s dwell below arms and marks it read again two seconds
-   * later. The mutation fires, the server agrees, and the user's explicit act is reverted
-   * by a heuristic while they watch. That is not a subtle bug; it makes `u` useless in the
-   * one view whose keyboard map advertises it, and the `?` overlay would be documenting a
-   * key that does not do what it says.
-   *
-   * An explicit "unread" therefore pins the message until the cursor MOVES. A ref rather
-   * than state: it must be readable by the dwell effect in the same commit, and it should
-   * not cause a render of its own.
-   *
-   * KEYED TO `dwellOn`, NOT to `selected`, so that the pin and the timer it exists to block
-   * agree on what "the cursor" means — `selected` also moves when the list re-partitions
-   * underneath the user, which is not a cursor move and must not release a pin.
+   * RELEASE THE `u` PIN WHEN THE CURSOR MOVES — the second half of `pinnedUnread`, declared
+   * above with the argument for it. It lives here because `dwellOn` is what "the cursor" means
+   * and `dwellOn` does not exist further up.
    *
    * NO GUARD BELOW FAILS IF THIS IS PUT BACK TO `selected?.id`, and that is stated rather
    * than hidden: with `dwellOn` set, `onSelect` has set the shell's `ohboxSel` to the same
-   * id, so the two only diverge once the message leaves the Ohbox — and the dwell's
+   * id, so the two only diverge once the message leaves the Ohbox — and the commit's
    * fire-time re-read already drops that case. This is coherence, not a fixed bug.
    */
-  const pinnedUnread = useRef<string | null>(null);
   useEffect(() => {
     if (pinnedUnread.current && pinnedUnread.current !== dwellOn) pinnedUnread.current = null;
   }, [dwellOn]);
@@ -364,19 +457,30 @@ export function OhboxView({
    *
    * ── THE PIN IS THE WHOLE REASON THESE ARE NOT `onMarkSeen` AT THE CALL SITE ────────────
    *
-   * Marking unread inside the dwell window arms nothing new, but the timer that was already
-   * ticking would fire two seconds later and mark it read again — the message would silently
-   * un-unread itself. `pinnedUnread` is what the dwell checks when it fires. So an explicit
-   * unread SURVIVES the next open, which is the behaviour that was asked for, and it survives
-   * it because of this ref rather than because of anything the dwell does differently.
+   * Marking unread inside the dwell window arms nothing new, but the debt that was already
+   * recorded would be spent on the way out and mark it read again — the message would silently
+   * un-unread itself one keypress later. So `u` does BOTH halves: it sets the pin the commit
+   * checks, and it tears up the debt outright.
+   *
+   * TWO MECHANISMS FOR ONE OUTCOME, AND BOTH ARE LOAD-BEARING. Cancelling the debt is what makes
+   * `u` survive the very next departure; the pin is what makes it survive a departure that
+   * happens some other way — a second open, a re-entry into the same row. Neither alone covers
+   * both, and an explicit unread that a heuristic can undo is not an explicit unread.
+   *
+   * The debt is cancelled only when it is THIS message's. `u` acts on the row under the cursor;
+   * if some other message is still owed a commit, that reading really did happen and the pin
+   * here says nothing about it.
    */
   const markUnread = useCallback((m: EngineMessage) => {
     pinnedUnread.current = m.id;
+    if (pendingRead.current === m.id) pendingRead.current = null;
     onMarkSeen([m.id], true);
   }, [onMarkSeen]);
 
   const markRead = useCallback((m: EngineMessage) => {
-    // Reading it is consent for the dwell to have been right, so the pin is released.
+    // Reading it is consent for the dwell to have been right, so the pin is released. The debt
+    // is left alone rather than cleared: the commit re-reads the list when it fires and will find
+    // this message already read, so it spends the debt on nothing. One place decides that.
     pinnedUnread.current = null;
     onMarkSeen([m.id], false);
   }, [onMarkSeen]);
@@ -405,11 +509,19 @@ export function OhboxView({
    * reach the end of its own clock. The current list is read through `allRef` instead, at the
    * two moments that need it.
    *
-   * THE TARGET IS FROZEN AT ARM TIME. It commits the id the user was standing on, never
+   * THE TARGET IS FROZEN AT ARM TIME. It records the id the user was standing on, never
    * "whatever is selected now", so a list that reorders mid-dwell cannot redirect the write
-   * onto a message nobody looked at. The fire-time re-read covers the three ways the world
-   * can have moved on: the message left the Ohbox (filed, moved), it is already read (an
-   * open, a `⇧U`, another device), or `u` has pinned it since.
+   * onto a message nobody looked at.
+   *
+   * ── AND IT DISPATCHES NOTHING. IT RECORDS A DEBT ──────────────────────────────────────
+   *
+   * The timer used to call the writer directly, which meant two seconds of stillness re-sorted
+   * the list under the reader's eyes: the row moved out of "New for you" while it was the one
+   * being read, the count dropped, and everything below it slid up. The dwell's judgement is
+   * still exactly the same — this is the moment the product decides reading has happened — but
+   * the CONSEQUENCE is deferred to the moment the reader leaves. So the fire-time re-read moves
+   * with it, into {@link commitPendingRead}, where it can answer the same three questions
+   * (still here, still unread, not pinned) against a list that is one departure newer.
    *
    * Split pane only. On mobile there is no reading column beside the list, so a selection shows
    * nothing and dwelling on it means nothing; there, only `open` counts.
@@ -422,12 +534,81 @@ export function OhboxView({
     if (typeof window === "undefined" || !window.matchMedia) return;
     if (window.matchMedia("(max-width: 900px)").matches) return;
     const timer = window.setTimeout(() => {
-      if (pinnedUnread.current === id) return;
-      if (!allRef.current.find((m) => m.id === id)?.unread) return;
-      markSeenRef.current([id], false);
+      pendingRead.current = id;
     }, DWELL_MS);
     return () => window.clearTimeout(timer);
   }, [dwellOn]);
+
+  /**
+   * ═══ DEPARTURES #2, #3 AND #4 ═════════════════════════════════════════════════════════════
+   *
+   * #1 is the cursor moving, and it lives in `selectByUser` because that is where a cursor move
+   * happens. The other three are things that happen TO this view rather than in it, so they are
+   * effects.
+   */
+
+  /**
+   * #2 — THE VIEW GOES AWAY. Switching to Reads, Receipts, the Screener or Settings unmounts this
+   * component (the shell renders exactly one view), and leaving the Ohbox is unambiguously
+   * leaving the message that was open in it. Without this, walking away by clicking a rail item
+   * would be the one exit that silently forgot the reading.
+   *
+   * THE EFFECT BODY IS EMPTY AND THE CLEANUP IS THE WHOLE OF IT, which only works because
+   * {@link commitPendingRead} has a stable identity — it reads nothing but refs and is memoised on
+   * nothing. A cleanup re-runs whenever a dependency changes, so a commit function that was
+   * rebuilt each render would fire this on ordinary re-renders and mark mail read mid-session,
+   * with no departure anywhere in sight.
+   */
+  useEffect(() => commitPendingRead, [commitPendingRead]);
+
+  /**
+   * #3 — THE READER SHEET CLOSES, AND ONLY WHERE THE SHEET WAS THE READING.
+   *
+   * Below 900px there is no reading column: the sheet IS how a message is read, so dismissing it
+   * is leaving the message, and on a phone it is usually the ONLY departure that happens — a
+   * reader taps a message, reads it, taps back, and never moves the cursor at all.
+   *
+   * At a split width it is not a departure and must not be treated as one. The column beside the
+   * list goes on showing the same message after the sheet closes, so committing there would mark
+   * mail read while the reader is still looking at it — the very thing this whole mechanism was
+   * built to stop, arriving through the one path that looks like an exit and is not.
+   *
+   * The width question is asked with the SAME query the dwell asks, at the moment the sheet
+   * closes rather than at the moment it opened: a device rotated or a window resized mid-read
+   * should be judged by where the reading actually ended.
+   */
+  const prevReaderId = useRef<string | null>(readerId);
+  useEffect(() => {
+    const closed = prevReaderId.current !== null && readerId === null;
+    prevReaderId.current = readerId;
+    if (!closed) return;
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    if (!window.matchMedia("(max-width: 900px)").matches) return;
+    commitPendingRead();
+  }, [readerId, commitPendingRead]);
+
+  /**
+   * #4 — THE TAB GOES AWAY. `pagehide` is the last event a page reliably gets on a close, a
+   * navigation away, or being frozen into the back/forward cache, and it fires in cases
+   * `beforeunload` does not — notably on mobile, which is where a reader is most likely to leave
+   * without ever moving the cursor.
+   *
+   * IT DISPATCHES THE ORDINARY MUTATION, not a beacon. A side-channel request would leave the
+   * client's own idempotency key and optimistic overlay behind, so the write would arrive by a
+   * route no other read-state write takes and could not be de-duplicated against the one the user
+   * might make from another device a second later. One writer, one path.
+   *
+   * The cost is stated rather than hidden: a tab killed hard enough that no listener runs loses
+   * the pending commit. That is the direction to fail in — the message stays unread and is
+   * presented as new next time, which is a second chance to read it rather than mail silently
+   * marked read on the strength of a session nobody finished.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onLeave = () => commitPendingRead();
+    window.addEventListener("pagehide", onLeave);
+    return () => window.removeEventListener("pagehide", onLeave);
+  }, [commitPendingRead]);
 
   /**
    * The Ohbox's keys, DECLARED.

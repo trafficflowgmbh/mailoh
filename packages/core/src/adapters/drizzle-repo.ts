@@ -1262,7 +1262,23 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
     const changed = row.unread !== !seen;
     if (changed) {
-      await this.db.update(messages).set({ unread: !seen, updatedAt: new Date() })
+      /**
+       * THE READ ORDER GETS THE OBSERVATION TIME, AND THAT IS THE HONEST ANSWER AVAILABLE.
+       *
+       * This branch adopts a `\Seen` the mail server reports — someone read the message in
+       * another client. The instant they read it is not on the wire: IMAP carries the flag, not
+       * when it was set. So what is stamped is when WE first saw it, which is the reconcile pass
+       * that noticed, and which can lag the real reading by up to a sync cycle.
+       *
+       * That is accepted rather than worked around, because the alternative is worse in the
+       * direction that matters. Leaving the column NULL would file mail read minutes ago in
+       * another client BELOW everything read here — under the rule that unstamped rows sort last
+       * — which is a bigger error than a stamp that is a few minutes late. Within one sync cycle
+       * the two orderings agree; across one, a message read elsewhere appears at the moment this
+       * client learned about it, which is also the moment it stopped being bold on screen.
+       */
+      await this.db.update(messages)
+        .set({ unread: !seen, lastReadAt: seen ? new Date() : null, updatedAt: new Date() })
         .where(eq(messages.id, row.id));
     }
     // The flag row is written either way: an unchanged value still RECORDS that the server has

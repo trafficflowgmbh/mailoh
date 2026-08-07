@@ -483,8 +483,30 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // of the migration moves nothing — the safe direction. Deploy order: migration → API (and worker).
   //
   // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker: read off a row
-  // fetched by primary key, never filtered on. It is the NEWEST entry in the mail journal.
+  // fetched by primary key, never filtered on. It was the NEWEST entry in the mail journal until
+  // 0047 added the read-order column below.
   ["account_settings", "screener_auto_apply_at"],
+  // mail 0047_read_order — WHEN a message stopped being unread, which is what the client's
+  // "Earlier" group is sorted by. One additive nullable column on `messages`.
+  //
+  // It is the STRONGEST whole-row-select case on this list, and that is why a column whose only
+  // consumer is a client-side sort is here at all. `messages` is projected through
+  // `select().from(messages)`, so drizzle enumerates every column this schema knows about on the
+  // message list, the single read, the delta feed and the bootstrap snapshot alike. An API
+  // deployed ahead of this migration therefore answers Postgres 42703 on the ENTIRE read surface —
+  // every view empty, every sync drain failing — from a column no view actually reads. Every other
+  // whole-row entry above takes out one panel; this one takes out the mail.
+  //
+  // No worker half: nothing in the sync worker reads or writes it. The flag adoption that stamps
+  // it on an externally-set `\Seen` runs in the same process as the API's own writers, through the
+  // same schema. Deploy order: migration → API.
+  //
+  // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker — deliberately,
+  // and stated here rather than left to be inferred. Nothing filters or pages on the column: the
+  // sort runs on the client over the window it already holds, and the server's keyset stays
+  // `(date, id)`. A permanent index maintained by every read of every message, serving no query,
+  // is a write cost with no reader. It is the NEWEST entry in the mail journal.
+  ["messages", "last_read_at"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -781,8 +803,16 @@ export const MAIL_EXPECTED_MARKERS =
  * `drafts` markers there IS a worker half — the auto-apply pass probes the column each cycle — but
  * that read degrades to OFF on 42703, so the worker never blocks on it; the order is still
  * migration → API (and worker).
+ *
+ * `0047_read_order` is probed ONCE, by `messages.last_read_at`, and it is the first `messages`
+ * column on this list since 0028. The whole-row-select argument every `account_settings` entry
+ * above makes is the same argument, one order of magnitude larger: `messages` is the table every
+ * read surface projects, so an API ahead of this migration 42703s the message list, the single
+ * read, the delta feed and the snapshot — not a panel, the mail. No CHECK marker (a timestamp
+ * closes no set) and no INDEX marker, because nothing filters or pages on the column; the sort it
+ * feeds runs on the client. No worker half, so the order is migration → API.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0046_screener_auto_apply";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0047_read_order";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

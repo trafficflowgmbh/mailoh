@@ -688,7 +688,7 @@
     "manyMailboxes": "{address} and {others} more — {synced}.",
     "syncedAt": "last synced {when}",
     "neverSynced": "not synced yet",
-    "build": "Build {build}."
+    "build": "{version} · build {build}."
   },
   "reader": {
     "hint": "to return"

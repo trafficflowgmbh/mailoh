@@ -2791,6 +2791,14 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                    It is `enterReader` and no longer `setReaderFor` — see the gate above. */
                 onEnterReader={enterReader}
                 onMarkSeen={markSeen}
+                /* WHICH MESSAGE THE SHEET IS SHOWING, so the view can tell when it CLOSES.
+                   Reading is committed on the way out of a message, and at a width with no
+                   reading column dismissing the sheet is the way out — often the only one, since
+                   a phone reader taps in, reads, and taps back without ever moving the cursor.
+                   The view owns that decision, including the width test that makes a desktop
+                   sheet-close not a departure; the shell owns the sheet, so the state has to
+                   travel. Nothing else in the view reads it. */
+                readerId={readerFor}
                 doorbellInitials={waitingLive.map((w) => w.initial)}
                 doorbellHues={waitingLive.map((w) => avatarHue(w.from.address))}
                 doorbellCount={screener.waitingCount}

@@ -337,10 +337,15 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       const targets = m.messageIds
         ? feed.filter((msg) => m.messageIds!.includes(msg.id))
         : feed.filter((msg) => msg.unread);
+      // `lastReadAt` beside `unread`, exactly as the server writes it. The overlay is not
+      // decoration here: the Ohbox sorts its read group by this field, so an optimistic flip that
+      // left it alone would move the row into "Earlier" at the BOTTOM of the list and then jump it
+      // to the top when the server's answer landed. One visible reorder per read, from the client
+      // and the server disagreeing about a field only one of them was writing.
       const effects: MutationEffect[] = targets.map((msg) => ({
         type: "message",
         id: msg.id,
-        entity: { ...msg, unread: false, updatedAt: iso },
+        entity: { ...msg, unread: false, lastReadAt: iso, updatedAt: iso },
       }));
       const newest = [...feed].sort((a, b) => Date.parse(b.date ?? "0") - Date.parse(a.date ?? "0"))[0];
       const afterId = m.upToId ?? newest?.id;
@@ -367,11 +372,22 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       // An id the mirror does not know is dropped (there is no entity to produce), so a
       // selection of entirely unknown ids yields [] and the engine reports it as a rejection
       // rather than pretending to have applied something.
+      //
+      // `lastReadAt` travels with the flag in BOTH directions, and the second one is the half
+      // worth stating: marking unread clears it, because a message the user deliberately put back
+      // has no reading to be ordered by. Keeping the old instant would leave it stamped as
+      // recently finished with, and it would file itself at the top of "Earlier" the moment
+      // anything marked it read again. The server's own writer does exactly this, so the overlay
+      // and the answer that replaces it agree.
       const effects: MutationEffect[] = [];
       for (const id of m.messageIds) {
         const msg = reader.get<EngineMessage>("message", id);
         if (!msg) continue;
-        effects.push({ type: "message", id, entity: { ...msg, unread: m.unread, updatedAt: iso } });
+        effects.push({
+          type: "message",
+          id,
+          entity: { ...msg, unread: m.unread, lastReadAt: m.unread ? null : iso, updatedAt: iso },
+        });
       }
       return effects;
     }

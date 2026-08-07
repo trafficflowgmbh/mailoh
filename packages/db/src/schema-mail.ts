@@ -295,6 +295,23 @@ export const messages = pgTable("messages", {
   // ── API display fields + threading (materialized into MessageDTO) ──
   threadId: uuid("thread_id").references(() => threads.id),
   unread: boolean("unread").notNull().default(true),
+  /**
+   * WHEN THIS MESSAGE STOPPED BEING UNREAD — the order "Earlier" is sorted by (mail 0047).
+   *
+   * Written by the same statement that flips {@link unread}: an instant when the flag goes false,
+   * NULL when it goes back to true. It is a record OF that flag and never the source of it, so
+   * dropping the column costs the reading order and nothing else.
+   *
+   * **NULL means "not known", and it must sort BELOW every stamped row rather than being folded in
+   * by date.** Two different rows carry NULL — one read before this column existed, and one never
+   * read at all — and neither has an honest answer. There is no backfill for the same reason:
+   * substituting `updated_at` or `date` would hand the reader a manufactured order they cannot
+   * tell from a real one.
+   *
+   * Nothing filters or pages on it, so it has no index; the sort happens on the client over the
+   * window it already holds, and the server's keyset stays `(date, id)`.
+   */
+  lastReadAt: timestamp("last_read_at", { withTimezone: true }),
   snippet: text("snippet").notNull().default(""),          // sensitivity-redacted preview (never an OTP)
   toAddresses: jsonb("to_addresses").notNull().default(sql`'[]'::jsonb`),   // EmailAddress[]
   ccAddresses: jsonb("cc_addresses").notNull().default(sql`'[]'::jsonb`),   // EmailAddress[]

@@ -330,6 +330,13 @@
       "when": 1788209686206,
       "tag": "0046_screener_auto_apply",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1788296086206,
+      "tag": "0047_read_order",
+      "breakpoints": true
     }
   ]
 }
