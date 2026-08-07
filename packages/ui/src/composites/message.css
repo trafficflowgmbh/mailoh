@@ -3,7 +3,43 @@
   min-width:0;min-height:0;overflow-y:auto;padding-bottom:132px;
   background:var(--panel);border-radius:20px;box-shadow:var(--lift-1);
 }
-.msg{max-width:640px;width:100%;margin:0 auto;padding:26px 34px 48px}
+/* THE MESSAGE, AND THE TWO THINGS IT PUBLISHES TO ITS OWN PARTS.
+ *
+ * ── `--msg-measure`: THE MAIL MEASURE, AS A LENGTH THAT CAN BE SHARED ──────────────────
+ *
+ * The body is set to a reading measure and the action bar has to agree with it, or the row of
+ * verbs is a different width from the text it acts on and the message has two left-to-right
+ * rhythms. The measure cannot simply be written twice as `68ch`: `ch` is the advance of "0" in
+ * the CURRENT font, and the bar's font is 11.5px against the body's 14.5px, so the same two
+ * characters would resolve to two different widths — which is exactly the bug it looks like it
+ * is preventing. A custom property does not help by itself either, because a `ch` inside one is
+ * substituted as text and resolved at the element that USES it.
+ *
+ * So it is a px length, and the number is a MEASUREMENT rather than a round figure: 68ch
+ * rendered at 14.5px in this app's stack (`-apple-system` → San Francisco on macOS) is 621.06px,
+ * read off the built page in Chrome. Re-measure it if the body's size or the font stack changes;
+ * it is not a value to nudge by eye.
+ *
+ * **It does not bind at any width the product ships today, and that is stated rather than left
+ * to be discovered.** `.msg` is capped at 640px and pads 34px a side, so the content box is
+ * 572px — under the measure — and both the body and the bar are simply that wide. What this
+ * token buys is that they cannot DIVERGE: a wider reading column, here or in some later layout,
+ * widens both together or neither, instead of letting the bar run out to a column width while
+ * the text stops at its measure.
+ *
+ * ── `--msg-paper`: WHAT THIS MESSAGE IS PRINTED ON ────────────────────────────────────────
+ *
+ * The action bar is sticky now, so it has to be OPAQUE — a translucent strip with the mail
+ * sliding under it is unreadable in both directions. `background: inherit` cannot do it (this
+ * element is transparent and the colour belongs to the column behind it), so each surface names
+ * its own paper: the reading column's panel here, the reader overlay's float in `reader.css`.
+ * One variable, two answers, and the bar reads whichever it is standing on.
+ */
+.msg{
+  --msg-measure:621px;
+  --msg-paper:var(--panel);
+  max-width:640px;width:100%;margin:0 auto;padding:26px 34px 48px;
+}
 .msg-from{display:flex;align-items:center;gap:9px;font-size:12.5px}
 .msg-from b{font-weight:600}
 .msg-from small{color:var(--ink3);font-size:12px}
@@ -25,7 +61,7 @@
    the panel scrolls sideways at 390px. `pre-line` stays — single newlines inside a paragraph are
    the sender's line breaks and mail still means them — and the measure opens from 60ch to 68ch
    now that paragraphs, rather than one wall of text, carry the rhythm. */
-.msg-body{font-size:14.5px;line-height:1.72;color:var(--ink);white-space:pre-line;max-width:68ch;margin:0;overflow-wrap:anywhere}
+.msg-body{font-size:14.5px;line-height:1.72;color:var(--ink);white-space:pre-line;max-width:var(--msg-measure);margin:0;overflow-wrap:anywhere}
 /* The paragraphs `BodyText` emits — deliberately NOT scoped under `.msg-body`, because the same
    component renders the conversation siblings inside `.hm-body`, whose rules live in the app's
    own stylesheet. One class, one rhythm, wherever a mail body is rendered.
@@ -48,7 +84,54 @@
   transition:transform .15s var(--swift), box-shadow .2s var(--swift)}
 .attach:hover{transform:translateY(-1px);box-shadow:var(--lift-2)}
 .attach small{color:var(--ink3)}
-.msg-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:34px}
+/* ═══ THE ACTION BAR IS DOCKED, NOT PARKED AT THE END OF THE MAIL ═══════════════════════
+ *
+ * Reply, the read switch and the rest used to sit after the last paragraph, so on anything
+ * longer than a screen they were somewhere below the fold: reading a message and then answering
+ * it meant scrolling to the bottom to find the verb. The verbs are about the message as a whole,
+ * not about its ending, so they belong in view for as long as the message is.
+ *
+ * `sticky` and NOT `fixed`, and that is the decision the rest of this rule follows from. Fixed
+ * would take the bar out of flow and pin it to the VIEWPORT — which is the wrong box in both
+ * places this anatomy renders: in the split layout the bar would sit across the message list as
+ * well as the reading column, and in the reader overlay it would leave the floating card and
+ * hang over the page behind it. Sticky pins to the nearest scroller and stays inside `.msg`, so
+ * one rule is correct in the column, in the overlay, and at every width, with no second
+ * implementation and no media query deciding which one is in force.
+ *
+ * IT MUST BE OPAQUE, because mail scrolls underneath it — hence `--msg-paper` (see `.msg`) and
+ * the inset hairline, which is the one mark that says "this strip is in front of the text"
+ * without drawing a box around it.
+ *
+ * THE 34px GAP IS NOW PADDING, INSIDE THE BOX. It used to be `margin-top`, which is transparent:
+ * a pinned bar with a margin above it shows a 34px window of the mail sliding past between the
+ * hairline and the buttons. Padding belongs to the bar, travels with it, and is painted.
+ * 14px rather than 34px, because a docked strip is a toolbar and takes a toolbar's rhythm; the
+ * full 34px comes back below, in the one state where the bar is the end of the article again.
+ */
+.msg-actions{
+  display:flex;flex-wrap:wrap;gap:7px;
+  position:sticky;bottom:0;z-index:1;
+  max-width:var(--msg-measure);
+  margin:0;padding:14px 0 12px;
+  background:var(--msg-paper);
+  box-shadow:inset 0 1px 0 var(--hair-soft);
+}
+/* THE REPLY EDITOR IS OPEN: THE BAR STANDS DOWN.
+ *
+ * The editor renders after the bar and carries its own Send row, so a bar pinned to the bottom
+ * would float over the control the user is reaching for — the one place a docked toolbar is
+ * plainly wrong. While a reply is open the message is not being read, it is being answered, so
+ * the bar returns to the flow at its natural position above the editor and gives back the 34px
+ * that separates it from the mail. `:has()` because the state lives in a sibling further down
+ * the tree; there is no class on `.msg` to key off, and adding one would put the same fact in
+ * two places. */
+.msg:has(.reply) .msg-actions{
+  position:static;
+  background:none;
+  box-shadow:none;
+  padding:34px 0 0;
+}
 /* the small open-reader affordance in the from-line */
 .msg-open{width:26px;height:26px;display:grid;place-items:center;border-radius:99px;color:var(--ink2);
   border:0;cursor:pointer;background:none;

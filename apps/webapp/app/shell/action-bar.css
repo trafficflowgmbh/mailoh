@@ -74,6 +74,11 @@
   container-type: inline-size;
   container-name: abar;
   width: 100%;
+  /* The anchor for the disclosure menu. `container-type` already makes this a containing block
+     for positioned descendants, but relying on that would make the menu's placement depend on a
+     side effect of containment rather than on something this file says. Stated, so removing the
+     container query would not silently move a menu into the page. */
+  position: relative;
 }
 
 .abar-row {
@@ -241,6 +246,61 @@
   opacity: .55;
 }
 
+/* ── THE DISCLOSURE MENU ──────────────────────────────────────────────────────────────────
+ *
+ * UPWARD and RIGHT-ALIGNED, and both are consequences of where the bar is rather than taste.
+ * The bar is docked at the bottom of the reading area, so a menu opening downward would leave
+ * the column on its first item; and the button that opens it is the last control in the row, so
+ * `right: 0` on the bar is that button's right edge. The menu therefore grows back across the
+ * bar it belongs to instead of out into the mail.
+ *
+ * `absolute` inside `.abar`, which is the container the density queries below ask about — that
+ * is what lets one set of breakpoints decide both "this group stands in the row" and "this item
+ * is in the menu". See `MoreMenu.tsx`.
+ */
+.mmenu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 2;
+  min-width: 172px;
+  max-width: min(240px, 100%);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: var(--float);
+  box-shadow: var(--lift-3);
+  animation: mmenu-rise .16s var(--swift);
+}
+@keyframes mmenu-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.mm-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.5;
+  color: var(--ink);
+  text-align: left;
+  white-space: nowrap;
+  border-radius: 9px;
+}
+.mm-item:hover { background: var(--tint); }
+/* The roving focus is the menu's only cursor, so it has to be visible — a menu you can move
+   through and cannot see your position in is worse than no keyboard support. */
+.mm-item:focus-visible { background: var(--tint); outline: none; }
+
 /* ── ONE BORROWED RULE, NARROWED RATHER THAN REVERSED ─────────────────────────────────
  *
  * `packages/ui/src/composites/reader.css:17-18` rests the reader's action bar at
@@ -253,43 +313,77 @@
  *
  * Restored only where hover does not exist. The desktop exhale is deliberately untouched —
  * this narrows the rule to the devices its own mechanism works on, it does not overrule it.
+ *
+ * The selector follows the rule it narrows: the exhale moved onto `.abar` when the bar became
+ * sticky and started painting its own paper (a 35% strip over scrolling mail is unreadable), so
+ * this restores the same element rather than an ancestor that no longer carries the fade.
  */
 @media (hover: none) {
-  .reader .msg-actions:has(> .abar) { opacity: 1; }
+  .reader .msg-actions > .abar { opacity: 1; }
 }
 
 /* ── THE DENSITY LADDER ───────────────────────────────────────────────────────────────
  *
  * Base = the tightest surface. Reply, the read switch and More are the three that always
  * stand: the first is the verb, the second is the one asked for by name, the third
- * is the way to everything else. Base row measures **184px**, which is what lets it stand
- * in the 242px split column.
+ * is the way to everything else.
  *
  * EVERY NUMBER BELOW IS A MEASUREMENT, not a round number picked to look tidy. Each is the
- * natural width of the row that tier admits, read off the built page in Chrome:
+ * natural width of the row that tier admits, read off the built page in Chrome at the WORST
+ * case — a read message, whose switch says "Mark unread", the longer of the two labels:
  *
- *   Reply 67.7 · defer 220.4 · file 138.7 · read+More 110.3 · gaps 6
- *     base            = 67.7 + 110.3 + 6           = 184.0
- *     base + defer    = 184.0 + 220.4 + 6          = 410.4  → admit at 411
- *     + file          = 410.4 + 138.7 + 6          = 555.1  → admit at 556
+ *   Reply 68.2 · defer 221.7 · file 139.5 · read+More 153.3 · gaps 6
+ *     base            = 68.2 + 153.3 + 6           = 227.5
+ *     base + defer    = 227.5 + 221.7 + 6          = 455.2  → admit at 456
+ *     + file          = 455.2 + 139.5 + 6          = 601.7  → admit at 601
  *
- * The desktop container is 568.6px (`.msg` is capped at `max-width:640px` and pads 34px a
- * side), so the full row fits with **13.5px to spare** — measured `scrollWidth === clientWidth`,
- * i.e. zero overflow. That slack is thin on purpose: it is the price of showing all seven
- * verbs at the one width the reading measure allows, and it is the number to re-check first
- * if a label is ever lengthened or a locale other than `en` is added.
+ * ── THESE ARE THE SECOND MEASUREMENT, AND THE FIRST ONE HAD GONE STALE ────────────────
+ *
+ * The ladder was first written as 411 / 556, against a read switch that measured 110.3px
+ * because it was labelled with the STATE ("Read", `role="switch"`). It was relabelled with the
+ * ACTION — "Mark unread" / "Mark read", which is the correction that made the control legible
+ * without being hovered — and that is 43px wider. Nothing re-measured the ladder, so the file
+ * group went on being admitted at 556 into a row that now needs 601: at the desktop reading
+ * measure of 572px the bar **overflowed its container by 26px**, measured as
+ * `scrollWidth 598 > clientWidth 572` on the shipped build. It did not wrap, because the row is
+ * `nowrap` by construction — it simply put the More button 26px outside the message.
+ *
+ * That was survivable while the bar was a transparent row at the end of the mail and only looked
+ * slightly loose. It is not survivable now that the bar is sticky and paints its own paper: the
+ * paper stops at the reading measure, so the overflowing control would sit outside it, over
+ * scrolling text. Hence the re-measurement, and hence the visible consequence: at 572px the
+ * FILE group (Screening, Move) now folds into More, where the density ladder has always put a
+ * group that does not fit. That is the ladder working.
+ *
+ * The lesson is in the numbers rather than in the fix: **a measured breakpoint is only true for
+ * the labels it was measured against.** Re-measure this when a label changes, when the read
+ * switch's vocabulary changes, or when a locale other than `en` is added — all three change the
+ * intrinsic width and none of them touches this file.
  */
 .abar-defer,
 .abar-file { display: none; }
 
-/* Panel duplicates: hidden exactly when the group is standing in the row above, so a verb
-   is in the row or in the panel and never in both. Same queries, opposite sense. */
-@container abar (min-width: 411px) {
+/* Duplicates, hidden exactly when the group is standing in the row above, so a verb is in the
+   row or behind More and never in both. Same queries, opposite sense.
+ *
+ * TWO PLACES ARE SWITCHED OFF, and they are two different surfaces rather than a duplication.
+ * `.abar-panel` is the SELECTION bar's More row, which is still a row (a bulk verb over eleven
+ * messages is a different control from a single message's disclosure and keeps its own strip);
+ * `.mmenu` is the message bar's menu. One set of numbers governs both.
+ *
+ * THE MEASURE MAKES THIS LADDER MATTER MORE, NOT LESS. `.abar` is its own container, so binding
+ * the bar to the mail measure (`--msg-measure`, `packages/ui/.../message.css`) narrows what the
+ * ladder is reading whenever that measure is narrower than the column. Fewer verbs stand in the
+ * row and more of them are behind More — which is the ladder working, not a regression, and the
+ * reason it is a container query rather than a viewport one. */
+@container abar (min-width: 456px) {
   .abar-defer { display: flex; }
   .abar-panel .abar-p-defer { display: none; }
+  .mmenu .mm-defer { display: none; }
 }
 
-@container abar (min-width: 556px) {
+@container abar (min-width: 601px) {
   .abar-file { display: flex; }
   .abar-panel .abar-p-file { display: none; }
+  .mmenu .mm-file { display: none; }
 }

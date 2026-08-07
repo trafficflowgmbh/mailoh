@@ -17,6 +17,7 @@ import { PLACE_LABEL, avatarHue, dayNine, dayValue, displayTime, hueOf, initials
 import { InlineReply } from "./InlineReply";
 import { chordKeys, useBinding, useKeyPress } from "./keymap";
 import { useMessageChrome } from "./message-chrome";
+import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import "./action-bar.css";
 
 /**
@@ -88,8 +89,16 @@ export type BulkAction =
  *
  * It was a `moving` boolean. A second disclosure (More) made two booleans able to
  * be true at once, which is a state the bar has no rendering for — a union cannot express it.
+ *
+ * `"more"` is GONE from this union and that is the shape of the change, not a detail of it. A
+ * disclosure and a question are different things: Move and Resurface each ask WHERE or WHEN, and
+ * a strip that replaces the bar with the possible answers and a Cancel is the right ceremony for
+ * a question. "More" asked nothing — it swapped the row for a different row in the same place,
+ * with no visible connection to the press. That is a menu, and a menu is what it is now
+ * ({@link MoreMenu}), anchored to the button that opened it. What is left here is exactly the
+ * two ceremonies.
  */
-type BarPanel = "move" | "more" | "resurface";
+type BarPanel = "move" | "resurface";
 
 /**
  * A verb's keycap, READ FROM THE LIVE REGISTRY.
@@ -180,6 +189,23 @@ function ActionBar({
   const press = useKeyPress();
   /** Hoisted above `toggleRead`, which needs it to decide WHICH key it is standing in for. */
   const read = !message.unread;
+  /** Is the disclosure menu open? A boolean, because the menu is anchored by CSS, not by a point. */
+  const [menuOpen, setMenuOpen] = useState(false);
+  /**
+   * The button the menu belongs to, so dismissing returns the keyboard where it came from.
+   *
+   * A menu that closes and drops focus to the document leaves a keyboard user at the top of the
+   * page, and the thing they were operating is nowhere near. Escape, an outside click and
+   * choosing an item all come back through `closeMenu`.
+   */
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const closeMenu = (): void => {
+    setMenuOpen(false);
+    moreRef.current?.focus();
+  };
+
+  // A message swap must not leave a menu open over a different message's verbs.
+  useEffect(() => setMenuOpen(false), [message.id]);
 
   /**
    * A label whose key is not in `messages/en.json` yet.
@@ -327,27 +353,31 @@ function ActionBar({
     );
   }
 
-  if (panel === "more") {
-    /* The panel REPLACES the bar rather than growing it, which is the pattern Move already
-       used. Its members are hidden by the same container queries that put them in the row,
-       from the other side — so a verb is in the row or in this panel and never in both. */
-    return (
-      <div className="abar">
-        <div className="abar-panel">
-          <span className="abar-lab">{copy("actionMore", "More")}</span>
-          <span className="abar-pg abar-p-defer">{defer}</span>
-          <span className="abar-pg abar-p-file">{file}</span>
-          <button type="button" className="abar-b abar-solo" onClick={() => onAction("draft")}>
-            <Icon name="spark" size={13} />
-            {t("actionDraftReply")}
-          </button>
-          <button type="button" className="abar-b" onClick={() => onPanel(null)}>
-            {t("moveCancel")}
-          </button>
-        </div>
-      </div>
-    );
-  }
+  /**
+   * WHAT IS BEHIND "MORE" — the same verbs, in the same order they stand in the row.
+   *
+   * `group` is what keeps the rule "a verb is in the row or in the menu, never both": the
+   * container queries at the foot of `action-bar.css` switch each group off HERE at exactly the
+   * width they switch it on THERE. One set of numbers, read from both sides.
+   *
+   * The two that ask a question — Resurface and Move — close the menu and open their panel,
+   * which is the same two-step the row's own buttons perform. Screening opens the sender sheet
+   * anchored on the item that was pressed, so the popover appears where the click was rather
+   * than under a bar that has just closed.
+   */
+  const menuItems: MoreMenuItem[] = [
+    { id: "later", group: "defer", label: copy("actionLater", "Later"), run: () => { closeMenu(); onAction("later"); } },
+    { id: "aside", group: "defer", label: t("actionSetAside"), run: () => { closeMenu(); onAction("aside"); } },
+    { id: "resurface", group: "defer", label: t("actionResurface"), run: () => { closeMenu(); onPanel("resurface"); } },
+    { id: "screen", group: "file", label: tr("action"), run: () => { setMenuOpen(false); onScreen(moreRef.current); } },
+    { id: "move", group: "file", label: t("actionMove"), run: () => { closeMenu(); onPanel("move"); } },
+    {
+      id: "draft",
+      label: t("actionDraftReply"),
+      icon: <Icon name="spark" size={13} />,
+      run: () => { closeMenu(); onAction("draft"); },
+    },
+  ];
 
   return (
     <div className="abar">
@@ -413,19 +443,38 @@ function ActionBar({
            * only thing it can do — so it is the right 35px to spend. The name is not lost,
            * it moves to `aria-label` and the tooltip.
            */}
+          {/*
+           * `aria-expanded` REPORTS THE MENU, and until this slice it was the literal `false`.
+           * That was not merely stale — with `aria-haspopup` beside it, it announced "there is a
+           * popup and it is closed" every time, including while the disclosure was open. A
+           * screen-reader user pressed the control, the row underneath was replaced, and the
+           * control went on saying nothing had happened. It is a live value now, which is only
+           * possible because there is a real popup to report on.
+           */}
           <button
+            ref={moreRef}
             type="button"
             className="abar-b abar-solo abar-more"
-            aria-haspopup="true"
-            aria-expanded={false}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
             aria-label={copy("actionMore", "More")}
             title={copy("actionMore", "More")}
-            onClick={() => onPanel("more")}
+            onClick={() => setMenuOpen((open) => !open)}
           >
             <Icon name="chev" size={12} className="abar-chev" />
           </button>
         </div>
       </div>
+
+      {/* The menu is a child of `.abar` — see `MoreMenu` for why that is the container and not
+          a fixed popover, and why it drops upward. Out of flow, so the row above is unmoved. */}
+      {menuOpen ? (
+        <MoreMenu
+          items={menuItems}
+          ariaLabel={copy("actionMore", "More")}
+          onClose={closeMenu}
+        />
+      ) : null}
     </div>
   );
 }

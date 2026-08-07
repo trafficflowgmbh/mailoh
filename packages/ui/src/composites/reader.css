@@ -6,6 +6,10 @@
 .reader .msg{
   max-width:660px;padding:46px 52px 40px;animation:exhale .5s var(--spring);
   background:var(--float);border-radius:28px;box-shadow:var(--lift-3);
+  /* The paper the sticky action bar prints on here. The overlay's card is `--float`, not the
+     reading column's `--panel`, and the bar has to match whichever surface it is standing on or
+     it reads as a foreign strip laid over the message. See `.msg` in `message.css`. */
+  --msg-paper:var(--float);
 }
 @keyframes exhale{from{opacity:0;transform:translateY(18px) scale(.99)}to{opacity:1;transform:none}}
 .reader .msg h2{font-size:29px;margin:18px 0 16px}
@@ -14,8 +18,16 @@
    the 16px `.reader .msg h2` already uses below itself. Same rhythm, one size louder. */
 .reader .msg-p{margin-bottom:16px}
 .reader .msg-p:last-child{margin-bottom:0}
-.reader .msg-actions{opacity:.35;transition:opacity .3s var(--swift)}
-.reader .msg:hover .msg-actions, .reader .msg:focus-within .msg-actions{opacity:1}
+/* THE EXHALE, NARROWED TO THE BUTTONS ONCE THE BAR BECAME OPAQUE.
+ *
+ * The reader is the exhale: the bar rests quiet and one mouse movement brings it back. That was
+ * `opacity` on `.msg-actions` itself, which was harmless while the bar was a transparent row at
+ * the end of the message. It is not harmless now that the bar is sticky and paints its own
+ * paper — a 35% strip with mail sliding under it is two texts on top of each other, and neither
+ * is readable. So the fade applies to the CONTENT and the paper stays solid. Same resting state,
+ * same recovery, nothing bleeding through. */
+.reader .msg-actions > .abar{opacity:.35;transition:opacity .3s var(--swift)}
+.reader .msg:hover .msg-actions > .abar, .reader .msg:focus-within .msg-actions > .abar{opacity:1}
 .reader-hint{position:fixed;top:18px;left:50%;translate:-50%;font-size:11px;color:var(--ink3);
   display:flex;gap:8px;align-items:center;pointer-events:none;z-index:var(--z-read);
   animation:hint 3.6s var(--swift) .2s both}
