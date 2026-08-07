@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import {
   messages, folderState, flagState, messageBodies, claimIdempotencyKey, recordChange, type Tx,
 } from "@trafficflow/db";
@@ -7,7 +7,7 @@ import type { Db, ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { materializeMessage } from "./dto/materialize.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
-import type { Folder, MessageBodyDTO, MessageDTO, Page } from "./dto/types.js";
+import type { Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
@@ -124,6 +124,31 @@ function decodeMsgCursor(cursor: string): { date: Date; id: string } {
   return { date: new Date(Number(raw.slice(0, i))), id: raw.slice(i + 1) };
 }
 
+export interface GetBodiesOptions {
+  /** Opaque keyset cursor — the last `messages.id` a previous page returned. */
+  after?: string;
+  limit?: number;
+}
+
+/**
+ * The batch text pull bounds, and why each one exists on a `maxDuration = 60` lambda.
+ *
+ * `limit` defaults to 50 and is capped at 100: each row here is a whole stored body — the
+ * redacted `text`, and for non-sensitive mail the sanitized `html` — not a compact DTO, so a
+ * page is far heavier than a list page and 100 is the most rows one request may name.
+ *
+ * The BYTE BUDGET is the real fence, because the count cap alone is not one. A single page of
+ * newsletter html can be hundreds of KiB, so 100 marketing bodies would push megabytes through
+ * the lambda and past its time budget. Accumulated `text` + `html` is measured as the page is
+ * assembled and the page stops early once it crosses ~4 MiB, returning a `nextCursor` so the
+ * client resumes exactly after the last row it received. At least one row is always returned
+ * even when it alone exceeds the budget — otherwise one oversized body would stall pagination
+ * for ever.
+ */
+export const BODIES_DEFAULT_LIMIT = 50;
+export const BODIES_MAX_LIMIT = 100;
+export const BODIES_BYTE_BUDGET = 4 * 1024 * 1024;
+
 /**
  * MessageService — the read/patch/move surface over `messages`.
  * Reads are account-scoped (a cross-account id is a 404). Every client-visible
@@ -194,6 +219,60 @@ export class MessageService {
       headers: (body?.headers as Record<string, unknown>) ?? {},
       loadedRemoteContent: body?.loadedRemoteContent ?? false,
     };
+  }
+
+  /**
+   * The batch text pull — the foundation of the macOS Cloud-local text mirror.
+   *
+   * Keyset-paginates the account's message bodies by `messages.id` (ascending), returning the
+   * STORED ROW VERBATIM: `text` is already sensitivity-redacted and positively-sensitive mail
+   * has `html: null` at write time (`packages/core/src/pipeline.ts`), so this NEVER re-derives a
+   * secret and NEVER rehydrates. Ownership is proven through `messages` — `message_bodies` has no
+   * `account_id`, exactly as {@link getBody} handles it — and the query LEFT-JOINs
+   * `message_bodies` and joins NOTHING ELSE: no headers, no attachment bytes, no other table.
+   * That absence IS the no-rehydrate guarantee, so there is deliberately no rehydrate path here.
+   */
+  async getBodies(ctx: ServiceContext, opts: GetBodiesOptions): Promise<Page<MessageBodyBatchItem>> {
+    const limit = Math.min(Math.max(1, opts.limit ?? BODIES_DEFAULT_LIMIT), BODIES_MAX_LIMIT);
+
+    const filters = [eq(messages.accountId, ctx.accountId)];
+    if (opts.after) {
+      const after = decodeListCursor(opts.after);
+      // The cursor is a message id; a malformed one would reach Postgres and raise 22P02 — a 500
+      // for a plainly bad request. Reject it as a 400 first, the same guard `markSeen` applies.
+      if (!UUID_RE.test(after)) throw new ServiceError("validation_failed", 400, "invalid cursor");
+      filters.push(gt(messages.id, after));
+    }
+
+    // `limit + 1`: the extra row is how a further page is detected without a second query.
+    const rows = await ctx.db.select({
+      messageId: messages.id,
+      text: messageBodies.text,
+      html: messageBodies.html,
+      loadedRemoteContent: messageBodies.loadedRemoteContent,
+    }).from(messages)
+      .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+      .where(and(...filters))
+      .orderBy(asc(messages.id))
+      .limit(limit + 1);
+
+    const items: MessageBodyBatchItem[] = [];
+    let bytes = 0;
+    for (const r of rows.slice(0, limit)) {
+      const text = r.text ?? "";
+      const html = r.html ?? null;
+      items.push({ messageId: r.messageId, text, html, loadedRemoteContent: r.loadedRemoteContent ?? false });
+      bytes += Buffer.byteLength(text, "utf8") + (html ? Buffer.byteLength(html, "utf8") : 0);
+      // Stop AFTER including the row that crossed the budget, so at least one row always makes
+      // progress; the cursor below carries the rest.
+      if (bytes >= BODIES_BYTE_BUDGET) break;
+    }
+
+    // A next page exists iff a fetched row sits beyond the last one included — either the
+    // `limit + 1` sentinel, or a row skipped when the byte budget stopped the loop early.
+    const last = items[items.length - 1];
+    const nextCursor = last && items.length < rows.length ? encodeListCursor(last.messageId) : null;
+    return { items, nextCursor };
   }
 
   async patch(ctx: ServiceContext, id: string, body: MessagePatchBody): Promise<PatchResult> {

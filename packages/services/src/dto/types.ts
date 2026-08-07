@@ -105,6 +105,23 @@ export interface MessageBodyDTO {
   loadedRemoteContent: boolean;
 }
 
+/**
+ * One row of the batch text pull (`GET /messages/bodies`) — the foundation of the macOS
+ * Cloud-local text mirror.
+ *
+ * A TRIMMED {@link MessageBodyDTO}: the stored `text` (already sensitivity-redacted at write
+ * time) and `html` (`null` for positively-sensitive mail, dropped by the pipeline at write
+ * time), both VERBATIM — this surface never re-derives a secret. There is deliberately **no
+ * `headers`** field and no attachment bytes: the batch text pull carries the body and nothing
+ * else, and that absence is the no-rehydrate guarantee.
+ */
+export interface MessageBodyBatchItem {
+  messageId: string;
+  text: string;
+  html: string | null;
+  loadedRemoteContent: boolean;
+}
+
 export interface ThreadDTO {
   id: string;
   accountId: string;
@@ -425,6 +442,13 @@ export interface DraftDTO {
   html: string | null;
   to: EmailAddress[];
   cc: EmailAddress[];
+  /**
+   * Blind-carbon recipients. Echoed back so a client can confirm the server ACCEPTED them — a new
+   * client sending `bcc` to a server that predates it gets a DTO with no `bcc` key and can refuse
+   * to send rather than deliver silently without the copies. Never leaves the envelope on the wire:
+   * the delivered message and the Sent copy carry no Bcc header (see `SendService`).
+   */
+  bcc: EmailAddress[];
   rationale: string | null;
   status: DraftStatus;
   createdAt: ISODateTime;

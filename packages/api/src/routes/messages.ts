@@ -34,6 +34,29 @@ export const messageRoutes: Route[] = [
     },
   },
   {
+    // The batch text pull — the foundation of the macOS Cloud-local text mirror.
+    // Keyset-pages the account's message bodies by `messages.id`; `?after=<cursor>&limit=`.
+    // `read`: it reads rows already stored for the caller's own account and writes nothing.
+    //
+    // STATIC-BEATS-PARAM, verified against `router.ts#tryMatch`/`cmpSpec` and not assumed:
+    // `/messages/bodies` and `/messages/:id` are both two segments, so both match this path;
+    // their specificity vectors are [1,1] and [1,0], and `cmpSpec` compares lexicographically —
+    // `1 > 0` at index 1 — so the static `bodies` route always wins. `/messages/bodies` can
+    // therefore never resolve to `GET /messages/:id` with `id === "bodies"`. Placed before the
+    // `:id` route here only for readability; `matchRoute` picks the most specific regardless.
+    method: "GET",
+    pattern: "/messages/bodies",
+    cost: "read",
+    handler: async (req, deps) => {
+      const url = new URL(req.url);
+      const after = url.searchParams.get("after") ?? undefined;
+      const limitRaw = url.searchParams.get("limit");
+      const limit = limitRaw != null ? Number(limitRaw) : undefined;
+      const page = await message(deps).getBodies(serviceContext(deps, req), { after, limit });
+      return jsonResponse({ items: page.items, nextCursor: page.nextCursor });
+    },
+  },
+  {
     method: "GET",
     pattern: "/messages/:id",
     cost: "read",
