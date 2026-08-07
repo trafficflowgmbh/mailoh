@@ -18,7 +18,8 @@ import {
 import type { AiCreditGate } from "@trafficflow/db";
 import type { AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy } from "@trafficflow/core/mail";
 import {
-  applyReconcileAction, effectForDestination, rationaleHoldsAtGate, resolveOhboxPolicy,
+  applyReconcileAction, CLASSIFY_DESTINATIONS, effectForDestination, rationaleHoldsAtGate,
+  resolveOhboxPolicy,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
@@ -232,10 +233,35 @@ export interface ScreenerSuggestion {
   messageId: string;
   /**
    * `hold` is the model declining to place this sender — see {@link SCREEN_DISPOSITION}. It is
-   * advice a surface may show and a BULK control may never act on; it names no destination
-   * because the wire still has only the two `POST /screener/:id` can perform.
+   * advice a surface may show and a BULK control may never act on.
+   *
+   * It stays three-valued now that {@link ScreenerSuggestion.destination} sits beside it, and that
+   * is the point of the pair: this field is what a BULK control reads, so widening it would have
+   * widened what one press of "Apply all" can do. The finer answer is carried, not acted on.
    */
   decision: "yes" | "no" | "hold";
+  /**
+   * The pile the model actually named, unreduced.
+   *
+   * `decision` answers "may a bulk control act, and which way"; three values cannot also say WHICH
+   * of five piles, and the difference was visible on a live account: `ohmail/Receipts`,
+   * `ohmail/Reads` and `ohmail/Quarantine` answers all reached the surface as the one word
+   * "Screened out", so the product looked as though it never suggested Receipts, never Reads and
+   * never spam. It suggested all three.
+   *
+   * `POST /screener/:id` already accepts every one of these as a `dest`, so a surface can offer the
+   * suggestion as a one-press filing. What it must not do is act on it WITHOUT a press — that is
+   * `decision`'s job, and `decision` still says `hold` wherever the model declined.
+   */
+  destination: Destination;
+  /**
+   * The model's own hard "no", carried rather than folded into the destination.
+   *
+   * `ohmail/Quarantine` and "screened out" are different verdicts about a stranger — one says the
+   * mail is junk, the other says the person is unwanted — and collapsing them left the Screener
+   * unable to say "spam" at all.
+   */
+  spam: boolean;
   confidence: number;
   rationale: string;
 }
@@ -1011,7 +1037,7 @@ export class ScreenerReadService {
     for (const r of rows) {
       if (out.has(r.messageId)) continue;
       out.set(r.messageId, {
-        decision: suggestionDecision(r.destination, r.spam, r.rationale ?? "", ohboxPolicy),
+        ...suggestionAdvice(r.destination, r.spam, r.rationale ?? "", ohboxPolicy),
         confidence: r.confidence ?? 0,
         rationale: r.rationale ?? "",
       });
@@ -1190,7 +1216,17 @@ export class ScreenerService extends ScreenerReadService {
 
       let result;
       try {
-        result = await classifier.classify({
+        // THE SCREENING QUESTION, not the routing one — see `classify-prompt.ts`. Routing asks
+        // "which folder does this belong in", and `ohmail/Screener` is that taxonomy's own
+        // definition of a first-contact sender, which is every row this loop can reach. Asking it
+        // here was a question with its answer built in, and the model gave that answer 89% of the
+        // time on an account with no stated bar.
+        //
+        // The fallback is `classify` because a `ClassifierPort` is implemented outside this repo's
+        // core too. It degrades the advice and cannot degrade the safety: routing's answer for a
+        // stranger coerces to `hold`, never to an admission.
+        const ask = classifier.screen?.bind(classifier) ?? classifier.classify.bind(classifier);
+        result = await ask({
           from: { name: null, address: r.fromAddress },
           subject: r.subject,
           snippet: r.snippet,
@@ -1215,7 +1251,7 @@ export class ScreenerService extends ScreenerReadService {
       suggestions.push({
         sender,
         messageId: r.messageId,
-        decision: suggestionDecision(result.destination, result.spam, result.rationale, ohboxPolicy),
+        ...suggestionAdvice(result.destination, result.spam, result.rationale, ohboxPolicy),
         confidence: result.confidence,
         rationale: result.rationale,
       });
@@ -1379,6 +1415,31 @@ const SCREEN_DISPOSITION: Record<Destination, ScreenerSuggestion["decision"]> = 
  * schema-checked; when they disagree, the one that costs a human glance wins over the one that
  * writes an allow rule.
  */
+/**
+ * ONE stored row, read as advice — the decision AND the answer the decision collapses.
+ *
+ * Both callers go through here ({@link ScreenerService.suggest} for a fresh answer,
+ * {@link ScreenerReadService.storedSuggestions} for one off disk) so a suggestion cannot read one
+ * way when it is bought and another on the next page load. That shared-ness is also what makes a
+ * change here retroactive: rows already written are re-read through it with no backfill.
+ *
+ * `destination` is normalised against the taxonomy for the same reason `suggestionDecision` is
+ * total over strings — this reads a `text` column, which a past version or a hand-run migration
+ * may have written. An unrecognised label becomes the gate, which is `hold`: never a guess.
+ */
+function suggestionAdvice(
+  destination: string, spam: boolean, rationale: string, ohboxPolicy: OhboxPolicy,
+): Pick<ScreenerSuggestion, "decision" | "destination" | "spam"> {
+  const dest: Destination = CLASSIFY_DESTINATIONS.includes(destination as Destination)
+    ? (destination as Destination)
+    : "ohmail/Screener";
+  return {
+    decision: suggestionDecision(dest, spam, rationale, ohboxPolicy),
+    destination: dest,
+    spam: spam === true,
+  };
+}
+
 function suggestionDecision(
   destination: string, spam: boolean, rationale: string, ohboxPolicy: OhboxPolicy,
 ): ScreenerSuggestion["decision"] {

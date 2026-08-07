@@ -71,6 +71,141 @@ export const TAXONOMY_PREFIX = [
   "and whether the message is spam. Respond ONLY with the structured JSON object.",
 ].join("\n");
 
+/* ── THE SCREENING QUESTION ───────────────────────────────────────────────────────────────────
+ *
+ * A SECOND question, for the Screener's suggestion path only. Live mail keeps asking the routing
+ * question above, unchanged.
+ *
+ * ## Why a second question rather than a second copy of the first
+ *
+ * The docblock at the top of this file argues for ONE question asked identically however the
+ * request travels. That invariant is about one question per PURPOSE — two copies of the SAME
+ * taxonomy is how two hosts file the same message differently — and it is preserved here: this
+ * question is defined once, in this file, beside the one it is not.
+ *
+ * ## The tautology it replaces
+ *
+ * The Screener's suggestion path used to ask the routing question of mail that is already sitting
+ * in `ohmail/Screener`. But `ohmail/Screener` is what the routing taxonomy DEFINES as the correct
+ * answer for a first-contact sender, and every row the Screener reasons about is a first-contact
+ * sender. So the model was being asked a question whose own rules made one answer correct in
+ * advance, and it gave that answer: measured on a live account with no stated bar, 66 of 74 stored
+ * suggestions (89%) came back `ohmail/Screener`. The user had paid for advice and been told, at
+ * high confidence, that the mail was where it already was.
+ *
+ * The fix is not a better prompt for the same question. It is a different question: the user is
+ * not asking "where does this belong in a mailbox that has a gate" — they are standing AT the
+ * gate, and the decision in front of them is what to do with this stranger. So `ohmail/Screener`
+ * is removed from the answer set. It is the question being asked; it cannot also be an answer.
+ *
+ * ## The user's words are BINDING here, not advisory
+ *
+ * On the routing path the account's bar is one input among several and is explicitly forbidden
+ * from carrying a first-contact sender past the gate. Here the bar is the whole point: the person
+ * wrote down who they want to hear from, and this question is "does this sender meet what they
+ * wrote". The instruction below therefore names the bar as the criteria to judge against rather
+ * than something to weigh.
+ *
+ * **The words themselves still travel in the USER turn, never in this prefix.** The prefix is sent
+ * with `cache_control:{type:"ephemeral"}` and that cache is shared across accounts, so one
+ * account's sentence embedded here would be served to another's request. What this constant may
+ * contain is the INSTRUCTION about the field; what it may never contain is the field's value.
+ */
+export const SCREEN_DESTINATIONS: Destination[] = [
+  "INBOX",
+  "ohmail/Reads",
+  "ohmail/Receipts",
+  "ohmail/Screened",
+  "ohmail/Quarantine",
+];
+
+/**
+ * The screening instruction. Cacheable and account-independent, exactly like
+ * {@link TAXONOMY_PREFIX}.
+ *
+ * Each outcome carries its own criteria, and two of them are written the way they are because of
+ * what was measured without them:
+ *
+ *  · **Receipts** had to be named with a concrete first-contact example. An order confirmation from
+ *    a shop the user has never mailed is the canonical case, and it is the one a "do I know this
+ *    sender" reading gets wrong.
+ *  · **Quarantine** had to be given criteria that separate junk from mere automation. Left
+ *    undefined, "spam" collapses into "automated", and every newsletter becomes spam — or, as
+ *    actually happened, nothing does.
+ */
+export const SCREENING_PREFIX = [
+  "You are helping someone screen a first-contact sender for ohmail. This sender is waiting at",
+  "the gate: their mail is held, and the person has to decide what happens to it. Your job is to",
+  "recommend that decision. Choose exactly one:",
+  "",
+  "- INBOX: their Ohbox. A real person writing to them, or service mail they personally have to",
+  "  act on — a delivery, a security alert, something with a consequence if ignored.",
+  "- ohmail/Reads: newsletters, marketing, announcements, bulk or list mail worth skimming later.",
+  "  Legitimate mail they may want, but never urgent.",
+  "- ohmail/Receipts: order confirmations, invoices, payment and shipping notices, statements,",
+  "  booking confirmations. Keep, do not read. A shop the person has never written to still files",
+  "  here when the mail is a receipt for something they bought.",
+  "- ohmail/Screened: legitimate mail from a sender this person does not want to hear from —",
+  "  cold sales approaches, unrequested promotions, automated notification floods they never",
+  "  asked for. Not junk; just unwanted.",
+  "- ohmail/Quarantine: junk. Unsolicited bulk mail with no relationship of any kind, a forged or",
+  "  deceptive sender, phishing, or a message whose purpose is to trick the reader. Being",
+  "  automated, promotional or unwanted is NOT enough — that is ohmail/Screened. Quarantine is for",
+  "  mail that should not have been sent at all.",
+  "",
+  "Set \"spam\" true only for ohmail/Quarantine, and false for every other destination.",
+  "",
+  // GENERIC and CONDITIONAL — never the value, which is per-account and lives in the user turn.
+  "If the user turn carries an \"ohboxBar\" field, it is this person's own written statement of who",
+  "belongs in their Ohbox. Treat it as the binding criteria for this decision: a sender who meets",
+  "what it says belongs in INBOX, and a sender it excludes does not, whatever else is true of the",
+  "mail. Where it is silent, use the definitions above.",
+  "",
+  "You are recommending, not filing. Nothing moves until the person agrees, so give the decision",
+  "you would defend rather than the safest one. Return confidence in [0,1] and a one-line reason",
+  "in plain language, addressed to the person deciding (never echo secrets or one-time codes).",
+  "Respond ONLY with the structured JSON object.",
+].join("\n");
+
+/** The screening response schema. Same shape as the routing one, over the five-pile answer set. */
+export const SCREENING_RESULT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["destination", "confidence", "rationale", "spam"],
+  properties: {
+    destination: { type: "string", enum: SCREEN_DESTINATIONS },
+    confidence: { type: "number" },
+    rationale: { type: "string" },
+    spam: { type: "boolean" },
+  },
+} as const;
+
+/**
+ * A screening answer, made safe to act on.
+ *
+ * A label outside {@link SCREEN_DESTINATIONS} becomes `ohmail/Screener`, which every consumer
+ * reads as "hold — the person decides". The safe answer does not have to be OFFERED to the model
+ * to remain the fallback, and leaving it out of the enum is what removes the tautology.
+ *
+ * This is also what makes the change degrade safely rather than dangerously: an implementation
+ * that has not been taught the screening question and answers the routing taxonomy anyway returns
+ * `ohmail/Screener`, which lands here and coerces to a hold. It never coerces to an admission.
+ *
+ * `spam` is forced to agree with the destination rather than trusted alongside it. The two are one
+ * fact in the prompt, and a reply that names `ohmail/Quarantine` with `spam:false` is not a third
+ * verdict to preserve — it is the same verdict, said twice, once wrongly.
+ */
+export function coerceScreeningResult(raw: unknown): ClassifierResult {
+  const o = (raw ?? {}) as Record<string, unknown>;
+  const destination = SCREEN_DESTINATIONS.includes(o.destination as Destination)
+    ? (o.destination as Destination)
+    : "ohmail/Screener";
+  let confidence = typeof o.confidence === "number" && Number.isFinite(o.confidence) ? o.confidence : 0;
+  confidence = Math.max(0, Math.min(1, confidence));
+  const rationale = typeof o.rationale === "string" ? o.rationale : "";
+  return { destination, confidence, rationale, spam: destination === "ohmail/Quarantine" };
+}
+
 /**
  * The routing response schema.
  *

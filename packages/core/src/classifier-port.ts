@@ -56,4 +56,21 @@ export interface ClassifierResult {
 
 export interface ClassifierPort {                        // added to PipelineDeps (optional)
   classify(input: ClassifierInput): Promise<ClassifierResult>;
+  /**
+   * THE SCREENING QUESTION — "what should happen to this first-contact sender".
+   *
+   * A separate method rather than a flag on {@link classify}, because it is a different question
+   * over a different answer set, not the same question with an option set. Live mail routing must
+   * never reach it, and a boolean parameter is one mistaken argument away from that.
+   *
+   * OPTIONAL, and the optionality is a compatibility statement rather than a design preference: a
+   * `ClassifierPort` is implemented outside this package too, and a required method would have
+   * been a compile break in every one of them for a capability only the Screener uses.
+   *
+   * A caller that finds it absent falls back to {@link classify}, which is what the Screener did
+   * before this method existed. That fallback is a DEGRADATION, never a hazard: the routing
+   * question's answer for a first-contact sender is `ohmail/Screener`, which every consumer reads
+   * as "hold — the person decides". The absent case gives worse advice, not unsafe advice.
+   */
+  screen?(input: ClassifierInput): Promise<ClassifierResult>;
 }

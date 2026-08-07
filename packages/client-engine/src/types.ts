@@ -585,7 +585,21 @@ export interface ScreenerSenderDTO {
   time: string;
   scope: "sender" | "domain";
   dull?: boolean;
-  ai: { dest: OhmailView | "screened" | "spam"; confidence: number; rationale: string } | null;
+  /**
+   * The advice on record for this sender, or `null` when none was ever bought.
+   *
+   * `withheld` is the third thing this field can say, and it exists because the other two could
+   * not say it. A run that could not answer for a sender — most often because the mail is one we
+   * never send to a model at all — left the row looking exactly like a row nobody had asked
+   * about, on a surface the person had just paid to fill in. Present ⇒ `dest` is `screener`,
+   * there is nothing to act on, and the reason is the whole of the content.
+   */
+  ai: {
+    dest: OhmailView | "screened" | "spam";
+    confidence: number;
+    rationale: string;
+    withheld?: "withheld" | "out_of_credits" | "spend_unavailable" | "model_unavailable";
+  } | null;
   /**
    * NO-COLLAPSE (invariant #6): every held message, in full, oldest first —
    * non-empty in every segment. There is deliberately no `heldCount` /

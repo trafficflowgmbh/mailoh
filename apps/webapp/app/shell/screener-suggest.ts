@@ -35,16 +35,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { senderKey } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
-import { ApiError, apiConfigured, screener as screenerApi, type ScreenerSuggestWire } from "../api-client";
+import {
+  ApiError, apiConfigured, screener as screenerApi,
+  type ScreenerSkipReason, type ScreenerSuggestWire,
+} from "../api-client";
 
 /**
  * One sender's suggestion, in the vocabulary the rows already speak.
  *
- * `ohbox` and `screened` are the only two outcomes `POST /screener/:id` has — a yes files to
- * INBOX, a no to `ohmail/Screened` — so no finer destination may appear here: a chip promising a
- * filing the wire cannot perform is a lie the button would have to keep.
+ * All five piles appear here, because all five are things `POST /screener/:id` can perform: it
+ * takes a `dest` and files the sender's held mail there. This comment used to say the wire had
+ * only two outcomes and that no finer destination could be shown. That stopped being true when
+ * the endpoint learned the full destination set, and the stale sentence had a cost: the surface
+ * kept collapsing every answer into "Ohbox" or "Screened out", so a model that said Receipts,
+ * Reads or Spam was reported as having said "Screened out" — and the product looked as though it
+ * never suggested those three at all.
  *
- * `screener` is the third, and it is NOT a filing: it is "leave this one where it already is",
+ * `screener` is the sixth value and it is NOT a filing: it is "leave this one where it already is",
  * which is what the server's `hold` means and what `OhmailView` has always called this pile. It
  * is here because the alternative — collapsing it into one of the two real ones — is the defect
  * this type used to carry. The comment above this interface used to read "the server's own
@@ -58,10 +65,32 @@ import { ApiError, apiConfigured, screener as screenerApi, type ScreenerSuggestW
  * would move nothing and grant nothing, so it is not an outcome to offer.
  */
 export interface SenderSuggestion {
-  dest: "ohbox" | "screened" | "screener";
+  dest: "ohbox" | "reads" | "receipts" | "screened" | "spam" | "screener";
   confidence: number;
   rationale: string;
+  /**
+   * WHY THERE IS NO ANSWER, when there is none.
+   *
+   * A purchase does not always come back with a verdict for every sender it was asked about, and
+   * the surface used to render those rows exactly as it rendered a sender nobody had bought advice
+   * for — blank. The person had paid, watched the run finish, and found rows that looked skipped,
+   * with nothing anywhere saying why. Some of them were mail we will never send to a model at all,
+   * so no amount of pressing the button again would have changed it.
+   *
+   * Present ⇒ `dest` is `screener` and there is nothing to act on, only something to say. Absent ⇒
+   * this is an ordinary suggestion.
+   */
+  withheld?: SuggestSkipShown;
 }
+
+/**
+ * The skip reasons a ROW can show — every one except `not_held`.
+ *
+ * Narrowed rather than reusing the wire enum whole, because `not_held` means the sender has left
+ * the gate, so there is no row on screen to put it on. Naming that in the type is what stops a
+ * later change quietly rendering a chip for a sender who is not there.
+ */
+export type SuggestSkipShown = Exclude<ScreenerSkipReason, "not_held">;
 
 /** Suggestions known so far, keyed by {@link senderKey}. */
 export type SuggestionOverlay = ReadonlyMap<string, SenderSuggestion>;
@@ -469,7 +498,10 @@ export function useScreenerSuggestions(opts: {
       try {
         const res = await screenerApi.suggest(set, { idempotencyKey: newKey() });
         if (io.current.autoRun !== run) return;
-        merge(res.suggestions.map((s) => ({ address: s.sender, suggestion: toSuggestion(s) })));
+        merge([
+          ...res.suggestions.map((s) => ({ address: s.sender, suggestion: toSuggestion(s) })),
+          ...toSkips(res.skipped),
+        ]);
         // SAID OUT LOUD, every time, even though nobody pressed anything. This is the "visible
         // after the fact" half of the opt-in: money moved, so the same sentence the manual
         // purchase shows is shown here. A spend the user only discovers on their next invoice is
@@ -681,7 +713,10 @@ export function useScreenerSuggestions(opts: {
             // Stale — a newer press owns the state; keep nothing from this chunk.
             if (io.current.run !== run) return;
             // Chips land NOW, before the next chunk is bought.
-            merge(res.suggestions.map((s) => ({ address: s.sender, suggestion: toSuggestion(s) })));
+            merge([
+              ...res.suggestions.map((s) => ({ address: s.sender, suggestion: toSuggestion(s) })),
+              ...toSkips(res.skipped),
+            ]);
             gotSuggestions.push(...res.suggestions);
             gotSkipped.push(...res.skipped);
             charged += res.charged;
@@ -797,12 +832,54 @@ export function batchSizes(available: number, maxPerRequest: number): number[] {
  * test to notice. An exhaustive switch makes the server's third answer a compile error here
  * instead.
  */
-function toSuggestion(a: { decision: "yes" | "no" | "hold"; confidence: number; rationale: string }): SenderSuggestion {
-  const dest: SenderSuggestion["dest"] =
-    a.decision === "yes" ? "ohbox"
-      : a.decision === "no" ? "screened"
-        : "screener";
+/**
+ * The five piles a folder answer maps to, and the only place that mapping is written.
+ *
+ * `ohmail/Screener` is deliberately absent: it is not a pile a decision files to, it is the queue
+ * the sender is already in, so it falls through to `screener` — the no-action arm — along with any
+ * label this table does not know.
+ */
+const VIEW_DEST: Record<string, SenderSuggestion["dest"]> = {
+  "INBOX": "ohbox",
+  "ohmail/Reads": "reads",
+  "ohmail/Receipts": "receipts",
+  "ohmail/Screened": "screened",
+  "ohmail/Quarantine": "spam",
+};
+
+function toSuggestion(a: {
+  decision: "yes" | "no" | "hold"; destination?: string; confidence: number; rationale: string;
+}): SenderSuggestion {
+  // A `hold` is a non-answer whatever folder travels beside it, so it is read first and the
+  // destination is never consulted. Letting a folder outrank the hold is how the surface would
+  // start naming a pile for a sender the model explicitly declined to place.
+  if (a.decision === "hold") return { dest: "screener", confidence: a.confidence, rationale: a.rationale };
+
+  // THE SERVER'S OWN ANSWER, when it sends one. An older server does not, and the fallback below
+  // is the two-way reading this function used to be — never a guessed folder. A client that filled
+  // in "Reads" because the server said "no" would be inventing advice nobody bought.
+  const named = a.destination ? VIEW_DEST[a.destination] : undefined;
+  const dest: SenderSuggestion["dest"] = named
+    ?? (a.decision === "yes" ? "ohbox" : "screened");
   return { dest, confidence: a.confidence, rationale: a.rationale };
+}
+
+/**
+ * The senders a run could not answer for, as overlay entries.
+ *
+ * `not_held` is deliberately absent: that sender is no longer at the gate, so their row is not on
+ * screen to carry a chip. Every other reason describes a row the person is still looking at.
+ */
+function toSkips(skipped: Array<{ sender: string; reason: ScreenerSkipReason }>) {
+  return skipped
+    .filter((s) => s.reason !== "not_held")
+    .map((s) => ({
+      address: s.sender,
+      suggestion: {
+        dest: "screener" as const, confidence: 0, rationale: "",
+        withheld: s.reason as SuggestSkipShown,
+      },
+    }));
 }
 
 /** What one completed purchase actually did, said in numbers. */

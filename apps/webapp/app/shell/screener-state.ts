@@ -470,7 +470,11 @@ export function useScreenerState(
   // A queue whose every suggestion is a `hold` offers no button at all, which is honest: there
   // is nothing to apply, and a button reading "Apply all (83)" that moved nothing would be the
   // inert-button lie `ScreenerView.tsx` already refuses.
-  const suggestedCount = undecided.filter((x) => x.ai != null && x.ai.dest !== "screener").length;
+  // Spam is excluded here for the same reason it is excluded there — see `applyAll`. Counting it
+  // would put a number on the button that the press does not deliver.
+  const suggestedCount = undecided.filter(
+    (x) => x.ai != null && x.ai.dest !== "screener" && x.ai.dest !== "spam",
+  ).length;
   /**
    * The buy list, from the SAME set and in the SAME order.
    *
@@ -565,7 +569,14 @@ export function useScreenerState(
       // person working the queue. Acting on it in bulk is a consent gate granting consent — the
       // very thing removing the fallback was meant to end. Without this the cast above would send
       // the string "screener" to `decide` as a `DecisionDestination`, which is not one of the five.
-      (x) => x.ai != null && x.ai.dest !== "screener",
+      //
+      // SPAM IS EXCLUDED FROM THIS CONTROL TOO, and for a different reason than the hold. It is a
+      // real suggestion and the surface shows it; what it is not is a filing to make forty at a
+      // time on a model's word. Every other destination sorts a stranger's mail, and this one
+      // makes a judgement about the stranger. There is already a control for doing it in bulk —
+      // `markAllSpam`, pressed deliberately — so a row suggested as spam keeps its chip, stays in
+      // the queue, and waits for the one press that means it.
+      (x) => x.ai != null && x.ai.dest !== "screener" && x.ai.dest !== "spam",
     );
 
   const markAllSpam = (scopeOf: (x: ScreenerSenderDTO) => DecisionScope) =>

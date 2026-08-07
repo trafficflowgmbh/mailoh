@@ -45,7 +45,25 @@ export interface ScreenerItem {
     // `hold` ⇒ the model declined to place this sender, so the decision belongs to the person
     // reading the Screener. A surface may show it; a BULK control may never act on it. See
     // `screener-service.ts`'s SCREEN_DISPOSITION for why this is three-valued and not two.
+    //
+    // THIS FIELD IS THE BULK-ACTIONABLE VERDICT AND NOTHING ELSE. It is deliberately still
+    // three-valued after `destination` was added beside it: every bulk control reads `decision`,
+    // so widening it would have widened what "Apply all" may do in one step.
     decision: "yes" | "no" | "hold";
+    /**
+     * WHICH PILE the model actually named — the answer `decision` collapses.
+     *
+     * Added because the collapse was lossy in a way the user could see: on a live account 63
+     * `ohmail/Receipts`, 43 `ohmail/Reads` and 5 `ohmail/Quarantine` answers all rendered as the
+     * single word "Screened out", so the Screener appeared never to suggest Receipts, never Reads
+     * and never spam. It suggested all three; `decision` had no room to say so.
+     *
+     * A surface shows this; nothing acts on it. `decision` remains the only field a control may
+     * consult, so a client that ignores this field behaves exactly as it did before.
+     */
+    destination: Destination;
+    /** The model's own hard "no". Separated from `ohmail/Screened` so junk can be named as junk. */
+    spam: boolean;
     confidence: number;           // 0..1
     rationale: string;
   } | null;                       // null while unclassified / when AI is unavailable

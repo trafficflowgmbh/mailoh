@@ -463,9 +463,16 @@ export function ScreenerView({
                   // `screener` is in no `DECISION_DONE_LABEL` — the five there are the five a
                   // decision can FILE to, and this is the one that files nothing. The
                   // `?? w.ai.dest` fallback would print the raw view key "screener" in the row.
-                  destLabel: w.ai.dest === "screener"
-                    ? t("aiHoldChip")
-                    : DECISION_DONE_LABEL[w.ai.dest as keyof typeof DECISION_DONE_LABEL] ?? w.ai.dest,
+                  //
+                  // THREE STATES, THREE CHIPS. A row with an answer names its pile; a row the
+                  // model declined says the decision is yours; a row that never reached a model
+                  // says so. All three used to be two, and the third read as nothing at all —
+                  // which is how mail we never send to AI came to look like mail we forgot.
+                  destLabel: w.ai.withheld
+                    ? t("aiNoAnswerChip")
+                    : w.ai.dest === "screener"
+                      ? t("aiHoldChip")
+                      : DECISION_DONE_LABEL[w.ai.dest as keyof typeof DECISION_DONE_LABEL] ?? w.ai.dest,
                   confidence: w.ai.confidence,
                 }
               : undefined
@@ -1003,7 +1010,12 @@ function WaitingPreview({
                 of a non-answer, so the verb changes. The confidence and the rationale stay —
                 the account paid for them, and the model IS 0.92 sure this is a stranger for a
                 person to place. */}
-            {sender.ai.dest === "screener" ? (
+            {/* A sender the run could not answer for says WHY, and says it here rather than
+                leaving the row blank. There is no confidence and no rationale to print — nothing
+                was asked — so this branch is one sentence and stops. */}
+            {sender.ai.withheld ? (
+              <span>{t(`aiSkip.${sender.ai.withheld}`)}</span>
+            ) : sender.ai.dest === "screener" ? (
               <span>
                 {t("aiHolds")}{" "}
                 <span className="conf num">{sender.ai.confidence.toFixed(2)}</span> —{" "}

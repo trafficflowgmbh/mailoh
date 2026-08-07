@@ -1069,26 +1069,97 @@ function credentialShapeIn(rep: Representation): boolean {
  * token is a page, not a credential.
  */
 const AUTH_URL_MARKER = new RegExp(
-  "https?://[^\\s<>\"')\\]]*(" +
-    "/(session|sessions|login|log-in|signin|sign-in|auth|authorize|authorise|authenticate|" +
+  "https?://[^\\s<>\"')\\]]*(?:" +
+    "/(?:session|sessions|login|log-in|signin|sign-in|auth|authorize|authorise|authenticate|" +
     "verify|verification|confirm|confirmation|activate|activation|magic|passwordless|" +
     "reset|recover|recovery|token|otp|2fa|mfa|invite|invitation|onetime|one-time)\\b" +
-    "|[?&](t|tk|token|code|key|otp|auth|session|sso|magic|nonce|secret|access_token|id_token|" +
+    "|[?&](?:t|tk|token|code|key|otp|auth|session|sso|magic|nonce|secret|access_token|id_token|" +
     "confirmation_token|reset_token|verification_token|login_token|auth_token|invitation_token)=" +
-  ")[^\\s<>\"')\\]]*",
+  // THE TAIL, CAPTURED. Everything after the marker and nothing before it — see `hasAuthUrlToken`.
+  ")([^\\s<>\"')\\]]*)",
   "gi",
 );
-/** ≥12 characters of token alphabet with the shape of a secret rather than of a word. */
+/**
+ * ONE candidate value out of a URL tail — a run between the separators that delimit path segments
+ * and query values. `/` and `=` and `&` and `?` are the delimiters, so they are NOT in the class:
+ * a token is a single value, and a run that spans them is a sentence of URL, not a secret.
+ */
+const TOKEN_SEGMENT = /[A-Za-z0-9_\-.~+%]+/g;
+/**
+ * The REDACTION pattern, used only by {@link redactAuthUrls} — deliberately broader than
+ * {@link looksLikeOpaqueToken} and deliberately not shared with it.
+ *
+ * Detection and redaction want opposite errors. Detection decides whether a message is withheld
+ * from a model and stored redacted, so over-matching costs the user a feature (it cost 31% of one
+ * account's Screener). Redaction runs only on a message ALREADY judged to carry a credential, and
+ * its only error is blanking a few characters of a URL nobody will read. Broad is correct there.
+ */
 const OPAQUE_TOKEN = /[A-Za-z0-9_\-.~+/=%]{12,}/;
+/**
+ * The shape of a secret rather than of a word: long, AND carrying something words in URLs do not
+ * — a digit or a case change.
+ *
+ * Length alone was not enough once the search was correctly confined to the tail. `?cloudRoute=alerts`
+ * and `/confirmation-page` are both long enough, and the old entropy test passed anything holding a
+ * `-` or an `=`, so ordinary readable URLs still read as credentials.
+ *
+ * **A DIGIT OR ANY UPPERCASE LETTER, not "mixed case".** Mixed case was the first thing tried here
+ * and the corpus caught it: a pinned case in the redaction corpus is
+ * `…/session?t=SECRET-LOGIN-TOKEN`, an all-caps bearer token with no digit in it. Under a
+ * mixed-case test that reached the model, which is the exact hole this rule exists to close. So
+ * the test is the weaker one, and it is weaker in the fail-CLOSED direction: `confirmation-page`
+ * and `manage-preferences` stay ordinary because URL prose is lower-case, while `SECRET-LOGIN-TOKEN`,
+ * `8f3a9b2c1d4e5f6a` and `eyJhbGciOiJIUzI1NiIs` are all withheld.
+ *
+ * What it still costs: a ≥16-character camel-cased path segment reads as a token. That is the
+ * residue of a rule that must not miss a credential, and it is a far narrower cost than the one
+ * being removed — the marker alone used to be enough.
+ */
+const TOKEN_MIN = 16;
+function looksLikeOpaqueToken(seg: string): boolean {
+  if (seg.length < TOKEN_MIN) return false;
+  return /[\dA-Z]/.test(seg);
+}
 
+/**
+ * ── THE TOKEN IS LOOKED FOR AFTER THE MARKER, AND THAT IS THE WHOLE OF THIS FUNCTION ─────────
+ *
+ * The docblock above states that BOTH halves are required. For a long time the code did not
+ * implement that, and the gap is worth writing down because it read as correct.
+ *
+ * It sliced the token search at `url.search(/[?&/]/) + 1` — the first `/`, `?` or `&` anywhere in
+ * the match. For any `https://…` URL the first of those is the `/` at index 6, so the slice began
+ * inside the scheme and **included the hostname**. `OPAQUE_TOKEN`'s alphabet contains `.` and `/`,
+ * so a hostname like `app.netdata.cloud/sign-in` is itself a ≥12-character run, and the `.`
+ * satisfies the entropy test on the next line. The token half was therefore satisfied by every
+ * URL that reached it, and the predicate degenerated to "does this URL contain an auth-shaped
+ * word" — no token required anywhere.
+ *
+ * What that cost: `no_ai` is set on any message containing a `/login`, `/signin`, `/confirm`,
+ * `/verify`, `/reset` or `/invite` link, or a `?t=` / `?code=` parameter — which is ordinary bulk
+ * marketing mail, footer unsubscribe links and discount codes. It reaches through HTML `href`
+ * attributes too, so an invisible "Log in" button in a template was enough. Measured on a live
+ * account: 535 of 1717 held senders (31%) were withheld from the model, and the four the account
+ * owner reported as "the Screener never suggests anything for these" were all of them —
+ * `https://app.netdata.cloud/sign-in` and its kind. They cannot be suggested for, cannot be
+ * drafted against, and their bodies are stored redacted.
+ *
+ * The fix is to search the CAPTURED TAIL — what follows the marker — which is what "an
+ * authentication-shaped URL carrying a token" meant all along. `/verify` with nothing after it is
+ * a page; `/verify?token=<32 opaque characters>` is a credential.
+ *
+ * Deliberately NOT fixed here: the converse half, a genuine opaque token under a path this list
+ * does not name (`/click/<token>`), still passes. That is a tightening rather than a correction,
+ * it needs its own corpus evidence, and doing it in the same change would make this one's
+ * before/after unreadable.
+ */
 function hasAuthUrlToken(s: string): boolean {
   AUTH_URL_MARKER.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = AUTH_URL_MARKER.exec(s)) !== null) {
-    const url = m[0];
-    const after = url.slice(url.search(/[?&/]/) + 1);
-    for (const run of after.match(new RegExp(OPAQUE_TOKEN, "g")) ?? []) {
-      if (/\d/.test(run) || /[-_=%.~+]/.test(run) || (/[a-z]/.test(run) && /[A-Z]/.test(run))) return true;
+    const tail = m[1] ?? "";
+    for (const seg of tail.match(TOKEN_SEGMENT) ?? []) {
+      if (looksLikeOpaqueToken(seg)) return true;
     }
   }
   return false;

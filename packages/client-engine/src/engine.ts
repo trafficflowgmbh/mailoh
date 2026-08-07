@@ -466,6 +466,15 @@ class OverlayReader implements EntityReader {
   }
 }
 
+/**
+ * The most body fetches in the air at once, across all messages.
+ *
+ * Four rather than one: a thread of a handful of messages should still fill in at roughly the
+ * speed it does today, and browsers cap per-host connections in this region anyway — the point is
+ * to stop a forty-message sender from opening forty at once, not to serialise reading.
+ */
+const MAX_CONCURRENT_BODIES = 4;
+
 export class OhmailEngine {
   readonly store: MirrorStore;
   private readonly adapter: EngineAdapter;
@@ -485,6 +494,9 @@ export class OhmailEngine {
   private hydrating: Promise<void> | null = null;
   /** In-flight body fetches by message id — see {@link OhmailEngine.hydrateBody}. */
   private readonly bodyRequests = new Map<string, Promise<void>>();
+  /** In-flight body fetches, and the ones waiting for a slot. See {@link bodySlot}. */
+  private bodyActive = 0;
+  private readonly bodyQueue: Array<() => void> = [];
   /** The archive transport, or `null` when this client has no server behind it. */
   private readonly serverSearchFn: ServerSearchFn | null;
   /** `GET /sync/snapshot`, or `null` when this adapter has no such route — see {@link SnapshotCapableAdapter}. */
@@ -1119,11 +1131,53 @@ export class OhmailEngine {
     // See `retry` above: an automatic trigger must not re-ask a server that already refused.
     if (held?.state === "failed" && !opts.retry) return;
 
-    const request = this.fetchBodyInto(messageId, held).finally(() => {
-      this.bodyRequests.delete(messageId);
-    });
+    const request = this.bodySlot(opts.retry === true, () => this.fetchBodyInto(messageId, held))
+      .finally(() => {
+        this.bodyRequests.delete(messageId);
+      });
     this.bodyRequests.set(messageId, request);
     return request;
+  }
+
+  /**
+   * ── HOW MANY BODIES MAY BE IN THE AIR AT ONCE ──────────────────────────────────
+   *
+   * `bodyRequests` single-flights per MESSAGE, which is the wrong axis for the caller that
+   * matters. The Screener preview hydrates every held message of the selected sender in one
+   * effect, so a sender with forty held messages opened forty `GET /messages/:id/body` requests
+   * in a single tick — none of them duplicates, so nothing above deduplicated them.
+   *
+   * What that looks like on screen is the reported defect. `fetchBodyInto` writes `failed` on any
+   * throw, `bodyOf` answers `html: null` for a record that is not `ready`, and `MessageBody`
+   * renders its text fallback when `html` is null — so a burst that overruns the browser's or the
+   * server's connection limit turns into a preview of plain-text dumps beside one or two properly
+   * rendered frames. It looks like the viewer failing on threads. It is the fan-out.
+   *
+   * A HUMAN JUMPS THE QUEUE. `retry: true` is only ever a person pressing "try again" on a
+   * message they are looking at, and making that wait behind an automatic backlog would make the
+   * one control that exists for this feel broken.
+   *
+   * The slot is released in `finally`, including on rejection. A limiter that leaked a slot on
+   * failure would starve every later hydration and do it silently — the same class of defect as
+   * the one above, reached from the other side.
+   */
+  private bodySlot<T>(urgent: boolean, run: () => Promise<T>): Promise<T> {
+    if (urgent || this.bodyActive < MAX_CONCURRENT_BODIES) {
+      this.bodyActive++;
+      return run().finally(() => {
+        this.bodyActive--;
+        this.bodyQueue.shift()?.();
+      });
+    }
+    return new Promise<T>((resolve, reject) => {
+      this.bodyQueue.push(() => {
+        this.bodyActive++;
+        run().then(resolve, reject).finally(() => {
+          this.bodyActive--;
+          this.bodyQueue.shift()?.();
+        });
+      });
+    });
   }
 
   /**
