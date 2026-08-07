@@ -364,8 +364,7 @@ public final class AppRootModel {
     ///
     /// Persisted before it is acted on, so the choice survives a quit taken half-way through the flow
     /// behind it — the property this makes true is "chosen once". Door one leads on to the provider
-    /// picker; door two is a stated limit in this build (``SetupStep/cloudUnavailable``), reachable
-    /// and honest rather than hidden.
+    /// picker; door two leads to a hosted sign-in (``SetupStep/cloudSignIn(problem:)``).
     public func chooseDoor(_ door: OnboardingDoor) {
         try? store.saveDoor(door)
         self.door = door
@@ -381,8 +380,8 @@ public final class AppRootModel {
         self.chosenProvider = provider
     }
 
-    /// Return to the chooser and forget the door, so neither an unfinished door one nor door two's
-    /// stated limit is a place a person can be stuck. Clearing the stored choice is deliberate: the
+    /// Return to the chooser and forget the door, so neither an unfinished door one nor an in-progress
+    /// cloud sign-in is a place a person can be stuck. Clearing the stored choice is deliberate: the
     /// only thing that changes which way this install organizes is an explicit human action, and this
     /// is that action for "actually, the other way".
     public func reconsiderDoor() {

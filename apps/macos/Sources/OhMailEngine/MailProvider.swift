@@ -3,9 +3,9 @@ import Foundation
 /// THE TWO DOORS, AND THE PROVIDER PRESETS BEHIND DOOR ONE.
 ///
 /// Onboarding opens on a choice — organize this mailbox **on this Mac** or **on ohmail Cloud** — and
-/// the choice is a property of the install, made once. Cloud's transport is a separate slice, so in
-/// this build door two routes to a stated limit rather than a working flow: a door that opened onto
-/// nothing would be worse than no door at all.
+/// the choice is a property of the install, made once. Door two signs in to a hosted account and reads
+/// and triages its mailboxes here; door one is the local engine, and the provider presets below are
+/// what it opens.
 ///
 /// Door one is the local engine, and it begins by asking who hosts the mailbox. The answer fills in
 /// server, port and TLS — settings a person cannot be expected to know and providers do not agree on
@@ -27,9 +27,9 @@ import Foundation
 
 /// Where an install organizes its mailbox. Chosen once, and remembered per install.
 public enum OnboardingDoor: String, Codable, Equatable, Sendable {
-    /// The local engine on this Mac, connecting straight to the user's own server. Fully built here.
+    /// The local engine on this Mac, connecting straight to the user's own server.
     case local
-    /// ohmail Cloud. The transport is a later slice; this build states the limit rather than faking it.
+    /// ohmail Cloud: sign in to a hosted account and read and triage the mailboxes it already holds.
     case cloud
 }
 

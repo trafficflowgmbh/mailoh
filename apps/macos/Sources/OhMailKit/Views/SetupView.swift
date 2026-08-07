@@ -113,14 +113,11 @@ struct SetupView: View {
                 heading("Where should ohmail organize this mailbox?",
                         "Pick once. You can change this later.")
                 VStack(spacing: 12) {
-                    doorCard(title: "On this Mac",
-                             detail: "ohmail runs here and connects straight to your mailbox over IMAP. "
-                                 + "Nothing goes to our servers.",
-                             note: nil) { onChooseDoor(.local) }
-                    doorCard(title: "On ohmail Cloud",
-                             detail: "Always-on organizing on our servers, so it keeps working while this "
-                                 + "Mac is asleep.",
-                             note: "Not in this build yet") { onChooseDoor(.cloud) }
+                    ForEach(Self.doorChoices, id: \.door) { choice in
+                        doorCard(title: choice.title, detail: choice.detail, note: choice.note) {
+                            onChooseDoor(choice.door)
+                        }
+                    }
                 }
                 .padding(.top, 22)
             }
@@ -353,8 +350,35 @@ struct SetupView: View {
 
     // MARK: - The two doors
 
-    /// One of the two doors: a title, a line of what it means, and — for a door this build cannot
-    /// open — a quiet note so the choice is not a bait. Tapping it is the whole surface.
+    /// One door's copy, held as a value rather than a literal in the view body so a test can read it.
+    /// Both doors are real destinations, so `note` is normally `nil`; it exists only for a short, true
+    /// caption when one earns its place. `OnboardingCopyTests` asserts no door advertises a feature as
+    /// missing — the guard against a caption outliving the thing it once qualified.
+    struct DoorChoice: Equatable {
+        let door: OnboardingDoor
+        let title: String
+        let detail: String
+        let note: String?
+    }
+
+    /// The two doors, in the order the chooser shows them. Door one runs the local engine and reaches
+    /// no server; door two signs in to a hosted account whose organizing runs on our side. Both work,
+    /// so neither carries a caption.
+    static let doorChoices: [DoorChoice] = [
+        DoorChoice(door: .local,
+                   title: "On this Mac",
+                   detail: "ohmail runs here and connects straight to your mailbox over IMAP. "
+                       + "Nothing goes to our servers.",
+                   note: nil),
+        DoorChoice(door: .cloud,
+                   title: "On ohmail Cloud",
+                   detail: "Always-on organizing on our servers, so it keeps working while this "
+                       + "Mac is asleep.",
+                   note: nil),
+    ]
+
+    /// Render one door: a title, a line of what it means, and — when a door carries one — a quiet
+    /// caption beside the title. Tapping it is the whole surface.
     @ViewBuilder
     private func doorCard(title: String, detail: String, note: String?,
                           action: @escaping () -> Void) -> some View {
