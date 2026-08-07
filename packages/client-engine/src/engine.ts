@@ -1119,7 +1119,7 @@ export class OhmailEngine {
     // See `retry` above: an automatic trigger must not re-ask a server that already refused.
     if (held?.state === "failed" && !opts.retry) return;
 
-    const request = this.fetchBodyInto(messageId).finally(() => {
+    const request = this.fetchBodyInto(messageId, held).finally(() => {
       this.bodyRequests.delete(messageId);
     });
     this.bodyRequests.set(messageId, request);
@@ -1140,11 +1140,36 @@ export class OhmailEngine {
     return this.adapter.unsubscribe(messageId);
   }
 
-  private async fetchBodyInto(messageId: string): Promise<void> {
-    await this.putBody(messageId, {
-      messageId, state: "loading", text: "", html: null, loadedRemoteContent: false,
-    });
+  /**
+   * ── `held` IS HERE SO A RE-READ DOES NOT TAKE THE MESSAGE OFF THE SCREEN ────────────────
+   *
+   * This used to write the `loading` marker unconditionally, and that is a destructive write:
+   * `bodyOf` answers a `loading` record with the SNIPPET, so a message the reader is looking at
+   * collapsed to one line the instant anything asked for it again. The re-read above
+   * (`ready` with no `html` key, from a build that predates the html part) is exactly such a
+   * caller, and it fires on a message the reader has just opened — so the visible effect of
+   * fixing that record was the body disappearing first. If the fetch then failed or hung, they
+   * had LOST a body they already had.
+   *
+   * A record that is already `ready` is therefore left alone until there is something better to
+   * put in its place. The reader keeps reading; the swap happens when the answer arrives.
+   *
+   * ── AND THE WRITES ARE INSIDE THE TRY, WHICH IS NOT A TIDY-UP ───────────────────────────
+   *
+   * `putBody` reaches IndexedDB, and IndexedDB refuses: a quota that is full, a private window,
+   * a connection closed by a version change, an `IdbMirrorStore` whose owner moved. With the
+   * first write outside the `try` that refusal propagated out of `hydrateBody` — breaking the
+   * "WHY IT NEVER REJECTS" contract stated above it, in a React effect, where the outcome is an
+   * unhandled rejection over somebody's mailbox. Everything that can throw is now inside, and
+   * the failure arm has its own guard: see {@link Engine.failBody}.
+   */
+  private async fetchBodyInto(messageId: string, held: MessageBodyRecord | undefined): Promise<void> {
     try {
+      if (held?.state !== "ready") {
+        await this.putBody(messageId, {
+          messageId, state: "loading", text: "", html: null, loadedRemoteContent: false,
+        });
+      }
       const wire = await this.adapter.fetchBody(messageId);
       // `null` ⇒ this adapter serves no bodies (the fixtures world). Tombstone the loading
       // marker rather than leaving a surface saying "loading…" forever; `bodyOf` then falls
@@ -1189,6 +1214,24 @@ export class OhmailEngine {
             },
       );
     } catch (err) {
+      await this.failBody(messageId, err);
+    }
+  }
+
+  /**
+   * Record that this body could not be read — the state the surfaces render as "couldn't load
+   * the full message" with a Retry beside it.
+   *
+   * ITS OWN WRITE IS GUARDED, AND THAT IS THE POINT OF SPLITTING IT OUT. This runs on the arm
+   * that already knows something has gone wrong, and it reaches the same IndexedDB that may be
+   * the thing going wrong. A throw from here would escape `fetchBodyInto`'s `catch` — there is
+   * no outer one — and reject `hydrateBody`, so the mirror refusing a write would turn a
+   * reportable failure into an unhandled rejection. Swallowed deliberately: the record keeps
+   * whatever it held, `hydrateBody` still resolves, the single-flight entry is still cleared by
+   * the `.finally` above it, and the reader can ask again.
+   */
+  private async failBody(messageId: string, err: unknown): Promise<void> {
+    try {
       await this.putBody(messageId, {
         messageId,
         state: "failed",
@@ -1197,8 +1240,11 @@ export class OhmailEngine {
         loadedRemoteContent: false,
         error: err instanceof Error ? err.message : String(err),
       });
+    } catch {
+      /* the mirror refused the failure record too; see above — never rethrow */
     }
   }
+
 
   private async putBody(messageId: string, record: MessageBodyRecord | null): Promise<void> {
     await this.store.putLocal("message_body", messageId, record);
