@@ -127,7 +127,7 @@ describe("tauri.conf.json", () => {
    * that used to depend on running both at once are not worth a permanent fork in every path the
    * app touches.
    */
-  it("shares the SwiftUI client's identifier, because it is the same install", () => {
+  it("keeps the previous client's bundle identifier, because it is the same install", () => {
     const plist = fs.readFileSync(
       path.resolve(APP, "../../public/ohmail/Resources/Info.plist"),
       "utf8",
@@ -452,27 +452,36 @@ describe("the Rust side", () => {
   /**
    * THE KEY AN EARLIER VERSION STORED IS COPIED, NEVER MOVED.
    *
-   * A machine that has run the macOS client already has this install's key, under that client's own
-   * coordinates. The shell adopts it rather than minting a fresh one — a fresh key would leave the
-   * mailbox password sealed months ago unreadable, with nothing on screen able to say why.
+   * A machine that has run the previous macOS client already has this install's key, under that
+   * client's own coordinates. The shell adopts it rather than minting a fresh one — a fresh key
+   * would leave the mailbox password sealed months ago unreadable, with nothing on screen able to
+   * say why.
    *
-   * The DELETE is the half that has to be asserted rather than reasoned about: the other client is
-   * still installed and still needs that item, so a migration that tidied up after itself would
+   * The DELETE is the half that has to be asserted rather than reasoned about: the older app may
+   * still be installed and still needs that item, so a migration that tidied up after itself would
    * break an app somebody may open five minutes later. The ordering and the fallbacks are proven in
    * Rust (`cargo test --features local-engine`); what this adds is that no delete exists to be
    * called in the first place.
    */
   it("adopts an earlier version's key and never removes it", () => {
+    /*
+     * THE COORDINATES ARE LITERALS HERE BECAUSE THE SOURCE THEY WERE READ FROM IS GONE.
+     *
+     * This used to read `defaultService` and `defaultAccount` out of the macOS client's own
+     * `KeychainKeyStore.swift`, so the two sides could not drift. That client is retired and its
+     * directory is deleted, which changes what "the other side" means: the coordinates are no
+     * longer a shared constant between two live programs, they are the fixed, historical address
+     * of an item sitting in the Keychain of every machine that ever ran the old app.
+     *
+     * A fixed address is exactly what must NOT be re-derived. `io.ohmail.desktop` / `kek.v1` are
+     * spelled out below, and the point of asserting them is that they can never be "tidied up" to
+     * match a newer naming scheme: change either string and the shell mints a fresh key, leaving
+     * every mailbox password sealed by the old one unreadable, with nothing on screen able to say
+     * why. The literals ARE the contract now; the Swift file was only ever a copy of it.
+     */
     const engine = read("src-tauri/src/engine.rs");
     expect(engine).toMatch(/LEGACY_KEYSTORE_SERVICE: &str = "io\.ohmail\.desktop"/);
     expect(engine).toMatch(/LEGACY_KEYSTORE_ENTRY: &str = "kek\.v1"/);
-    // Those coordinates are the macOS client's own, read from its source rather than remembered.
-    const swift = fs.readFileSync(
-      path.resolve(APP, "../macos/Sources/OhMailEngine/KeychainKeyStore.swift"),
-      "utf8",
-    );
-    expect(swift).toMatch(/defaultService = "io\.ohmail\.desktop"/);
-    expect(swift).toMatch(/defaultAccount = "kek\.v1"/);
     // Nothing in this module can delete a keystore item.
     expect(engine).not.toMatch(/delete_credential|delete_password/);
   });

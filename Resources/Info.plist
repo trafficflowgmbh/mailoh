@@ -1,8 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Bundle metadata for the .app that scripts/package-app.sh assembles around the
-     SwiftPM release binary. CFBundleVersion is stamped by that script (commit sha
-     or CI run number); everything else is static. -->
+<!-- THE PREVIOUS macOS CLIENT'S BUNDLE METADATA, KEPT ON PURPOSE AFTER THAT CLIENT WAS RETIRED.
+
+     macOS now ships the same application as Windows and Linux, bundled by Tauri from
+     apps/desktop/src-tauri/tauri.conf.json and Info.plist. Nothing builds an app around THIS file
+     any more, and it is published for two reasons that outlive the client it belonged to:
+
+       · SUPublicEDKey below is the trust anchor of the HANDOVER. Every Mac still carrying the old
+         client asks Sparkle for appcast-macos.xml, and installs what that feed offers only if the
+         signature verifies against this key. The key is committed so anyone can check the feed
+         against it themselves.
+       · CFBundleIdentifier is the identity the new app deliberately keeps, so an update replaces
+         the install rather than sitting beside it and addressing a different data directory.
+
+     CFBundleVersion here is inert. What the handover is compared against is the CFBundleVersion of
+     the shipped Tauri bundle; see apps/desktop/src-tauri/Info.plist. -->
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
@@ -37,18 +49,18 @@
 	<string>NSApplication</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
-	<!-- Sparkle auto-updater (see apps/macos Sources/OhMailKit/Update).
-	     The app is unsigned, so this EdDSA public key is the whole of what makes an update
-	     trustworthy: an archive is installed only if its signature verifies against it. Its
-	     private half is held outside the repo and never shipped. A build MUST NOT ship without a
-	     valid key here — package-app.sh refuses to assemble one that is missing or empty, because
-	     an empty key would make the app trust an unsigned feed. -->
+	<!-- Sparkle auto-updater. The apps are unsigned, so this EdDSA public key is the whole of what
+	     makes an update trustworthy: an archive is installed only if its signature verifies against
+	     it. Its private half is held outside the repo and never shipped. This key must never be
+	     removed or rotated on its own — an installed client verifies against the copy IT shipped
+	     with, so the release workflow has to keep signing with the matching private half or those
+	     installs can never take another update. -->
 	<key>SUPublicEDKey</key>
 	<string>yHMOFvqQ6/MzGRkj74xS3NH8kHU76w2LHh23Ss3i67I=</string>
-	<!-- Where the app looks for updates: one pinned HTTPS endpoint on the project's own repo. The
-	     appcast served here is produced by the release CI, not by this client; the client's
-	     only expectation of it is that it is EdDSA-signed with the key above and orders versions the
-	     way OhMailVersionComparator does. -->
+	<!-- Where the older client looks for updates: one pinned HTTPS endpoint on the project's own
+	     repo. The appcast served there is produced by the release CI and is published on EVERY
+	     release, indefinitely — a client that has not been opened in a year still asks for it, and a
+	     404 leaves that install where it is for ever. -->
 	<key>SUFeedURL</key>
 	<string>https://github.com/trafficflowhq/ohmail/releases/latest/download/appcast-macos.xml</string>
 	<!-- Check on a schedule, but NEVER install silently: a found update is always presented for the

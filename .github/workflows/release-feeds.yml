@@ -218,7 +218,9 @@ jobs:
           # that pin load-bearing rather than decorative — a plist that loses the
           # key fails the release instead of stranding the people it protects.
           # ════════════════════════════════════════════════════════════════════
-          SPARKLE_VER=2.9.4   # matches apps/macos/Package.resolved
+          # The Sparkle release the retired macOS client embedded, so the
+          # signature this produces is the one those installs know how to verify.
+          SPARKLE_VER=2.9.4
           curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VER/Sparkle-$SPARKLE_VER.tar.xz" -o sparkle.tar.xz
           mkdir -p sparkle && tar -xJf sparkle.tar.xz -C sparkle
           SIGN_UPDATE="$(find sparkle -type f -name sign_update | head -1)"
