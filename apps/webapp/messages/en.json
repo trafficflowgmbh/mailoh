@@ -414,7 +414,10 @@
     "explainer": "Mail from people you never screened, who haven't written in a while. It's all read, so nothing here is waiting on you. It hasn't moved — each message is still where your mail server keeps it.",
     "emptyTitle": "Nothing has settled here yet.",
     "emptyHint": "History holds old mail from senders you never made a decision about. If one of them writes again, they go to the Screener and bring this mail with them.",
-    "placeChip": "History"
+    "placeChip": "History",
+    "layoutAria": "Reading layout",
+    "layoutList": "List",
+    "layoutSplit": "Split"
   },
   "tag": {
     "metaCount": "{count, plural, one {1 message} other {# messages}}",

@@ -2776,10 +2776,13 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                  * message does not present there. The reader takes an id and reads the message
                  * straight from the mirror, so it works for a message belonging to no pile.
                  *
-                 * `setReaderFor` and not `enterReader`: that gate exists because the piles have
-                 * a reading COLUMN under 900px and the sheet would duplicate it. History is a
-                 * solo list with no such column, so the sheet is the only reading surface it
-                 * has, at every width.
+                 * `setReaderFor` and not `enterReader`: in the SOLO list there is no reading
+                 * column at any width, so the sheet is the only reading surface — the gate that
+                 * suppresses the sheet where a column exists would leave the solo list unable to
+                 * open anything. The split layout has a column and reads there instead; the
+                 * sheet is only its mobile fallback, where the column is `display:none` and this
+                 * is again the one surface. Either way the body hydrates through the
+                 * `readerFor`-keyed effect above.
                  *
                  * It is what makes decide-on-encounter work: the pane renders the full body and
                  * thread, and the sender menu inside it offers the screening decision with the
@@ -2787,6 +2790,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                  * everywhere else, reached from the mail that prompted the thought.
                  */
                 onOpen={(m) => setReaderFor(m.id)}
+                /* The split reading column hydrates its own selection, the way ReadsView does. */
+                hydrateBody={hydrateBody}
+                onAction={onMessageAction}
+                onAddTag={openTagPicker}
               />
             ) : null}
 
