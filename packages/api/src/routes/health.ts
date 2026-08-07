@@ -474,6 +474,17 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail entry until 0044 added the dormancy-dial ceiling — whose marker is a CHECK, so it lives in
   // `SCHEMA_CHECK_MARKERS` rather than here, and `MAIL_SCHEMA_MARKER_JOURNAL_TAG` moved to it.
   ["account_settings", "ohbox_tidy_requested_at"],
+  // mail 0046_screener_auto_apply — the opt-in Screener auto-apply flag. One additive nullable
+  // column on `account_settings`, and it earns a marker for the same whole-row-select reason as
+  // `auto_suggest_at` (0040) three features over: `consentSettings` and `getScreeningPreference`
+  // reach this row, so a database missing the column 42703s the CONSENT and SCREENING surfaces, not
+  // just this feature. The worker READS the column every cycle (the opt-in probe of the auto-apply
+  // pass), but a read that 42703s degrades to OFF (absent-config-selects-safe), so a worker ahead
+  // of the migration moves nothing — the safe direction. Deploy order: migration → API (and worker).
+  //
+  // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker: read off a row
+  // fetched by primary key, never filtered on. It is the NEWEST entry in the mail journal.
+  ["account_settings", "screener_auto_apply_at"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -762,8 +773,16 @@ export const MAIL_EXPECTED_MARKERS =
  * compose and reply both dark, from a column a bcc-less send never reads. No CHECK marker (the
  * column is a plain jsonb default, no constraint) and no INDEX marker. No worker half: nothing in
  * `apps/worker` reads `drafts`, so the order is migration → API with no third step.
+ *
+ * `0046_screener_auto_apply` is probed ONCE, by `account_settings.screener_auto_apply_at`, the twin
+ * of the `auto_suggest_at` marker and for the same whole-row-select reason: `consentSettings`
+ * selects WHOLE `account_settings` rows, so an API deployed ahead of the migration 42703s `GET
+ * /consent` for every account, from a column the consent surface never itself reads. Unlike the two
+ * `drafts` markers there IS a worker half — the auto-apply pass probes the column each cycle — but
+ * that read degrades to OFF on 42703, so the worker never blocks on it; the order is still
+ * migration → API (and worker).
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0045_draft_bcc";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0046_screener_auto_apply";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

@@ -1,0 +1,67 @@
+-- SCREENER AUTO-APPLY — the opt-in `account_settings` flag that lets the deterministic strong-bulk
+-- floor file obvious newsletters and receipts OUT of the Screener queue on the account's behalf,
+-- instead of waiting for a human to press a destination on each one.
+--
+-- `0035_account_settings.sql` foresaw the second per-account opt-in and named its shape: additive,
+-- `ALTER TABLE account_settings ADD COLUMN`, no data motion. `0040_auto_suggest.sql` was the first
+-- such flag; this is the second, and it is deliberately nothing more than that column.
+--
+-- ══ WHAT THE FLAG DOES, AND WHAT IT EXPLICITLY DOES NOT ══════════════════════════════════════
+--
+-- ON: a worker pass re-evaluates the senders HELD in the Screener under the SAME deterministic
+-- strong-bulk floor the live engine and the Ohbox backfill use (`rules.ts#migrationBulkPlacement`
+-- — `List-Unsubscribe` REQUIRED plus a corroborating list/ESP marker), and files the obvious bulk
+-- to Reads (or Receipts on a money subject). Every move is a durable, user-reversible placement:
+-- `folder_state.desired_folder` plus a `change_log` move plus an `audit_log` row with an inverse
+-- undo. It NEVER deletes, and it writes NO `rules` row — it grants no admission, so the next
+-- message from that sender still screens.
+--
+-- It does NOT decide with the model, and it does NOT spend. No classifier call, no credit debit,
+-- and — the load-bearing carve-out — a sensitivity-flagged message (`sensitivity_category` set OR
+-- `no_ai`) is KEPT in the Screener, never auto-moved, exactly as the live router force-keeps
+-- sensitive mail in the Ohbox (`pipeline.ts`). A login code, password reset or security alert from
+-- a stranger stays at the gate for a human. First-time PEOPLE stay at the gate too: the floor only
+-- ever fires on declared bulk.
+--
+-- The opt-in exists because auto-mode decides WHERE mail is routed without a per-message click, and
+-- moving mail on someone's behalf is the thing that requires asking. It is complete to opt out:
+-- turning it OFF stops the pass, and everything it moved is a normal placement the user can drag
+-- back — nothing has to be unwound.
+--
+-- ══ WHY timestamptz AND NOT boolean ═════════════════════════════════════════════════════════
+--
+-- The same argument `auto_suggest_at` (0040) and `seed_confirmed_at` (0035) make: "when" is the
+-- only form of this fact that can be reasoned about later. "Was auto-apply on before or after the
+-- screening reset?" is a real support question a boolean cannot answer. NULL = off, and off is the
+-- default for every account — including every account with no `account_settings` row, which is most
+-- of them. Absence MUST read as OFF at every layer, and a settings read that FAILS must also read
+-- as OFF: defaulting the other way would move somebody's mail on a fetch error. The column is read
+-- as a predicate (`IS NOT NULL`), never as a deadline, so a skewed clock cannot make it mean
+-- anything other than "on".
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO BACKFILL, NO CHECK, NO LOCKDOWN ═════════════════════════════════
+--
+-- `ADD COLUMN IF NOT EXISTS`, so a journal replay is a no-op and a partially-applied window cannot
+-- wedge it (setup-prod replays the journal; the pg tests rewind and re-migrate). NULL on every
+-- existing account is correct: no account has opted in, so the pass no-ops for all of them and no
+-- mail moves the day this ships. No CHECK — any instant is a legal answer, on 0040's rule. `ADD
+-- COLUMN` on `account_settings` inherits its grants (0035, tightened), so no privilege lockdown is
+-- owed and the content-blind operator role gains nothing — an opt-in flag is not something an
+-- operator needs.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ══════════════════════════════════════════════════════════
+--
+-- Migration → API (and worker). `consentSettings` and `getScreeningPreference` reach this row, so a
+-- host ahead of the migration answers Postgres 42703 on the screening/consent surface; the health
+-- marker `["account_settings","screener_auto_apply_at"]` turns that into a `503 schema_incomplete`
+-- that names this file. The worker probes the column every cycle (the opt-in check), but a read
+-- that 42703s degrades to OFF (absent-config-selects-safe), so a worker ahead of the migration
+-- moves nothing — the safe direction, and visible.
+--
+-- ROLLBACK is `ALTER TABLE account_settings DROP COLUMN screener_auto_apply_at`. The cost is that
+-- every account that opted in is silently opted out — the safe direction, since the column's only
+-- effect is to authorise moving mail. Nothing about the mail unwinds: mail already filed stays
+-- filed (a reversible placement the user can drag back), and no consent is lost, because consent
+-- lives in `rules` and this pass writes none.
+
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "screener_auto_apply_at" timestamp with time zone;

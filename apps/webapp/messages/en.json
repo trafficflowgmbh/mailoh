@@ -570,6 +570,8 @@
       "postureTitle": "Keep my Ohbox for what's relevant",
       "postureOn": "Real people and the service mail you act on stay in the Ohbox. Newsletters and promotions go to Reads, receipts to Receipts.",
       "postureOff": "Everything from a sender you've written to reaches your Ohbox, promotions included.",
+      "autoApplyTitle": "File obvious bulk out of my Screener for me",
+      "autoApplyDescription": "When a first-time sender is plainly a newsletter or a receipt, file it to Reads or Receipts instead of holding it for you. Deterministic rules only — no AI, and it never spends. Security codes and other sensitive mail are never moved, and first-time people always wait for you. You can move anything back; nothing is deleted. Off by default.",
       "barLabel": "In your words, what belongs in your Ohbox",
       "save": "Save",
       "reset": "Use the default",

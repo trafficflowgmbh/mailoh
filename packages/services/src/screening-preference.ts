@@ -46,12 +46,20 @@ export const DEFAULT_OHBOX_BAR =
   + "a security alert, something that needs a reply. File the newsletters and promotions in Reads, the "
   + "receipts and confirmations in Receipts, and hold first-time strangers in the Screener.";
 
-/** What a caller stores. Both optional: a PATCH may set one axis without touching the other. */
+/** What a caller stores. All optional: a PATCH may set one axis without touching the others. */
 export interface ScreeningPreferenceUpdate {
   /** `people_only` | `people_and_replied` | `null` (revert to the lenient default). */
   ohboxPolicy?: OhboxPolicy | null;
   /** The free-text bar, or `null` to revert to {@link DEFAULT_OHBOX_BAR}. */
   ohboxBar?: string | null;
+  /**
+   * SCREENER AUTO-APPLY opt-in. `true` ⇒ stamp `screener_auto_apply_at = now()` (on); `false` ⇒
+   * NULL it (off). A boolean on the wire, a timestamp in the column — the read below collapses the
+   * timestamp back to a boolean, and {@link ScreeningPreference.screenerAutoApply} is what a control
+   * renders. There is no "revert to default" third state: the default IS off, and `false` reaches
+   * it. See {@link ScreeningPreference.screenerAutoApply} for what turning it on does.
+   */
+  screenerAutoApply?: boolean;
 }
 
 /**
@@ -62,6 +70,15 @@ export interface ScreeningPreferenceUpdate {
 export interface ScreeningPreference {
   ohboxPolicy: OhboxPolicy | null;
   ohboxBar: string | null;
+  /**
+   * Whether SCREENER AUTO-APPLY is on — the resolved boolean, from `screener_auto_apply_at IS NOT
+   * NULL`. An absent row, a NULL column and a failed read all resolve to `false`, so an account
+   * that has never touched this — and one whose settings could not be fetched — auto-applies
+   * nothing. That default is the safe one: on means the worker files obvious strong-bulk senders
+   * out of the Screener (deterministic routing only — no model call, no spend, no auto-purchase of
+   * paid suggestions), and off means the queue is a human's to triage as it has always been.
+   */
+  screenerAutoApply: boolean;
 }
 
 /**
@@ -72,6 +89,7 @@ export async function getScreeningPreference(ctx: ServiceContext): Promise<Scree
   const [row] = await ctx.db.select({
     ohboxPolicy: accountSettings.ohboxPolicy,
     ohboxBar: accountSettings.ohboxBar,
+    screenerAutoApplyAt: accountSettings.screenerAutoApplyAt,
   }).from(accountSettings).where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
   return {
     // A value outside the enum (only reachable if the CHECK is somehow bypassed) reads as NULL here,
@@ -79,6 +97,9 @@ export async function getScreeningPreference(ctx: ServiceContext): Promise<Scree
     ohboxPolicy: row?.ohboxPolicy === "people_only" || row?.ohboxPolicy === "people_and_replied"
       ? row.ohboxPolicy : null,
     ohboxBar: row?.ohboxBar ?? null,
+    // `IS NOT NULL`, never the timestamp itself — the flag is a predicate, and an absent row reads
+    // as OFF like every other unset field here.
+    screenerAutoApply: row?.screenerAutoApplyAt != null,
   };
 }
 
@@ -146,6 +167,19 @@ export async function setScreeningPreference(
     }
     values.ohboxBar = b ?? null;
     set.ohboxBar = b ?? null;
+  }
+
+  if ("screenerAutoApply" in update) {
+    const on = update.screenerAutoApply;
+    if (typeof on !== "boolean") {
+      throw new ServiceError("validation_failed", 400, "screenerAutoApply must be a boolean");
+    }
+    // A boolean in, a timestamp stored: `true` records WHEN the account opted in (the fact worth
+    // keeping, for the reason `auto_suggest_at` keeps it), `false` NULLs it back to OFF. Unlike the
+    // posture flip this arms NOTHING — the pass reads this column live every cycle, so there is no
+    // "requested_at" to stamp; opting in is the whole instruction and opting out is complete.
+    values.screenerAutoApplyAt = on ? ctx.now() : null;
+    set.screenerAutoApplyAt = on ? ctx.now() : null;
   }
 
   await ctx.db.insert(accountSettings).values(values)

@@ -64,7 +64,11 @@ export function ScreeningSection() {
   const { pref, draft } = state;
   const relevanceOn = pref.ohboxPolicy === "people_only";
 
-  const apply = (next: Partial<{ ohboxPolicy: ScreeningPreferenceWire["ohboxPolicy"]; ohboxBar: string | null }>) => {
+  const apply = (next: Partial<{
+    ohboxPolicy: ScreeningPreferenceWire["ohboxPolicy"];
+    ohboxBar: string | null;
+    screenerAutoApply: boolean;
+  }>) => {
     if (pending) return;
     setPending(true);
     setFailed(false);
@@ -100,6 +104,22 @@ export function ScreeningSection() {
             disabled={pending}
             ariaLabel={t("screening.postureTitle")}
             onChange={(next) => apply({ ohboxPolicy: next ? "people_only" : "people_and_replied" })}
+          />
+        }
+      />
+
+      {/* Auto-apply: an opt-in, default OFF. It moves obvious bulk out of the Screener for you using
+          the deterministic rules — never the AI, never a purchase, never sensitive mail — and every
+          move is reversible. The description states the spend model (none) and what stays untouched. */}
+      <SettingsRow
+        label={t("screening.autoApplyTitle")}
+        description={t("screening.autoApplyDescription")}
+        control={
+          <Switch
+            checked={pref.screenerAutoApply}
+            disabled={pending}
+            ariaLabel={t("screening.autoApplyTitle")}
+            onChange={(next) => apply({ screenerAutoApply: next })}
           />
         }
       />

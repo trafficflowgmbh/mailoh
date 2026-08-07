@@ -1469,6 +1469,26 @@ export const accountSettings = pgTable("account_settings", {
   ohboxTidyRequestedAt: timestamp("ohbox_tidy_requested_at", { withTimezone: true }),
   ohboxTidyDoneAt: timestamp("ohbox_tidy_done_at", { withTimezone: true }),
   ohboxTidyCursor: uuid("ohbox_tidy_cursor"),
+  /**
+   * SCREENER AUTO-APPLY — when the account opted in, or NULL for off (mail 0046). ON means: the
+   * worker's auto-apply pass files obvious strong-bulk senders (the deterministic
+   * `migrationBulkPlacement` floor — `List-Unsubscribe` plus a corroborating list/ESP marker) OUT
+   * of the Screener into Reads/Receipts, so the queue is not clogged by newsletters and receipts a
+   * human would only wave through.
+   *
+   * It applies DETERMINISTIC routing only: no classifier call, no credit debit, no auto-purchase of
+   * paid AI suggestions. Every move is durable and user-reversible (a `folder_state` placement plus
+   * a `change_log` move plus an `audit_log` inverse), never a delete, and it writes NO `rules` row —
+   * the sender still screens next time. A sensitivity-flagged message (`sensitivity_category` set OR
+   * `no_ai`) is NEVER auto-moved — the same cross-class KEEP the live router and the Ohbox backfill
+   * apply — so a stranger's login code stays at the gate for a human.
+   *
+   * A timestamp, not a boolean, for the same reason as {@link autoSuggestAt}: "was this on before or
+   * after the screening reset?" is a real question. **NULL, no row, and a FAILED read must all read
+   * as OFF** — defaulting the other way would move mail on a fetch error. Read as `IS NOT NULL`,
+   * never as a deadline.
+   */
+  screenerAutoApplyAt: timestamp("screener_auto_apply_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
