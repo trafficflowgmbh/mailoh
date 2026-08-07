@@ -1014,6 +1014,39 @@ const PROBE_PX = 600;
  */
 const MAX_FRAME_PX = 20_000;
 
+/**
+ * THE SCROLLABLE ANCESTORS OF THE FRAME, nearest first, plus the document scroller.
+ *
+ * {@link measure} sizes the frame by briefly SHRINKING it to {@link PROBE_PX}. Anything that
+ * scrolls above the frame — the reading pane, the app column, the page itself — has its own
+ * `scrollHeight` drop by the difference the instant the frame shrinks, and the browser clamps
+ * that element's `scrollTop` to the new, smaller maximum during the forced layout the probe
+ * read triggers. Restoring the frame's height does NOT unclamp it. These are the elements
+ * whose `scrollTop` the probe must capture and put back, or a reader who has scrolled down is
+ * yanked toward the top on every reflow: every remote image that loads, every column resize.
+ *
+ * jsdom performs no layout, so `scrollHeight`/`clientHeight` are both 0 there and this returns
+ * `[]` — the whole preservation is a no-op under the unit suite and only does work in a real
+ * engine, which is why #95's acceptance is a browser check, not a jsdom one.
+ */
+function scrollAncestors(el: Element): Element[] {
+  const out: Element[] = [];
+  let node: Element | null = el.parentElement;
+  while (node) {
+    const oy = getComputedStyle(node).overflowY;
+    if (
+      (oy === "auto" || oy === "scroll" || oy === "overlay") &&
+      node.scrollHeight > node.clientHeight
+    ) {
+      out.push(node);
+    }
+    node = node.parentElement;
+  }
+  const se = el.ownerDocument.scrollingElement;
+  if (se && !out.includes(se) && se.scrollHeight > se.clientHeight) out.push(se);
+  return out;
+}
+
 // ── the component ──────────────────────────────────────────────────────────────────────
 
 export interface MessageBodyProps {
@@ -1149,11 +1182,26 @@ export function MessageBody({
     const frame = frameRef.current;
     const doc = frame?.contentDocument;
     if (!frame || !doc?.documentElement) return;
+    // ── PRESERVE THE PANE'S SCROLL ACROSS THE PROBE ────────────────────────────────────
+    // Capture the scroll offset of every scrollable ancestor BEFORE the probe shrinks the
+    // frame, and restore each AFTER the final height is written. Without this, the probe's
+    // forced layout clamps a scrolled-down pane's scrollTop to the shrunken maximum and the
+    // restore never puts it back — see {@link scrollAncestors}. Reading `.scrollTop` in the
+    // restore flushes layout at the FINAL height first, so the assignment lands against the
+    // full scroll range, not the probe's. Both writes stay in one task so nothing paints in
+    // between and the reader sees no motion.
+    const scrollers = scrollAncestors(frame);
+    const tops = scrollers.map((el) => el.scrollTop);
+
     const restore = frame.style.height;
     frame.style.height = `${PROBE_PX}px`;
     const raw = Math.ceil(doc.documentElement.offsetHeight);
     const h = Math.min(raw, MAX_FRAME_PX);
     frame.style.height = h > 0 ? `${h}px` : restore;
+
+    for (let i = 0; i < scrollers.length; i++) {
+      if (scrollers[i]!.scrollTop !== tops[i]) scrollers[i]!.scrollTop = tops[i]!;
+    }
   }, []);
 
   useEffect(() => {
