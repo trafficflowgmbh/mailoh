@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createSidecar, type Sidecar, type SidecarConfig } from "./engine.js";
+import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "./cloud-engine.js";
 import { serveOverStdio, type StdioHost } from "./host.js";
 import { createSidecarLog } from "./log.js";
 
@@ -195,6 +196,48 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
   };
 }
 
+/**
+ * THE CLOUD CONFIGURATION — and the refusal that makes the safe branch STRUCTURAL.
+ *
+ * Cloud mode mirrors a hosted account and never opens IMAP. That is not enforced by the ABSENCE of
+ * IMAP settings — a launcher that materializes every declared variable, or a stale IMAP block left
+ * in a script, must not be able to quietly hand this process a mailbox to organize. So the presence
+ * of ANY non-empty `OHMAIL_IMAP_*` is a hard refusal: the safe branch is selected by construction,
+ * and there is no configuration under which Cloud mode reaches the IMAP path. Together with the
+ * import census over `cloud-engine.ts`, an install running this mode cannot become a second
+ * organizer of a mailbox the hosted worker already holds.
+ *
+ * `OHMAIL_CLOUD_ACCESS_TOKEN` / `OHMAIL_CLOUD_REFRESH_TOKEN` are the FIRST-LAUNCH tokens; after
+ * that they live sealed on disk and the environment carries only `OHMAIL_KEK` (see
+ * `cloud-auth.ts`). A launch with neither a sealed pair nor an environment token is refused by the
+ * engine, not here — the mirror it already holds is still worth serving up to that point.
+ */
+export function cloudConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CloudSidecarConfig {
+  const imapPresent = Object.entries(env)
+    .filter(([name, value]) => name.startsWith("OHMAIL_IMAP_") && (value ?? "").trim() !== "")
+    .map(([name]) => name);
+  if (imapPresent.length > 0) {
+    throw new Error(
+      `OHMAIL_MODE=cloud refuses to start because ${imapPresent.sort().join(", ")} is set. Cloud ` +
+        "mode mirrors a hosted account and never opens IMAP; the safe branch is chosen by " +
+        "construction, not by the absence of a value, so an IMAP setting present here is a " +
+        "misconfiguration rather than an instruction.",
+    );
+  }
+  const access = env.OHMAIL_CLOUD_ACCESS_TOKEN;
+  const refresh = env.OHMAIL_CLOUD_REFRESH_TOKEN;
+  const keks = keksFromEnv(env);
+  return {
+    dataDir: env.OHMAIL_DATA_DIR ?? required("OHMAIL_DATA_DIR"),
+    cloudUrl: env.OHMAIL_CLOUD_URL ?? required("OHMAIL_CLOUD_URL"),
+    address: env.OHMAIL_MAILBOX_ADDRESS ?? required("OHMAIL_MAILBOX_ADDRESS"),
+    ...(env.OHMAIL_MAILBOX_DISPLAY_NAME ? { displayName: env.OHMAIL_MAILBOX_DISPLAY_NAME } : {}),
+    ...(access && refresh ? { tokens: { accessToken: access, refreshToken: refresh } } : {}),
+    ...(env.OHMAIL_POLL_MS ? { pollIntervalMs: Number(env.OHMAIL_POLL_MS) } : {}),
+    ...(Object.keys(keks).length > 0 ? { keks } : {}),
+  };
+}
+
 export async function runSidecar(): Promise<void> {
   const stdout = claimStdout();
   // The hardened logger from `packages/core`, on stderr. This used to be a hand-rolled
@@ -300,6 +343,95 @@ export async function runSidecar(): Promise<void> {
 }
 
 /**
+ * THE RUNNABLE CLOUD SIDECAR — `OHMAIL_MODE=cloud`.
+ *
+ * Structurally the same process as {@link runSidecar}: `claimStdout`, the hardened logger on
+ * stderr, the stdio bridge, and the same shutdown ordering. What differs is the engine — a
+ * read-only mirror of a hosted account ({@link createCloudSidecar}) rather than the local
+ * organizer — and it is the difference the whole mode exists for: this branch reaches no IMAP
+ * adapter, no organizer lease and no sync loop, so an install here cannot become a second organizer
+ * of a mailbox the hosted worker already holds.
+ */
+export async function runCloudSidecar(): Promise<void> {
+  const stdout = claimStdout();
+  const log = createSidecarLog();
+  let cloud: CloudSidecar | null = null;
+
+  process.stdout.on?.("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EPIPE") void shutdown("stdout_epipe", 0);
+  });
+
+  let host: StdioHost | null = null;
+  let shuttingDown: Promise<void> | null = null;
+  const shutdown = (reason: string, code: number): Promise<void> => {
+    shuttingDown ??= (async () => {
+      log("shutdown", { reason, inFlight: host?.inFlight ?? 0 });
+      try {
+        if (host) {
+          host.stop();
+          await host.finished();
+        }
+        await cloud?.stop();
+      } catch (err) {
+        log("shutdown_failed", { err });
+        code = 1;
+      }
+      process.exit(code);
+    })();
+    return shuttingDown;
+  };
+
+  try {
+    cloud = await createCloudSidecar({ ...cloudConfigFromEnv(), log });
+  } catch (err) {
+    // A refused IMAP setting, a missing token, or a locked data directory — all report the same
+    // way the local engine's start failure does: a structured line and a non-zero exit, so the
+    // shell sees a refusal rather than a process that served nothing in silence.
+    log("cloud_start_failed", { err });
+    process.exit(1);
+  }
+
+  host = serveOverStdio({
+    handle: (req) => cloud!.handle(req),
+    input: process.stdin,
+    output: stdout,
+    log,
+    onFatal: (err) => {
+      log("transport_fatal", { err });
+      void shutdown("transport_fatal", 1);
+    },
+  });
+
+  await host.ready({
+    baseUrl: "http://sidecar",
+    sessionToken: cloud.sessionToken,
+    accountId: cloud.world.accountId,
+    userId: cloud.world.userId,
+    mailboxId: cloud.world.mailboxId,
+    // There is no mailbox password on this transport — the session is a hosted bearer, and the
+    // mirror is served whether or not the next pull succeeds. `ready` is the honest state.
+    credentialState: "ready",
+  });
+  log("cloud_serving", { mailboxId: cloud.world.mailboxId });
+
+  // The mirror comes up AFTER the bridge is serving: a first pull of a real account takes a while,
+  // and a UI that can ask nothing until it finishes looks broken. A failed first pull is logged and
+  // the poll keeps trying; the bridge serves the mirror throughout.
+  void cloud.start().catch((err: unknown) => {
+    log("cloud_pull_failed", {
+      err,
+      reason: "the mirror did not start pulling; the bridge keeps serving what it holds and the poll retries",
+    });
+  });
+
+  process.on("SIGINT", () => void shutdown("SIGINT", 0));
+  process.on("SIGTERM", () => void shutdown("SIGTERM", 0));
+
+  await host.finished();
+  await shutdown("stdin_closed", 0);
+}
+
+/**
  * IS THIS PROCESS RUNNING THE BUNDLE, rather than importing it?
  *
  * `@trafficflow/worker/entry`'s `isCliEntry` compares `import.meta.url` to `process.argv[1]` as
@@ -325,6 +457,20 @@ function isRunAsProgram(): boolean {
   }
 }
 
+/**
+ * THE BRANCH THAT SELECTS THE ENGINE. `OHMAIL_MODE=cloud` runs the read-only hosted mirror;
+ * anything else runs the local organizer. The choice is made here, once, from one variable — and
+ * `cloudConfigFromEnv` refuses to proceed in Cloud mode if any `OHMAIL_IMAP_*` is present, so the
+ * two branches cannot be conflated by configuration.
+ */
+async function main(): Promise<void> {
+  if ((process.env.OHMAIL_MODE ?? "").trim().toLowerCase() === "cloud") {
+    await runCloudSidecar();
+  } else {
+    await runSidecar();
+  }
+}
+
 if (isRunAsProgram()) {
-  void runSidecar();
+  void main();
 }
