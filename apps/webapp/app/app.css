@@ -1033,6 +1033,17 @@ body.reading .shell {
   gap: 16px;
   align-items: start;
 }
+/* EVERY PANE SECTION LIVES IN THE CONTENT COLUMN, INCLUDING THE SECOND ONE.
+   `.set-layout` is nav (170px) | content (1fr), and every pane renders exactly one `.set-pane`
+   into the content column — except Account, which renders TWO (the sign-out card and the delete
+   card). With auto-placement the second `.set-pane` wrapped onto the next row into COLUMN 1 — the
+   nav column — squeezed to 170px and sitting under the nav. Pinning every direct `.set-pane` to
+   column 2 keeps the nav in column 1 and stacks a pane's sections down the content column with the
+   grid's own row gap. A no-op for single-section panes (they were already column 2); the mobile
+   single-column layout resets it below. */
+.set-layout > .set-pane {
+  grid-column: 2;
+}
 .set-nav {
   display: flex;
   flex-direction: column;
@@ -1990,6 +2001,11 @@ body.reading .shell {
     width: calc(100% - 28px);
     grid-template-columns: 1fr;
     gap: 10px;
+  }
+  /* One column here, so the content-column pin above would push sections into an implicit
+     second column. Back to auto: the nav is a wrapping row of pills and the panes stack under it. */
+  .set-layout > .set-pane {
+    grid-column: auto;
   }
   .set-nav {
     position: static;
