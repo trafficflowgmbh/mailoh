@@ -401,9 +401,9 @@ Cloud necessarily holds a copy of it to deliver push, mobile and search. Both ar
 honest positions; they are not the same position, and picking between them is the
 point.
 
-Desktop is not *planned* as a demo of Cloud — it is a complete product on its own. On
-macOS that is true today; the Windows and Linux builds still run on fixtures, so
-"preview" remains the fair word for those until the engine reaches them.
+Desktop is not *planned* as a demo of Cloud — it is a complete product on its own,
+and as of this release that is true on all three platforms: every build carries the
+mail engine and connects to your own mailbox.
 
 ### If you do want Cloud
 
@@ -454,26 +454,20 @@ lets them skip a Cloud path instead of crashing on one.
 
 Worth knowing if you plan to read the code:
 
-- **`AppState` is the only thing views may touch.** No view imports fixtures; a
-  test fails the build if one does.
-- **Every colour and shadow comes from `Theme/`.** `Palette` converts the
-  authored OKLCH values to sRGB with Ottosson's matrix so the native app and the
-  web design system resolve to the same pixels; `Lift` holds the whole shadow
-  vocabulary. A hand-written `OKLCH(` or `.shadow(` inside `Views/` fails the
-  suite — that is how a drifted shadow was caught.
-- **`--smoke` is the interesting test.** It proves three separate things per
-  route: that it lays out, that it actually *draws* (bitmap sampled for ink and
-  distinct colours), and that every message the state says exists was built by a
-  real row view. The harness is itself mutation-tested: a flat bitmap must fail
-  the blank check, and a deliberately collapsing list must fail the row audit.
-- **Compact layout is not an afterthought.** `RootView` measures itself and
-  publishes `compactLayout` at ≤ 900 pt; the rail becomes a drawer, panes
-  collapse per view, and `--smoke` walks every route at 390 × 844 in both
-  schemes.
-
-`apps/macos/README.md` is the long version: the architecture, every invariant and
-where it is enforced, the two instrumentation approaches that were tried and
-abandoned, and the one deliberate divergence from `NavigationSplitView`.
+- **Every colour, radius and spacing step comes from `packages/tokens`.** The
+  values are authored in OKLCH and converted once; nothing in a view writes a
+  colour of its own, and the design system is the same one the web client
+  renders, not a copy of it.
+- **`npm run smoke` is the interesting test.** It loads the built bundle and
+  walks every route, so it fails on a screen that compiles and does not draw —
+  which a typecheck cannot see. It runs on all three platforms in CI, before the
+  bundle is ever put inside an installer.
+- **The engine is a separate process on a private pipe.** `src-tauri/src/engine.rs`
+  is the whole of its lifetime, and it is compiled only under the `local-engine`
+  feature — so the interface-only build does not contain the code at all rather
+  than containing it and not using it. `cargo test` runs both configurations.
+- **Compact layout is not an afterthought.** The window is clean down to 390 px;
+  the rail becomes a drawer and panes collapse per view, in both colour schemes.
 
 This tree is a generated mirror of a private monorepo (the Cloud backend lives
 there and stays there). Commits arrive as syncs that name the monorepo revision
@@ -481,17 +475,16 @@ they came from; pull requests land in the monorepo and come back out here.
 
 ## Roadmap
 
-1. **The engine on Windows and Linux.** The mail engine — IMAP (IDLE, delta fetch,
-   per-mailbox sequence), an on-device store, and the rules pipeline behind
-   `AppState`, moving real folders in place with a desired-state model that makes a
-   half-moved mailbox impossible — shipped in the macOS build in 0.4.0. Next is
-   porting it to the Tauri shell so the Windows and Linux builds connect too.
-2. **Signed installers** — a notarized DMG with a real Apple Developer ID, an
-   Authenticode-signed .msi and .exe, and automatic updates.
-3. **AI, on by default** — Screener suggestions and draft replies via your own API
-   key or a local Ollama ship off-by-default on macOS today; making them a
-   first-class part of the flow is the remaining work. Proposed, never applied;
-   sensitive mail structurally excluded.
+1. **Signed installers** — a notarized DMG with a real Apple Developer ID and an
+   Authenticode-signed .exe. Today's builds are unsigned on every platform, which
+   is what the install notes are about. Updates are already signed and verified;
+   this is about the first launch.
+2. **AI, on by default** — Screener suggestions and draft replies via your own API
+   key or a local Ollama ship off by default; making them a first-class part of
+   the flow is the remaining work. Proposed, never applied; sensitive mail
+   structurally excluded.
+3. **A packaged Linux repository** — an apt source and a properly signed AppImage,
+   so an install is a command rather than a download and a `chmod`.
 
 Dates are not promised. The order is. Each of these is an open issue with the
 detail in it, and [CHANGELOG.md](CHANGELOG.md) records what has actually shipped.

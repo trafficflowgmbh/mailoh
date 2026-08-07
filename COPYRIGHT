@@ -25,8 +25,7 @@ What is under GPL-3.0
 ---------------------
 All source in this repository:
 
-  apps/macos/**            the SwiftUI client for macOS
-  apps/desktop/**          the Tauri shell for Windows and Linux (Rust + TS)
+  apps/desktop/**          the app, on all three platforms (Rust + TS)
   apps/webapp/app/**       the shared client shell and its views
   packages/**              design tokens, UI components, fixtures, client engine
   scripts/**, .github/**   packaging and CI
@@ -63,12 +62,7 @@ Third parties
 Every dependency carries its own licence, granted by its own authors, and
 nothing in this file changes any of them.
 
-  macOS client    None. apps/macos/Package.swift declares zero third-party
-                  packages — the only "dependencies:" entries are its own
-                  internal targets. Nothing is resolved, downloaded or trusted
-                  in order to build it.
-
-  Windows/Linux   Rust: the Tauri 2 crate tree pinned in
+  The app          Rust: the Tauri 2 crate tree pinned in
                   apps/desktop/src-tauri/Cargo.lock. Tauri is MIT OR
                   Apache-2.0, and its transitive tree is predominantly the
                   same two.

@@ -1,10 +1,11 @@
 /**
  * PRIVACY INVARIANT (#6): zero real personal data, zero real brands.
  *
- * This file is the single place where the demo world's naming is reviewed.
- * It is the web mirror of `Fixtures.fictionalNames` / `Fixtures.bannedTerms`
- * in `apps/macos/Sources/OhMailKit/Fixtures/Fixtures.swift` — the two lists
- * must stay in step, because the same persona ships on both surfaces.
+ * This file is the single place where the demo world's naming is reviewed —
+ * and it is now the ONLY place. A second copy of both lists lived in the
+ * native macOS client, which had to be kept in step by hand because the same
+ * persona shipped on both surfaces; that client is retired and every surface
+ * reads these lists directly, so there is nothing left to drift from.
  *
  * HOW A NAME EARNS ITS PLACE. Every entry carries a `verdict`, not just prose,
  * because a note that merely *sounds* reviewed is worse than no registry at

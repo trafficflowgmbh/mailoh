@@ -20,7 +20,7 @@ and nothing more — it takes away no freedom the GPL gives you over the *code*.
 | the name **ohmail**, in any casing | throughout — the product name, the macOS bundle `ohmail.app`, `ohmail.exe`, `/usr/bin/ohmail`, the Debian package `ohmail` |
 | the **"oh." wordmark** | drawn into the icon artwork below |
 | the **app icon** — the "oh." squircle tile | `Resources/ohmail.icns`, `docs/ohmail-icon.png`, `apps/desktop/src-tauri/icons/` (`icon.icns`, `icon.ico`, `icon.png`, `32x32.png`, `64x64.png`, `128x128.png`, `128x128@2x.png`) |
-| the domains **ohmail.app** and **app.ohmail.app** | links in the README and in `Resources/FIRST-RUN.txt` |
+| the domains **ohmail.app** and **app.ohmail.app** | links in the README and in the app's own about screen |
 
 These are trademarks of **TrafficFlow GmbH**, Staubstrasse 1, 8038 Zürich,
 Switzerland. They are *included* in this repository because the project builds
@@ -59,7 +59,7 @@ Concretely, if you distribute a **modified** build to other people:
 - Do not call it **ohmail**, or a name a user would confuse with ohmail.
 - Do not ship the **"oh." icon or wordmark** as your application's identity.
   Replace `Resources/ohmail.icns` and `apps/desktop/src-tauri/icons/` with your
-  own artwork, and change the product name in `apps/macos/Package.swift`,
+  own artwork, and change the product name in
   `Resources/Info.plist` and `apps/desktop/src-tauri/tauri.conf.json`.
 - Do not use the marks to imply endorsement, affiliation, or that TrafficFlow
   supports your build.
