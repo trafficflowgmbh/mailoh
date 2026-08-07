@@ -588,7 +588,15 @@ export function ScreenerView({
 
       <div className="read-col scn-read">
         {!current ? (
-          <Empty segment={segment} settled={settled} />
+          // SHOW THE EMPTY STATE ONCE. When the segment holds nothing, the list pane already
+          // renders `<Empty>` at `ListRows` above — and on mobile the list is the only pane
+          // visible until a sender is opened. A second `<Empty>` here put the same glyph, title
+          // and hint on screen twice, side by side on desktop. The read column is a preview area,
+          // so with nothing to preview it stands empty, exactly as it does before a sender is
+          // selected. `items.length` (not `current`) is the test: a `waiting` segment can have
+          // rows that are all mid-exit — none selectable, so `current` is null while the list is
+          // NOT empty — and there the read column keeps its own "nothing selected" state.
+          items.length === 0 ? null : <Empty segment={segment} settled={settled} />
         ) : segment === "waiting" ? (
           <WaitingPreview
             sender={current as ScreenerSenderDTO}

@@ -98,6 +98,7 @@ import { MailStateProvider, useMailState, type MailboxProbe } from "./MailStateP
 import {
   optionsFromFacts,
   optionsFromMirror,
+  replyRecipients,
   resolveComposeFrom,
   resolveReplyFrom,
 } from "./compose-from";
@@ -1169,6 +1170,13 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       if (messageId !== replyTo) return;
       const parent = reader.get<EngineMessage>("message", messageId) ?? null;
       const from = resolveReplyFrom(fromOptions, parent?.mailboxId ?? null);
+      // WHO IT IS ADDRESSED TO. `enrich` defaults to `[parent.from]`, which answers yourself on
+      // a message you sent — a self-authored one shows inline the moment a thread has two turns.
+      // `replyRecipients` returns the correspondents for that case (and `null` otherwise, leaving
+      // the default in place), using the account's own addresses off the same From options.
+      const to = parent
+        ? replyRecipients(parent, fromOptions.map((o) => o.address))
+        : null;
       mailSend.send({
         kind: "mail_send",
         inReplyTo: messageId,
@@ -1179,6 +1187,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         body: replyBody.text,
         ...(replyBody.html ? { html: replyBody.html } : {}),
         ...(from.substituted && from.mailboxId ? { mailboxId: from.mailboxId } : {}),
+        ...(to ? { to } : {}),
       });
     },
     [mailSend, replyTo, replyBody, reader, version, fromOptions],

@@ -1889,8 +1889,23 @@ body.reading .shell {
   .view-receipts .list-col {
     display: none;
   }
+  /* DOCK CLEARANCE IS SAFE-AREA-AWARE ON A PHONE. The floating ⌘K dock is fixed at
+     `bottom:32px` (`dock.css`); a device with a home indicator adds a bottom safe-area inset
+     below that, which the fixed 120/132px clearances did not account for — so the last list row
+     could sit under the pill on a notched phone at 390px even though it clears on a flat
+     viewport. Folding `env(safe-area-inset-bottom)` into each scroll list's bottom padding
+     restores the clearance there. `env(...,0px)` resolves to 0 on desktop and non-notched
+     phones, so nothing moves anywhere else. */
   .view .stream {
-    padding: 0 6px 120px;
+    padding: 0 6px calc(120px + env(safe-area-inset-bottom, 0px));
+  }
+  .view .scroller {
+    padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+  }
+  /* The sent-mail seed review scrolls the whole card (`.view-seed { overflow:auto }`), and its
+     Confirm / Not now actions sit at the bottom of it — under the dock without clearance. */
+  .view-seed {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
   }
   .stream-top {
     display: flex;

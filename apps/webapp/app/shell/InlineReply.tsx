@@ -50,7 +50,7 @@ import type { RichValue } from "./rich-text";
 import type { DraftReplyControl, DraftedReply } from "./draft-reply";
 import { SendStatus } from "./SendStatus";
 import { useMailboxFacts } from "./MailStateProvider";
-import { optionsFromFacts, resolveReplyFrom } from "./compose-from";
+import { optionsFromFacts, replyRecipients, resolveReplyFrom } from "./compose-from";
 
 /*
  * The scratch-buffer helpers and `canSend` used to live here and now live in `mail-send.ts`,
@@ -137,7 +137,23 @@ export function InlineReply({
    * reason this line is worth rendering on a reply, is a fact only `GET /mailboxes` holds.
    */
   const facts = useMailboxFacts();
-  const from = resolveReplyFrom(facts ? optionsFromFacts(facts) : [], message.mailboxId);
+  const options = facts ? optionsFromFacts(facts) : [];
+  const from = resolveReplyFrom(options, message.mailboxId);
+
+  /**
+   * WHO THIS IS ADDRESSED TO. `enrich` answers `[parent.from]` by default, which is yourself on
+   * a message you sent — so on a self-authored message (a thread you started, or your own turn
+   * in one) the head would read "To: <you>" while the wire, corrected in `AppShell.sendReply`,
+   * goes to the correspondent. `replyRecipients` closes that gap here so the head names the same
+   * recipient the send carries; it returns `null` for the ordinary case and when the facts are
+   * unreadable, and then the head falls back to the sender exactly as before.
+   */
+  const recipients = replyRecipients(message, options.map((o) => o.address));
+  const target = recipients?.[0] ?? null;
+  const toName = target ? target.name ?? target.address : senderName(message);
+  const toAddr = target
+    ? (target.name && target.name !== target.address ? target.address : undefined)
+    : rowAddress(message);
 
   /**
    * BRING THE EDITOR TO THE READER.
@@ -185,9 +201,9 @@ export function InlineReply({
   return (
     <div className="reply" data-reply-for={message.id} ref={box}>
       <div className="reply-head">
-        <b>{t("to", { name: senderName(message) })}</b>
+        <b>{t("to", { name: toName })}</b>
         {/* Only when it adds something — see `rowAddress`. */}
-        {rowAddress(message) ? <small>{rowAddress(message)}</small> : null}
+        {toAddr ? <small>{toAddr}</small> : null}
       </div>
 
       {/* FROM, and the substitution said out loud. Static text, never a control: a

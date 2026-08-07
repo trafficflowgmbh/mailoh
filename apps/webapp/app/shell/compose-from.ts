@@ -46,6 +46,8 @@
  * them to drift into — the same discipline as `canSend` in `mail-send.ts`.
  */
 
+import type { EmailAddress } from "@ohmail/client-engine";
+
 /** One mailbox, as a From line is entitled to know it. */
 export interface FromOption {
   /** The selector's value. Never an address — see the header. */
@@ -223,4 +225,37 @@ export function resolveReplyFrom(
     substituted: chosen !== null && inherited !== null,
     substitutedFrom: chosen !== null && inherited !== null ? own?.address ?? null : null,
   };
+}
+
+/**
+ * WHO A REPLY IS ADDRESSED TO — the sender, UNLESS you were the sender.
+ *
+ * `Engine.enrich` defaults a reply's recipient to `[parent.from]` (`engine.ts`, the `mail_send`
+ * branch), which is right for the ordinary case: you answer the person who wrote to you. On a
+ * message YOU sent — a self-authored message, which a thread shows inline the moment either side
+ * has answered — `parent.from` is your OWN address, so that default addresses the reply straight
+ * back to your own mailbox and the correspondent never hears it.
+ *
+ * The signal is the account's own addresses — `ownAddresses`, the same `GET /mailboxes` facts the
+ * From line reads (`optionsFromFacts(...).map(o => o.address)`). When `parent.from` is one of
+ * them, the reply is addressed to whom the message was addressed TO — the correspondents — with
+ * any of your own addresses filtered out so a self-copy never rides along. A message you sent to
+ * yourself alone leaves nothing after that filter, and there `[parent.from]` is restored rather
+ * than shipping a reply with no recipient.
+ *
+ * Returns `null` for the ordinary (not-self-authored) case, so the caller omits `to` and lets
+ * `enrich` keep owning that path — this speaks up only for the self-authored one. It also returns
+ * `null` when `ownAddresses` is empty, which is exactly the surface with no `GET /mailboxes` to
+ * read (the demo, the Desktop, a pane mounted with no provider): there is no way to know the
+ * parent is self-authored, so the default stands rather than a guess.
+ */
+export function replyRecipients(
+  parent: { from: EmailAddress; to: readonly EmailAddress[] },
+  ownAddresses: readonly string[],
+): EmailAddress[] | null {
+  const mine = new Set(ownAddresses.map((a) => a.trim().toLowerCase()));
+  if (mine.size === 0) return null;
+  if (!mine.has(parent.from.address.trim().toLowerCase())) return null;
+  const others = parent.to.filter((r) => !mine.has(r.address.trim().toLowerCase()));
+  return others.length > 0 ? [...others] : [parent.from];
 }
