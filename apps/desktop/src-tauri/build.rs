@@ -24,9 +24,12 @@ fn main() {
 
     let mut attributes = tauri_build::Attributes::new();
     if std::env::var_os("CARGO_FEATURE_LOCAL_ENGINE").is_some() {
-        attributes = attributes.app_manifest(
-            tauri_build::AppManifest::new().commands(&["engine_status", "engine_request"]),
-        );
+        attributes = attributes.app_manifest(tauri_build::AppManifest::new().commands(&[
+            "engine_status",
+            "engine_request",
+            "engine_configure",
+            "engine_logout",
+        ]));
     }
     tauri_build::try_build(attributes).expect("ohmail: failed to build the Tauri context");
 }

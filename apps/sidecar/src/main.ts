@@ -207,10 +207,13 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
  * import census over `cloud-engine.ts`, an install running this mode cannot become a second
  * organizer of a mailbox the hosted worker already holds.
  *
- * `OHMAIL_CLOUD_ACCESS_TOKEN` / `OHMAIL_CLOUD_REFRESH_TOKEN` are the FIRST-LAUNCH tokens; after
- * that they live sealed on disk and the environment carries only `OHMAIL_KEK` (see
- * `cloud-auth.ts`). A launch with neither a sealed pair nor an environment token is refused by the
- * engine, not here — the mirror it already holds is still worth serving up to that point.
+ * `OHMAIL_CLOUD_ACCESS_TOKEN` / `OHMAIL_CLOUD_REFRESH_TOKEN` are optional and exist for tests and
+ * headless runs; a desktop install has neither. In steady state the pair lives sealed on disk and
+ * the environment carries only `OHMAIL_KEK` (see `cloud-auth.ts`), and a launch with NEITHER a
+ * sealed pair nor an environment token is not a refusal at all: the engine comes up serving the
+ * sign-in surface, and `POST /cloud/signin` is how a person establishes the first session. That is
+ * the whole reason this function requires a URL and an address and requires no credential — the two
+ * it requires are settings the shell knows, and the one it does not require is the secret.
  */
 export function cloudConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CloudSidecarConfig {
   const imapPresent = Object.entries(env)
@@ -384,9 +387,10 @@ export async function runCloudSidecar(): Promise<void> {
   try {
     cloud = await createCloudSidecar({ ...cloudConfigFromEnv(), log });
   } catch (err) {
-    // A refused IMAP setting, a missing token, or a locked data directory — all report the same
-    // way the local engine's start failure does: a structured line and a non-zero exit, so the
-    // shell sees a refusal rather than a process that served nothing in silence.
+    // A refused IMAP setting, a missing URL or address, or a locked data directory — all report the
+    // same way the local engine's start failure does: a structured line and a non-zero exit, so the
+    // shell sees a refusal rather than a process that served nothing in silence. A missing SESSION
+    // is deliberately not on that list any more; it is a state this engine serves.
     log("cloud_start_failed", { err });
     process.exit(1);
   }
@@ -408,17 +412,23 @@ export async function runCloudSidecar(): Promise<void> {
     accountId: cloud.world.accountId,
     userId: cloud.world.userId,
     mailboxId: cloud.world.mailboxId,
-    // There is no mailbox password on this transport — the session is a hosted bearer, and the
-    // mirror is served whether or not the next pull succeeds. `ready` is the honest state.
-    credentialState: "ready",
+    // There is no mailbox password on this transport — the credential is a hosted session — so the
+    // field says whether this launch HAS one. `ready` with a sealed pair; `absent` on a pre-auth
+    // launch, which is the same word the local engine uses for "ask for it", and the shell renders
+    // a sign-in surface off exactly that.
+    credentialState: cloud.signedIn() ? "ready" : "absent",
     // The launch snapshot of reachability; `/health.online` is the live value thereafter.
     online: cloud.online(),
   });
-  log("cloud_serving", { mailboxId: cloud.world.mailboxId });
+  log("cloud_serving", {
+    mailboxId: cloud.world.mailboxId,
+    state: cloud.signedIn() ? "signed_in" : "signed_out",
+  });
 
   // The mirror comes up AFTER the bridge is serving: a first pull of a real account takes a while,
   // and a UI that can ask nothing until it finishes looks broken. A failed first pull is logged and
-  // the poll keeps trying; the bridge serves the mirror throughout.
+  // the poll keeps trying; the bridge serves the mirror throughout. A pre-auth launch has nothing
+  // to pull and `start()` is a no-op — the sign-in starts its own first pull.
   void cloud.start().catch((err: unknown) => {
     log("cloud_pull_failed", {
       err,

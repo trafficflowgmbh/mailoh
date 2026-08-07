@@ -1,0 +1,447 @@
+//! WHICH DOOR THIS INSTALL CAME IN BY, written down so the next launch knows.
+//!
+//! ── WHY A FILE AND NOT AN ENVIRONMENT VARIABLE ─────────────────────────────────────────────
+//!
+//! The engine is configured through its environment, and for a developer starting it by hand that
+//! is exactly right. It is useless for the product: a person who double-clicks the app and types
+//! their mail server into a window has no shell to export anything from, and the setting has to
+//! survive a quit. So the shell keeps one small JSON file beside the app's own data, and composes
+//! the engine's environment from it at every spawn. The environment still wins where it is set —
+//! that is the development path and the only way a launch can be reproduced by hand.
+//!
+//! ── TWO DOORS, TWO DATA DIRECTORIES, AND THE ONE THAT MUST NOT BE CROSSED ──────────────────
+//!
+//! LOCAL organizes the user's own IMAP mailbox from this machine. CLOUD mirrors a hosted account
+//! and never opens IMAP at all. They are different engines with different databases, and the
+//! directory each writes to is derived from the mode — `engine-local/` and `engine-cloud/` under
+//! the app's data directory — so switching doors cannot mix one mirror into the other. **The
+//! directory a switch leaves behind is FROZEN, never deleted.** Nothing in this file removes a
+//! mirror: the mail is on the user's server or in the hosted account, this machine's copy is a
+//! convenience, and a door switch that silently destroyed the old one would make going back
+//! expensive for no reason.
+//!
+//! ── THE ONE COMPOSITION THAT IS SAFETY-CRITICAL ────────────────────────────────────────────
+//!
+//! `OHMAIL_MODE=cloud`. The engine chooses its branch from that single variable, and its default
+//! branch is the LOCAL organizer. A cloud door spawned without it therefore runs the organizer —
+//! and if this process's own environment happens to carry an IMAP host (a developer's shell, a
+//! launcher script), that organizer would open a real mailbox the hosted worker is already
+//! organizing. Two organizers on one mailbox is the failure the whole dual-mode design exists to
+//! prevent, and it would arrive here, from an absent variable.
+//!
+//! It is defended twice, deliberately. {@link env_for} sets the mode explicitly for the cloud door
+//! — asserted by a test that watches the assertion fail when the line is removed — and
+//! {@link unset_for} names every `OHMAIL_IMAP_*` the shell knows about so an inherited one cannot
+//! reach the child. The engine has a third defence of its own: in cloud mode it refuses to start at
+//! all if any `OHMAIL_IMAP_*` is present. Three independent locks, because the cost of the failure
+//! is somebody's mailbox being reorganized by two engines at once.
+//!
+//! ── AND WHAT IS NEVER IN THIS FILE ─────────────────────────────────────────────────────────
+//!
+//! A password, a token, or anything else a person would be upset to find in plain text under their
+//! home directory. The mailbox password is typed into the running app and sealed by the ENGINE into
+//! its own store under the per-install key; the hosted session is established by the engine and
+//! sealed the same way. Neither ever passes through this process. {@link parse} refuses a
+//! configuration carrying a secret-shaped field rather than storing it, so that stays true by
+//! refusal rather than by everybody remembering.
+
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod tests;
+
+/// Which engine this install runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// The local organizer, against the user's own IMAP server.
+    Local,
+    /// The read-only mirror of a hosted account.
+    Cloud,
+}
+
+impl Mode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::Local => "local",
+            Mode::Cloud => "cloud",
+        }
+    }
+
+    /// The subdirectory this mode's mirror lives in, under the app's data directory.
+    ///
+    /// Per-mode and not shared: the two engines write different schemas into different databases,
+    /// and one directory holding both is one lock contended by two incompatible readers.
+    pub fn dir_name(self) -> &'static str {
+        match self {
+            Mode::Local => "engine-local",
+            Mode::Cloud => "engine-cloud",
+        }
+    }
+}
+
+/// The send server, when the user's provider has one worth naming.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Smtp {
+    pub host: String,
+    pub port: u16,
+    /// Implicit TLS: true for 465, false for 587 STARTTLS.
+    pub secure: bool,
+}
+
+/// The local door: the user's own mailbox, opened from this machine.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalDoor {
+    pub imap_host: String,
+    pub imap_user: String,
+    pub imap_port: u16,
+    pub imap_secure: bool,
+    pub smtp: Option<Smtp>,
+    /// The address the mailbox is known by, when it differs from the login.
+    pub address: Option<String>,
+}
+
+/// The cloud door: a hosted account, mirrored.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CloudDoor {
+    pub cloud_url: String,
+    pub address: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Config {
+    Local(LocalDoor),
+    Cloud(CloudDoor),
+}
+
+impl Config {
+    pub fn mode(&self) -> Mode {
+        match self {
+            Config::Local(_) => Mode::Local,
+            Config::Cloud(_) => Mode::Cloud,
+        }
+    }
+
+    /// The mailbox this install is for, as a person would recognise it.
+    pub fn address(&self) -> Option<&str> {
+        match self {
+            Config::Local(l) => l.address.as_deref().or(Some(l.imap_user.as_str())),
+            Config::Cloud(c) => Some(c.address.as_str()),
+        }
+    }
+}
+
+/// What the file is called inside the app's data directory.
+pub const CONFIG_FILE_NAME: &str = "config.json";
+
+/// Field names a configuration may never carry.
+///
+/// Matched as SUBSTRINGS of the lower-cased key, at every depth, and the refusal is a hard error
+/// rather than a silent drop. A dropped field would mean a caller believing it had stored a
+/// password that this file quietly did not — and then a mailbox that never connects, with nothing
+/// anywhere saying why. The secrets travel to the engine over the bridge and are sealed there; see
+/// this module's header.
+const SECRET_KEY_FRAGMENTS: [&str; 6] = ["pass", "secret", "token", "credential", "kek", "auth"];
+
+fn refuse_secrets(value: &serde_json::Value) -> Result<(), String> {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                let lower = key.to_ascii_lowercase();
+                if let Some(bad) = SECRET_KEY_FRAGMENTS.iter().find(|f| lower.contains(*f)) {
+                    return Err(format!(
+                        "the configuration carries a field named \"{key}\", and \"{bad}\" is not \
+                         something the shell stores. Passwords and sessions are typed into the app \
+                         and sealed by the engine under this install's key; nothing secret is \
+                         written to {CONFIG_FILE_NAME}"
+                    ));
+                }
+                refuse_secrets(child)?;
+            }
+            Ok(())
+        }
+        serde_json::Value::Array(items) => items.iter().try_for_each(refuse_secrets),
+        _ => Ok(()),
+    }
+}
+
+fn string_at(map: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+    map.get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn required_string(
+    map: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<String, String> {
+    string_at(map, key).ok_or_else(|| format!("the configuration needs a {key}"))
+}
+
+/// A port, or the default. Refuses a value outside 1..=65535 rather than truncating it.
+fn port_at(
+    map: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    default: u16,
+) -> Result<u16, String> {
+    match map.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(default),
+        Some(v) => {
+            let n = v
+                .as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                .ok_or_else(|| format!("{key} is not a port number"))?;
+            if n == 0 || n > u16::MAX as u64 {
+                return Err(format!("{key} is not a port number"));
+            }
+            Ok(n as u16)
+        }
+    }
+}
+
+/// A boolean that may arrive as a boolean or as the string the wire spells it with.
+fn bool_at(map: &serde_json::Map<String, serde_json::Value>, key: &str, default: bool) -> bool {
+    match map.get(key) {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::String(s)) => !matches!(s.trim(), "0" | "false" | ""),
+        _ => default,
+    }
+}
+
+/// Read a configuration out of what the window sent, or say why it is not one.
+pub fn parse(value: &serde_json::Value) -> Result<Config, String> {
+    refuse_secrets(value)?;
+    let map = value
+        .as_object()
+        .ok_or_else(|| "the configuration is not an object".to_string())?;
+    let mode = string_at(map, "mode").unwrap_or_default();
+    match mode.as_str() {
+        "local" => {
+            // `imap` may be flat or nested; the window sends one shape and a hand-written file may
+            // well use the other, and neither is worth a puzzling error.
+            let imap = map.get("imap").and_then(|v| v.as_object()).unwrap_or(map);
+            let smtp = match map.get("smtp").and_then(|v| v.as_object()) {
+                Some(s) => Some(Smtp {
+                    host: required_string(s, "host")?,
+                    port: port_at(s, "port", 587)?,
+                    secure: bool_at(s, "secure", port_at(s, "port", 587)? == 465),
+                }),
+                None => None,
+            };
+            Ok(Config::Local(LocalDoor {
+                imap_host: required_string(imap, "host").map_err(|_| {
+                    "the local door needs the mail server's address".to_string()
+                })?,
+                imap_user: required_string(imap, "user").map_err(|_| {
+                    "the local door needs the username the mail server knows you by".to_string()
+                })?,
+                imap_port: port_at(imap, "port", 993)?,
+                imap_secure: bool_at(imap, "secure", true),
+                smtp,
+                address: string_at(map, "address"),
+            }))
+        }
+        "cloud" => Ok(Config::Cloud(CloudDoor {
+            cloud_url: required_string(map, "cloudUrl")
+                .map_err(|_| "the cloud door needs the hosted service's address".to_string())?,
+            address: required_string(map, "address")
+                .map_err(|_| "the cloud door needs the mailbox address".to_string())?,
+        })),
+        other if other.is_empty() => Err("the configuration needs a mode".to_string()),
+        other => Err(format!(
+            "\"{other}\" is not a mode; this app has two doors, \"local\" and \"cloud\""
+        )),
+    }
+}
+
+/// The configuration as it is written to disk. The inverse of {@link parse}.
+pub fn to_json(config: &Config) -> serde_json::Value {
+    match config {
+        Config::Local(l) => {
+            let mut out = serde_json::json!({
+                "mode": "local",
+                "imap": {
+                    "host": l.imap_host,
+                    "user": l.imap_user,
+                    "port": l.imap_port,
+                    "secure": l.imap_secure,
+                },
+            });
+            if let Some(smtp) = &l.smtp {
+                out["smtp"] = serde_json::json!({
+                    "host": smtp.host, "port": smtp.port, "secure": smtp.secure,
+                });
+            }
+            if let Some(address) = &l.address {
+                out["address"] = serde_json::Value::String(address.clone());
+            }
+            out
+        }
+        Config::Cloud(c) => serde_json::json!({
+            "mode": "cloud",
+            "cloudUrl": c.cloud_url,
+            "address": c.address,
+        }),
+    }
+}
+
+/// Where this mode's mirror lives. See the module header — per-mode, and never shared.
+pub fn data_dir(root: &Path, mode: Mode) -> PathBuf {
+    root.join(mode.dir_name())
+}
+
+/// The engine's environment, composed from the configuration and the app's data directory.
+///
+/// **`OHMAIL_MODE=cloud` on the cloud branch is the safety-critical line in this file.** Read the
+/// module header before touching it; the engine's DEFAULT branch is the local organizer, so an
+/// omission here is not a missing feature, it is a second organizer on somebody's mailbox.
+///
+/// Everything else is settings the shell holds and the engine reads. There is deliberately no
+/// password and no token: see the header.
+pub fn env_for(config: &Config, root: &Path) -> Vec<(OsString, OsString)> {
+    let pair = |k: &str, v: String| (OsString::from(k), OsString::from(v));
+    let dir = data_dir(root, config.mode());
+    let mut env = vec![(
+        OsString::from(crate::engine::DATA_DIR_VAR),
+        dir.into_os_string(),
+    )];
+    match config {
+        Config::Local(l) => {
+            // No `OHMAIL_MODE` at all: the engine's default branch IS the local organizer, and
+            // naming it here would be a second spelling of the same fact for the branch that does
+            // not need one. The cloud branch below is where the variable is load-bearing.
+            env.push(pair("OHMAIL_IMAP_HOST", l.imap_host.clone()));
+            env.push(pair("OHMAIL_IMAP_USER", l.imap_user.clone()));
+            env.push(pair("OHMAIL_IMAP_PORT", l.imap_port.to_string()));
+            // The engine reads "0" and nothing else as "not implicit TLS", so the false case is
+            // spelled exactly that way and every other value means secure.
+            env.push(pair(
+                "OHMAIL_IMAP_SECURE",
+                if l.imap_secure { "1" } else { "0" }.to_string(),
+            ));
+            if let Some(smtp) = &l.smtp {
+                env.push(pair("OHMAIL_SMTP_HOST", smtp.host.clone()));
+                env.push(pair("OHMAIL_SMTP_PORT", smtp.port.to_string()));
+                env.push(pair(
+                    "OHMAIL_SMTP_SECURE",
+                    if smtp.secure { "1" } else { "0" }.to_string(),
+                ));
+            }
+            if let Some(address) = &l.address {
+                env.push(pair("OHMAIL_MAILBOX_ADDRESS", address.clone()));
+            }
+        }
+        Config::Cloud(c) => {
+            // ── THE LINE. Removing it does not break a test about this function's shape; it
+            // breaks `cloud_mode_is_composed_for_a_cloud_door`, which exists for exactly this
+            // mutation. See the module header for what happens without it.
+            env.push(pair("OHMAIL_MODE", "cloud".to_string()));
+            env.push(pair("OHMAIL_CLOUD_URL", c.cloud_url.clone()));
+            env.push(pair("OHMAIL_MAILBOX_ADDRESS", c.address.clone()));
+        }
+    }
+    env
+}
+
+/// Variables that must not reach the child, whatever this process inherited.
+///
+/// Only the cloud door has any, and they are the IMAP settings: this process's own environment may
+/// carry them (a developer's shell, a launcher script), the child inherits everything not
+/// overridden, and the engine refuses to start in cloud mode if it finds one. Clearing them here
+/// turns "the app will not start and the log says something about IMAP" into a launch that works.
+///
+/// It is a list of NAMES and not a prefix sweep, because a sweep would need the child's inherited
+/// environment enumerated on this side, and `Command::env_remove` takes names. The list is the
+/// engine's own documented `OHMAIL_IMAP_*` surface.
+pub fn unset_for(config: &Config) -> Vec<OsString> {
+    match config {
+        Config::Local(_) => Vec::new(),
+        Config::Cloud(_) => [
+            "OHMAIL_IMAP_HOST",
+            "OHMAIL_IMAP_USER",
+            "OHMAIL_IMAP_PORT",
+            "OHMAIL_IMAP_SECURE",
+            "OHMAIL_IMAP_PASS",
+            "OHMAIL_SMTP_HOST",
+            "OHMAIL_SMTP_PORT",
+            "OHMAIL_SMTP_SECURE",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect(),
+    }
+}
+
+/// Read the stored configuration, or `None` when there is none / it cannot be read.
+///
+/// A file that exists and does not parse is `None` and not an error: the recovery is identical
+/// either way — the app asks which door to come in by — and turning a corrupt byte into a refusal
+/// to start would leave somebody with an app that will not open and a file they cannot see.
+pub fn read(path: &Path) -> Option<Config> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    parse(&value).ok()
+}
+
+/// Write the configuration, creating the directory if it is not there.
+///
+/// Mode `0600` on Unix. Nothing secret is in it — see the header — but it names a mail server and a
+/// username, which is nobody else's business on a shared machine.
+pub fn write(path: &Path, config: &Config) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("{} could not be created ({err})", parent.display()))?;
+    }
+    let body = serde_json::to_vec_pretty(&to_json(config))
+        .map_err(|err| format!("the configuration could not be encoded ({err})"))?;
+    fs::write(path, &body).map_err(|err| format!("{} could not be written ({err})", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+/// Forget which door this install came in by. Absent is not an error.
+pub fn remove(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!("{} could not be removed ({err})", path.display())),
+    }
+}
+
+/// What the cloud engine seals its hosted session into, under this install's key.
+///
+/// Named here rather than in `engine.rs` because this module is the one that knows where each door
+/// keeps its things, and because `engine.rs` deliberately reaches the filesystem for its log file
+/// and nothing else — a guard over that file's `fs::` calls says so, and moving a file removal in
+/// there would have relaxed it.
+pub const CLOUD_SESSION_SEAL: &str = "cloud-tokens.seal";
+
+/// Remove the sealed hosted session from the cloud door's directory.
+///
+/// ── WHY THE SHELL DOES THIS AT ALL, WHEN THE ENGINE ALSO DOES ─────────────────────────────────
+///
+/// Signing out asks the engine to drop the session first, over the bridge, and that is the path
+/// that runs almost every time. This is the one that covers the case the bridge cannot: an engine
+/// that was never serving — it failed to start, it is mid-restart, the app has just been opened on
+/// a broken install — has nothing in memory to clear and no way to be asked. A sealed session left
+/// behind by a sign-out is a live credential to somebody's mail.
+///
+/// ONE FILE. Not the mirror, not the cursor: a door switch freezes the directory it leaves.
+/// Absent is not an error — a sign-out on a door that was never signed in is a no-op, and running
+/// this twice must not fail the second time.
+pub fn remove_sealed_session(root: &Path, mode: Mode) -> Result<(), String> {
+    let path = data_dir(root, mode).join(CLOUD_SESSION_SEAL);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!("{} could not be removed ({err})", path.display())),
+    }
+}

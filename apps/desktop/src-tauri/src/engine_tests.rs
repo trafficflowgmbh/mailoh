@@ -42,6 +42,15 @@ const note = (what) => { if (log) fs.appendFileSync(log, what + " " + process.pi
 note("start");
 process.on("exit", () => note("exit"));
 
+// WHAT THIS CHILD ACTUALLY INHERITED, for the one test that is about inheritance. Off unless the
+// test asks for it, so every other test's log lines are unchanged and its counts still mean what
+// they meant.
+if (process.env.FAKE_REPORT_ENV) {
+  for (const name of process.env.FAKE_REPORT_ENV.split(",")) {
+    note("env " + name + "=" + (process.env[name] ?? "<unset>"));
+  }
+}
+
 // One line on stderr, in the shape the real engine's logger emits: a JSON object per line, already
 // redacted by the time it leaves that process. It is here so a test can prove the shell forwards
 // the engine's own diagnostics to the log file rather than only its own account of them.
@@ -132,6 +141,7 @@ impl Fixture {
             program: PathBuf::from(node()),
             args: vec![self.script.clone().into_os_string(), OsString::from(mode)],
             env: vec![(OsString::from("FAKE_LOG"), self.log.clone().into_os_string())],
+            unset: Vec::new(),
         }
     }
 
@@ -300,6 +310,7 @@ fn a_launch_prints_the_names_of_its_environment_and_none_of_the_values() {
         program: PathBuf::from("/apps/ohmail/ohmail-engine"),
         args: vec![],
         env: vec![(OsString::from("OHMAIL_KEK"), OsString::from("deadbeef-do-not-print"))],
+        unset: Vec::new(),
     };
     let printed = format!("{launch:?}");
     assert!(printed.contains("OHMAIL_KEK"));
@@ -349,6 +360,7 @@ fn a_build_with_no_engine_beside_it_is_not_an_error() {
             program: PathBuf::from("/nonexistent/ohmail/ohmail-engine"),
             args: vec![],
             env: vec![],
+            unset: Vec::new(),
         },
         quick(),
     );
@@ -1125,5 +1137,109 @@ fn the_shells_lines_and_the_engines_own_diagnostics_both_reach_the_file() {
     assert!(
         !text.contains("tok_"),
         "the session token reached the log file, which is the one thing it may never do: {text}"
+    );
+}
+
+// ── The two doors ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn the_cloud_door_asks_for_the_service_and_the_address_rather_than_a_mail_server() {
+    // A hosted mirror has no mail server to name and no username to log in with, so the local
+    // door's required list would report two variables that do not exist for it as missing — an
+    // install that could never start, with a message about IMAP in front of somebody who chose
+    // Cloud precisely to avoid it.
+    let env: HashMap<String, String> = HashMap::new();
+    let plan = plan_with(
+        &|k| env.get(k).cloned(),
+        Some(Path::new("/apps/ohmail")),
+        Some(Path::new("/data")),
+        &REQUIRED_CLOUD_VARS,
+    );
+    match plan {
+        Plan::Inert(EngineState::NotConfigured { missing }) => {
+            assert_eq!(
+                missing,
+                vec![
+                    "OHMAIL_CLOUD_URL".to_string(),
+                    "OHMAIL_MAILBOX_ADDRESS".to_string(),
+                    "OHMAIL_KEK".to_string(),
+                ]
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_hosted_session_is_never_something_the_shell_refuses_to_start_without() {
+    // The engine establishes it ITSELF, over the bridge, and seals it. If the shell demanded one it
+    // would have to obtain one — which means holding a credential, which is the whole thing this
+    // arrangement removes. A cloud door with a URL, an address and a key is a complete launch.
+    assert!(
+        !REQUIRED_CLOUD_VARS.iter().any(|v| v.contains("TOKEN")),
+        "the shell refuses to start without a hosted token: {REQUIRED_CLOUD_VARS:?}"
+    );
+    let env = env_of(&[
+        ("OHMAIL_CLOUD_URL", "https://api.ohmail.app"),
+        ("OHMAIL_MAILBOX_ADDRESS", "someone@ohmail.app"),
+        ("OHMAIL_KEK", &"0".repeat(64)),
+    ]);
+    assert!(matches!(
+        plan_with(&|k| env.get(k).cloned(), Some(Path::new("/apps/ohmail")), Some(Path::new("/data")), &REQUIRED_CLOUD_VARS),
+        Plan::Spawn(_)
+    ));
+}
+
+#[test]
+fn an_inherited_mail_server_setting_does_not_reach_a_cloud_child() {
+    // ── WHY THIS SPAWNS A REAL PROCESS ──────────────────────────────────────────────────────
+    //
+    // `unset_for` returning the right list is a fact about a list. What matters is whether the
+    // variable actually reaches the child, and inheritance is the mechanism under test — so this
+    // plants one in THIS process's environment, spawns through the same `supervise` the app uses,
+    // and reads what the child saw. A cloud engine that inherited an IMAP host refuses to start,
+    // which turns a working install into a puzzling failure; and if it ever did NOT refuse, it
+    // would be a second organizer on that mailbox.
+    let f = Fixture::new("unset");
+    std::env::set_var("OHMAIL_IMAP_HOST", "inherited.example.org");
+
+    let mut launch = f.launch("serve");
+    launch.env.push((OsString::from("FAKE_REPORT_ENV"), OsString::from("OHMAIL_IMAP_HOST")));
+    launch.unset = crate::config::unset_for(&crate::config::Config::Cloud(crate::config::CloudDoor {
+        cloud_url: "https://api.ohmail.app".to_string(),
+        address: "someone@ohmail.app".to_string(),
+    }));
+
+    let engine = Engine::spawn_with(launch, quick());
+    serving(&engine);
+    engine.stop();
+    std::env::remove_var("OHMAIL_IMAP_HOST");
+
+    let reported: Vec<String> = f.lines().into_iter().filter(|l| l.starts_with("env ")).collect();
+    assert!(!reported.is_empty(), "the child reported no environment at all: {:?}", f.lines());
+    assert!(
+        reported.iter().all(|l| l.contains("OHMAIL_IMAP_HOST=<unset>")),
+        "a cloud child inherited a mail server: {reported:?}"
+    );
+}
+
+#[test]
+fn a_local_child_still_inherits_what_the_environment_says() {
+    // The other direction, and it is not a symmetry worth breaking: inheritance is how a developer
+    // configures the local door by hand, and `unset_for` is empty for it.
+    let f = Fixture::new("inherit");
+    std::env::set_var("OHMAIL_TEST_INHERITED", "yes");
+
+    let mut launch = f.launch("serve");
+    launch.env.push((OsString::from("FAKE_REPORT_ENV"), OsString::from("OHMAIL_TEST_INHERITED")));
+    let engine = Engine::spawn_with(launch, quick());
+    serving(&engine);
+    engine.stop();
+    std::env::remove_var("OHMAIL_TEST_INHERITED");
+
+    let reported: Vec<String> = f.lines().into_iter().filter(|l| l.starts_with("env ")).collect();
+    assert!(
+        reported.iter().any(|l| l.contains("OHMAIL_TEST_INHERITED=yes")),
+        "the child inherited nothing: {reported:?}"
     );
 }

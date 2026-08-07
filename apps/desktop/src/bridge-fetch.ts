@@ -50,9 +50,11 @@ import { HttpAdapter } from "@ohmail/client-engine";
  */
 export type BridgeFetch = (url: string, init?: unknown) => Promise<Response>;
 
-/** The two commands the shell registers. Named here so a typo is one place rather than three. */
+/** The commands the shell registers. Named here so a typo is one place rather than three. */
 const REQUEST_COMMAND = "engine_request";
 const STATUS_COMMAND = "engine_status";
+const CONFIGURE_COMMAND = "engine_configure";
+const LOGOUT_COMMAND = "engine_logout";
 
 const NO_SHELL =
   "ohmail Desktop: this window is not running inside the ohmail shell, so there is no local engine " +
@@ -248,6 +250,9 @@ function abortError(): Error {
   return err;
 }
 
+/** Which door this install came in by. `null` means none has been chosen yet. */
+export type EngineMode = "local" | "cloud";
+
 /** What the shell says about the engine. A tagged object; `state` is always there. */
 export interface EngineStatus {
   state:
@@ -259,19 +264,97 @@ export interface EngineStatus {
     | "restarting"
     | "stopped"
     | "failed";
+  /**
+   * The configured door, or `null` when there is none.
+   *
+   * ALWAYS PRESENT, and null rather than missing on a fresh install — a surface that read an absent
+   * field as "still loading" would spin for ever in exactly the state that most needs to reach the
+   * door picker.
+   */
+  mode?: EngineMode | null;
+  /** The mailbox this install is for, as a person would recognise it. */
+  address?: string;
   mailboxId?: string;
   accountId?: string;
   userId?: string;
   baseUrl?: string;
+  /**
+   * Whether the engine holds the credential it needs.
+   *
+   * On the LOCAL door that is the mailbox password. On the CLOUD door it is the hosted session, and
+   * `absent` there means "signed out" — the sign-in surface is `POST /cloud/signin` over the bridge,
+   * not a shell command, because the password and the code go to the engine and never through the
+   * shell.
+   */
   credentialState?: "ready" | "absent" | "unreadable" | "unknown";
   reason?: string;
   missing?: string[];
   lookedFor?: string;
 }
 
+/** The local door: the user's own mail server, opened from this machine. */
+export interface LocalDoorConfig {
+  mode: "local";
+  imap: { host: string; user: string; port?: number; secure?: boolean };
+  smtp?: { host: string; port?: number; secure?: boolean };
+  /** The address the mailbox is known by, when it differs from the IMAP login. */
+  address?: string;
+}
+
+/** The cloud door: a hosted ohmail account, mirrored. */
+export interface CloudDoorConfig {
+  mode: "cloud";
+  /**
+   * The hosted service's base address.
+   *
+   * A VALUE, never a default written here. This file names no host — that is asserted over its
+   * source, because a URL in it would be the first thing in either artifact capable of naming one,
+   * and the whole claim about the preview build is that nothing in it can.
+   */
+  cloudUrl: string;
+  address: string;
+}
+
+/**
+ * What `engineConfigure` takes — SETTINGS ONLY.
+ *
+ * There is deliberately no password field and no token field on either door, and the shell refuses
+ * a payload carrying one rather than storing it. The mailbox password goes to the engine through
+ * `PATCH /mailboxes/:id` and the hosted sign-in through `POST /cloud/signin`, both over
+ * {@link bridgeFetch} — so a credential is never an argument to a shell command, never held in the
+ * shell's memory, and never written to the shell's settings file. The engine seals it under this
+ * install's key, which is the one thing the shell does hold.
+ */
+export type EngineConfig = LocalDoorConfig | CloudDoorConfig;
+
 /** Ask the shell what the engine is doing. Carries no credential — see the Rust `status_json`. */
 export async function engineStatus(): Promise<EngineStatus> {
   return (await shell().invoke(STATUS_COMMAND)) as EngineStatus;
+}
+
+/**
+ * Choose a door, or change the one already chosen, and restart the engine behind it.
+ *
+ * Answers the status AFTER the change. A caller that re-read `engineStatus()` instead would race
+ * the swap and could be told about the engine that was being replaced.
+ *
+ * The two doors keep separate mirrors, and switching FREEZES the one being left rather than
+ * deleting it: coming back does not cost a full re-sync, and no mail is lost either way — the
+ * master is the user's own server or the hosted account, never this machine.
+ */
+export async function engineConfigure(config: EngineConfig): Promise<EngineStatus> {
+  return (await shell().invoke(CONFIGURE_COMMAND, { config })) as EngineStatus;
+}
+
+/**
+ * Sign out of this install: clear the engine's sealed credential, stop it, and forget the door.
+ *
+ * What stays: the mirror (frozen, see {@link engineConfigure}) and this install's key in the
+ * operating system's keystore, which is per-install rather than per-account and is what the next
+ * account's credential will be sealed under.
+ */
+export async function engineLogout(): Promise<EngineStatus> {
+  return (await shell().invoke(LOGOUT_COMMAND)) as EngineStatus;
 }
 
 /**

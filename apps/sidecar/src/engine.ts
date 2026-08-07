@@ -15,7 +15,7 @@ import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
   kbService, tagsService,
   makeApprovalService, makeAuthConfig, makeMailboxService, makePrivacyService,
-  makeScreenerService, messageService, notifyRulesService,
+  makeScreenerService, messageService, notifyRulesService, resolveSession,
   rulesService, searchService, sendService, snippetsService, syncService, threadService,
   triageService, workflowsService, ServiceError,
   type AuthConfig, type HostResolver, type MailboxAllowancePolicy, type PushService, type RemoteFetch,
@@ -198,6 +198,21 @@ export interface Sidecar {
    * plaintext exists in this process only as the argument `ImapAdapter` was constructed with.
    */
   credentialState(): Promise<CredentialState>;
+  /**
+   * Forget the stored mailbox password. Answers whether there was one to forget.
+   *
+   * This is what makes signing out of the LOCAL door mean something. The shell can delete its own
+   * configuration file and stop this process, but the sealed credential lives inside the mirror's
+   * database — and the mirror is FROZEN on a door switch rather than deleted, because the mail is
+   * on the user's own server and re-pulling it is expensive and pointless. So the one thing that
+   * has to go is removed here, over the bridge, leaving everything else exactly where it is.
+   *
+   * It does not disconnect: the adapter this launch built is already holding an authenticated
+   * socket, and tearing that down mid-request is the shell's job through the process lifetime it
+   * owns. The next launch has no password and serves the mirror, which is the documented no-password
+   * state and not a new one.
+   */
+  forgetStoredLogin(): Promise<boolean>;
   /** Stop polling, let the in-flight cycle finish, close IMAP, close and unlock the database. */
   stop(): Promise<void>;
 }
@@ -605,6 +620,28 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     };
 
     /**
+     * Remove the `(mailbox, imap)` credential row. See {@link Sidecar.forgetStoredLogin}.
+     *
+     * ONE ROW, AND NOTHING ELSE. Not the mailbox, not the messages, not the mirror — every one of
+     * those is reconstructible from the user's own server and none of them is a secret. The
+     * credential is the only thing on this machine that a person signing out is asking to be gone.
+     */
+    const forgetStoredLogin = async (): Promise<boolean> => {
+      const had = (await storedLogin()) !== null;
+      await db.delete(mailboxCredentials).where(and(
+        eq(mailboxCredentials.mailboxId, world.mailboxId),
+        eq(mailboxCredentials.transport, "imap"),
+      ));
+      log("stored_login_cleared", {
+        mailboxId: world.mailboxId,
+        state: had ? "removed" : "absent",
+        reason: "the sealed mailbox password was removed from this install; the mirror and the " +
+          "mailbox on the user's own server are untouched",
+      });
+      return had;
+    };
+
+    /**
      * The password this launch will use, and what the shell should be told.
      *
      * Order is deliberate: the STORE WINS over the environment, matching the rule the hosted
@@ -1001,10 +1038,42 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       adapter,
       world,
       sessionToken: session.token,
-      handle: (req) => app.handle(req, depsFor()),
+      handle: async (req) => {
+        // ── ONE ROUTE AHEAD OF THE TABLE, AND WHY IT IS NOT IN THE TABLE ────────────────────
+        //
+        // `DELETE /local/stored-login` is a DESKTOP-ONLY action: forget the password sealed on
+        // THIS machine. `packages/api`'s route table is shared with the hosted service, where the
+        // idea has no meaning — there is no per-install key and no local store to forget from — so
+        // adding it there would be hosted surface invented for a desktop lifecycle.
+        //
+        // It carries the same gate every other request on this transport carries: the per-launch
+        // bearer, resolved by the same `resolveSession` the middleware chain runs. The bearer is
+        // added shell-side and never reaches the window, so a page cannot compose this call itself.
+        const url = new URL(req.url);
+        if (req.method === "DELETE" && url.pathname === "/local/stored-login") {
+          const header = req.headers.get("authorization");
+          const token = header && /^Bearer\s+/i.test(header)
+            ? header.replace(/^Bearer\s+/i, "").trim()
+            : "";
+          const core = token ? await resolveSession(db, token, now()) : null;
+          if (!core) {
+            return new Response(
+              JSON.stringify({ error: { code: "unauthorized", message: "authentication required" } }),
+              { status: 401, headers: { "content-type": "application/json" } },
+            );
+          }
+          const cleared = await forgetStoredLogin();
+          return new Response(JSON.stringify({ cleared }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return app.handle(req, depsFor());
+      },
       syncUntilQuiet,
       organizerState: () => organizer,
       credentialState: async () => (await resolveLogin()).state,
+      forgetStoredLogin,
       async start() {
         // ── NO PASSWORD, NO CONNECTION — AND THAT IS NOT A FAILED LAUNCH ──────────────────
         //

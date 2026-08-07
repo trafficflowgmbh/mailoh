@@ -62,6 +62,7 @@
 //! make that worse: it retries a bounded number of times and then stays down with a reason,
 //! rather than hammering a directory another process legitimately owns.
 
+use crate::config::{self, Config, Mode};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt;
@@ -118,6 +119,19 @@ pub const DATA_DIR_VAR: &str = "OHMAIL_DATA_DIR";
 /// The engine still accepts one if the environment happens to carry it, and this shell never
 /// composes it.
 pub const REQUIRED_ENGINE_VARS: [&str; 3] = ["OHMAIL_IMAP_HOST", "OHMAIL_IMAP_USER", "OHMAIL_KEK"];
+
+/// The same list for the CLOUD door, where none of the IMAP settings exists.
+///
+/// A hosted mirror has no mail server to name and no username to log in with — it has an account,
+/// reached at a URL, and the shell knows both because the person who signed in told it. The KEK is
+/// on this list for exactly the reason it is on the local one: without it the engine comes up,
+/// serves, accepts a sign-in and then cannot seal the session, so the next launch is signed out
+/// again with nothing on screen able to say why.
+///
+/// The hosted SESSION is deliberately absent, and that is the whole shape of the cloud door: the
+/// engine establishes it itself over the bridge, and the shell holds no credential of any kind.
+pub const REQUIRED_CLOUD_VARS: [&str; 3] =
+    ["OHMAIL_CLOUD_URL", "OHMAIL_MAILBOX_ADDRESS", "OHMAIL_KEK"];
 
 /// How many times the engine may be started before the shell gives up: one start and three
 /// restarts.
@@ -306,6 +320,14 @@ pub struct Launch {
     pub args: Vec<OsString>,
     /// Overlaid on the shell's own environment, which the engine otherwise inherits.
     pub env: Vec<(OsString, OsString)>,
+    /// Variables REMOVED from what the child would otherwise inherit.
+    ///
+    /// Inheritance is the default and is right for almost everything. It is wrong for one case:
+    /// the cloud door, where an `OHMAIL_IMAP_*` left in this process's environment is a variable
+    /// the engine refuses to start with — and correctly so, since a cloud install must have no
+    /// path to a mailbox at all. Overwriting with an empty string would also work, because the
+    /// engine reads empty as absent; removing says what is meant. See `config::unset_for`.
+    pub unset: Vec<OsString>,
 }
 
 impl fmt::Debug for Launch {
@@ -320,6 +342,7 @@ impl fmt::Debug for Launch {
             .field("program", &self.program)
             .field("args", &self.args)
             .field("env", &self.env.iter().map(|(k, _)| k).collect::<Vec<_>>())
+            .field("unset", &self.unset)
             .finish()
     }
 }
@@ -343,6 +366,21 @@ pub fn plan(
     exe_dir: Option<&Path>,
     data_dir_fallback: Option<&Path>,
 ) -> Plan {
+    plan_with(get, exe_dir, data_dir_fallback, &REQUIRED_ENGINE_VARS)
+}
+
+/// [`plan`], with the list of variables the door in question cannot start without.
+///
+/// The list is a parameter because the two doors need different ones and everything else about the
+/// decision is identical: where the engine is, whether the data directory is known, and what to
+/// report when something is missing. A second copy of this function per door would be two places
+/// for the "look beside the executable" rule to drift.
+pub fn plan_with(
+    get: &dyn Fn(&str) -> Option<String>,
+    exe_dir: Option<&Path>,
+    data_dir_fallback: Option<&Path>,
+    required: &[&str],
+) -> Plan {
     let program = match get(ENGINE_PATH_VAR).filter(|v| !v.trim().is_empty()) {
         Some(explicit) => PathBuf::from(explicit),
         None => match exe_dir {
@@ -357,7 +395,7 @@ pub fn plan(
         },
     };
 
-    let mut missing: Vec<String> = REQUIRED_ENGINE_VARS
+    let mut missing: Vec<String> = required
         .iter()
         .filter(|name| get(name).filter(|v| !v.trim().is_empty()).is_none())
         .map(|name| (*name).to_string())
@@ -392,6 +430,7 @@ pub fn plan(
         // first-run special case to get wrong, and no launch on which a password sits in process
         // state that anything running as this user could read.
         env: vec![(OsString::from(DATA_DIR_VAR), data_dir.expect("checked above"))],
+        unset: Vec::new(),
     })
 }
 
@@ -513,77 +552,6 @@ impl Engine {
         Engine { inner, thread: Mutex::new(Some(thread)) }
     }
 
-    /// From the Tauri app: work out the plan and act on it.
-    pub fn start(app: &tauri::App) -> Engine {
-        use tauri::Manager;
-
-        // THE LOG IS OPENED FIRST, because the states worth reading about are the ones this
-        // function can reach before it has started anything: a keystore that would not answer, an
-        // engine that is not there, a variable nobody set. Opening it later would put exactly the
-        // lines a person needs on a stream a packaged app discards.
-        //
-        // The path comes from the platform rather than from this file — `~/Library/Logs/<id>` on
-        // macOS, `~/.local/share/<id>/logs` on Linux, `%APPDATA%\<id>\logs` on Windows — so the
-        // file is where that platform's users and its crash reporters already look. A failure to
-        // open one is reported and is not fatal: an app that will not start because it could not
-        // open its log has turned a diagnostic into an outage.
-        match app.path().app_log_dir() {
-            Ok(dir) => {
-                if let Err(reason) = install_log_file(dir.join(LOG_FILE_NAME)) {
-                    log_line(format_args!("no log file — {reason}"));
-                }
-            }
-            Err(err) => log_line(format_args!("no log file — this platform named no log directory ({err})")),
-        }
-
-        let exe = std::env::current_exe().ok();
-        let exe_dir = exe.as_deref().and_then(Path::parent);
-        let data_dir = app.path().app_data_dir().ok();
-
-        // THE KEY IS RESOLVED BEFORE THE PLAN IS MADE, AND IT IS THE SHELL'S TO RESOLVE.
-        //
-        // The environment still wins. That is the development path — a key handed in by whoever
-        // started the process — and it is also the only way a launch can be reproduced by hand.
-        // When the environment says nothing, the keystore does: `install_key` reads the one item
-        // this install owns, or mints it. A failure there is NOT allowed to degrade into "start
-        // without a key": the engine would come up, serve the mirror, accept a password and refuse
-        // to store it, which is the failure that looks like the product working right up until it
-        // does not.
-        let from_env = std::env::var(KEK_VAR).ok().filter(|v| !v.trim().is_empty());
-        let key = match from_env {
-            Some(key) => Ok(key),
-            None => install_key(),
-        };
-        let key = match key {
-            Ok(key) => key,
-            Err(reason) => return Engine::inert(EngineState::NoKey { reason }),
-        };
-
-        // The key answers for itself. `plan` lists `OHMAIL_KEK` among what it refuses to start
-        // without, and it is right to — an engine with no key cannot store a password. What has
-        // changed is only WHERE the value comes from, so the shell answers that one name and every
-        // other still comes from the environment the process was given.
-        let resolved = key.clone();
-        let get = move |name: &str| -> Option<String> {
-            if name == KEK_VAR {
-                Some(resolved.clone())
-            } else {
-                std::env::var(name).ok()
-            }
-        };
-        match plan(&get, exe_dir, data_dir.as_deref()) {
-            Plan::Spawn(mut launch) => {
-                // Composed here rather than in `plan`, because `plan` touches nothing outside its
-                // arguments and the keystore is emphatically outside them. `Launch`'s `Debug`
-                // prints the NAMES of its environment and never the values — written before there
-                // was a value worth hiding, for exactly this line.
-                launch.env.push((OsString::from(KEK_VAR), OsString::from(key)));
-                Engine::spawn(launch)
-            }
-            Plan::Inert(state) => Engine::inert(state),
-        }
-    }
-
     /// ── THE THREE READERS, AND WHY THEY HAVE NO CALLER IN THE APP YET ────────────────────
     ///
     /// What the shell knows about the engine, and the seam the UI wiring slice takes:
@@ -652,6 +620,344 @@ impl Drop for Engine {
     }
 }
 
+// ── The shell around the engine: which door, and the power to change it ──────────────────────
+//
+// ── WHY THIS EXISTS AND `Engine` DOES NOT DO IT ──────────────────────────────────────────────
+//
+// An `Engine` is one run of one child under one configuration, and that is the right shape for it:
+// its supervisor thread owns a `Launch` and cannot be handed a different one. What the product
+// needs on top is the ability to CHANGE the configuration while the app is open — a person picks a
+// door, types their mail server, and expects the app to start working without quitting it. That is
+// a lifetime one level up: stop this engine, write the new configuration down, start a different
+// engine. `Shell` is that level, and it is also the thing the window's commands are given, so the
+// engine underneath can be replaced without the commands holding a stale handle.
+//
+// ── THE PIECES IT OWNS ───────────────────────────────────────────────────────────────────────
+//
+//  · the app's own paths, so a spawn does not have to reach back into Tauri;
+//  · the per-install key, resolved from the keystore once per plan (see `install_key`);
+//  · the configuration file, which is the only durable answer to "which door";
+//  · the current engine, behind a lock, replaced whole rather than mutated.
+
+/// Where this install's things are. Resolved once from the Tauri app.
+pub struct ShellPaths {
+    /// The app's data directory. `config.json` sits in it and the per-mode mirrors under it.
+    pub app_data: Option<PathBuf>,
+    /// Where the engine is looked for, when nothing names it explicitly.
+    pub exe_dir: Option<PathBuf>,
+}
+
+impl ShellPaths {
+    pub fn config_path(&self) -> Option<PathBuf> {
+        self.app_data.as_ref().map(|d| d.join(config::CONFIG_FILE_NAME))
+    }
+
+    /// The configuration this install came in by, if it has one.
+    pub fn config(&self) -> Option<Config> {
+        self.config_path().as_deref().and_then(config::read)
+    }
+
+    /// Decide what to start, from the stored configuration or from the environment.
+    ///
+    /// ── THE PRECEDENCE, WHICH IS DELIBERATELY NOT "CONFIG WINS EVERYWHERE" ──────────────────
+    ///
+    /// A stored configuration composes the engine's environment ENTIRELY: its data directory, its
+    /// mode and its settings, all derived from the door it names. Nothing inherited can contribute,
+    /// which is the point — a stale `OHMAIL_DATA_DIR` left in somebody's shell must not silently
+    /// point a cloud door at a local door's mirror.
+    ///
+    /// With NO stored configuration the shell falls back to reading the environment, which is the
+    /// development path and the only way a launch is reproducible by hand. That fallback keeps its
+    /// historic data directory — the app's data root, not a per-mode subdirectory — because
+    /// changing it would move an existing developer's mirror out from under them for no gain.
+    ///
+    /// The KEY is resolved here in both cases and never comes from the file. The environment wins
+    /// where it is set; otherwise the keystore answers, and a keystore that will not is
+    /// [`EngineState::NoKey`] rather than a launch without a key — an engine with no key comes up,
+    /// serves, accepts a password and then cannot store it, which is the failure that looks like
+    /// the product working right up until it does not.
+    pub fn plan_now(&self, config: Option<&Config>) -> Plan {
+        let from_env = std::env::var(KEK_VAR).ok().filter(|v| !v.trim().is_empty());
+        let key = match from_env {
+            Some(key) => Ok(key),
+            None => install_key(),
+        };
+        let key = match key {
+            Ok(key) => key,
+            Err(reason) => return Plan::Inert(EngineState::NoKey { reason }),
+        };
+
+        let stored;
+        let config = match config {
+            Some(c) => Some(c),
+            None => {
+                stored = self.config();
+                stored.as_ref()
+            }
+        };
+
+        let exe_dir = self.exe_dir.as_deref();
+        match config {
+            Some(config) => {
+                let Some(root) = self.app_data.as_deref() else {
+                    return Plan::Inert(EngineState::NotConfigured {
+                        missing: vec![DATA_DIR_VAR.to_string()],
+                    });
+                };
+                let mut env = config::env_for(config, root);
+                env.push((OsString::from(KEK_VAR), OsString::from(key)));
+
+                // The composed environment answers first and the process's own second, so the
+                // "missing" report below is about what will ACTUALLY be handed over.
+                let composed: Vec<(String, String)> = env
+                    .iter()
+                    .map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned()))
+                    .collect();
+                let get = move |name: &str| -> Option<String> {
+                    composed
+                        .iter()
+                        .find(|(k, _)| k == name)
+                        .map(|(_, v)| v.clone())
+                        .or_else(|| std::env::var(name).ok())
+                };
+                let required: &[&str] = match config.mode() {
+                    Mode::Local => &REQUIRED_ENGINE_VARS,
+                    Mode::Cloud => &REQUIRED_CLOUD_VARS,
+                };
+                match plan_with(&get, exe_dir, None, required) {
+                    Plan::Spawn(mut launch) => {
+                        // `plan_with` decided WHETHER and WHERE; the environment is composed here,
+                        // whole, replacing the single data-directory pair it put there.
+                        launch.env = env;
+                        launch.unset = config::unset_for(config);
+                        Plan::Spawn(launch)
+                    }
+                    inert => inert,
+                }
+            }
+            None => {
+                let resolved = key.clone();
+                let get = move |name: &str| -> Option<String> {
+                    if name == KEK_VAR {
+                        Some(resolved.clone())
+                    } else {
+                        std::env::var(name).ok()
+                    }
+                };
+                match plan(&get, exe_dir, self.app_data.as_deref()) {
+                    Plan::Spawn(mut launch) => {
+                        // Composed here rather than in `plan`, because `plan` touches nothing
+                        // outside its arguments and the keystore is emphatically outside them.
+                        // `Launch`'s `Debug` prints the NAMES of its environment and never the
+                        // values — written before there was a value worth hiding, for this line.
+                        launch.env.push((OsString::from(KEK_VAR), OsString::from(key)));
+                        Plan::Spawn(launch)
+                    }
+                    inert => inert,
+                }
+            }
+        }
+    }
+}
+
+/// The app's engine, its configuration, and the two actions that change either.
+pub struct Shell {
+    paths: ShellPaths,
+    /// Replaced whole on a reconfigure. `Arc` because a command may be answering out of it while
+    /// another is swapping it, and the answer must come from the engine it started against.
+    engine: Mutex<Arc<Engine>>,
+}
+
+impl Shell {
+    /// THE LOG IS OPENED FIRST, because the states worth reading about are the ones the shell can
+    /// reach before it has started anything: a keystore that would not answer, an engine that is
+    /// not there, a variable nobody set. Opening it later would put exactly the lines a person
+    /// needs on a stream a packaged app discards.
+    ///
+    /// The path comes from the platform rather than from this file — `~/Library/Logs/<id>` on
+    /// macOS, `~/.local/share/<id>/logs` on Linux, `%APPDATA%\<id>\logs` on Windows — so the file
+    /// is where that platform's users and its crash reporters already look. A failure to open one
+    /// is reported and is not fatal: an app that will not start because it could not open its log
+    /// has turned a diagnostic into an outage.
+    pub fn open_log(app: &tauri::App) {
+        use tauri::Manager;
+        match app.path().app_log_dir() {
+            Ok(dir) => {
+                if let Err(reason) = install_log_file(dir.join(LOG_FILE_NAME)) {
+                    log_line(format_args!("no log file — {reason}"));
+                }
+            }
+            Err(err) => {
+                log_line(format_args!("no log file — this platform named no log directory ({err})"))
+            }
+        }
+    }
+
+    pub fn paths(app: &tauri::App) -> ShellPaths {
+        use tauri::Manager;
+        let exe = std::env::current_exe().ok();
+        ShellPaths {
+            app_data: app.path().app_data_dir().ok(),
+            exe_dir: exe.as_deref().and_then(Path::parent).map(Path::to_path_buf),
+        }
+    }
+
+    /// Open the log, work out the plan, and start whatever it says.
+    pub fn start(app: &tauri::App) -> Shell {
+        Shell::open_log(app);
+        let paths = Shell::paths(app);
+        let engine = match paths.plan_now(None) {
+            Plan::Spawn(launch) => Engine::spawn(launch),
+            Plan::Inert(state) => Engine::inert(state),
+        };
+        Shell { paths, engine: Mutex::new(Arc::new(engine)) }
+    }
+
+    /// For tests and for the commands: the engine as it is right now.
+    pub fn engine(&self) -> Arc<Engine> {
+        Arc::clone(&self.engine.lock().expect("shell engine"))
+    }
+
+    /// Ask the engine to leave. Idempotent, and safe from a window-close and again from the exit.
+    pub fn stop(&self) {
+        self.engine().stop();
+    }
+
+    /// Replace the running engine with one started from `next`.
+    ///
+    /// STOP BEFORE SPAWN, ALWAYS. The engine takes an exclusive lock on its data directory, so a
+    /// new one started before the old one has gone fails to start — and it fails in the way that
+    /// looks worst, because "another copy already holds this directory" is also what a genuine
+    /// second instance of the app reports.
+    fn replace(&self, plan: Plan) {
+        let mut slot = self.engine.lock().expect("shell engine");
+        slot.stop();
+        *slot = Arc::new(match plan {
+            Plan::Spawn(launch) => Engine::spawn(launch),
+            Plan::Inert(state) => Engine::inert(state),
+        });
+    }
+
+    /// Write down which door this install comes in by, and restart the engine behind it.
+    ///
+    /// The configuration is written BEFORE the engine is touched: a write that fails leaves a
+    /// running engine and an unchanged file, which is the state somebody can retry from. The
+    /// reverse order would take the app down to report a full disk.
+    pub fn configure(&self, value: &serde_json::Value) -> Result<serde_json::Value, String> {
+        let config = config::parse(value)?;
+        let path = self.paths.config_path().ok_or_else(|| {
+            "this computer named no place for the app to keep its settings".to_string()
+        })?;
+        config::write(&path, &config)?;
+        log_line(format_args!(
+            "configured for the {} door; the engine's data directory is {}",
+            config.mode().as_str(),
+            config.mode().dir_name()
+        ));
+        self.replace(self.paths.plan_now(Some(&config)));
+        Ok(self.status())
+    }
+
+    /// Forget the account: clear the engine's sealed secrets, stop it, and forget the door.
+    ///
+    /// ── WHAT IS REMOVED, AND THE MUCH LONGER LIST OF WHAT IS NOT ────────────────────────────
+    ///
+    /// Removed: the credential the engine sealed (the mailbox password on the local door, the
+    /// hosted session on the cloud one) and `config.json`. That is all of it.
+    ///
+    /// NOT removed, each for its own reason:
+    ///
+    ///  · **The mirror.** Either door's mirror is a copy — of the user's own server, or of a hosted
+    ///    account — and a door switch freezes the directory it leaves rather than deleting it.
+    ///    Signing out to look at the other door and back should not cost a full re-sync.
+    ///  · **The keystore item.** The per-install key is per INSTALL, not per account: it is what
+    ///    the NEXT account's credential will be sealed under, and deleting it would make every
+    ///    frozen mirror's stored credential permanently unreadable rather than merely unused.
+    ///
+    /// The clear goes over the BRIDGE when the engine is serving, because the local door's sealed
+    /// password lives inside the mirror's database and only the engine can reach it. The cloud
+    /// door's sealed session is a file, so it is also removed directly — which is what covers the
+    /// case where the engine was not serving and there was nothing to ask.
+    pub fn logout(&self) -> Result<serde_json::Value, String> {
+        let config = self.paths.config();
+
+        if let Some(config) = &config {
+            let path = match config.mode() {
+                Mode::Local => "/local/stored-login",
+                Mode::Cloud => "/cloud/session",
+            };
+            let answer = self.engine().request(EngineRequest {
+                method: "DELETE".to_string(),
+                url: path.to_string(),
+                headers: Vec::new(),
+                body: Vec::new(),
+            });
+            match answer {
+                // BEST EFFORT, and the fallbacks below are why that is not a shrug. An engine that
+                // is not serving has nothing in memory to clear, and the file removal covers the
+                // durable half. Reporting a failure here would refuse a sign-out because the thing
+                // being signed out of was already down.
+                Ok(res) if (200..300).contains(&res.status) => {}
+                Ok(res) => log_line(format_args!(
+                    "signing out: the engine answered {} to {path}; the sealed session is removed \
+                     from disk regardless",
+                    res.status
+                )),
+                Err(reason) => log_line(format_args!(
+                    "signing out: the engine could not be asked to clear its stored credential \
+                     ({reason}); the sealed session is removed from disk regardless"
+                )),
+            }
+        }
+
+        // The engine goes down before the files move: it holds the data directory, and removing a
+        // file underneath a process that has it open is the kind of thing that works on one
+        // platform and does not on another.
+        self.engine().stop();
+
+        if let (Some(Config::Cloud(_)), Some(root)) = (&config, self.paths.app_data.as_deref()) {
+            if let Err(reason) = config::remove_sealed_session(root, Mode::Cloud) {
+                log_line(format_args!("signing out: {reason}"));
+            }
+        }
+
+        if let Some(path) = self.paths.config_path() {
+            config::remove(&path)?;
+        }
+        log_line(format_args!("signed out; the mirror and this install's key are left as they are"));
+
+        // NOT a re-plan. After a sign-out the honest state is "nothing is configured", and
+        // re-planning would start an engine again from whatever the environment happens to say —
+        // which on a developer's machine is the door the person just left.
+        self.replace(Plan::Inert(EngineState::NotConfigured {
+            missing: vec![config::CONFIG_FILE_NAME.to_string()],
+        }));
+        Ok(self.status())
+    }
+
+    /// What the window renders. See [`status_json`]; this adds the facts only the shell holds.
+    pub fn status(&self) -> serde_json::Value {
+        let mut out = status_json(&self.engine());
+        if let Some(object) = out.as_object_mut() {
+            match self.paths.config() {
+                Some(config) => {
+                    object.insert("mode".into(), config.mode().as_str().into());
+                    if let Some(address) = config.address() {
+                        object.insert("address".into(), address.into());
+                    }
+                }
+                // NAMED RATHER THAN OMITTED. A window that reads an absent `mode` as "still
+                // loading" would spin for ever on a fresh install, which is exactly the state that
+                // most needs to reach the door picker.
+                None => {
+                    object.insert("mode".into(), serde_json::Value::Null);
+                }
+            }
+        }
+        out
+    }
+}
+
 impl Inner {
     fn set_state(&self, state: EngineState) {
         log_state(&state);
@@ -699,6 +1005,12 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // REMOVE FIRST, THEN SET. The two lists never overlap today, and doing it in this order
+        // means they never can: a variable that is both cleared and composed keeps the composed
+        // value, which is the one the shell decided on.
+        for key in &launch.unset {
+            command.env_remove(key);
+        }
         for (key, value) in &launch.env {
             command.env(key, value);
         }
@@ -1725,12 +2037,19 @@ fn install_key() -> Result<String, String> {
 
 // ── What the window may ask ──────────────────────────────────────────────────────────────────
 //
-// Two commands, and they are the only thing the webview can call. `engine_status` is what a surface
-// renders; `engine_request` is the bridge the client engine's `fetch` goes down.
+// Four commands, and they are the only thing the webview can call. `engine_status` is what a surface
+// renders; `engine_request` is the bridge the client engine's `fetch` goes down; `engine_configure`
+// and `engine_logout` are the two that change which door this install came in by.
 //
 // THE SESSION TOKEN IS NOT AMONG THEM. `engine_status` does not carry it and `engine_request` adds
 // it on this side, so the page holds no credential — which is also what lets the unmodified client
 // run here: it authenticates with nothing because it needs to.
+//
+// AND NEITHER IS ANY OTHER SECRET. `engine_configure` takes settings and refuses a payload carrying
+// a password, a token or anything else secret-shaped (`config::parse`). The mailbox password and
+// the hosted sign-in travel over `engine_request`, addressed to the engine, and are sealed there —
+// so no credential is ever an argument to a shell command, held in this process's memory, or
+// written to this process's file.
 
 /// What the shell knows about the engine, as the webview sees it.
 ///
@@ -1776,8 +2095,30 @@ fn status_json(engine: &Engine) -> serde_json::Value {
 
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
-fn engine_status(engine: tauri::State<'_, Arc<Engine>>) -> serde_json::Value {
-    status_json(&engine)
+fn engine_status(shell: tauri::State<'_, Arc<Shell>>) -> serde_json::Value {
+    shell.status()
+}
+
+/// Choose a door, or change the one already chosen.
+///
+/// Takes settings and no secret — see the section header. The engine is restarted behind it, so
+/// this returns the status AFTER the change: a caller that immediately re-read `engine_status`
+/// would race the swap and could see the engine it was replacing.
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn engine_configure(
+    shell: tauri::State<'_, Arc<Shell>>,
+    config: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    shell.configure(&config)
+}
+
+/// Forget the account on this install: clear the sealed credential, stop the engine, forget the
+/// door. The mirror and this install's key stay. See [`Shell::logout`].
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn engine_logout(shell: tauri::State<'_, Arc<Shell>>) -> Result<serde_json::Value, String> {
+    shell.logout()
 }
 
 /// One request, down the pipe and back.
@@ -1792,13 +2133,16 @@ fn engine_status(engine: tauri::State<'_, Arc<Engine>>) -> serde_json::Value {
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
 fn engine_request(
-    engine: tauri::State<'_, Arc<Engine>>,
+    shell: tauri::State<'_, Arc<Shell>>,
     method: String,
     url: String,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
 ) -> Result<tauri::ipc::Response, String> {
-    let answer = engine.request(EngineRequest { method, url, headers, body })?;
+    // Read ONCE, into an `Arc` this request holds for its whole life. A reconfigure can replace the
+    // engine while this is in flight, and the answer must come from the engine the question went to
+    // — re-reading the slot for the reply would deliver it against a different child's bookkeeping.
+    let answer = shell.engine().request(EngineRequest { method, url, headers, body })?;
     let meta = serde_json::json!({
         "status": answer.status,
         "statusText": answer.status_text,
@@ -1821,26 +2165,31 @@ fn engine_request(
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine and send it one request at a time. Nothing else: no filesystem, no shell, no network, and no Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, and sign out of it. Nothing else: no filesystem, no shell, no network, and no Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout"]
 }"#;
 
-/// Register the two commands. Called from `main.rs` under the same feature.
+/// Register the four commands. Called from `main.rs` under the same feature.
 ///
 /// It lives here rather than there so that `main.rs` contains no `invoke_handler` at all — the
 /// published shell's "registers no commands" is then a property of a file that is always compiled,
 /// rather than of a branch inside one.
 #[cfg(feature = "local-engine")]
 pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder.invoke_handler(tauri::generate_handler![engine_status, engine_request])
+    builder.invoke_handler(tauri::generate_handler![
+        engine_status,
+        engine_request,
+        engine_configure,
+        engine_logout
+    ])
 }
 
-/// Hand the running engine to the window, and grant the window the two commands.
+/// Hand the shell to the window, and grant the window the four commands.
 #[cfg(feature = "local-engine")]
-pub fn manage(app: &tauri::App, engine: Arc<Engine>) {
+pub fn manage(app: &tauri::App, shell: Arc<Shell>) {
     use tauri::Manager;
-    app.manage(engine);
+    app.manage(shell);
     if let Err(err) = app.add_capability(LOCAL_ENGINE_CAPABILITY) {
         // Fatal, and loudly. A window that cannot call the bridge is a window that renders nothing
         // — and silently continuing would produce exactly the failure this slice exists to prevent:

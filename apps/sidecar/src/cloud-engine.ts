@@ -1,3 +1,4 @@
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { StaticKeyProvider, type KeyProvider } from "@trafficflow/core/mail";
 import {
@@ -7,8 +8,9 @@ import {
 import { openLocalDb, type LocalDb, type OpenLocalDb } from "./db.js";
 import { ensureLocalWorld, mintLaunchSession, type LocalWorld } from "./identity.js";
 import {
-  createCloudAuth, loadSealedTokens, sealTokens, type CloudTokens,
+  createCloudAuth, loadSealedTokens, sealTokens, type CloudAuth, type CloudTokens,
 } from "./cloud-auth.js";
+import { cloudSignIn, CloudSignInError, type CloudSignInRequest } from "./cloud-signin.js";
 import { createCloudMirror, CLOUD_SYNC_TYPES, type CloudMirror } from "./cloud-mirror.js";
 import { matchReadRoute } from "./cloud-read.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
@@ -54,6 +56,33 @@ import type { Diagnostic } from "./log.js";
  * before answering, so the client's immediate local `/sync` re-drain already holds its own write.
  * When a pull fails the mirror goes offline and the proxy answers `503 offline_read_only` writing
  * nothing locally — `online` rides `/health` and the ready frame so the shell can say which it is.
+ *
+ * ── SIGNED OUT IS A STATE THIS ENGINE SERVES, NOT A REASON TO REFUSE TO START ─────────────────
+ *
+ * A launch with no token pair — a fresh install that has just picked the hosted door, or one whose
+ * session was cleared — used to be a startup failure. That is the wrong shape: the shell would show
+ * "the engine did not start" to somebody whose only problem is that they have not signed in yet,
+ * and the only way out was for the shell to obtain a token pair from somewhere it has no way to
+ * reach. So this engine now comes up in a PRE-AUTH state and serves two things:
+ *
+ *   · `GET  /health`        — public, and says `signedIn: false` so the shell can render the door;
+ *   · `POST /cloud/signin`  — `{email, password, totp}`, the two-step hosted sign-in.
+ *
+ * Everything else answers `409 not_signed_in`. Deliberately NOT the mirror: after a sign-out the
+ * mirror still holds the previous account's mail, and serving it to a signed-out window would be a
+ * reader gaining access by the absence of a credential rather than by one.
+ *
+ * A successful sign-in seals the pair and TRANSITIONS IN PLACE — the same process, the same open
+ * database, the same bridge — because a restart here would tear down the stdio host the window is
+ * mid-request on. Only the authed half (`cloud-auth`, the mirror, the write-through proxy) is
+ * assembled at that point, which is why it lives in {@link activate} rather than inline.
+ *
+ * ── SECRETS NEVER TRAVEL THROUGH THE SHELL ────────────────────────────────────────────────────
+ *
+ * The password and the code arrive over the same bridge every other request uses, addressed to this
+ * process, and leave it as a sealed file. The shell composes no credential into the engine's
+ * environment and holds none in its own state; what it holds is the per-install key the seal is
+ * written under, which is the arrangement the IMAP password already uses.
  */
 
 export interface CloudSidecarConfig {
@@ -83,12 +112,14 @@ export interface CloudSidecar {
   readonly sessionToken: string;
   /** `Request → Response` over the mirror (reads) + the write-through proxy — the stdio surface. */
   handle(req: Request): Promise<Response>;
-  /** Pull the hosted feed now, then poll. */
+  /** Pull the hosted feed now, then poll. A signed-out engine does nothing and does not throw. */
   start(): Promise<void>;
   /** Stop polling, close and unlock the database. */
   stop(): Promise<void>;
   /** Is the hosted account reachable? Surfaced in `/health` and the ready frame. */
   online(): boolean;
+  /** Is there a session at all? False on a pre-auth launch and after a sign-out. */
+  signedIn(): boolean;
 }
 
 const json = (body: unknown, status = 200): Response =>
@@ -119,46 +150,70 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     const sealPath = join(config.dataDir, "cloud-tokens.seal");
 
     const sealed = keyProvider ? await loadSealedTokens(sealPath, keyProvider) : null;
-    const tokens = sealed ?? config.tokens;
-    if (!tokens) {
-      throw new Error(
-        "Cloud mode has no session: no token is sealed on this install and none was supplied in " +
-          "the environment. The shell passes OHMAIL_CLOUD_ACCESS_TOKEN / OHMAIL_CLOUD_REFRESH_TOKEN " +
-          "on first launch.",
-      );
+
+    /**
+     * THE AUTHED HALF, assembled from a token pair — at construction when there is one, and from
+     * `POST /cloud/signin` when there is not.
+     *
+     * `null` is the pre-auth state and is the ONLY thing the signed-in checks below read, so there
+     * is no second flag that could disagree with it.
+     */
+    interface Authed {
+      auth: CloudAuth;
+      mirror: CloudMirror;
+      proxy: WriteThroughProxy;
     }
-    // FIRST LAUNCH: seal the environment token so no later launch needs one. Skipped without a key,
-    // and skipped when a sealed pair already exists — which is what keeps this idempotent.
-    if (!sealed && keyProvider) {
-      await sealTokens(sealPath, keyProvider, tokens);
+    let authed: Authed | null = null;
+
+    const activate = (tokens: CloudTokens): Authed => {
+      const auth = createCloudAuth({
+        baseUrl: config.cloudUrl,
+        tokens,
+        ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
+        ...(keyProvider ? { keyProvider } : {}),
+        sealPath,
+        now,
+        ...(log ? { log } : {}),
+      });
+
+      const mirror: CloudMirror = createCloudMirror({
+        db,
+        world,
+        auth,
+        cursorPath: join(config.dataDir, "cloud-cursor.json"),
+        ...(log ? { log } : {}),
+        now,
+        ...(config.pageLimit !== undefined ? { pageLimit: config.pageLimit } : {}),
+        ...(config.pollIntervalMs !== undefined ? { pollIntervalMs: config.pollIntervalMs } : {}),
+      });
+
+      const proxy: WriteThroughProxy = createWriteThroughProxy({
+        auth,
+        mirror,
+        ...(log ? { log } : {}),
+      });
+
+      authed = { auth, mirror, proxy };
+      return authed;
+    };
+
+    const launchTokens = sealed ?? config.tokens;
+    if (launchTokens) {
+      // FIRST LAUNCH: seal the environment token so no later launch needs one. Skipped without a
+      // key, and skipped when a sealed pair already exists — which keeps this idempotent.
+      if (!sealed && keyProvider) {
+        await sealTokens(sealPath, keyProvider, launchTokens);
+      }
+      activate(launchTokens);
+    } else {
+      // NOT A FAILURE. See the pre-auth section in this file's header: the engine serves
+      // `/health` and `/cloud/signin`, and the shell renders a sign-in surface rather than an
+      // error about a process that would not start.
+      log?.("cloud_pre_auth", {
+        reason: "no session is sealed on this install and none was supplied, so the engine serves " +
+          "the sign-in surface until one is established",
+      });
     }
-
-    const auth = createCloudAuth({
-      baseUrl: config.cloudUrl,
-      tokens,
-      ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
-      ...(keyProvider ? { keyProvider } : {}),
-      sealPath,
-      now,
-      ...(log ? { log } : {}),
-    });
-
-    const mirror: CloudMirror = createCloudMirror({
-      db,
-      world,
-      auth,
-      cursorPath: join(config.dataDir, "cloud-cursor.json"),
-      ...(log ? { log } : {}),
-      now,
-      ...(config.pageLimit !== undefined ? { pageLimit: config.pageLimit } : {}),
-      ...(config.pollIntervalMs !== undefined ? { pollIntervalMs: config.pollIntervalMs } : {}),
-    });
-
-    const proxy: WriteThroughProxy = createWriteThroughProxy({
-      auth,
-      mirror,
-      ...(log ? { log } : {}),
-    });
 
     const ctxFor = (accountId: string, userId: string | null, sessionId: string | null): ServiceContext => ({
       db,
@@ -172,15 +227,48 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       origin: undefined,
     });
 
+    /**
+     * DROP THE HOSTED SESSION — the bridge-reachable half of signing out.
+     *
+     * Three things, and deliberately not a fourth. The poll stops, the sealed pair is removed, and
+     * the engine returns to the pre-auth state it launches in. **The mirror is left exactly where
+     * it is.** A door switch freezes the directory it leaves rather than deleting it: the mail is
+     * still on the hosted account, and a mirror thrown away here is a full re-pull the next time
+     * somebody signs back in — for no gain, since nothing can be read out of it while signed out.
+     */
+    const signOut = async (): Promise<void> => {
+      const live = authed;
+      authed = null;
+      live?.mirror.stop();
+      try {
+        rmSync(sealPath, { force: true });
+      } catch (err) {
+        log?.("cloud_seal_removal_failed", {
+          err,
+          reason: "the sealed session could not be deleted; it is no longer used by this process " +
+            "and a later sign-in overwrites it",
+        });
+      }
+      log?.("cloud_signed_out", { mailboxId: world.mailboxId });
+    };
+
     const handle = async (req: Request): Promise<Response> => {
       const url = new URL(req.url);
       const path = url.pathname;
 
       // `/health` is public: a readiness probe carries no credential, exactly as the hosted host's.
       // `online` is the live mirror state — the shell polls this to tell "offline mirror" apart from
-      // "slow first pull", the same distinction the ready frame's `online` records at launch.
+      // "slow first pull", the same distinction the ready frame's `online` records at launch. A
+      // pre-auth engine is not online: there is no session to be reachable with.
       if (req.method === "GET" && path === "/health") {
-        return json({ ok: true, mode: "cloud", schemaTier: "mail", mailboxId: world.mailboxId, online: mirror.online() });
+        return json({
+          ok: true,
+          mode: "cloud",
+          schemaTier: "mail",
+          mailboxId: world.mailboxId,
+          signedIn: authed !== null,
+          online: authed !== null && authed.mirror.online(),
+        });
       }
 
       // Everything else requires the launch bearer — the same `resolveSession` the hosted chain runs.
@@ -188,6 +276,83 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       const token = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
       const core = token ? await resolveSession(db, token, now()) : null;
       if (!core) return json({ error: { code: "unauthorized", message: "authentication required" } }, 401);
+
+      // ── SIGNING IN, AND SIGNING OUT ────────────────────────────────────────────────────────
+      //
+      // Both are addressed to THIS process over the pipe the shell already holds. The password and
+      // the code are read here, exchanged for a token pair, sealed, and never seen again — the
+      // shell composes no credential and stores none.
+      if (req.method === "POST" && path === "/cloud/signin") {
+        if (authed) {
+          return json(
+            { error: { code: "already_signed_in", message: "this install already holds a session" } },
+            409,
+          );
+        }
+        let body: CloudSignInRequest;
+        try {
+          body = (await req.json()) as CloudSignInRequest;
+        } catch {
+          return json({ error: { code: "invalid_request", message: "the sign-in body is not JSON" } }, 400);
+        }
+        let tokens: CloudTokens;
+        try {
+          tokens = await cloudSignIn(
+            {
+              baseUrl: config.cloudUrl,
+              ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
+              ...(log ? { log } : {}),
+            },
+            body,
+          );
+        } catch (err) {
+          if (err instanceof CloudSignInError) {
+            return json({ error: { code: err.code, message: err.message } }, err.status);
+          }
+          throw err;
+        }
+        // SEALED BEFORE THE MIRROR IS TOLD ABOUT IT. A pair that could not be written to disk is a
+        // session that survives until the next quit and then silently is not there — better to say
+        // so now, while the person who typed the password is still looking at the app.
+        if (keyProvider) await sealTokens(sealPath, keyProvider, tokens);
+        const live = activate(tokens);
+        log?.("cloud_signed_in", { mailboxId: world.mailboxId });
+        // NOT AWAITED, and for the reason the launch path does not await it either: a first pull of
+        // a real account takes a while, and a sign-in that appears to hang for it looks broken. The
+        // mirror reports its own progress through `/health.online` and the next `/sync`.
+        void live.mirror.start().catch((err: unknown) => {
+          log?.("cloud_pull_failed", {
+            err,
+            reason: "the first pull after signing in did not complete; the mirror retries with backoff",
+          });
+        });
+        return json({ status: "signed_in", mailboxId: world.mailboxId, address: config.address });
+      }
+
+      if (req.method === "DELETE" && path === "/cloud/session") {
+        await signOut();
+        return json({ status: "signed_out" });
+      }
+
+      // ── EVERYTHING ELSE NEEDS A HOSTED SESSION ─────────────────────────────────────────────
+      //
+      // Including the reads. After a sign-out the mirror still holds the previous account's mail,
+      // and answering a read out of it would hand that mail to a window that holds no hosted
+      // credential — access granted by the ABSENCE of one, which is the shape this refuses.
+      if (!authed) {
+        return json(
+          {
+            error: {
+              code: "not_signed_in",
+              message: "this install is not signed in to a hosted account yet",
+            },
+          },
+          409,
+        );
+      }
+      // Captured, not re-read: `authed` is written by `activate`, so TypeScript cannot keep a
+      // narrowing across the awaits below and neither should a reader.
+      const { proxy } = authed;
 
       if (req.method === "GET" && path === "/sync") {
         const since = url.searchParams.get("since") ?? undefined;
@@ -240,12 +405,15 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       world,
       sessionToken: session.token,
       handle,
-      online: () => mirror.online(),
+      signedIn: () => authed !== null,
+      online: () => authed !== null && authed.mirror.online(),
       async start() {
-        await mirror.start();
+        // A pre-auth launch has nothing to pull. Not an error and not a no-op worth logging: the
+        // engine already said so once, at assembly.
+        await authed?.mirror.start();
       },
       async stop() {
-        mirror.stop();
+        authed?.mirror.stop();
         await opened.close();
       },
     };

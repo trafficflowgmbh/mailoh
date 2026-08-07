@@ -21,26 +21,35 @@
 //
 // Under the `local-engine` feature — OFF by default, and off in every build
 // published so far — the shell also owns the lifetime of the local engine: it
-// starts it with the app and makes certain it is gone when the app is. That is
-// process lifecycle, not a capability the webview gains: the permission list
-// stays empty, because the frontend still calls nothing and no command is
-// registered for it to call. `engine.rs` carries the reasoning; the three lines
-// here are the only places it is hooked up.
+// starts it with the app, lets the window choose which mailbox the install is
+// for, and makes certain the engine is gone when the app is. That is process
+// lifecycle, not a capability the webview gains for free: with the feature off
+// the permission list stays empty, because the frontend calls nothing and no
+// command is registered for it to call. `engine.rs` and `config.rs` carry the
+// reasoning; the lines here are the only places any of it is hooked up.
+//
+// What is held across the run is a `Shell` rather than an `Engine`, and the
+// difference is load-bearing: a reconfigure REPLACES the engine, so a handle to
+// one particular engine would stop the wrong process on quit — the one that had
+// already been swapped out — and leave the live one behind. `Shell::stop` always
+// stops the current one.
 //
 // The hooks are BOTH of the ones that exist, and they are not redundant.
 // Destroying the last window ends the app on Windows and Linux, so `Exit`
 // covers a quit; it does not on macOS, where a closed window can leave the
 // process running — and an engine outliving the window it belonged to is
-// exactly the stray process this exists to prevent. `Engine::stop` is
-// idempotent, so a platform that fires both pays nothing for it.
+// exactly the stray process this exists to prevent. `Shell::stop` is idempotent,
+// so a platform that fires both pays nothing for it.
 
+#[cfg(feature = "local-engine")]
+mod config;
 #[cfg(feature = "local-engine")]
 mod engine;
 mod updater;
 
 fn main() {
     let mut builder = tauri::Builder::default();
-    // The two commands the window may call, registered in `engine.rs` so that this file names none
+    // The commands the window may call, registered in `engine.rs` so that this file names none
     // of them. With the feature off the line is not compiled and the builder is untouched.
     #[cfg(feature = "local-engine")]
     {
@@ -55,9 +64,9 @@ fn main() {
         .expect("ohmail: failed to start the Tauri runtime");
 
     #[cfg(feature = "local-engine")]
-    let engine = std::sync::Arc::new(engine::Engine::start(&app));
+    let shell = std::sync::Arc::new(engine::Shell::start(&app));
     #[cfg(feature = "local-engine")]
-    engine::manage(&app, std::sync::Arc::clone(&engine));
+    engine::manage(&app, std::sync::Arc::clone(&shell));
 
     app.run(move |_app, _event| {
         #[cfg(feature = "local-engine")]
@@ -65,9 +74,9 @@ fn main() {
             tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. }
                 if label == "main" =>
             {
-                engine.stop()
+                shell.stop()
             }
-            tauri::RunEvent::Exit => engine.stop(),
+            tauri::RunEvent::Exit => shell.stop(),
             _ => {}
         }
     });

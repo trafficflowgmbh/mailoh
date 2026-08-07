@@ -264,9 +264,14 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these five files and no others", () => {
+  it("is these seven files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
+      // Which door this install came in by, and the environment each one composes. Compiled only
+      // under `local-engine`, like `engine.rs` — asserted below, because the published preview
+      // configures nothing and must carry no way to.
+      "config.rs",
+      "config_tests.rs",
       "engine.rs",
       "engine_tests.rs",
       "main.rs",
@@ -285,6 +290,9 @@ describe("the Rust side", () => {
    */
   it("compiles the engine's lifecycle out of the default build", () => {
     expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod engine;/);
+    // `config.rs` is behind the same gate and for the same reason: the preview configures nothing,
+    // so it must carry no way to compose an engine's environment or write a settings file.
+    expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod config;/);
     // `default` exists and is empty. A missing `[features]` block would also match "not
     // enabled", and would be a different fact.
     expect(cargo).toMatch(/^default = \[\]$/m);
@@ -304,19 +312,44 @@ describe("the Rust side", () => {
   /**
    * THE WINDOW'S GRANT IS A PROPERTY OF THE BUILD, NOT OF A PERMISSION LIST.
    *
-   * The local build gives the webview two commands — that is the bridge, and it is the point of
-   * the feature. What must stay true of the PUBLISHED build is that it has neither: no command is
-   * registered, and nothing exists for a capability to reference. Both halves are checked, because
-   * either one alone can be true while the other is not.
+   * The local build gives the webview four commands — that is the bridge and the door picker, and
+   * it is the point of the feature. What must stay true of the PUBLISHED build is that it has
+   * none of them: no command is registered, and nothing exists for a capability to reference. Both
+   * halves are checked, because either one alone can be true while the other is not.
    *
    * `build.rs` is the harder half and the more important one: a command that is not declared there
    * has no `allow-…` permission for any capability to name, so it is not possible to grant what was
    * never declared. It is conditional on the same feature.
+   *
+   * ── AND THE HALF THAT ONLY FAILS AT RUNTIME ─────────────────────────────────────────────────
+   *
+   * The two lists have to hold the SAME four names. A command registered by `generate_handler!`
+   * but absent from `build.rs` compiles perfectly and then panics on launch, because the capability
+   * naming its `allow-…` permission cannot be resolved — so neither `cargo check` nor `cargo test`
+   * can see it. The set equality below is the only thing that does.
    */
-  it("declares and registers its two commands only in the local build", () => {
+  it("declares and registers its four commands only in the local build", () => {
     const build = read("src-tauri/build.rs");
+    const engine = read("src-tauri/src/engine.rs");
+    const COMMANDS = ["engine_status", "engine_request", "engine_configure", "engine_logout"];
+
     expect(build).toMatch(/CARGO_FEATURE_LOCAL_ENGINE/);
-    expect(build).toMatch(/commands\(&\["engine_status", "engine_request"\]\)/);
+    const declared = [...build.matchAll(/"(engine_[a-z_]+)"/g)].map((m) => m[1]!);
+    expect(declared.sort(), "build.rs declares a different set from the one below").toEqual(
+      [...COMMANDS].sort(),
+    );
+
+    for (const command of COMMANDS) {
+      // Defined, registered, and granted — the three places a name has to appear, and the ones a
+      // half-added command is missing from.
+      expect(engine, `${command} is not defined`).toContain(`fn ${command}(`);
+      expect(engine, `${command} is not registered`).toMatch(
+        new RegExp(`generate_handler!\\[[^\\]]*${command}`, "s"),
+      );
+      expect(engine, `${command} is not granted`).toContain(
+        `allow-${command.replace(/_/g, "-")}`,
+      );
+    }
 
     // Nothing in `main.rs`, still. The registration is a call into `engine.rs`, which the default
     // build does not compile — so "the published shell registers no commands" stays a fact about a
@@ -324,20 +357,18 @@ describe("the Rust side", () => {
     expect(main).not.toMatch(/invoke_handler/);
     expect(main).not.toMatch(/#\[tauri::command/);
 
-    // Everything that reaches the webview or the keystore lives in `engine.rs`, and `engine.rs` is
-    // a module the default build does not compile — `#[cfg(feature = "local-engine")] mod engine;`
-    // is asserted just below, and it is the whole gate. Naming the two files this way is what makes
-    // the check meaningful: it is a statement about WHERE the capability lives, and the file list
-    // test above fails if a third .rs file appears to hold it instead.
-    const engine = read("src-tauri/src/engine.rs");
-    expect(engine).toMatch(/fn engine_status\(/);
-    expect(engine).toMatch(/fn engine_request\(/);
-    expect(engine).toMatch(/allow-engine-status/);
-    expect(engine).toMatch(/allow-engine-request/);
-    // The keystore is reached from that one module and nowhere else. `main.rs` in particular must
-    // not learn how to read a key: it is compiled into every build.
+    // Everything that reaches the webview or the keystore lives in `engine.rs` (with the settings
+    // it composes from in `config.rs`), and both are modules the default build does not compile —
+    // `#[cfg(feature = "local-engine")]` on each is asserted just below, and that is the whole
+    // gate. Naming the files this way is what makes the check meaningful: it is a statement about
+    // WHERE the capability lives, and the file list test above fails if another .rs file appears
+    // to hold it instead.
     expect(engine).toMatch(/keyring::Entry::new/);
     expect(main).not.toMatch(/keyring|getrandom/);
+    // The settings module reaches neither the keystore nor the webview: it composes an environment
+    // and reads and writes one file, which is the whole of it.
+    const config = read("src-tauri/src/config.rs");
+    expect(config).not.toMatch(/keyring|getrandom|tauri::command|std::process/);
   });
 
   /**
@@ -400,6 +431,36 @@ describe("the Rust side", () => {
     // The one file it opens, and the cap that bounds it.
     expect(engine).toMatch(/LOG_FILE_NAME: &str = "engine\.log"/);
     expect(engine).toMatch(/LOG_MAX_BYTES: u64 = 5 \* 1024 \* 1024/);
+  });
+
+  /**
+   * THE SETTINGS MODULE IS THE ONLY OTHER FILE THAT TOUCHES DISK, AND ITS LIST IS ITS OWN.
+   *
+   * The same guard, applied where the second filesystem capability actually landed rather than
+   * relaxed where the first one lives. `config.rs` writes and removes exactly two things — the
+   * settings file, and the cloud door's sealed session on a sign-out — and every call it uses is
+   * named here. A `copy`, a `read_dir` or a `remove_dir_all` appearing in it is a new capability
+   * and has to be argued rather than absorbed; `remove_dir_all` in particular is the one that would
+   * delete somebody's frozen mirror, which this app's door-switch rule says never happens.
+   */
+  it("keeps the settings module's filesystem reach to the two files it owns", () => {
+    const config = read("src-tauri/src/config.rs");
+    const allowed = new Set([
+      "fs::create_dir_all", // the app's data directory, on first run
+      "fs::read_to_string", // the settings file
+      "fs::write", // the settings file
+      "fs::set_permissions", // 0600 on it
+      "fs::Permissions", // the mode it is set to
+      "fs::PermissionsExt", // and the Unix trait that spells the mode
+      "fs::remove_file", // the settings file, and the cloud door's sealed session
+    ]);
+    const used = [...config.matchAll(/\bfs::(\w+)/g)].map((m) => `fs::${m[1]}`);
+    expect(used.length).toBeGreaterThan(0);
+    for (const call of used) {
+      expect(allowed, `config.rs reaches the filesystem through ${call}`).toContain(call);
+    }
+    // The mirror is frozen on a door switch, never deleted — no recursive removal exists to do it.
+    expect(config).not.toMatch(/remove_dir/);
   });
 
   /**
