@@ -106,12 +106,42 @@ export function MoreMenu({
     return () => document.removeEventListener("mousedown", onDown);
   }, [onClose]);
 
+  /**
+   * A KEY THE MENU HANDLES IS THE MENU'S, AND NOTHING ELSE'S.
+   *
+   * **`stopImmediatePropagation`, and `stopPropagation` is NOT enough — this was measured on the
+   * deployed build, not reasoned about.** Escape while the menu was open dismissed the menu AND
+   * closed the reader sheet underneath it, so a reader who pressed Escape to put a menu away lost
+   * the message they were reading.
+   *
+   * The mechanism is worth writing down because it is invisible from the component's own code.
+   * The keyboard registry listens for `keydown` ON `document`. So does React: the App Router
+   * hydrates the whole document, which makes `document` React's root container too. Two
+   * bubble-phase listeners on the SAME node run in registration order, and `stopPropagation` only
+   * stops the event moving to the next NODE — it does nothing about a second listener already
+   * attached to the one it is on. React's runs first, this handler calls `stopPropagation`, and
+   * the registry's listener runs anyway, one line later, on the same element.
+   *
+   * `stopImmediatePropagation` on the NATIVE event is the one that stops a sibling listener. It is
+   * called for every key the menu acts on, not only Escape: while a menu is open its keys belong
+   * to it, and a `j` that both moved the menu's focus and moved the mail cursor underneath would
+   * be the same defect wearing different clothes.
+   *
+   * It cannot be reproduced under a test DOM, and that is stated rather than left to be
+   * discovered: a harness mounts React into a `<div>`, so React's listener is on that div and a
+   * plain `stopPropagation` genuinely does stop `document`. The guard therefore watches the CALL
+   * rather than the outcome — see `action-bar.test.ts`.
+   */
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
     const buttons = live();
     const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    const move = (next: number): void => {
+    const claim = (): void => {
       e.preventDefault();
       e.stopPropagation();
+      e.nativeEvent.stopImmediatePropagation();
+    };
+    const move = (next: number): void => {
+      claim();
       buttons[(next + buttons.length) % buttons.length]?.focus();
     };
     if (e.key === "ArrowDown") return move(at + 1);
@@ -119,10 +149,7 @@ export function MoreMenu({
     if (e.key === "Home") return move(0);
     if (e.key === "End") return move(buttons.length - 1);
     if (e.key === "Escape") {
-      // STOPPED HERE, and that matters: the shell's Escape cascade closes the reader, and a
-      // reader who pressed Escape to dismiss a menu must not lose the message with it.
-      e.preventDefault();
-      e.stopPropagation();
+      claim();
       onClose();
     }
   };
