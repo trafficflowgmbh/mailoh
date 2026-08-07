@@ -1539,6 +1539,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           markSeen([m.id], !m.unread);
           break;
         case "resurface": {
+          // The horizon-less default — the keyboard's `b` and the palette. The popover on the
+          // bar dispatches `resurface:<iso>` instead, handled in `default` below.
           const when = nextFridayNine(now);
           void engine.mutate({
             kind: "triage_set",
@@ -1550,6 +1552,21 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           break;
         }
         default: {
+          // RESURFACE AT A CHOSEN INSTANT — the bar's popover feeds the day here. The wire has
+          // always carried an arbitrary `bubbleUpAt`; this is the caller that fills it with
+          // something other than the Friday default, and `resurfaceLabel` states whichever day
+          // it is.
+          if (action.startsWith("resurface:")) {
+            const when = action.slice("resurface:".length);
+            void engine.mutate({
+              kind: "triage_set",
+              messageId: m.id,
+              state: "bubbled_up",
+              bubbleUpAt: when,
+            });
+            toast(t("ohbox.toastResurface", { when: resurfaceLabel(when) }));
+            break;
+          }
           // `move:<view>` — the destination travels with the action. Before
           // this the whole branch was a toast reading "Demo — Move isn't wired yet.",
           // rendered on live accounts; the mutation was already on the wire.
@@ -2757,7 +2774,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 messages={tagGroup.messages}
                 tags={tags}
                 now={now}
-                onOpen={openMessage}
+                /**
+                 * IN PLACE — `setReaderFor`, not `openMessage`. A tag is a lens over every pile,
+                 * and `openMessage` follows a row OUT of the lens into its home view (a tagged
+                 * Receipt threw you into Receipts), the jump-away this replaces.
+                 * The reader reads the message straight from the mirror over the tag, and the
+                 * split layout reads it in the column instead — either way the tag stays up.
+                 * The body hydrates through the `readerFor`-keyed effect, as History's does.
+                 */
+                onOpen={(m) => setReaderFor(m.id)}
+                hydrateBody={hydrateBody}
+                onAction={onMessageAction}
+                onAddTag={openTagPicker}
+                /* The same rename/delete verbs Settings uses — a tag is managed from its page. */
+                admin={tagAdmin}
               />
             ) : null}
 

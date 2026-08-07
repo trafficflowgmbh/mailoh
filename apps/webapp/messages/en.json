@@ -437,7 +437,18 @@
     "toastDeleted": "Tag “{name}” deleted.",
     "notOnServer": "Tags are stored by ohmail, not in your mailbox. Your folders are real IMAP folders and survive if you leave; tags don’t — erasing your account erases them.",
     "toastTaggedMany": "Tagged {count, plural, one {1 message} other {# messages}} “{name}”.",
-    "toastUntaggedMany": "Untagged {count, plural, one {1 message} other {# messages}} “{name}”."
+    "toastUntaggedMany": "Untagged {count, plural, one {1 message} other {# messages}} “{name}”.",
+    "layoutAria": "Reading layout",
+    "layoutList": "List",
+    "layoutSplit": "Split",
+    "manageAria": "Manage this tag",
+    "rename": "Rename",
+    "delete": "Delete",
+    "save": "Save",
+    "cancel": "Cancel",
+    "renameAria": "Rename tag",
+    "deleteAsk": "Delete “{name}”?",
+    "deleteWhat": "{count, plural, =0 {Nothing carries it. } one {It's on 1 of your messages. } other {It's on # of your messages. }}The messages stay where they are."
   },
   "search": {
     "title": "Search",

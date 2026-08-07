@@ -96,6 +96,45 @@ body.reading .shell {
   padding: 0 30px 10px;
 }
 
+/* The Tag page's header slot: manage on the left, the reading-layout toggle pushed to the
+   right. Padding matches `.vhead`'s horizontal so both line up under the tag name above. */
+.tag-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 30px 12px;
+  flex-wrap: wrap;
+}
+.tag-head .seg {
+  margin-left: auto;
+}
+.tag-manage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tag-manage-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* The delete question and the sentence about what survives — the same wording the Settings
+   pane uses, stacked tight so the confirm reads as one thing. */
+.tag-manage-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-size: 12px;
+}
+.tag-manage-ask b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.tag-manage-ask span {
+  color: var(--ink3);
+}
+
 /* One quiet sentence above a list, explaining what the list IS. Used by History, where the
    word on the heading is one this product uses in a way no other mail client does. Sized and
    coloured like the settings notes rather than like body copy: it is furniture, not content,
@@ -1905,14 +1944,17 @@ body.reading .shell {
   .view-ohbox .read-col {
     display: none;
   }
-  /* History in the split layout: same rule as the Ohbox — the reading column is hidden and a
-     tap opens the reader sheet, so the split degrades to the list on a phone. */
-  .view-history .read-col {
+  /* History + Tag in the split layout: same rule as the Ohbox — the reading column is hidden
+     and a tap opens the reader sheet, so the split degrades to the list on a phone. */
+  .view-history .read-col,
+  .view-tag .read-col {
     display: none;
   }
-  /* …and the layout toggle keeps the list's horizontal padding on a phone. */
-  .view-mode {
-    padding: 0 20px 10px;
+  /* …and the header slots keep the list's horizontal padding on a phone. */
+  .view-mode,
+  .tag-head {
+    padding-left: 20px;
+    padding-right: 20px;
   }
   /* Reads + Receipts on mobile: the stream IS the view */
   .view-reads .list-col,
