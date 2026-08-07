@@ -204,6 +204,10 @@ export function RailNav({
               <button
                 key={item.id}
                 type="button"
+                // A stable, presentation-free hook on each rail entry. Nothing in the app
+                // reads it; it lets an outside surface (the marketing page's embedded demo)
+                // anchor a pointer to a specific entry without depending on label text.
+                data-rail-id={item.id}
                 className={item.id === activeId ? "ritem on" : "ritem"}
                 title={item.title}
                 aria-current={item.id === activeId ? "page" : undefined}

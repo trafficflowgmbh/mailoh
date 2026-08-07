@@ -77,7 +77,10 @@ export function Chip({
     .join(" ");
   const iconName = icon === null ? null : (icon ?? VARIANT_ICON[variant]);
   return (
-    <span className={cls}>
+    // `data-chip` names the capsule variant (rationale / tracker / ai) without leaking into
+    // the class or the styling. Nothing in the app reads it; it lets an outside surface (the
+    // marketing page's embedded demo) anchor a pointer to a specific chip.
+    <span className={cls} data-chip={variant}>
       {iconName ? <Icon name={iconName} size={12} /> : null}
       {children}
       {actions?.map((a, i) => (
