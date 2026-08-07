@@ -91,11 +91,39 @@ const PREAMBLE_BYTES: usize = 8;
 const MAX_HEADER_BYTES: u32 = 64 * 1024;
 const MAX_BODY_BYTES: u32 = 32 * 1024 * 1024;
 
-/// The engine's file name beside the shell's own executable.
-pub const ENGINE_FILE_STEM: &str = "ohmail-engine";
+/// The engine's file name inside the app's own resources.
+///
+/// **`.mjs`, and the extension is load-bearing rather than cosmetic.** The bundle is ESM, and it
+/// used to be extensionless — which worked only because it was executed through its own
+/// `#!/usr/bin/env node` line and because Node 22.7+ enables module-syntax DETECTION by default.
+/// Handed to a runtime by name, an extensionless file's module type is a heuristic over its
+/// contents; `.mjs` makes it a fact, on every Node that will ever run this and regardless of what
+/// `package.json` happens to sit above it. The bundle still carries its shebang and its execute bit,
+/// because running it straight off a checkout is a real thing people do — but nothing SHIPPED
+/// depends on the kernel knowing how to run a text file, which is what lets one launch shape work
+/// on all three platforms.
+pub const ENGINE_FILE_NAME: &str = "ohmail-engine.mjs";
 
-/// An explicit path to the engine, which overrides looking beside the executable.
+/// Where the packaged engine sits under the app's resource directory: `engine/bin/`, with its
+/// migration journal one level up at `engine/drizzle/`.
+///
+/// **THE TWO HALVES ARE NOT INDEPENDENT, AND THE RELATIONSHIP IS THE ENGINE'S, NOT OURS.** The
+/// bundle composes its journal path as `dirname(import.meta.url)/../drizzle`, and esbuild rewrites
+/// `import.meta.url` to the OUTPUT file's own URL — so the journal must sit exactly one directory
+/// above the bundle or the engine dies in `migrate()` with `ENOENT`, after a successful spawn and a
+/// successful start. `scripts/stage-desktop-resources.mjs` is what lays this out and
+/// `scripts/verify-engine-boot.mjs` is what watches it fail when it is wrong.
+const ENGINE_RESOURCE_DIR: [&str; 2] = ["engine", "bin"];
+
+/// Where the vendored Node runtime sits under the app's resource directory.
+const RUNTIME_RESOURCE_DIR: &str = "runtime";
+
+/// An explicit path to the engine bundle, which overrides looking in the app's resources.
 pub const ENGINE_PATH_VAR: &str = "OHMAIL_ENGINE";
+
+/// An explicit path to the Node runtime the engine is run with. An operator's override, and the
+/// first thing [`resolve_node`] consults.
+pub const NODE_PATH_VAR: &str = "OHMAIL_NODE";
 
 /// Where the local mirror lives. Supplied by the shell when the environment does not name one.
 pub const DATA_DIR_VAR: &str = "OHMAIL_DATA_DIR";
@@ -355,18 +383,165 @@ pub enum Plan {
     Inert(EngineState),
 }
 
-/// Decide whether there is an engine to start, and how — without touching the filesystem.
+/// What one look at a path found.
 ///
-/// Nothing here stats a path. Whether the engine exists is answered by trying to start it and
-/// reading `NotFound` back, which is one syscall instead of two and cannot go stale between the
-/// check and the spawn. It also keeps this shell's claim to open no files true of the source and
-/// not merely of the common case.
+/// Three answers and not two, because the engine and the runtime are held to DIFFERENT bars and
+/// collapsing them gets one of the two wrong. The engine bundle is handed to Node by name, so a
+/// readable regular file is all it has to be. The runtime is executed, so it has to be executable —
+/// **runnable, not merely present**: a directory at that path, or a file without the execute bit,
+/// would fail the spawn with a permission error rather than `NotFound`, which is a *different
+/// sentence* for the same absence and sends whoever reads it looking for the wrong thing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Found {
+    /// Nothing there, or a directory. Neither an engine nor a runtime.
+    Nothing,
+    /// A regular file. Enough to hand to a Node runtime by name.
+    File,
+    /// A regular file this process could execute. On Windows every regular file is this, which is
+    /// the honest answer on a platform where executability is the loader's decision and not a bit.
+    Runnable,
+}
+
+/// One look at one path, against the real filesystem. The shipped shell's probe; the tests pass
+/// their own so every branch of [`plan_with`] is reachable without a temp directory.
+pub fn look(path: &Path) -> Found {
+    match fs::metadata(path) {
+        Ok(meta) if meta.is_file() => {
+            if executable(&meta) {
+                Found::Runnable
+            } else {
+                Found::File
+            }
+        }
+        _ => Found::Nothing,
+    }
+}
+
+#[cfg(unix)]
+fn executable(meta: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    meta.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn executable(_meta: &fs::Metadata) -> bool {
+    true
+}
+
+/// `node` on Unix, `node.exe` on Windows.
+fn node_file_name() -> &'static str {
+    if cfg!(windows) {
+        "node.exe"
+    } else {
+        "node"
+    }
+}
+
+/// The Node runtime the engine will be run with, or `None` when this machine has none.
+///
+/// ── THE SHIPPED APP CARRIES ITS OWN NODE, AND THAT IS THE POINT ─────────────────────────────
+///
+/// The engine is a Node program. Until this shell resolved a runtime it relied on the bundle's
+/// `#!/usr/bin/env node` line and on `node` being on the child's `PATH` — which is true in a
+/// terminal and false everywhere a shipped app is actually opened. A Finder or launchd launch on
+/// macOS has a `PATH` of `/usr/bin:/bin:/usr/sbin:/sbin`: no Homebrew, no nvm, no node. A Windows
+/// shell has no shebang mechanism at all, so a text file with a `#!` line is not executable by any
+/// means — the spawn fails with a format error whatever `PATH` says. So the runtime is resolved
+/// HERE, explicitly, and passed to the child as `<node> <engine.js>`.
+///
+/// Order, most specific first:
+///
+///  1. [`NODE_PATH_VAR`] — an operator's exact override, and the escape hatch the failure message
+///     names.
+///  2. The **vendored** runtime in the app's own resources. This is the one that must win on a
+///     normal machine: it is what makes the download standalone, and it is a known-good version
+///     rather than whatever the user happens to have.
+///  3. The platform's usual package locations — Homebrew on Apple silicon and then the Intel/older
+///     prefix on macOS, `/usr/local/bin` then `/usr/bin` on Linux, the default installer directory
+///     on Windows. A development checkout has no vendored runtime and this is what covers it.
+///  4. Whatever the inherited `PATH` already carries.
+///
+/// Every candidate has to come back [`Found::Runnable`].
+pub fn resolve_node(
+    get: &dyn Fn(&str) -> Option<String>,
+    vendored: Option<&Path>,
+    look: &dyn Fn(&Path) -> Found,
+) -> Option<PathBuf> {
+    let consider = |path: PathBuf| -> Option<PathBuf> { (look(&path) == Found::Runnable).then_some(path) };
+
+    if let Some(explicit) = get(NODE_PATH_VAR).filter(|v| !v.trim().is_empty()) {
+        if let Some(found) = consider(PathBuf::from(explicit)) {
+            return Some(found);
+        }
+    }
+    if let Some(found) = vendored.and_then(|p| consider(p.to_path_buf())) {
+        return Some(found);
+    }
+    for candidate in DEFAULT_NODE_LOCATIONS {
+        if let Some(found) = consider(PathBuf::from(candidate)) {
+            return Some(found);
+        }
+    }
+    // `PATH` last, and split with the platform's own separator — `;` on Windows, where a `:` split
+    // would cut every entry in half at its drive letter.
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    for dir in get("PATH").unwrap_or_default().split(separator) {
+        if dir.trim().is_empty() {
+            continue;
+        }
+        if let Some(found) = consider(Path::new(dir).join(node_file_name())) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+const DEFAULT_NODE_LOCATIONS: &[&str] = &["/opt/homebrew/bin/node", "/usr/local/bin/node"];
+#[cfg(target_os = "windows")]
+const DEFAULT_NODE_LOCATIONS: &[&str] = &[r"C:\Program Files\nodejs\node.exe"];
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const DEFAULT_NODE_LOCATIONS: &[&str] = &["/usr/local/bin/node", "/usr/bin/node"];
+
+/// Decide whether there is an engine to start, and how.
+///
+/// `look` is the ONLY way this function touches the filesystem, and it is a parameter so the whole
+/// decision stays a function of its arguments — the tests drive every branch without a temp
+/// directory, and the shipped shell passes [`look`].
+///
+/// It used to touch nothing at all: whether the engine existed was answered by trying to start it
+/// and reading `NotFound` back. **That stopped working when the spawn stopped being the engine.**
+/// What is spawned now is the Node runtime, which exists; a missing engine would come back as a
+/// module error on the child's stderr and a non-zero exit — i.e. as a crash loop rather than as the
+/// interface preview it actually is. So presence is asked before the spawn, once, and the preview's
+/// honest state survives the change.
+///
+/// ── WHY THE PROBE IS INJECTED RATHER THAN THIS LIVING ONE LAYER UP ──────────────────────────
+///
+/// The obvious alternative is to keep this function literally filesystem-free and resolve the
+/// engine and the runtime in [`ShellPaths::plan_now`], which already reads a file and a keystore.
+/// It was refused for two reasons. The decision is ONE decision — is there an engine, is there
+/// something to run it with, is it configured — and splitting it would leave `plan_now`
+/// post-processing a `Plan::Spawn` to swap its own `program` and `args` back in, which is a second
+/// place for the launch shape to drift from the first. And `plan_now` is the layer the tests cannot
+/// reach: it opens the real keystore. Injecting the probe keeps every branch below reachable from a
+/// test — including the two that only exist on a broken install — where moving it up would make the
+/// real filesystem the only implementation any of them ever ran against.
+///
+/// ── ONE RESIDUAL, NAMED RATHER THAN LEFT TO BE FOUND ────────────────────────────────────────
+///
+/// The runtime is resolved ONCE, here, and the resulting [`Launch`] is what the supervisor restarts
+/// from. A Node that disappears mid-run — a Homebrew upgrade under a development build using the
+/// PATH fallback — therefore fails all remaining restarts identically instead of re-resolving. It
+/// cannot happen to a shipped install, whose runtime is inside its own bundle and goes away only
+/// with the app.
 pub fn plan(
     get: &dyn Fn(&str) -> Option<String>,
-    exe_dir: Option<&Path>,
+    resources: Option<&Path>,
     data_dir_fallback: Option<&Path>,
+    look: &dyn Fn(&Path) -> Found,
 ) -> Plan {
-    plan_with(get, exe_dir, data_dir_fallback, &REQUIRED_ENGINE_VARS)
+    plan_with(get, resources, data_dir_fallback, &REQUIRED_ENGINE_VARS, look)
 }
 
 /// [`plan`], with the list of variables the door in question cannot start without.
@@ -374,25 +549,50 @@ pub fn plan(
 /// The list is a parameter because the two doors need different ones and everything else about the
 /// decision is identical: where the engine is, whether the data directory is known, and what to
 /// report when something is missing. A second copy of this function per door would be two places
-/// for the "look beside the executable" rule to drift.
+/// for the resource-layout rule to drift.
 pub fn plan_with(
     get: &dyn Fn(&str) -> Option<String>,
-    exe_dir: Option<&Path>,
+    resources: Option<&Path>,
     data_dir_fallback: Option<&Path>,
     required: &[&str],
+    look: &dyn Fn(&Path) -> Found,
 ) -> Plan {
-    let program = match get(ENGINE_PATH_VAR).filter(|v| !v.trim().is_empty()) {
+    let engine = match get(ENGINE_PATH_VAR).filter(|v| !v.trim().is_empty()) {
         Some(explicit) => PathBuf::from(explicit),
-        None => match exe_dir {
-            Some(dir) => dir.join(engine_file_name()),
+        None => match resources {
+            Some(dir) => engine_path_in(dir),
             None => {
                 return Plan::Inert(EngineState::Absent {
                     looked_for: format!(
-                        "{ENGINE_PATH_VAR} is not set and this executable's own directory could not be resolved"
+                        "{ENGINE_PATH_VAR} is not set and this app's resource directory could not be resolved"
                     ),
                 })
             }
         },
+    };
+
+    // NO ENGINE IS NOT AN ERROR — it is the interface preview, which is what this shell shipped for
+    // its whole life before the engine was packaged with it. A regular file is the whole bar: the
+    // bundle is handed to Node by name, so it does not need the execute bit and refusing one that
+    // lacks it would report "no engine" about an engine that is right there.
+    if look(&engine) == Found::Nothing {
+        return Plan::Inert(EngineState::Absent { looked_for: engine.display().to_string() });
+    }
+
+    // THE RUNTIME AFTER THE ENGINE AND BEFORE THE CONFIGURATION. A build with no engine has nothing
+    // to say about Node; a build WITH one and no runtime is broken in a way no amount of correct
+    // configuration fixes, and saying so beats naming three environment variables at somebody whose
+    // real problem is a stripped install.
+    let vendored = resources.map(vendored_node_in);
+    let Some(node) = resolve_node(get, vendored.as_deref(), look) else {
+        return Plan::Inert(EngineState::Failed {
+            reason: format!(
+                "ohmail could not find the Node runtime its mail engine runs on. This build should \
+                 carry its own; if it was modified, reinstall ohmail — or set {NODE_PATH_VAR} to a \
+                 Node 20+ binary and open ohmail again."
+            ),
+            last: None,
+        });
     };
 
     let mut missing: Vec<String> = required
@@ -413,9 +613,18 @@ pub fn plan_with(
         return Plan::Inert(EngineState::NotConfigured { missing });
     }
 
+    // THE PROGRAM IS THE RUNTIME AND THE ENGINE IS ITS ARGUMENT — on every platform, deliberately.
+    //
+    // The obvious alternative is to exec the bundle directly and let its `#!` line find Node, which
+    // is what this shell did and what the macOS client did before it. It cannot be made to work on
+    // Windows at all: there is no shebang mechanism, so a text file is not executable by any means
+    // the loader has, and `plan` used to compose `ohmail-engine.exe` — a name the bundler has never
+    // emitted. Keeping the direct-exec shape on the two platforms where it CAN work and a second
+    // shape on the third would have meant two launch paths, of which only one was ever exercised.
+    // One shape, everywhere, and the shebang stays in the file for the developer who runs it by hand.
     Plan::Spawn(Launch {
-        program,
-        args: Vec::new(),
+        program: node,
+        args: vec![engine.into_os_string()],
         // ONLY THE DATA DIRECTORY, AND THAT INCLUDES NOT COMPOSING A PASSWORD.
         //
         // Everything else the engine reads is already in the environment this process was given
@@ -434,12 +643,15 @@ pub fn plan_with(
     })
 }
 
-fn engine_file_name() -> String {
-    if cfg!(windows) {
-        format!("{ENGINE_FILE_STEM}.exe")
-    } else {
-        ENGINE_FILE_STEM.to_string()
-    }
+/// Where the packaged engine bundle is, given the app's resource directory. One spelling, so the
+/// plan and anything that wants to report the layout cannot disagree about it.
+pub fn engine_path_in(resources: &Path) -> PathBuf {
+    resources.join(ENGINE_RESOURCE_DIR.iter().collect::<PathBuf>()).join(ENGINE_FILE_NAME)
+}
+
+/// Where the vendored runtime is, given the app's resource directory.
+pub fn vendored_node_in(resources: &Path) -> PathBuf {
+    resources.join(RUNTIME_RESOURCE_DIR).join(node_file_name())
 }
 
 // ── The supervisor ───────────────────────────────────────────────────────────────────────────
@@ -643,8 +855,16 @@ impl Drop for Engine {
 pub struct ShellPaths {
     /// The app's data directory. `config.json` sits in it and the per-mode mirrors under it.
     pub app_data: Option<PathBuf>,
-    /// Where the engine is looked for, when nothing names it explicitly.
-    pub exe_dir: Option<PathBuf>,
+    /// The app's RESOURCE directory — where the engine and its Node runtime are looked for when
+    /// nothing names them explicitly.
+    ///
+    /// **Tauri's, and not derived from the executable's own directory, because the three platforms
+    /// do not agree on the relationship.** A macOS bundle puts resources in `Contents/Resources/`
+    /// while the binary is in `Contents/MacOS/`; a Linux `.deb` puts the binary in `/usr/bin` and
+    /// its resources in `/usr/lib/ohmail/`; Windows puts both in the install directory. Composing
+    /// that mapping here would be a second copy of something the framework already owns, and it is
+    /// the copy that would be wrong on whichever platform nobody tested.
+    pub resources: Option<PathBuf>,
 }
 
 impl ShellPaths {
@@ -696,7 +916,7 @@ impl ShellPaths {
             }
         };
 
-        let exe_dir = self.exe_dir.as_deref();
+        let resources = self.resources.as_deref();
         match config {
             Some(config) => {
                 let Some(root) = self.app_data.as_deref() else {
@@ -724,7 +944,7 @@ impl ShellPaths {
                     Mode::Local => &REQUIRED_ENGINE_VARS,
                     Mode::Cloud => &REQUIRED_CLOUD_VARS,
                 };
-                match plan_with(&get, exe_dir, None, required) {
+                match plan_with(&get, resources, None, required, &look) {
                     Plan::Spawn(mut launch) => {
                         // `plan_with` decided WHETHER and WHERE; the environment is composed here,
                         // whole, replacing the single data-directory pair it put there.
@@ -744,7 +964,7 @@ impl ShellPaths {
                         std::env::var(name).ok()
                     }
                 };
-                match plan(&get, exe_dir, self.app_data.as_deref()) {
+                match plan(&get, resources, self.app_data.as_deref(), &look) {
                     Plan::Spawn(mut launch) => {
                         // Composed here rather than in `plan`, because `plan` touches nothing
                         // outside its arguments and the keystore is emphatically outside them.
@@ -795,10 +1015,9 @@ impl Shell {
 
     pub fn paths(app: &tauri::App) -> ShellPaths {
         use tauri::Manager;
-        let exe = std::env::current_exe().ok();
         ShellPaths {
             app_data: app.path().app_data_dir().ok(),
-            exe_dir: exe.as_deref().and_then(Path::parent).map(Path::to_path_buf),
+            resources: app.path().resource_dir().ok(),
         }
     }
 
@@ -995,6 +1214,23 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         inner.set_state(EngineState::Starting { attempt });
 
         let mut command = Command::new(&launch.program);
+        // NO CONSOLE WINDOW BEHIND THE ENGINE ON WINDOWS.
+        //
+        // `main.rs` builds this app for the `windows` subsystem, so the shell itself has no console.
+        // The child does not inherit that: `node.exe` is a CONSOLE-subsystem program, and spawning
+        // one from a GUI process makes Windows allocate a console for it — a black window that sits
+        // beside the app for the whole of the engine's life and reappears on every restart. It is
+        // invisible on macOS and Linux, and it did not exist at all while the engine was executed
+        // through a shebang, so nothing about the port would have surfaced it.
+        //
+        // 0x08000000 is `CREATE_NO_WINDOW`, spelled out rather than pulled from `winapi` for one
+        // constant. The engine's stderr is piped and teed to the log file either way, so nothing a
+        // console would have shown is lost.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
         command
             .args(&launch.args)
             // Piped, all three, and each for its own reason. stdin because the write end must

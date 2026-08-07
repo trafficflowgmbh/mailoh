@@ -560,7 +560,7 @@ smokeTheBundle("ad-hoc");
 step("embedding the mail engine");
 
 const ENGINE_ROOT = path.join(REPO, "build", "engine");
-const ENGINE_BIN = path.join(ENGINE_ROOT, "MacOS", "ohmail-engine");
+const ENGINE_BIN = path.join(ENGINE_ROOT, "bin", "ohmail-engine.mjs");
 const ENGINE_META = `${ENGINE_BIN}.meta.json`;
 const ENGINE_NODE_MODULES = path.join(ENGINE_ROOT, "MacOS", "node_modules");
 const ENGINE_JOURNAL = path.join(ENGINE_ROOT, "drizzle");

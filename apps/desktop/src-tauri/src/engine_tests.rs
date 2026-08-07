@@ -223,6 +223,38 @@ fn env_of(pairs: &[(&str, &str)]) -> HashMap<String, String> {
     pairs.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect()
 }
 
+/// The app's resource directory in these tests, and the two paths under it the plan composes.
+const RES: &str = "/apps/ohmail/resources";
+fn res() -> &'static Path {
+    Path::new(RES)
+}
+fn engine_at() -> PathBuf {
+    engine_path_in(res())
+}
+fn node_at() -> PathBuf {
+    vendored_node_in(res())
+}
+
+/// A filesystem, as a list. `Runnable` for everything named, `Nothing` for everything else.
+///
+/// The probe is a parameter to `plan_with` precisely so this can exist: every branch below —
+/// including the two that only happen on a broken install — is reachable without a temp directory,
+/// and none of them depends on what happens to be installed on the machine running the suite.
+fn fs_with(paths: &[PathBuf]) -> impl Fn(&Path) -> Found + '_ {
+    move |p: &Path| {
+        if paths.iter().any(|q| q == p) {
+            Found::Runnable
+        } else {
+            Found::Nothing
+        }
+    }
+}
+
+/// The ordinary shipped install: an engine and a vendored runtime, both in the app's resources.
+fn packaged() -> Vec<PathBuf> {
+    vec![engine_at(), node_at()]
+}
+
 fn full_env() -> HashMap<String, String> {
     env_of(&[
         ("OHMAIL_IMAP_HOST", "imap.example.org"),
@@ -234,37 +266,60 @@ fn full_env() -> HashMap<String, String> {
 }
 
 #[test]
-fn an_explicit_engine_path_wins_over_the_one_beside_the_executable() {
+fn an_explicit_engine_path_wins_over_the_one_in_the_apps_resources() {
     let mut env = full_env();
-    env.insert(ENGINE_PATH_VAR.to_string(), "/opt/ohmail/engine".to_string());
-    let plan = plan(&|k| env.get(k).cloned(), Some(Path::new("/apps/ohmail")), Some(Path::new("/data")));
+    let elsewhere = PathBuf::from("/opt/ohmail/engine.mjs");
+    env.insert(ENGINE_PATH_VAR.to_string(), elsewhere.display().to_string());
+    let there = vec![elsewhere.clone(), node_at()];
+    let plan = plan(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &fs_with(&there));
     match plan {
         Plan::Spawn(launch) => {
-            assert_eq!(launch.program, PathBuf::from("/opt/ohmail/engine"));
+            assert_eq!(launch.args, vec![elsewhere.into_os_string()]);
             assert_eq!(launch.env, vec![(OsString::from(DATA_DIR_VAR), OsString::from("/data"))]);
-            assert!(launch.args.is_empty());
         }
         other => panic!("expected a spawn plan, got {other:?}"),
     }
 }
 
+/// THE LAUNCH SHAPE, AND IT IS THE WHOLE POINT OF THIS SLICE.
+///
+/// The engine is not executed; a Node runtime is, with the engine as its argument. It used to be the
+/// other way round — `Launch::program` was the bundle itself, run through its `#!` line — and that
+/// shape has no Windows implementation at all: there is no shebang mechanism there, and `plan`
+/// composed `ohmail-engine.exe`, a file the bundler has never produced. One shape on all three
+/// platforms is what this asserts.
 #[test]
-fn without_an_explicit_path_the_engine_is_looked_for_beside_the_executable() {
+fn the_runtime_is_spawned_and_the_engine_is_its_argument() {
     let env = full_env();
-    let plan = plan(&|k| env.get(k).cloned(), Some(Path::new("/apps/ohmail")), Some(Path::new("/data")));
+    let plan = plan(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &fs_with(&packaged()));
     match plan {
         Plan::Spawn(launch) => {
-            assert_eq!(launch.program, Path::new("/apps/ohmail").join(engine_file_name()));
+            assert_eq!(launch.program, node_at(), "the program must be the Node runtime");
+            assert_eq!(launch.args, vec![engine_at().into_os_string()], "the engine is the argument");
         }
         other => panic!("expected a spawn plan, got {other:?}"),
     }
+}
+
+/// The two paths under the resource directory, pinned. They are a contract with
+/// `scripts/stage-desktop-resources.mjs` and with `bundle.resources` in the engine build's config
+/// overlay: a change on either side that is not made on the other produces an app that packages
+/// cleanly and reports "no engine" when it is opened.
+#[test]
+fn the_packaged_layout_is_the_one_the_bundler_stages() {
+    assert!(engine_at().ends_with("engine/bin/ohmail-engine.mjs"), "{}", engine_at().display());
+    assert_eq!(engine_at().parent().unwrap().parent().unwrap(), Path::new(RES).join("engine"));
+    assert!(node_at().starts_with(Path::new(RES).join("runtime")));
+    // `.mjs` rather than an extensionless file: the bundle is ESM and is now handed to node BY NAME,
+    // where an extensionless file's module type is Node's syntax heuristic rather than a fact.
+    assert_eq!(ENGINE_FILE_NAME, "ohmail-engine.mjs");
 }
 
 #[test]
 fn a_missing_mailbox_is_named_and_nothing_is_started() {
     let mut env = full_env();
     env.remove("OHMAIL_IMAP_HOST");
-    let plan = plan(&|k| env.get(k).cloned(), Some(Path::new("/apps/ohmail")), Some(Path::new("/data")));
+    let plan = plan(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &fs_with(&packaged()));
     assert_eq!(
         plan,
         Plan::Inert(EngineState::NotConfigured { missing: vec!["OHMAIL_IMAP_HOST".to_string()] })
@@ -278,7 +333,7 @@ fn without_a_key_nothing_is_started() {
     // a missing key as a reason not to start rather than as a reason to start and hope.
     let mut env = full_env();
     env.remove("OHMAIL_KEK");
-    let plan = plan(&|k| env.get(k).cloned(), Some(Path::new("/apps/ohmail")), Some(Path::new("/data")));
+    let plan = plan(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &fs_with(&packaged()));
     assert_eq!(
         plan,
         Plan::Inert(EngineState::NotConfigured { missing: vec!["OHMAIL_KEK".to_string()] })
@@ -293,7 +348,7 @@ fn the_mailbox_password_is_never_required_and_never_composed() {
     assert!(!REQUIRED_ENGINE_VARS.contains(&"OHMAIL_IMAP_PASS"));
     let env = full_env();
     assert!(!env.contains_key("OHMAIL_IMAP_PASS"));
-    match plan(&|k| env.get(k).cloned(), Some(Path::new("/apps/ohmail")), Some(Path::new("/data"))) {
+    match plan(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &fs_with(&packaged())) {
         Plan::Spawn(launch) => {
             let names: Vec<&OsString> = launch.env.iter().map(|(k, _)| k).collect();
             assert_eq!(names, vec![&OsString::from(DATA_DIR_VAR)]);
@@ -307,7 +362,7 @@ fn a_launch_prints_the_names_of_its_environment_and_none_of_the_values() {
     // The keystore slice puts a key in this field. A derived Debug would put that key in the
     // first panic message that formats a plan.
     let launch = Launch {
-        program: PathBuf::from("/apps/ohmail/ohmail-engine"),
+        program: PathBuf::from("/apps/ohmail/resources/runtime/node"),
         args: vec![],
         env: vec![(OsString::from("OHMAIL_KEK"), OsString::from("deadbeef-do-not-print"))],
         unset: Vec::new(),
@@ -321,7 +376,7 @@ fn a_launch_prints_the_names_of_its_environment_and_none_of_the_values() {
 fn an_empty_credential_counts_as_missing() {
     let mut env = full_env();
     env.insert("OHMAIL_IMAP_USER".to_string(), "   ".to_string());
-    let plan = plan(&|k| env.get(k).cloned(), Some(Path::new("/apps/ohmail")), Some(Path::new("/data")));
+    let plan = plan(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &fs_with(&packaged()));
     assert_eq!(
         plan,
         Plan::Inert(EngineState::NotConfigured { missing: vec!["OHMAIL_IMAP_USER".to_string()] })
@@ -331,7 +386,7 @@ fn an_empty_credential_counts_as_missing() {
 #[test]
 fn with_no_data_directory_from_either_source_nothing_is_started() {
     let env = full_env();
-    let plan = plan(&|k| env.get(k).cloned(), Some(Path::new("/apps/ohmail")), None);
+    let plan = plan(&|k| env.get(k).cloned(), Some(res()), None, &fs_with(&packaged()));
     assert_eq!(
         plan,
         Plan::Inert(EngineState::NotConfigured { missing: vec![DATA_DIR_VAR.to_string()] })
@@ -342,7 +397,7 @@ fn with_no_data_directory_from_either_source_nothing_is_started() {
 fn an_environment_data_directory_beats_the_shells_own() {
     let mut env = full_env();
     env.insert(DATA_DIR_VAR.to_string(), "/elsewhere".to_string());
-    let plan = plan(&|k| env.get(k).cloned(), Some(Path::new("/apps/ohmail")), Some(Path::new("/data")));
+    let plan = plan(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &fs_with(&packaged()));
     match plan {
         Plan::Spawn(launch) => {
             assert_eq!(launch.env, vec![(OsString::from(DATA_DIR_VAR), OsString::from("/elsewhere"))]);
@@ -357,7 +412,7 @@ fn a_build_with_no_engine_beside_it_is_not_an_error() {
     // shell has shipped since it existed.
     let engine = Engine::spawn_with(
         Launch {
-            program: PathBuf::from("/nonexistent/ohmail/ohmail-engine"),
+            program: PathBuf::from("/nonexistent/ohmail/node"),
             args: vec![],
             env: vec![],
             unset: Vec::new(),
@@ -366,6 +421,153 @@ fn a_build_with_no_engine_beside_it_is_not_an_error() {
     );
     wait_for(|| matches!(engine.state(), EngineState::Absent { .. }), Duration::from_secs(5), "the absent state");
     engine.stop();
+}
+
+// ── Finding a Node to run the engine with ───────────────────────────────────────────────────
+//
+// The engine is a Node program, and until this slice the shell relied on the bundle's
+// `#!/usr/bin/env node` line plus whatever was on the child's PATH. That is true in a terminal and
+// false in every way a shipped app is actually opened: a Finder or launchd launch on macOS gets
+// `/usr/bin:/bin:/usr/sbin:/sbin` — no Homebrew, no nvm, no node — and Windows has no shebang
+// mechanism at all. So the runtime is resolved explicitly, and the order is the thing under test.
+
+#[test]
+fn the_vendored_runtime_wins_over_anything_installed_on_the_machine() {
+    // THE ONE THAT MAKES THE DOWNLOAD STANDALONE. A machine with its own node must still run the
+    // node that shipped inside the app: it is a known version, and preferring the user's would make
+    // "it works on a clean machine" depend on the machine.
+    let env = env_of(&[("PATH", "/usr/local/bin:/usr/bin")]);
+    let there = vec![node_at(), PathBuf::from("/usr/local/bin/node"), PathBuf::from("/opt/homebrew/bin/node")];
+    let found = resolve_node(&|k| env.get(k).cloned(), Some(&node_at()), &fs_with(&there));
+    assert_eq!(found, Some(node_at()));
+}
+
+#[test]
+fn an_operators_override_wins_over_the_vendored_runtime() {
+    let mine = PathBuf::from("/opt/node22/bin/node");
+    let env = env_of(&[(NODE_PATH_VAR, "/opt/node22/bin/node")]);
+    let there = vec![mine.clone(), node_at()];
+    let look = fs_with(&there);
+    assert_eq!(resolve_node(&|k| env.get(k).cloned(), Some(&node_at()), &look), Some(mine));
+}
+
+#[test]
+fn an_override_that_is_not_runnable_falls_through_rather_than_failing() {
+    // An override naming something that is not there is a mistake, not an instruction to give up:
+    // the vendored runtime is still the right answer and the app still works. The alternative —
+    // refusing outright — turns a typo in an environment variable into an app that will not start.
+    let env = env_of(&[(NODE_PATH_VAR, "/opt/nothing-here/node")]);
+    let there = vec![node_at()];
+    let look = fs_with(&there);
+    assert_eq!(resolve_node(&|k| env.get(k).cloned(), Some(&node_at()), &look), Some(node_at()));
+}
+
+#[test]
+fn a_development_build_with_no_vendored_runtime_finds_one_on_the_path() {
+    // No resources, which is what `cargo run` from the workspace looks like.
+    let env = env_of(&[("PATH", "/nope:/usr/local/bin")]);
+    let there = vec![PathBuf::from("/usr/local/bin/node")];
+    assert_eq!(
+        resolve_node(&|k| env.get(k).cloned(), None, &fs_with(&there)),
+        Some(PathBuf::from("/usr/local/bin/node")),
+    );
+}
+
+#[test]
+fn present_but_not_executable_is_not_a_runtime() {
+    // RUNNABLE, NOT MERELY PRESENT. A file without the execute bit fails the spawn with a permission
+    // error rather than NotFound — a different sentence for the same absence, and one that sends
+    // whoever reads it looking for the wrong thing. This is also the shape of the real packaging
+    // failure being guarded against: a bundler that copies the vendored node WITHOUT its mode.
+    let env = env_of(&[("PATH", "/usr/local/bin")]);
+    let look = |p: &Path| if p == node_at() { Found::File } else { Found::Nothing };
+    assert_eq!(resolve_node(&|k| env.get(k).cloned(), Some(&node_at()), &look), None);
+}
+
+#[test]
+fn a_build_whose_runtime_was_stripped_says_so_and_names_the_way_out() {
+    // The engine is there and the runtime is not — a modified or half-copied install. It must not
+    // report "not configured" at somebody whose environment is perfectly fine, and it must not
+    // report "no engine" about an engine that is right there.
+    let env = full_env();
+    let there = vec![engine_at()];
+    let look = fs_with(&there);
+    match plan(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &look) {
+        Plan::Inert(EngineState::Failed { reason, last }) => {
+            assert!(last.is_none(), "nothing ran, so there is no exit to report");
+            assert!(reason.contains(NODE_PATH_VAR), "the escape hatch is not named: {reason}");
+            assert!(reason.contains("Node"), "{reason}");
+        }
+        other => panic!("expected a failed plan naming the runtime, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_build_with_no_engine_in_its_resources_is_the_preview_and_not_a_failure() {
+    // The interface preview is a real artifact, not a broken one. It has a runtime available and no
+    // engine, and the honest state is `Absent` with the path it looked at — the same state this
+    // shell reported for its whole life before the engine was packaged with it.
+    //
+    // It cannot be discovered by spawning any more, which is why the check exists at all: the spawn
+    // is now `node`, and `node` is there. A missing engine would surface as a module error and a
+    // non-zero exit, i.e. as a crash loop against a build that is behaving exactly as intended.
+    let env = full_env();
+    let there = vec![node_at()];
+    let look = fs_with(&there);
+    match plan(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &look) {
+        Plan::Inert(EngineState::Absent { looked_for }) => {
+            assert_eq!(looked_for, engine_at().display().to_string());
+        }
+        other => panic!("expected an absent plan, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_engine_does_not_need_the_execute_bit_because_nothing_executes_it() {
+    // It is handed to node BY NAME. Requiring the bit would report "no engine" about an engine that
+    // is present and perfectly usable — a real risk, since the bit survives four repackagers
+    // (dmg, deb, AppImage, NSIS) and only three of them have a mode field at all.
+    let env = full_env();
+    let look = |p: &Path| {
+        if p == engine_at() { Found::File } else if p == node_at() { Found::Runnable } else { Found::Nothing }
+    };
+    match plan(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &look) {
+        Plan::Spawn(launch) => assert_eq!(launch.args, vec![engine_at().into_os_string()]),
+        other => panic!("expected a spawn plan, got {other:?}"),
+    }
+}
+
+#[test]
+fn with_no_resource_directory_at_all_nothing_is_started() {
+    let env = full_env();
+    match plan(&|k| env.get(k).cloned(), None, Some(Path::new("/data")), &fs_with(&packaged())) {
+        Plan::Inert(EngineState::Absent { looked_for }) => {
+            assert!(looked_for.contains(ENGINE_PATH_VAR), "{looked_for}");
+        }
+        other => panic!("expected an absent plan, got {other:?}"),
+    }
+}
+
+/// The real probe, against a real file, in both directions. Everything above injects a filesystem;
+/// this is the one test that pins what the SHIPPED predicate actually answers — without it the
+/// injected tests would all be consistent with a `look` that was wrong.
+#[test]
+#[cfg(unix)]
+fn the_shipped_probe_tells_runnable_from_merely_present() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new("probe");
+    let plain = fixture.dir.join("plain.mjs");
+    fs::write(&plain, "// not executable\n").expect("write");
+    fs::set_permissions(&plain, fs::Permissions::from_mode(0o644)).expect("chmod");
+    assert_eq!(look(&plain), Found::File);
+
+    let runnable = fixture.dir.join("runnable");
+    fs::write(&runnable, "#!/bin/sh\n").expect("write");
+    fs::set_permissions(&runnable, fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert_eq!(look(&runnable), Found::Runnable);
+
+    assert_eq!(look(&fixture.dir), Found::Nothing, "a directory is not a file");
+    assert_eq!(look(&fixture.dir.join("nothing-here")), Found::Nothing);
 }
 
 // ── Starting, and what "running" means ──────────────────────────────────────────────────────
@@ -1151,9 +1353,10 @@ fn the_cloud_door_asks_for_the_service_and_the_address_rather_than_a_mail_server
     let env: HashMap<String, String> = HashMap::new();
     let plan = plan_with(
         &|k| env.get(k).cloned(),
-        Some(Path::new("/apps/ohmail")),
+        Some(res()),
         Some(Path::new("/data")),
         &REQUIRED_CLOUD_VARS,
+        &fs_with(&packaged()),
     );
     match plan {
         Plan::Inert(EngineState::NotConfigured { missing }) => {
@@ -1185,7 +1388,7 @@ fn the_hosted_session_is_never_something_the_shell_refuses_to_start_without() {
         ("OHMAIL_KEK", &"0".repeat(64)),
     ]);
     assert!(matches!(
-        plan_with(&|k| env.get(k).cloned(), Some(Path::new("/apps/ohmail")), Some(Path::new("/data")), &REQUIRED_CLOUD_VARS),
+        plan_with(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &REQUIRED_CLOUD_VARS, &fs_with(&packaged())),
         Plan::Spawn(_)
     ));
 }

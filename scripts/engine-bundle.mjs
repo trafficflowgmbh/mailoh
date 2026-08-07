@@ -2,10 +2,10 @@
 /**
  * engine-bundle.mjs — the desktop mail engine as ONE file, plus the two things it reads off disk.
  *
- * The native shell spawns `ohmail-engine` from beside its own executable (see `EngineProcess.swift`
- * under `apps/macos/Sources`). This produces that file, and the layout around it, from the
- * workspace. Run it directly, or import {@link buildEngine} to build the same artifact and get its
- * inputs back for inspection.
+ * The app's shell hands this file to a Node runtime by name — `<node> <bundle>` — and it does that
+ * on all three platforms. This produces the file, and the layout around it, from the workspace. Run
+ * it directly, or import {@link buildEngine} to build the same artifact and get its inputs back for
+ * inspection.
  *
  *     D=$(mktemp -d) && (cd $D && npm install --no-save esbuild@0.24.0)
  *     OHMAIL_ESBUILD_FROM=$D node scripts/engine-bundle.mjs
@@ -23,10 +23,11 @@
  *  1. **The mail migration journal.** The database package composes it as
  *     `join(dirname(fileURLToPath(import.meta.url)), "..", "drizzle")`, and the bundler rewrites
  *     `import.meta.url` to the OUTPUT file's own URL. So the journal must sit at
- *     `<dirname(bundle)>/../drizzle` — one level ABOVE the bundle. Inside an application bundle
- *     that puts the `.sql` files in `Contents/`, because the engine is in `Contents/MacOS/`. This
- *     relationship is invisible to every test in the repository: nothing else runs the engine from
- *     anywhere but the workspace root, where the same expression happens to resolve.
+ *     `<dirname(bundle)>/../drizzle` — one level ABOVE the bundle. That is the whole reason the
+ *     output has a `bin/` directory at all: the journal sits beside `bin/`, not inside it, and the
+ *     packager copies the pair as a unit. This relationship is invisible to every test in the
+ *     repository: nothing else runs the engine from anywhere but the workspace root, where the same
+ *     expression happens to resolve. `scripts/verify-engine-boot.mjs` is what watches it fail.
  *
  *     Only the MAIL journal is copied, and there is deliberately no second branch here. The engine
  *     builds one database, from one journal, whose own closure rule guarantees it is runnable
@@ -43,17 +44,22 @@
  * wants to resolve — after a successful launch, a successful mailbox connection and a successful
  * fetch, which is the worst possible place for a module error to surface. The banner defines one.
  *
- * ── THE SHEBANG AND THE EXECUTE BIT ARE LOAD-BEARING ──────────────────────────────────────
+ * ── `.mjs`, AND WHY THE EXTENSION IS NOT COSMETIC ─────────────────────────────────────────
  *
- * The native shell spawns this file DIRECTLY rather than passing it to `node`, so the kernel has
- * to know how to run it: for a text file that means a `#!` line and the execute bit. Without both,
- * the spawn fails with EACCES or ENOEXEC, the supervisor reports a start failure, and the window
- * says it cannot find its mail engine — about a file that is right there. Launched through an
- * explicit `node`, as the tests and the boot check do, none of this is visible, which is why it is
- * set here rather than discovered at a double-click.
+ * The output is ESM, and it used to have no extension at all — which worked because the shell
+ * executed it through its own `#!` line, and because Node 22.7+ turns on module-syntax DETECTION by
+ * default. Handed to a runtime BY NAME, an extensionless file's module type is a heuristic over its
+ * contents and over whatever `package.json` happens to sit above it. `.mjs` makes it a fact.
  *
- * `/usr/bin/env node` finds whatever `node` is on PATH. A machine with no `node` at all needs one
- * vendored beside the bundle; that is the packager's job, not this file's.
+ * ── THE SHEBANG AND THE EXECUTE BIT ARE NOW A CONVENIENCE, NOT THE MECHANISM ──────────────
+ *
+ * They are still set, because running the engine straight off a checkout is a real thing people do.
+ * Nothing SHIPPED depends on them any more: the shell resolves a Node runtime explicitly and spawns
+ * `<node> <bundle>`, which is the only launch shape that works on Windows — there is no shebang
+ * mechanism there, so a text file is not executable by any means the loader has. The previous
+ * arrangement also meant a machine with no `node` on PATH could not start the engine at all, and a
+ * Finder or launchd launch has neither Homebrew nor nvm on its PATH. The runtime is vendored into
+ * the app beside this bundle; see `scripts/vendor-node.mjs`.
  */
 import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -156,16 +162,19 @@ function pgliteDir(root) {
  *
  * @param {object} [o]
  * @param {string} [o.root]     workspace root
- * @param {string} [o.outRoot]  where the layout is written; the bundle lands in `MacOS/`
+ * @param {string} [o.outRoot]  where the layout is written; the bundle lands in `bin/`
  * @returns {Promise<{ build: Function, buildOptions: object, metafile: object, inputs: string[],
- *                     bundlePath: string, bundleText: string, outRoot: string }>}
+ *                     bundlePath: string, bundleText: string, outRoot: string,
+ *                     metafilePath: string }>}
  */
 export async function buildEngine({ root = ROOT, outRoot } = {}) {
   const out = outRoot ?? process.env.OHMAIL_ENGINE_OUT ?? join(root, "build", "engine");
-  /* The bundle lives here and the journal one level up, mirroring `Contents/MacOS` inside
-   * `Contents` — see the header. */
-  const binDir = join(out, "MacOS");
-  const bundlePath = join(binDir, "ohmail-engine");
+  /* The bundle lives here and the journal one level up — see the header. `bin/` and not `MacOS/`,
+   * which is what this directory was called while one platform's application bundle was the only
+   * consumer: that name would now be copied verbatim into every Linux `.deb` and every Windows
+   * install directory, describing nothing. */
+  const binDir = join(out, "bin");
+  const bundlePath = join(binDir, "ohmail-engine.mjs");
 
   const { build } = await loadEsbuild(root);
   const buildOptions = buildOptionsFor(root);
@@ -174,7 +183,12 @@ export async function buildEngine({ root = ROOT, outRoot } = {}) {
   mkdirSync(binDir, { recursive: true });
 
   const result = await build({ ...buildOptions, outfile: bundlePath, metafile: true });
-  writeFileSync(`${bundlePath}.meta.json`, JSON.stringify(result.metafile));
+  /* BESIDE the layout rather than inside it. `out` is copied WHOLESALE into the app's resources, so
+   * anything in it ships; the metafile is a build record — the measured list of sources that became
+   * this artifact, which the publisher expands into the GPL corresponding source — and has no
+   * business inside a download. `metafilePath` is returned so no caller has to re-derive it. */
+  const metafilePath = `${out}.meta.json`;
+  writeFileSync(metafilePath, JSON.stringify(result.metafile));
 
   // To match the shebang — see the header. Without it the spawn is EACCES.
   chmodSync(bundlePath, 0o755);
@@ -192,7 +206,7 @@ export async function buildEngine({ root = ROOT, outRoot } = {}) {
     build, buildOptions,
     metafile: result.metafile,
     inputs: Object.keys(result.metafile.inputs),
-    bundlePath, bundleText, outRoot: out,
+    bundlePath, bundleText, outRoot: out, metafilePath,
   };
 }
 
@@ -202,6 +216,7 @@ export async function buildEngine({ root = ROOT, outRoot } = {}) {
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   const { inputs, bundleText } = await buildEngine();
   console.log(`\nengine: ${inputs.length} bundled inputs, ${(bundleText.length / 1024 / 1024).toFixed(1)} MiB`);
-  console.log("NOTE: the engine is a node script (shebang: /usr/bin/env node). A machine without "
-    + "node on PATH needs one vendored beside it by the packager.");
+  console.log("NOTE: the engine is a node script. The app that ships it carries its own Node "
+    + "runtime (scripts/vendor-node.mjs) and spawns `<node> <bundle>`; the shebang is for running "
+    + "it by hand from a checkout.");
 }

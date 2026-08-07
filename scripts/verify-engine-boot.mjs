@@ -6,8 +6,8 @@
  *
  * `@ohmail/db-mail` composes the migration journal as `dirname(import.meta.url)/../drizzle`, and
  * esbuild rewrites `import.meta.url` to the OUTPUT file's own URL. So a bundle at
- * `<root>/MacOS/ohmail-engine` looks for its `.sql` at `<root>/drizzle` — one level ABOVE the
- * binary. In a `.app` that is `Contents/drizzle`, because the binary is in `Contents/MacOS/`.
+ * `<root>/bin/ohmail-engine.mjs` looks for its `.sql` at `<root>/drizzle` — one level ABOVE it.
+ * Inside a packaged app that is `<resources>/engine/drizzle`, beside `<resources>/engine/bin/`.
  *
  * This relationship is invisible to every test in the repository: the vitest suites run the engine
  * from `apps/sidecar/src` in the workspace, where the same expression happens to resolve to the
@@ -32,8 +32,8 @@
  *
  *   node scripts/verify-engine-boot.mjs [engineRoot]
  *
- * `engineRoot` holds `MacOS/ohmail-engine` and `drizzle/` — `build/engine` by default, or a built
- * bundle's `Contents` directory.
+ * `engineRoot` holds `bin/ohmail-engine.mjs` and `drizzle/` — `build/engine` by default, or the
+ * `engine/` directory inside a packaged app's resources, which is the same two-directory shape.
  */
 import { spawn } from "node:child_process";
 import { mkdtempSync, readdirSync, renameSync, rmSync } from "node:fs";
@@ -44,7 +44,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const engineRoot = resolve(process.argv[2] ?? join(ROOT, "build", "engine"));
-const bundle = join(engineRoot, "MacOS", "ohmail-engine");
+const bundle = join(engineRoot, "bin", "ohmail-engine.mjs");
 const journal = join(engineRoot, "drizzle");
 
 if (!existsSync(bundle)) fail(`no engine bundle at ${bundle} — run scripts/build-engine.mjs first`);
