@@ -461,9 +461,52 @@ const QP_HEX = /=[0-9A-Fa-f]{2}/;
 const MAX_DECODED_BLOCKS = 8;
 const MAX_DECODED_CHARS = 16_384;
 
-/** Mostly-printable text, i.e. worth scanning rather than random bytes from a hash. */
+/**
+ * U+FFFD REPLACEMENT CHARACTER, as an escape and never the literal glyph — the same rule
+ * {@link INVISIBLE_CLASS} is written under, for the same reason: a file that contains the
+ * characters it defends against is a file nobody can review, and a diff that deletes one is
+ * invisible in a diff too.
+ */
+const REPLACEMENT_CHAR = "\uFFFD";
+
+/**
+ * Mostly-printable text, i.e. worth scanning rather than random bytes from a hash.
+ *
+ * ── THE REPLACEMENT-CHARACTER TEST, AND THE MEASUREMENT THAT FORCED IT ─────────────────────
+ *
+ * `decodeEmbedded`'s header used to say that a block which is not really text "simply fails
+ * {@link looksLikeText} and is discarded". That was false, and it was false in the direction that
+ * manufactures false positives.
+ *
+ * `Buffer.from(run, "base64").toString("utf8")` does not fail on random bytes — it SUBSTITUTES,
+ * emitting U+FFFD REPLACEMENT CHARACTER for every byte sequence that is not valid UTF-8. U+FFFD is
+ * codepoint 65533, so the printable test below counted every one of them as printable, and a
+ * decode of pure noise came back 90–100% "printable". Three consecutive letters then turn up by
+ * chance in any long enough run. So a marketing tracking token — which is exactly a long
+ * `[A-Za-z0-9+/]` run — decoded to Unicode confetti and was handed back as a representation to
+ * scan. That confetti mixes scripts freely, `hasMixedScriptWord` read it as the classic homoglyph
+ * signal, and the message became `obfuscated_text` → indeterminate → `no_ai`.
+ *
+ * Measured over one account's Screener before this line existed: of 371 held representatives
+ * flagged `obfuscated_text`, **350 stopped being flagged when base64-shaped runs were removed from
+ * the body, and only 21 survived** — so roughly 95% of that signal was manufactured here rather
+ * than present in the mail. It is the same shape of defect as the `2Fa` tracker escape: an
+ * accidental reading of machine text as human text, decided by a token the sender chose at random.
+ *
+ * A rejection and not a re-weighting, because the signal is categorical: text that was genuinely
+ * base64-encoded decodes to valid UTF-8 with ZERO replacement characters. One U+FFFD means the
+ * bytes were not what we guessed they were, and a guess we know to be wrong is not evidence.
+ *
+ * The narrow arm only. `decodeEmbedded`'s DECLARED case (a body carrying a literal
+ * `Content-Transfer-Encoding:` line) still reports `encoded_block` for a payload it cannot read —
+ * refusing to call unreadable declared content ordinary is the whole point of that branch, and
+ * this does not touch it.
+ */
 function looksLikeText(s: string): boolean {
   if (s.length < 8) return false;
+  // U+FFFD is the decoder telling us it did not understand these bytes. `toString("utf8")`
+  // substitutes rather than throwing, so this is the only place that report survives.
+  if (s.includes(REPLACEMENT_CHAR)) return false;
   let printable = 0;
   for (const ch of s) {
     const c = ch.codePointAt(0)!;
@@ -483,7 +526,12 @@ function looksLikeText(s: string): boolean {
  *
  * The `CTE_MARKER` requirement on the suspicious arm is what keeps a DKIM signature, a hex
  * digest or a tracking token out of it. Opportunistic decoding has no such requirement because
- * garbage simply fails {@link looksLikeText} and is discarded.
+ * garbage is discarded by {@link looksLikeText} — which is TRUE ONLY SINCE that function learned
+ * to reject replacement characters. It used to say "garbage simply fails `looksLikeText`", and
+ * that sentence was the load-bearing justification for an arm which was, in fact, admitting the
+ * garbage: `toString("utf8")` substitutes U+FFFD instead of failing, and U+FFFD counted as
+ * printable. See {@link looksLikeText} for the measurement. Left here as a marker that this
+ * paragraph is the claim under test, not evidence for it.
  */
 function decodeEmbedded(text: string): { decoded: string[]; undecodable: boolean } {
   const decoded: string[] = [];
