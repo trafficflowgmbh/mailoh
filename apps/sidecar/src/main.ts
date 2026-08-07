@@ -411,6 +411,8 @@ export async function runCloudSidecar(): Promise<void> {
     // There is no mailbox password on this transport — the session is a hosted bearer, and the
     // mirror is served whether or not the next pull succeeds. `ready` is the honest state.
     credentialState: "ready",
+    // The launch snapshot of reachability; `/health.online` is the live value thereafter.
+    online: cloud.online(),
   });
   log("cloud_serving", { mailboxId: cloud.world.mailboxId });
 

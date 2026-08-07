@@ -10,6 +10,8 @@ import {
   createCloudAuth, loadSealedTokens, sealTokens, type CloudTokens,
 } from "./cloud-auth.js";
 import { createCloudMirror, CLOUD_SYNC_TYPES, type CloudMirror } from "./cloud-mirror.js";
+import { matchReadRoute } from "./cloud-read.js";
+import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -28,20 +30,30 @@ import type { Diagnostic } from "./log.js";
  * all, so the IMAP path cannot be reached even by misconfiguration.
  *
  * What this engine does instead is pull (`cloud-mirror.ts`) over a bearer client (`cloud-auth.ts`)
- * and serve a read-only bridge — `/health` and `/sync` — so the Swift projection reads the mirror
- * the pull writes.
+ * and serve the Swift client three things: `/sync` and the full mail READ surface out of the local
+ * mirror (`cloud-read.ts`), and a write-through proxy (`cloud-proxy.ts`) for everything else.
  *
- * ── THE READ BRIDGE IS NOT A SECOND MIDDLEWARE CHAIN ──────────────────────────────────────────
+ * ── THE SURFACE IS NOT A SECOND MIDDLEWARE CHAIN ──────────────────────────────────────────────
  *
  * The local organizer serves the full `packages/api` route table through the full middleware chain,
- * because it answers mutations (move, send, screen) that need CSRF, the spend gate and step-up. A
- * Cloud-mode install answers READS ONLY — there is nothing to mutate here, the mailbox is the
- * hosted worker's — so the two gates that matter to a read over stdio are the ones applied below:
- * a valid bearer (`resolveSession`, the same primitive the hosted chain uses) and nothing more. It
- * is not a laxer chain for the same operations; it is the correct surface for a mirror. Reusing
- * `packages/api`'s `createApp` would drag the whole route table — and with it the IMAP adapter the
- * `/mailboxes`, `/attachments` and `/drafts` routes carry — into this module's graph, which is
- * exactly what the census forbids.
+ * because it answers mutations locally. A Cloud-mode install owns no mailbox — the hosted worker
+ * does — so it splits the surface: READS are served from the mirror it already holds, and every
+ * WRITE (and the attachment/media byte reads the mirror does not hold) is FORWARDED to Cloud with
+ * the bearer. The one gate that matters over stdio is a valid launch bearer (`resolveSession`, the
+ * same primitive the hosted chain uses); the hosted API applies its own gates to the forwarded call.
+ *
+ * Reusing `packages/api`'s `createApp` (or its `localRoutes`) would drag the whole route table —
+ * and with it the IMAP adapter the `/mailboxes`, `/attachments` and `/drafts` routes carry — into
+ * this module's graph, which is exactly what the census forbids. So the read table is curated in
+ * `cloud-read.ts` from read services alone, and the census over this file's expanded graph proves
+ * it reaches no organizer module.
+ *
+ * ── THE WRITE-THROUGH ECHO, AND OFFLINE ───────────────────────────────────────────────────────
+ *
+ * A forwarded 2xx mutation echoes `X-Sync-Seq`; the proxy waits for the mirror to pull that far
+ * before answering, so the client's immediate local `/sync` re-drain already holds its own write.
+ * When a pull fails the mirror goes offline and the proxy answers `503 offline_read_only` writing
+ * nothing locally — `online` rides `/health` and the ready frame so the shell can say which it is.
  */
 
 export interface CloudSidecarConfig {
@@ -69,12 +81,14 @@ export interface CloudSidecar {
   readonly world: LocalWorld;
   /** The per-launch bearer token for the LOCAL bridge. In memory only. */
   readonly sessionToken: string;
-  /** `Request → Response` over the local mirror — the read surface the stdio host serves. */
+  /** `Request → Response` over the mirror (reads) + the write-through proxy — the stdio surface. */
   handle(req: Request): Promise<Response>;
   /** Pull the hosted feed now, then poll. */
   start(): Promise<void>;
   /** Stop polling, close and unlock the database. */
   stop(): Promise<void>;
+  /** Is the hosted account reachable? Surfaced in `/health` and the ready frame. */
+  online(): boolean;
 }
 
 const json = (body: unknown, status = 200): Response =>
@@ -140,6 +154,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       ...(config.pollIntervalMs !== undefined ? { pollIntervalMs: config.pollIntervalMs } : {}),
     });
 
+    const proxy: WriteThroughProxy = createWriteThroughProxy({
+      auth,
+      mirror,
+      ...(log ? { log } : {}),
+    });
+
     const ctxFor = (accountId: string, userId: string | null, sessionId: string | null): ServiceContext => ({
       db,
       accountId,
@@ -157,8 +177,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       const path = url.pathname;
 
       // `/health` is public: a readiness probe carries no credential, exactly as the hosted host's.
+      // `online` is the live mirror state — the shell polls this to tell "offline mirror" apart from
+      // "slow first pull", the same distinction the ready frame's `online` records at launch.
       if (req.method === "GET" && path === "/health") {
-        return json({ ok: true, mode: "cloud", schemaTier: "mail", mailboxId: world.mailboxId });
+        return json({ ok: true, mode: "cloud", schemaTier: "mail", mailboxId: world.mailboxId, online: mirror.online() });
       }
 
       // Everything else requires the launch bearer — the same `resolveSession` the hosted chain runs.
@@ -191,7 +213,26 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         }
       }
 
-      return json({ error: { code: "not_found", message: "not found" } }, 404);
+      // THE LOCAL READ SURFACE — GET /messages*, /threads/:id, /search, /mailboxes, /tags, /rules,
+      // served from the mirror through read services alone. The census over this file's expanded
+      // graph proves none of these handlers can reach the IMAP adapter, the lease or the sync loop.
+      const read = matchReadRoute(req.method, path);
+      if (read) {
+        try {
+          return await read.route.handler(req, ctxFor(core.accountId, core.userId, core.sessionId), read.params);
+        } catch (err) {
+          if (err instanceof ServiceError) {
+            return json({ error: { code: err.code, message: err.message } }, err.httpStatus);
+          }
+          throw err;
+        }
+      }
+
+      // EVERYTHING ELSE IS A WRITE (or an attachment/media byte read the mirror does not hold): the
+      // mailbox is the hosted worker's, so it is forwarded to Cloud with the bearer. A 2xx that
+      // echoes `X-Sync-Seq` waits for the mirror to pull that far before answering; offline ⇒
+      // `503 offline_read_only`, and nothing is written locally.
+      return proxy.forward(req);
     };
 
     return {
@@ -199,6 +240,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       world,
       sessionToken: session.token,
       handle,
+      online: () => mirror.online(),
       async start() {
         await mirror.start();
       },

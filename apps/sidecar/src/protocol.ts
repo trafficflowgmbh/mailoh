@@ -110,6 +110,16 @@ export interface ReadyInfo {
    * pretended otherwise.
    */
   credentialState: CredentialState;
+  /**
+   * Cloud mode only: whether the hosted account was reachable AT LAUNCH.
+   *
+   * Additive and optional — the local organizer omits it (there is no "offline mirror" to be in;
+   * it opens the user's own IMAP). In Cloud mode the mirror serves whatever it already holds
+   * whether or not the first pull has landed, so this is the launch snapshot and `/health.online`
+   * is the live value the shell polls thereafter. Like `credentialState`, it is not updated in
+   * place: the frame says what was true when the bridge began serving.
+   */
+  online?: boolean;
 }
 
 
