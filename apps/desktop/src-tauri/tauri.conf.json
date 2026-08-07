@@ -1,6 +1,6 @@
 {
   "productName": "ohmail",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "identifier": "io.ohmail.desktop.tauri",
   "build": {
     "frontendDist": "../dist"
