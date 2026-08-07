@@ -99,14 +99,39 @@ const PLATFORMS = {
   },
   windows: {
     archives: [`node-${VERSION}-win-x64.zip`],
-    /* `tar -xf` and not `unzip`: Windows 10+ ships bsdtar as `tar.exe`, which reads zip archives,
-     * and `unzip` is not on a Git-Bash PATH. One tool, three platforms, nothing to install. */
+    /* `tar -xf` and not `unzip`: Windows ships bsdtar as `tar.exe`, which reads zip archives, and
+     * `unzip` is not on a Git-Bash PATH. One tool, three platforms, nothing to install — but see
+     * TAR below, because "the tar on Windows" is two different programs and only one of them can
+     * do this. */
     unpack: ["-xf"],
     binary: (name) => path.join(name.replace(/\.zip$/, ""), "node.exe"),
     licence: (name) => path.join(name.replace(/\.zip$/, ""), "LICENSE"),
     out: "node.exe",
   },
 };
+
+/* THE TAR THAT ACTUALLY RUNS, NAMED RATHER THAN LOOKED UP.
+ *
+ * There are two `tar`s on a Windows runner and they are different programs:
+ *
+ *   · %SystemRoot%\System32\tar.exe   — bsdtar. Reads zip. Understands `C:\…`.
+ *   · Git Bash's /usr/bin/tar         — GNU tar. Reads neither.
+ *
+ * The workflow step runs under `shell: bash`, so node inherits a PATH with Git Bash's bin FIRST,
+ * and a bare "tar" resolves to GNU tar. It then reads the leading `C:` of the temp directory as a
+ * REMOTE HOST — `host:path` is its syntax for tape drives on other machines — and fails with
+ * `tar: Cannot connect to C: resolve failed`, which names neither the archive nor the real problem.
+ * Had it got past that it would have failed again on the zip, which GNU tar cannot read at all.
+ *
+ * The spec above always meant bsdtar; naming it is what makes that true rather than a hope about
+ * PATH order. On macOS and Linux the platform tar is already the right one and is left alone.
+ *
+ * Extraction also runs with `cwd` set to the work directory and a RELATIVE archive name, so no
+ * absolute path — and therefore no drive letter — is ever passed to any tar. bsdtar would cope;
+ * costing nothing to avoid, it stops this from depending on which one was found. */
+const TAR = process.platform === "win32"
+  ? path.join(process.env.SystemRoot ?? String.raw`C:\Windows`, "System32", "tar.exe")
+  : "tar";
 
 /** `process.platform` → the key above. */
 function hostPlatform() {
@@ -177,7 +202,7 @@ for (const name of spec.archives) {
   }
   say(`  ${name}  sha256 ok`);
 
-  execFileSync("tar", [...spec.unpack, archive, "-C", work]);
+  execFileSync(TAR, [...spec.unpack, name], { cwd: work });
   const binary = path.join(work, spec.binary(name));
   if (!fs.existsSync(binary)) die(`${name} did not contain ${spec.binary(name)}`);
   binaries.push(binary);
