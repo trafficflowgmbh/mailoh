@@ -23,6 +23,7 @@ import { OhmailEngine, type EntityReader } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
 import { createEngine, EngineUnarmedError } from "./engine-config";
 import { useLoadingGrace } from "./loading-grace";
+import { readOwner } from "./owner-cookie";
 import {
   startSyncScheduler,
   SYNC_BOOTSTRAPPING,
@@ -55,22 +56,36 @@ interface EngineBinding {
 }
 
 /**
- * WHAT THIS TAB HAS, and the two states that are not an engine.
+ * WHAT THIS TAB HAS, and the states that are not yet a confirmed mailbox.
  *
- * The live engine can no longer be built at first render, and that is the fix rather than
- * a regression. Its mirror persists into IndexedDB, and a persistent mirror has to be
- * NAMED for the account it holds — `engine-config.ts` explains the cross-account leak that
- * a single un-owned database produced. The account id comes from `GET /auth/session`, which
- * is a network round trip, so between mount and that answer there is no engine and there is
- * nothing honest to render: an empty shell would be a signed-in-looking chrome around a
- * mirror that may belong to somebody else.
+ * The live engine's mirror persists into IndexedDB, and a persistent mirror has to be NAMED for
+ * the account it holds — `engine-config.ts` explains the cross-account leak that a single
+ * un-owned database produced. The id has to be one the SERVER issued, so for a while the shell
+ * could not build a live engine at first render at all: it asked `GET /auth/session`, and until
+ * that answered there was no engine and nothing honest to render.
  *
- * So the shell WAITS, and then either renders or says why it cannot. The demo is
- * unaffected — it has no account, no persistence and no network, and is still built
- * synchronously in the first-render initializer.
+ * ── `warm` IS HOW THAT WAIT WENT AWAY WITHOUT THE CHECK GOING AWAY ──────────────────────────
+ *
+ * The browser already knows the answer from last time, in a cookie the API sets beside the
+ * session and the client may read (`owner-cookie.ts`). That is enough to OPEN the mirror — which
+ * is a local read, of mail this browser already holds — but it is not enough to BELIEVE, because
+ * a cookie is not a session and this browser's may have been revoked an hour ago.
+ *
+ * So the two are separated. `warm` builds the engine and paints from the device immediately,
+ * while the same `GET /auth/session` runs in parallel and decides what happens next. The check
+ * is not weakened by one step: an answer that does not match, or does not come, tears the engine
+ * down and lands on the same refusal surface as before.
+ *
+ * `resolving` is still the honest state for a browser with no remembered account, and it is the
+ * only state the desktop client ever takes here.
  */
 type Binding =
   | { status: "ready"; demo: boolean; engine: OhmailEngine }
+  /**
+   * Live: the mirror is open and painting from a REMEMBERED account id, and the server has not
+   * yet said whether that is the account it agrees this browser holds.
+   */
+  | { status: "warm"; owner: string; engine: OhmailEngine }
   /** Live: the account id has been asked for and has not come back. */
   | { status: "resolving" }
   /** Live: the API would not confirm a full session for this browser. */
@@ -108,13 +123,27 @@ export function EngineProvider({
    * single request) can run: there is no window in which a `?demo=1` page holds an
    * HttpAdapter, and the demo still paints without waiting for anything.
    *
-   * The LIVE engine is deliberately not built here. It cannot be: its mirror is named for
-   * the account it holds and the account id has not been asked for yet. `"resolving"` is
-   * that fact, spelled.
+   * The LIVE engine is built here TOO, but only when the browser remembers whose mailbox it
+   * holds. `readOwner()` is a synchronous cookie read with no side effects, which is what makes
+   * it legal in a render and what makes the mirror paint in the first frame instead of after a
+   * round trip. It is the same shape of decision the demo takes one line above: a browser-only
+   * source, read where the browser's real state is guaranteed to exist.
+   *
+   * Two conditions gate it, and both are load-bearing:
+   *
+   *  · a remembered id. Without one there is no name for the mirror, and guessing one is the
+   *    bug this whole seam exists to prevent. `"resolving"` is that fact, spelled.
+   *  · a `resolveOwner`. A build with no way to ASK cannot be allowed to open a mailbox on a
+   *    cookie alone — the confirmation is what makes the optimism safe, so a client that cannot
+   *    confirm does not get to be optimistic. This is also what keeps the desktop client, which
+   *    passes no resolver and has no cookie either, on exactly the path it was on.
    */
   const [binding, setBinding] = useState<Binding>(() => {
     const demo = resolveDemo(serverDemo);
-    return demo ? { status: "ready", demo, engine: createEngine(demo) } : { status: "resolving" };
+    if (demo) return { status: "ready", demo, engine: createEngine(demo) };
+    const remembered = resolveOwner ? readOwner() : null;
+    if (remembered === null) return { status: "resolving" };
+    return { status: "warm", owner: remembered, engine: createEngine(false, undefined, remembered) };
   });
 
   // A mode change after mount (a client-side navigation from `/` to `/?demo=1`, or the
@@ -163,19 +192,51 @@ export function EngineProvider({
    * infinite loop between `/` and `/`.
    */
   useEffect(() => {
-    if (binding.status !== "resolving") return;
+    if (binding.status !== "resolving" && binding.status !== "warm") return;
     // No resolver ⇒ this build cannot establish an owner, so it cannot open a persistent
     // mailbox. Refusing is the only correct answer; guessing an owner is the bug.
     if (!resolveOwner) {
       setBinding({ status: "unauthenticated" });
       return;
     }
+    /**
+     * THE ENGINE ALREADY PAINTING, if there is one. Captured here rather than rebuilt below,
+     * and that is the difference between a warm open and a flicker: confirming a mirror that is
+     * already on screen must not replace it. A second `createEngine` for the same account would
+     * open the same database again, hydrate it again, and restart the drain from the same
+     * cursor — a visible re-mount of the whole shell as a reward for being right.
+     */
+    const warm = binding.status === "warm" ? binding : null;
     let cancelled = false;
     void resolveOwner()
       .then((owner) => {
         if (cancelled) return;
         if (typeof owner !== "string" || owner === "") {
           setBinding({ status: "unauthenticated" });
+          return;
+        }
+        if (warm) {
+          /**
+           * THE SHARED-BROWSER CASE, AND THE ONLY REASON THE CHECK IS A COMPARISON RATHER THAN
+           * A PRESENCE TEST.
+           *
+           * "The server confirmed a session" is not the question. The question is whether it
+           * confirmed THIS one — the account whose mirror is on screen. A browser can hold a
+           * remembered id for one account and a live session for another (somebody signed in
+           * again elsewhere in the same profile, a restored cookie jar, a hand-edited value),
+           * and in that state the rows already painted belong to neither the session nor the
+           * person looking at them.
+           *
+           * A mismatch therefore ends the tab rather than swapping the engine underneath it.
+           * That is deliberately the harsher branch: the sign-in link on the refusal surface
+           * re-mints the cookie and the next load opens the right mirror, so the cost is one
+           * screen and the alternative is a mailbox that changes identity mid-session.
+           */
+          setBinding(
+            owner === warm.owner
+              ? { status: "ready", demo: false, engine: warm.engine }
+              : { status: "unauthenticated" },
+          );
           return;
         }
         setBinding({ status: "ready", demo: false, engine: createEngine(false, undefined, owner) });
@@ -192,7 +253,11 @@ export function EngineProvider({
     return () => {
       cancelled = true;
     };
-  }, [binding.status, resolveOwner]);
+    // `binding` and not `binding.status`: the warm branch reads the remembered account id and
+    // the engine off it, and a dependency on the status alone would let this effect close over a
+    // stale one. The early return above is what keeps that cheap — every binding that is not
+    // `resolving` or `warm` re-runs the effect and leaves immediately.
+  }, [binding, resolveOwner]);
 
   /**
    * What the sync loop is doing. Only a LIVE engine ever moves it off its resting value —
@@ -220,8 +285,22 @@ export function EngineProvider({
     );
   }, []);
 
-  const engine = binding.status === "ready" ? binding.engine : null;
-  const live = binding.status === "ready" && binding.demo === false;
+  /**
+   * `warm` IS A RENDERING, SYNCING ENGINE — the whole point — so both derivations include it,
+   * and both must produce the SAME values before and after the confirmation lands. They do:
+   * `warm` carries the same engine object it hands to `ready`, and both are live.
+   *
+   * That identity is what makes the confirmation invisible. The effect below depends on
+   * `[engine, live]`, so a warm → ready transition that changed either one would tear the
+   * scheduler down and start a second bootstrap over a mirror that was already draining.
+   *
+   * The teardown that IS wanted still happens: a refusal or a mismatch sets a binding with no
+   * engine, this reads `null`, and React runs the cleanup — which closes the engine's per-page
+   * gate, so an in-flight drain stops at its next page boundary rather than running on behind a
+   * screen that says the session ended.
+   */
+  const engine = binding.status === "ready" || binding.status === "warm" ? binding.engine : null;
+  const live = binding.status === "warm" || (binding.status === "ready" && binding.demo === false);
   useEffect(() => {
     if (!engine) return;
     /**
@@ -261,13 +340,18 @@ export function EngineProvider({
     return startSyncScheduler(engine, { onStatus: onSyncStatus });
   }, [engine, live, onSyncStatus]);
 
-  if (binding.status !== "ready") return <SessionScreen status={binding.status} />;
+  if (binding.status === "resolving" || binding.status === "unauthenticated") {
+    return <SessionScreen status={binding.status} />;
+  }
 
   return (
     <EngineContext.Provider
       value={{
         engine: binding.engine,
-        demo: binding.demo,
+        // A warm binding is a LIVE engine by construction — `createEngine(false, …)` built it —
+        // so the mode it publishes is the mode it was built in, exactly as the field's contract
+        // says. There is no window in which the demo chrome renders over a warm mailbox.
+        demo: binding.status === "warm" ? false : binding.demo,
         serverDemo,
         sync: live ? sync : SYNC_SETTLED,
       }}
