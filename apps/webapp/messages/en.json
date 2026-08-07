@@ -1355,7 +1355,8 @@
     "origin": {
       "promoted": "from a Screener decision",
       "manual": "you made this one",
-      "migrated": "brought over from Hey"
+      "migrated": "brought over from Hey",
+      "seeded-from-sent": "from someone you've written to"
     },
     "meta": "{origin} · {date}",
     "metaPaused": "{origin} · {date} · paused, so it sorts nothing",
