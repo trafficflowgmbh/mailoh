@@ -11,7 +11,11 @@
  *    default). It is framed around RELEVANCE, never "only real people", because the mechanism keeps
  *    relevant service mail — a receipt goes to Receipts, an alert can stay in the Ohbox.
  *  · a free-text BAR, in your own words, that reaches the AI's judgement of the ambiguous
- *    middle. NULL shows the product default as the placeholder; clearing it reverts to that default.
+ *    middle. When the account has never set one, the box is PREFILLED with the product default as
+ *    editable text — you tweak the words you can see, rather than staring at a greyed placeholder
+ *    and guessing what a blank box will do. "Save" stays inert until the text differs from the
+ *    effective value (the stored bar, or the default when there is none), so an untouched prefill
+ *    writes nothing; clearing the box entirely saves NULL, which reverts to that same default.
  *
  * ── IT RE-FILES FUTURE MAIL, AND SAYS SO ────────────────────────────────────────────────────
  *
@@ -47,7 +51,7 @@ export function ScreeningSection() {
     void (async () => {
       try {
         const pref = await screeningSettings.get();
-        if (alive.current) setState({ pref, draft: pref.ohboxBar ?? "" });
+        if (alive.current) setState({ pref, draft: pref.ohboxBar ?? pref.defaultBar });
       } catch {
         // Leave the section unrendered on a read fault rather than showing a broken control.
         if (alive.current) setState(null);
@@ -69,7 +73,7 @@ export function ScreeningSection() {
       try {
         const pref = await screeningSettings.set(next);
         if (!alive.current) return;
-        setState({ pref, draft: pref.ohboxBar ?? "" });
+        setState({ pref, draft: pref.ohboxBar ?? pref.defaultBar });
         setSaved(true);
       } catch {
         if (alive.current) setFailed(true);
@@ -79,7 +83,9 @@ export function ScreeningSection() {
     })();
   };
 
-  const barChanged = draft.trim() !== (pref.ohboxBar ?? "").trim();
+  // The baseline is the EFFECTIVE bar — the stored words, or the default the box was prefilled
+  // with when there are none. So an untouched prefill reads as unchanged and "Save" stays inert.
+  const barChanged = draft.trim() !== (pref.ohboxBar ?? pref.defaultBar).trim();
 
   return (
     <>
@@ -120,7 +126,7 @@ export function ScreeningSection() {
           {draft.trim() && (pref.ohboxBar ?? "") !== "" ? (
             <Button
               disabled={pending}
-              onClick={() => { setState({ pref, draft: "" }); apply({ ohboxBar: null }); }}
+              onClick={() => { setState({ pref, draft: pref.defaultBar }); apply({ ohboxBar: null }); }}
             >
               {t("screening.reset")}
             </Button>

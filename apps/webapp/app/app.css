@@ -633,8 +633,12 @@ body.reading .shell {
   padding: 10px 12px;
   border: 1px solid var(--hair-soft);
   border-radius: 10px;
-  background: var(--surface, #fff);
-  color: inherit;
+  /* `--float`, not the undefined `--surface`: that token is declared nowhere in the app, so
+     `var(--surface, #fff)` resolved to the white fallback in BOTH themes — a glaring white
+     field, with light ink on it, in dark mode. `--float` is the theme-aware raised-surface
+     token (white in light, a lifted dark in dark), matching the field to the pane behind it. */
+  background: var(--float);
+  color: var(--ink);
   font: inherit;
   line-height: 1.55;
 }
