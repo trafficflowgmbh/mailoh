@@ -153,6 +153,34 @@ jobs:
           set -euo pipefail
           B=apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle
           ls -la "$B/macos" "$B/dmg"
+          # ── THE AD-HOC SIGNATURE, CHECKED AT THE SOURCE ───────────────────
+          # On Apple silicon an unsigned Mach-O will not launch at all, so the
+          # ad-hoc signature is the floor for a usable artifact — not a claim of
+          # provenance. It is NOT applied here: `bundle.macOS.signingIdentity`
+          # in tauri.conf.json is "-", so the bundler runs `codesign --force -s -`
+          # itself, after it has staged the engine and the Node runtime into
+          # Contents/Resources and before it builds the DMG. That ordering is
+          # the whole reason it belongs to the bundler and not to a step here:
+          # a signature applied afterwards would seal a bundle the DMG had
+          # already been cut from, and the two artifacts would disagree.
+          #
+          # Verified at the .app rather than only at the mounted DMG, because
+          # the .app is also what `ohmail.app.tar.gz` below is made of — the
+          # updater payload that REPLACES an installed app. An unsigned payload
+          # produces an install that cannot be launched, which no check on the
+          # DMG can see. The README and the CHANGELOG say "ad-hoc signed"; this
+          # is the assertion that keeps that sentence true.
+          codesign --verify --verbose=2 "$B/macos/ohmail.app"
+          # No pipe: under `set -o pipefail` a reader that closes early SIGPIPEs
+          # the producer, and the step fails for a reason that is not the check.
+          SIG_INFO="$(codesign --display --verbose=2 "$B/macos/ohmail.app" 2>&1)"
+          printf '%s\n' "$SIG_INFO"
+          # Ad-hoc and nothing else: a real Developer ID here would mean the
+          # workflow had acquired signing material it is not supposed to have.
+          case "$SIG_INFO" in
+            *"Signature=adhoc"*) echo "ad-hoc signed, as the README says" ;;
+            *) echo "the .app is not ad-hoc signed — see bundle.macOS.signingIdentity" >&2; exit 1 ;;
+          esac
           DMG="$(ls "$B"/dmg/*.dmg | head -1)"
           test -s "$DMG"
           mv "$DMG" build/ohmail.dmg
@@ -418,17 +446,31 @@ jobs:
           echo "URLs in the binary:"
           ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
           printf '%s\n' "$ALL_URLS"
-          # ── First-party endpoints: allow EXACTLY the pinned update feed ────
-          # The updater is the only first-party endpoint compiled into the
-          # binary. The mail server this build talks to is not here and cannot
-          # be: it is whatever the user types, held in their own config file.
-          # So the rule is unchanged — every URL naming ohmail or trafficflow
-          # must be the feed — and a phone-home or a beacon still fails.
+          # ── First-party endpoints: allow EXACTLY two, named one by one ─────
+          # Every URL naming ohmail or trafficflow must be one of the two
+          # endpoints below. A phone-home, a beacon or an analytics host still
+          # fails, because the list is spelled out rather than pattern-matched.
           #
-          # Prefix match, not equality: the endpoint is a Rust string literal
-          # with no terminator in read-only data, so grep can return it with
-          # adjacent rodata glued on. Host and path are pinned by the prefix.
+          # 1 · THE UPDATE FEED. Prefix match, not equality: the endpoint is a
+          #   Rust string literal with no terminator in read-only data, so grep
+          #   can return it with adjacent rodata glued on. Host and path are
+          #   pinned by the prefix.
+          #
+          # 2 · THE CLOUD API. Added deliberately when the Cloud door shipped:
+          #   `src/doors.ts` holds `CLOUD_URL = "https://api.ohmail.app"`, and
+          #   the UI bundle is embedded uncompressed in the binary, so the host
+          #   is legitimately present in every engine-bearing build. It is an
+          #   endpoint the user opts into by signing in to the hosted service —
+          #   the app contacts it only after that, never on its own.
+          #
+          #   EQUALITY, not a prefix, and that is the point: this one comes out
+          #   of a JavaScript string literal, so the quote terminates it and the
+          #   extracted URL is exactly the host with nothing glued on. Matching
+          #   it exactly keeps `api.ohmail.app.example.com` a failure. If a real
+          #   path is ever appended in the bundle this check goes red and the new
+          #   endpoint gets named here too — which is the intended behaviour.
           FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
+          CLOUD_URL='https://api.ohmail.app'
           FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$ALL_URLS" || true)"
           if [ -z "$FIRST_PARTY" ]; then
             echo "the pinned update feed URL is missing from the binary" >&2
@@ -439,11 +481,12 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
+              "$CLOUD_URL") : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
             esac
           done <<< "$FIRST_PARTY"
           if [ "$BAD" -ne 0 ]; then
-            echo "first-party URLs other than the pinned update feed are present" >&2
+            echo "first-party URLs other than the two named endpoints are present" >&2
             exit 1
           fi
           echo "unique URL strings (reconcile with the README enumeration): $(grep -c . <<< "$ALL_URLS" || true)"
@@ -644,8 +687,10 @@ jobs:
           echo "URLs in the binary:"
           ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
           printf '%s\n' "$ALL_URLS"
-          # Identical rule to the Windows job; see the reasoning there.
+          # Identical rule to the Windows job — the update feed by prefix, the
+          # Cloud API by equality; see the reasoning there.
           FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
+          CLOUD_URL='https://api.ohmail.app'
           FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$ALL_URLS" || true)"
           if [ -z "$FIRST_PARTY" ]; then
             echo "the pinned update feed URL is missing from the binary" >&2
@@ -656,11 +701,12 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
+              "$CLOUD_URL") : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
             esac
           done <<< "$FIRST_PARTY"
           if [ "$BAD" -ne 0 ]; then
-            echo "first-party URLs other than the pinned update feed are present" >&2
+            echo "first-party URLs other than the two named endpoints are present" >&2
             exit 1
           fi
           echo "unique URL strings (reconcile with the README enumeration): $(grep -c . <<< "$ALL_URLS" || true)"
