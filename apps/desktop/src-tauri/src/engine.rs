@@ -2097,10 +2097,13 @@ pub const KEYSTORE_ENTRY: &str = "install-key";
 /// password somebody typed months ago, gone, with nothing on screen able to say why. So the miss
 /// is a reason to look one place further before minting, and that is the whole of this addition.
 ///
-/// **The item is copied and never moved.** The macOS client is still installed, still runs, and
-/// still needs it; deleting it would break the app somebody may open five minutes later. Two
-/// readers of one key is exactly the arrangement the design already has — one key per install, not
-/// one per artifact — so the copy is the state this converges on rather than a temporary one.
+/// **The item is copied and never moved**, and that stays right even though the macOS client is
+/// retired. The handover replaces that app rather than uninstalling it, and it can be interrupted:
+/// a user who declines the update, or whose install never checks again, still has a working client
+/// whose stored password only that key opens. Moving the item would break it for them to save a
+/// syscall here. Two readers of one key is also exactly the arrangement the design already has —
+/// one key per install, not one per artifact — so the copy is the state this converges on rather
+/// than a temporary one.
 #[cfg(target_os = "macos")]
 pub const LEGACY_KEYSTORE_SERVICE: &str = "io.ohmail.desktop";
 #[cfg(target_os = "macos")]

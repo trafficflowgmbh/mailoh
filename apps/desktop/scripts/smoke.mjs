@@ -2,9 +2,7 @@
 /**
  * smoke.mjs — the render check for the embedded UI bundle.
  *
- * The macOS client has `OhMail --smoke`: it hosts every route offscreen,
- * rasterises it and audits the result. This is its counterpart for the Tauri
- * shell, and it deliberately checks the ARTIFACT rather than the sources —
+ * It deliberately checks the ARTIFACT rather than the sources —
  * `dist/index.html` and the emitted chunks, exactly the bytes the installers
  * carry — because a bundle that builds and renders nothing is the failure mode
  * a compile step cannot catch.
@@ -21,8 +19,16 @@
  *
  * jsdom, not a real browser: this runs on every runner with no download and no
  * display, and layout is not what is at risk here — the Blanc geometry is
- * verified against the design system in packages/ui's own suite and pixel-wise
- * in the macOS `--smoke`.
+ * verified against the design system in packages/ui's own suite.
+ *
+ * ── IT RUNS AGAINST THE INTERFACE-ONLY BUNDLE, AND ONLY THAT ONE ──────────
+ *
+ * Check 4 asserts the page opened no connection and that `fetch` throws. That is
+ * true of the bundle built by `npm run ui:build` and deliberately false of the
+ * engine-bearing one, which reaches its engine over the bridge. So CI builds and
+ * smokes the interface-only bundle FIRST and rebuilds with the bridge afterwards;
+ * pointing this at the other artifact would not find a defect, it would report
+ * one that is the product working.
  *
  *   node scripts/smoke.mjs [--dist dist]
  */
