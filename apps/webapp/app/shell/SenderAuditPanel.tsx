@@ -13,7 +13,8 @@
  *  1. **The count says "ohmail has synced".** This reads the client mirror, so it holds the
  *     mail that has arrived through `/sync` and no more. "Every message from this sender"
  *     would be a claim about the IMAP mailbox, which is the master and which this has never
- *     seen (GOALS #3). A partial answer labelled partial is useful; a partial answer labelled
+ *     seen — the mailbox on the real server is the master, not this mirror. A partial answer
+ *     labelled partial is useful; a partial answer labelled
  *     complete is the kind of thing this panel exists to stop.
  *  2. **No rule hit-counts.** `RuleDTO.stats.hits` is declared, reported, and never written by
  *     anything in the repository — every value is the insert default — so a rule that has

@@ -347,12 +347,14 @@ export class FixturesAdapter implements EngineAdapter {
    * `toMessage` copies the fixture's `body` straight onto the mirror row, so every message
    * in Mila's world already holds its full text and `bodyOf` answers `full` from the
    * message itself, before the engine ever reaches an adapter. The one fixture message with
-   * no body is the protected verification code, which has none by design (invariant #1) and
+   * no body is the protected verification code, which has none by design — sensitive mail is
+   * stored redacted — and
    * whose surface renders `ProtectedBlock` rather than any text at all.
    *
    * `null` rather than `{text: ""}`: an empty string is a claim about the mail ("this
    * message is blank"), and the engine writes no record for a `null`, so a demo tab holds
-   * no `message_body` rows and performs no requests (invariants #6 and #8).
+   * no `message_body` rows and performs no requests at all, which is what a self-contained
+   * surface has to mean.
    */
   async fetchBody(): Promise<null> {
     return null;

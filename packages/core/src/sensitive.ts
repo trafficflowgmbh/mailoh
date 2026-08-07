@@ -1,7 +1,8 @@
 import type { NormalizedMessage } from "./types.js";
 
 /**
- * SENSITIVITY DETECTION — the upstream half of the AI gate's first invariant.
+ * SENSITIVITY DETECTION — the upstream half of the rule that sensitive mail never reaches a
+ * model and is never stored in the clear.
  *
  * `flags.no_ai` is the ONLY thing standing between an authentication mail and the model:
  * `pipeline.ts` opens its AI condition with `!sensitivity.flags.no_ai`, `DraftingService` 422s
@@ -198,7 +199,7 @@ export interface SensitivityResult {
   flags: { no_ai: boolean; no_forward: boolean; no_kb: boolean; priority: boolean };
   /**
    * The body safe to STORE — redacted whenever a credential is present, and that is now BOTH
-   * halves of invariant #1's redaction clause, not just the positive half.
+   * halves of that rule — never sent to a model, AND stored redacted — not just the first.
    *
    * Earlier this was redacted only when {@link sensitive}. But an INDETERMINATE credential —
    * `indeterminate [credential_shape]` / `[auth_url_token]` / `[unsupported_script]` — is a message
@@ -694,7 +695,7 @@ const OTP = new RegExp(
     // "your code to sign in", "code to log in", "code to verify your account"
     `\\bcode\\s+(to|for)\\s+(sign|log)[-\\s]?in\\b`,
     // DIGIT-ANCHORED. "Your code is 482913" must be `sensitive`, not merely withheld,
-    // because the first invariant has two halves and the second one is that the stored body is
+    // because the rule has two halves and the second one is that the stored body is
     // redacted. The digits ARE the qualifier here: article, code-noun, copula, digits, with
     // NOTHING between them. That strictness is the whole safety argument — `"your code is
     // ready"` and `"your code is failing CI"` cannot match, and an intervening word means
@@ -1269,7 +1270,7 @@ export const SEEDED_INDETERMINATE_CEILING = 0.05;
 /**
  * ── THE SECOND BRANCH, AND WHY IT CANNOT USE `\b` ──────────────────────────────────────────
  *
- * The first invariant has two halves — never sent to a model, **and stored redacted.** A
+ * The rule has two halves — never sent to a model, **and stored redacted.** A
  * vocabulary-framed Arabic-Indic code (`رمز التحقق ٠١٢٣٤٥`) has always classified `sensitive`
  * correctly, and then stored its code **in the clear**, because every alternative above is
  * ASCII-only.
@@ -1296,7 +1297,7 @@ const CODE =
 /**
  * A magic link is a credential in URL form, and {@link CODE} does not reach it — `SECRET-LOGIN-
  * TOKEN` is not a digit run and the `?t=` is not a word boundary away from anything. Redacting
- * the token-bearing tail of an authentication URL closes the stored half of the first invariant for the
+ * the token-bearing tail of an authentication URL closes the stored-redacted half for the
  * passwordless class the way `CODE` closes it for the OTP class.
  */
 function redactAuthUrls(text: string): string {
@@ -1460,7 +1461,7 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
   // a licence to block user actions or mangle the priority signal.
   const withheldFromModel = verdict !== "ordinary";
 
-  // The STORED half of invariant #1 for the fail-closed bucket. A message we withheld
+  // The STORED-REDACTED half of the rule, for the fail-closed bucket. A message we withheld
   // because it carries a credential must not then be stored raw. `credential_shape` and
   // `auth_url_token` are positive "a code is here" signals; `unsupported_script` is admitted too
   // because a code in a script we cannot read is exactly the case that would otherwise sit in the

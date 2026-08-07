@@ -31,7 +31,8 @@ import {
  * The cost shape also favours polling for this product. A visible tab is ~450 short `/sync`
  * calls an hour; one SSE connection is sixty minutes of open serverless function per hour,
  * multiplied by the per-account connection cap, and billed for abandoned tabs too. Polling
- * scales with attention, which is invariant #10's whole argument. SSE stays behind `TF_SSE`
+ * scales with attention, which is the whole argument for it: no API cost without somebody behind
+ * it. SSE stays behind `TF_SSE`
  * for after the beta.
  *
  * ── WHAT THIS MODULE IS NOT ─────────────────────────────────────────────────────────────
@@ -199,7 +200,7 @@ export const BACKOFF_FLOOR_RATIO = 0.25;
  * the ceiling never becomes a minimum. With a permanent `410 CursorExpired` each drain costs
  * two requests (the engine re-bootstraps once, then surfaces the second), so the degraded state
  * a mail client is supposed to be able to sit in forever could instead spin at whatever rate
- * the network allows — invariant #10, paid for by an abandoned tab.
+ * the network allows — paid API calls with nobody behind them, billed to an abandoned tab.
  *
  * The floor is `max(250 ms, ceiling / 4)`, so the window widens with the outage: [250 ms, 1 s]
  * at the first failure, [15 s, 60 s] at the cap. What full jitter buys is kept — N tabs, or N
@@ -226,7 +227,8 @@ export function backoffDelay(
    cold Cloud account's first drain is ~37 pages. The visibility gate below decides whether a
    drain STARTS; nothing decided whether it CONTINUES, so hiding or closing a tab thirty seconds
    into a bootstrap left every remaining page to be issued anyway — a background tab issuing
-   paid `/sync` calls, which is the one thing invariant #10 says must not happen. Teardown had
+   paid `/sync` calls, which is the one thing that must not happen: no API cost without somebody
+   behind it. Teardown had
    the same hole: `stopped` stops the timer, not the loop already inside the engine.
 
    The page boundary is the ENGINE'S TRANSPORT — `adapter.sync()`, called once per page — so
@@ -315,7 +317,7 @@ export function createSyncGate(): SyncGate {
          * opened a Screener row. It is the user's own intent, in a tab they are looking at,
          * and it is bounded by that act: one request per message opened. The gate exists to
          * stop a HIDDEN tab paging through a thirty-seven page bootstrap nobody asked for
-         * (invariant #10), which is a different shape of cost entirely.
+         * — API cost with nobody behind it — which is a different shape of cost entirely.
          *
          * It must be forwarded rather than omitted: a wrapper that dropped it would leave
          * the engine with `adapter.fetchBody` undefined on the LIVE path only — the demo is
@@ -327,9 +329,9 @@ export function createSyncGate(): SyncGate {
 
         /*
          * FORWARDED, NOT GATED — the same rule as `fetchBody` above: one request per settled
-         * query, from a tab the user is looking at, bounded by the act of typing. Invariant
-         * #10 is about a HIDDEN tab paging through a bootstrap nobody asked for, which this
-         * is not.
+         * query, from a tab the user is looking at, bounded by the act of typing. The rule
+         * against API cost with nobody behind it is about a HIDDEN tab paging through a
+         * bootstrap nobody asked for, which this is not.
          *
          * SPREAD rather than always defined, and that is the whole point: an adapter WITHOUT
          * the capability must keep not having it, because the surface reads absence as "this
@@ -347,7 +349,7 @@ export function createSyncGate(): SyncGate {
          * `since=0` whenever the mirror's cursor is "0" — a first-ever start, a bootstrap that
          * crashed before its last page, or the 410 branch. So the visibility argument that
          * exempts the others points the other way here: a hidden tab paging through a whole
-         * snapshot is exactly the cost invariant #10 is about.
+         * snapshot is exactly the cost-with-nobody-behind-it this gate exists to refuse.
          *
          * It is nevertheless NOT gated in this literal, and that is deliberate rather than an
          * omission. The engine calls `snapshot()` from `runSnapshot()`, whose page-1 failure
@@ -361,7 +363,8 @@ export function createSyncGate(): SyncGate {
          *
          * SPREAD, for the third time and the usual reason: defining it unconditionally would
          * make a `FixturesAdapter` behind a gate claim a snapshot endpoint it has no server
-         * for, and `?demo=1` would issue a request on its first drain (invariants #6/#8).
+         * for, and `?demo=1` would issue a request on its first drain — the demo is fixtures,
+         * and a self-contained surface makes no external request at all.
          *
          * FORWARDED AT ALL: this literal is the whole surface the engine sees, and the demo is
          * never wrapped — so a capability missing from this list is missing on the LIVE PATH
@@ -381,7 +384,8 @@ export function createSyncGate(): SyncGate {
          *
          * NOT GATED: it fires when somebody scrolls to the bottom of a pile, in a tab they are
          * looking at, and it is bounded by that act — one page per scroll, never speculative.
-         * Invariant #10 is about a hidden tab paging through a bootstrap nobody asked for.
+         * The rule against API cost with nobody behind it is about a hidden tab paging
+         * through a bootstrap nobody asked for.
          *
          * SPREAD: `OhmailEngine.listOlderAvailable()` decides whether the end of a list offers a
          * control at all. Defining this unconditionally would put "there is more, older mail" at
@@ -400,7 +404,8 @@ export function createSyncGate(): SyncGate {
          *
          * NOT GATED: `listAttachments` is one indexed row read when a message is opened, and
          * the two byte methods fire on a click on a named file. All three are the user's own
-         * intent in a tab they are looking at. Invariant #10 is about a HIDDEN tab paging
+         * intent in a tab they are looking at. The rule against API cost with nobody behind
+         * it is about a HIDDEN tab paging
          * through a bootstrap nobody asked for; a person pressing a PDF is the opposite of
          * that. Gating them would mean a file that silently refuses to open whenever the
          * predicate happens to be false.
@@ -540,8 +545,8 @@ function isTerminalRefusal(err: unknown): boolean {
  * ── A HIDDEN TAB PERFORMS ZERO SYNCS ────────────────────────────────────────────────────
  *
  * Not "fewer" and not "cheaper ones": the timer is disarmed and no request is issued, because
- * a background tab that keeps a mailbox warm is API cost with no revenue attached to it
- * (invariant #10). Coming back is instant — `visibilitychange` drains immediately rather than
+ * a background tab that keeps a mailbox warm is API cost with no revenue attached to it.
+ * Coming back is instant — `visibilitychange` drains immediately rather than
  * waiting out a period — and so is regaining the network, via `online`.
  *
  * It is asked at all THREE points where the answer can have changed, which is the correction
@@ -551,7 +556,8 @@ function isTerminalRefusal(err: unknown): boolean {
  * covers the ~37-page bootstrap that used to run to completion behind a tab nobody was looking
  * at. The same predicate also reads `stopped`, so teardown cancels rather than merely stops
  * caring: a live→demo navigation aborts the discarded live engine's drain instead of letting it
- * finish paging from behind a page that promises zero egress (invariants #6 and #8).
+ * finish paging from behind a page that promises zero egress — the demo is fictional data, and
+ * a surface that claims to be self-contained must make no external request at all.
  *
  * ── EVERYTHING FUNNELS THROUGH `syncOnce()` ─────────────────────────────────────────────
  *
@@ -626,7 +632,8 @@ export function startSyncScheduler(
    */
   let revalidating = false;
   /**
-   * When the last probe was issued. The bound for invariant #10: at most one probe per
+   * When the last probe was issued. The bound that keeps a revoked tab from becoming API cost
+   * with nobody behind it: at most one probe per
    * `BACKOFF_CAP_MS`, shared by BOTH wake sources, because `online` can fire repeatedly on a flaky
    * network. Worst case for a revoked, visible, focus-flapped tab is ~60 req/hr against a healthy
    * tab's ~450. A hidden tab issues zero (the `visible()` gate holds), and an abandoned visible tab
@@ -708,10 +715,12 @@ export function startSyncScheduler(
         //
         //  · the tab was hidden while it ran — so a tab nobody ever looked at still issued a
         //    paid drain, and my "0 syncs while hidden" measurement could not have caught it
-        //    because it was taken on an already-hydrated tab (invariant #10);
+        //    because it was taken on an already-hydrated tab — a paid request with nobody
+        //    behind it;
         //  · the scheduler was TORN DOWN — a live→demo navigation swaps the engine and runs
         //    this cleanup, and the discarded LIVE engine then called `/sync` from behind a
-        //    page whose whole promise is that nothing leaves the tab (invariants #6 and #8).
+        //    page whose whole promise is that nothing leaves the tab, which is a promise a
+        //    self-contained surface has to keep exactly.
         //
         // Hydration is kept (`hydrated` stays true) — the mirror is loaded and re-reading it
         // on the next wake would be pure waste. Only the REQUEST is withheld.

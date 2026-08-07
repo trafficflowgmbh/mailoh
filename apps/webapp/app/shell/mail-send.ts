@@ -16,8 +16,9 @@
  *                 (the engine kept the overlay and the key), the editor keeps the text, and
  *                 the copy says "not sent yet" — never "sent". Retried on a backoff below.
  *   `unverified`  SMTP threw AND the server's Sent-folder probe found no copy. Genuinely
- *                 ambiguous: it may have gone out. We do NOT retry — invariant #2 forbids an
- *                 automatic resend on ambiguity — and we do not lock the button either,
+ *                 ambiguous: it may have gone out. We do NOT retry — the send path never
+ *                 resends on its own when the outcome is ambiguous, because that is how a
+ *                 person receives the same mail twice — and we do not lock the button either,
  *                 because the server refuses every further send of THAT draft
  *                 (`send-service.ts:162-168`), so a lock would brick the editor forever after
  *                 one hiccup. The warning stays on screen and the next press is a fresh
@@ -29,7 +30,8 @@
  * It shipped serving the inline reply only, and Compose was given this machine rather than one
  * of its own. Nothing above is reply-specific: the lock, the retry driver, the
  * four-outcome reading of the wire and "a 200 is inspected, not trusted" are properties of
- * SENDING, and a second copy of them is a second place for invariant #2 to be true in. The
+ * SENDING, and a second copy of them is a second place for "one press is one delivery" to be
+ * true in. The
  * difference between the two callers is one field on the mutation (`inReplyTo`) and one line
  * in `settle` (a reply discharges a triage debt; a compose has none).
  *

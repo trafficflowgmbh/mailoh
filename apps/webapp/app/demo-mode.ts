@@ -1,5 +1,6 @@
 /**
- * THE DEMO DECISION — one function, fail-SAFE toward the demo (invariants #6 / #8).
+ * THE DEMO DECISION — one function, fail-SAFE toward the demo, because the demo is fiction and
+ * must make no external request at all.
  *
  * `?demo=1` is a PROMISE: fixtures only, zero network, nothing leaves the tab. The failure
  * that matters is therefore not "the demo did not open" but "a URL presented as the demo

@@ -3,8 +3,10 @@
 -- ══ THE DECISION, AND WHY IT IS NOT A FOLDER ═════════════════════════════════════════════
 --
 -- ohmail organizes the mailbox IN PLACE with a fixed folder set — `INBOX` plus
--- `ohmail/Screener|Reads|Receipts|Screened|Quarantine` — and the IMAP mailbox is the master
--- (GOALS #3). A tag is a CROSS-CUTTING dimension over those places: "invoices" is not a
+-- `ohmail/Screener|Reads|Receipts|Screened|Quarantine` — and the IMAP mailbox is the master:
+-- organization lands in real folders on the real server, so the mailbox stays organized whether
+-- or not this app is still running. A tag is a CROSS-CUTTING dimension over those places:
+-- "invoices" is not a
 -- seventh pile a message sits in, it is a word about a message that is already sitting in the
 -- Ohbox. Modelling it as a folder would have three costs, and the third is disqualifying:
 --

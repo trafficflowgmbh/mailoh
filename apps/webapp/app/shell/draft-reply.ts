@@ -13,12 +13,14 @@
  *
  * Two invariants decide everything about how this is built, and neither is negotiable:
  *
- *  · **Nothing sends** (GOALS #2). The drafter produces text. It lands in the reply editor as
+ *  · **Nothing sends.** AI proposes and the user decides; nothing leaves the account without an
+ *    explicit act. The drafter produces text. It lands in the reply editor as
  *    editable content and stops there — no `mail_send`, and no triage change. A generated
  *    draft is not a sent reply, so it must not discharge the Reply Run's debt: that discharge
  *    is owned by `onSendSettled`, keyed on a SEND settling, and this module dispatches no
  *    mutation at all. There is deliberately nothing here to get wrong, which is the point.
- *  · **The cost is stated before it is taken** (GOALS #10). One draft is one AI action. The
+ *  · **The cost is stated before it is taken** — no paid API call without the revenue for it
+ *    behind it, and none without the person knowing the price. One draft is one AI action. The
  *    figure is not computed from a balance this client happens to be holding — it is what the
  *    route charges, once per accepted request, and the sentence a person consents to says
  *    exactly that.

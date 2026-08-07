@@ -73,7 +73,7 @@ export interface MirrorStore extends EntityReader {
    *
    * ## `message_body` CASCADES
    *
-   * Invariant #1: raw body text must not sit at rest without the message it belongs to. A
+   * Raw body text must not sit at rest without the message it belongs to. A
    * `message_body` is client-local — `/sync` has no vocabulary for it, so nothing else will ever
    * remove one — and it is the single largest thing the mirror holds. Pruning a `message` without
    * its body would evict the row and keep the payload, which inverts the point of the pass. So
@@ -176,11 +176,12 @@ export abstract class BaseMirrorStore implements MirrorStore {
    * search index) unreferenced and unreachable:
    *
    *  · a `message` DELETE — the FULL TEXT of a deleted message would otherwise survive forever,
-   *    un-evicted and undeletable through any path the product offers, against GOALS #5's
-   *    deletable-Cloud-data promise; and
+   *    un-evicted and undeletable through any path the product offers, against the promise that
+   *    a person's mail is theirs to delete; and
    *  · a `message` that BECOMES PROTECTED — a body cached while the message was ordinary, then
-   *    flipped sensitive by a server-side redaction pass or a late reclassification, is invariant
-   *    #1's raw-secret-at-rest reproduced on the client. `hydrateBody` refuses to cache one going
+   *    flipped sensitive by a server-side redaction pass or a late reclassification, is the raw
+   *    secret sensitive mail is stored redacted to avoid, reproduced on the client.
+   *    `hydrateBody` refuses to cache one going
    *    forward; this purges one already cached. The protected test reads the POST-APPLY mirror
    *    state — this method runs after `applyToRecords` has mutated the map — so a replayed or
    *    older-seq update that did NOT win cannot trigger a purge, and no false `message` delete is

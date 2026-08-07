@@ -24,8 +24,8 @@
  * just answered a message found Compose inert, with an explanation about a demo they were not
  * in. Alongside it, three fields — the AI-draft tag, the editor placeholder and the note next
  * to Send — were read UNCONDITIONALLY out of `@ohmail/fixtures`, so `#/compose` showed a
- * paying customer strings written for a fictional demo world (invariant #6, and the rule that
- * a claim the product makes is a contract).
+ * paying customer strings written for a fictional demo world. Demo content is fiction and must
+ * never be shown to somebody as their own mail; a claim the product makes is a contract.
  *
  * ── WHAT IT IS NOW ──────────────────────────────────────────────────────────────────────
  *

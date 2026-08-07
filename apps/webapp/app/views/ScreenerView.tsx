@@ -891,7 +891,7 @@ function HeldMail({
    * AND IT CARRIES A CONTROL, for the reason the reading pane's does: the selection effect
    * above is an AUTOMATIC trigger, and `hydrateBody` deliberately refuses to re-ask a server
    * that already refused unless a human says so — otherwise a failing endpoint under an open
-   * view is a request loop billed per attempt (invariant #10). Reselecting the sender
+   * view is a request loop billed per attempt, with nobody behind it. Reselecting the sender
    * therefore does NOT retry, so without this button a held message whose body 500'd could
    * only be recovered by reloading the tab. In the one pile where the text is the basis of a
    * consent decision, that is not an acceptable dead end.
@@ -910,7 +910,8 @@ function HeldMail({
    * `bodyStall` is that fact, read from the same predicate `hydrateBody` decides on
    * ({@link HeldBodyStall}). The four states are now distinguished by what is true of each:
    *
-   *   protected  → the block, and no text at all. Invariant #1, exactly as `MessagePane` does
+   *   protected  → the block, and no text at all, because a sensitive message's body must
+   *                never be rendered — exactly as `MessagePane` does
    *                it — a spinner over a message whose body must not exist is the wrong
    *                sentence twice over.
    *   failed     → the failure, WITH Retry, unchanged.
@@ -951,7 +952,8 @@ function HeldMail({
           part, which is what this preview showed before. */}
       <div className="hm-body">
         {protectedMail ? (
-          /* INVARIANT #1 REACHES THIS PILE TOO. The gate is where a stranger's first mail is
+          /* SENSITIVE MAIL RENDERS NO TEXT IN THIS PILE EITHER. The gate is where a stranger's
+             first mail is
              read, and a verification code from a stranger is the ordinary case rather than an
              exotic one. `MessagePane` has always routed a protected message past its body
              renderer; this preview handed the same message's text to `MessageBody` and then

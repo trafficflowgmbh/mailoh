@@ -56,7 +56,8 @@ import { API_BASE, apiConfigured, messageOf, privacy } from "../api-client";
  * a real answer and not an oversight.
  *
  * `undefined` means this client cannot proxy an image: `?demo=1` (fixtures, zero network,
- * invariants #6 and #8), the desktop shell, and any test that mounts a view without an API.
+ * and a self-contained surface makes no external request), the desktop shell, and any test that
+ * mounts a view without an API.
  * `MessageBody` renders NO BUTTON for it rather than a dead one — `MessageBodyProps.imageProxy`
  * says so in as many words. The same rule `AttachmentsChrome` follows, for the same reason:
  * a control over a capability nothing can serve is worse than no control.

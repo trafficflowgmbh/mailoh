@@ -371,7 +371,7 @@ body.reading .shell {
    in progress and may sit there for six minutes; anything louder would train people to read the
    strip as a problem. WARN (`blocked`, `mailboxError`) keeps the accent ground of the retrying
    state: it is a condition, not an event, and the remedy is a link rather than a klaxon. Flat
-   fills only, no backdrop-filter, no gradients (invariant #7).
+   fills only, no backdrop-filter, no decorative gradients — the design system's own rule.
 
    ── AND BUSY IS A CORNER INDICATOR, NOT A HEADER BANNER ──────────────────────────────────
    `importing` and `awaiting` report a sync the worker runs on its own — not an impediment the
@@ -380,7 +380,8 @@ body.reading .shell {
    somebody's mail; the warn/error/stopped states above still are, and keep the strip in flow.
    Bottom-LEFT clears the centred dock and toast (both bottom-centre); z-dock keeps it above the
    deck but under every sheet and the toast. A pure-white shadow-sculpted surface — flat fill,
-   no backdrop-filter (invariant #7). Fixed, so it leaves the deck its full height. */
+   no backdrop-filter, as the design system requires. Fixed, so it leaves the deck its full
+   height. */
 .sync-bar.busy {
   position: fixed;
   left: 14px;

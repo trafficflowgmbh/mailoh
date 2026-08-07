@@ -43,7 +43,8 @@
 --       `code` is the only column here whose value could conceivably come from outside, and it may
 --       not. Its five members are `MessageFailureCode` (`apps/worker/src/dead-letter.ts`), the same
 --       contract `mailboxes_sync_blocked_reason_closed` holds `sync_blocked_reason` to and for the
---       same reason (GOALS #9): a throw out of the ingest path can carry RFC822 header bytes and a
+--       same reason — an account's mail must stay reachable by that account's own users and by
+--       nobody else: a throw out of the ingest path can carry RFC822 header bytes and a
 --       Postgres data-exception message quotes the offending row. Membership in a closed set cannot
 --       be forged by a mail server; a shape test can. The CHECK lives INSIDE the CREATE TABLE and
 --       not in a bare `ADD CONSTRAINT`, because replaying a journal is a supported operation and a

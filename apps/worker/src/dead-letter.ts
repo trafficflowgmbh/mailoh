@@ -64,7 +64,8 @@ import { parseRef } from "@trafficflow/core/adapters/imap";
 /**
  * WHY A MESSAGE COULD NOT BE INGESTED — a CLOSED set, and never free text.
  *
- * Same contract `mailboxes.error_detail` is held to (GOALS #9): a throw out of the ingest path can
+ * Same contract `mailboxes.error_detail` is held to, and for the same reason — an account's mail
+ * belongs to that account and to nobody else: a throw out of the ingest path can
  * embed RFC822 header bytes, a Postgres data-exception message quotes the offending row, and both
  * reach an `audit_log` payload the account owner's own tooling reads. Membership cannot be forged
  * by a mail server; a shape test can.

@@ -279,7 +279,7 @@ export function EngineProvider({
     // seconds or more. So "replacing the reference is safe because there is nothing running
     // inside the object being dropped" — which is what stood here — was false, and it is
     // exactly how a live→demo navigation kept issuing live `/sync` calls from behind a page
-    // that promises zero egress (invariants #6 and #8).
+    // that promises zero egress, which a self-contained surface has to mean literally.
     //
     // The SCHEDULER is where the timer and the two window listeners live, and it is torn down
     // by the effect below rather than by this assignment. Its dependency is `engine`, so React
@@ -457,7 +457,7 @@ export function EngineProvider({
      *
      * The demo keeps the single `start()`. It has fixtures, no server and no cursor to
      * advance, and polling it would be a timer that can only ever find the same world
-     * (invariant #6: nothing leaves this tab, and nothing needs to).
+     * (the demo is fixtures: nothing leaves this tab, and nothing needs to).
      */
     if (!live) {
       void engine.start().catch((err: unknown) => {

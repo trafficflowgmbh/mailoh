@@ -23,7 +23,8 @@
 -- backfill — one lookup per message over every row in the mailbox — was quadratic.
 --
 -- `(account_id, message_id_header)` and not `(message_id_header)` alone, in that order, because
--- ACCOUNT SCOPING IS THE FIRST PREDICATE, not a filter applied afterwards. GOALS #9: a
+-- ACCOUNT SCOPING IS THE FIRST PREDICATE, not a filter applied afterwards. An account's mail is
+-- reachable by that account's own users and by nobody else, and a
 -- Message-ID is attacker-choosable — anybody can send you mail carrying
 -- `Message-ID: <whatever-they-like>` — so a lookup that found a row in another account and then
 -- discarded it would still have read it, and one bug away from adopting its thread. The column

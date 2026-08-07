@@ -19,7 +19,7 @@
 --
 -- ══ WHY IT MIRRORS `folder_state` COLUMN FOR COLUMN ══════════════════════════════════════
 --
--- Because it is the same problem. GOALS #3: the API never opens IMAP to apply organization —
+-- Because it is the same problem. The API never opens IMAP to apply organization —
 -- a serverless function that dies mid-flight would leave a mailbox half-written — so a
 -- mutation records INTENT and the always-on worker performs the network write on its next
 -- reconcile pass. `folder_state` is that pattern for placement; this is that pattern for the

@@ -137,7 +137,7 @@ export interface ScreenerSuggestion {
 /**
  * One held message. It carries its own identity and its own full body, so
  * moving it between screener segments and mail places can never collapse it
- * into a count (NO-COLLAPSE, invariant #6).
+ * into a count — every message is always rendered in full.
  */
 export interface HeldMailFixture {
   id: string;

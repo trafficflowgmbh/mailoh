@@ -46,7 +46,9 @@
 -- `cloud`, `local`, and `unknown` as the catch-all for a peer we cannot rank — and `unknown` is
 -- what makes it closed rather than merely small.
 --
--- The CHECK is a GOALS #9 boundary, not tidiness. `error_detail` learned this the hard way: a
+-- The CHECK is an account-isolation boundary, not tidiness — nothing an account's own users may
+-- read, and nothing an operator may, gets to carry mail content or credentials by accident.
+-- `error_detail` learned this the hard way: a
 -- SHAPE test admitted `serverResponseCode = "SECRETPASSWORD123"` because imapflow derives that
 -- field from the SERVER's own bracket atom, and the value reached a column the account owner and
 -- the admin console both read. The write site here is allowlisted the same way

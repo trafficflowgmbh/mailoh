@@ -237,7 +237,8 @@ export class SensitivePayloadRefusal extends Error {
     super(
       `classifier: refusing to send a payload screened as sensitive `
       + `(rule=${screen.reason}${screen.category ? `, category=${screen.category}` : ""}). `
-      + `This is invariant #1 failing CLOSED at the sink; the upstream caller should have set no_ai.`,
+      + `Sensitive mail never reaches a model; this is that rule failing CLOSED at the sink, and `
+      + `the upstream caller should have set no_ai.`,
     );
     this.name = "SensitivePayloadRefusal";
     this.screen = screen;

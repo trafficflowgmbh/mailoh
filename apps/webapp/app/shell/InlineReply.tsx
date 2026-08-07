@@ -31,7 +31,8 @@
  * NOTHING ABOUT THE PAYLOAD CHANGED. Sending was, and is, `{inReplyTo, body}` with `body`
  * exactly what was typed (`http-adapter.ts` `mailSend`). There has never been a quoted
  * original in outgoing mail and this slice did not add one: the parent's text in the payload
- * is how a `no_forward` message's redacted body would leave the account (invariant #1).
+ * is how a `no_forward` message's redacted body would leave the account, and sensitive mail is
+ * never forwarded.
  * What the editor shows and what it sends are two different questions, and only the first
  * one moved.
  *

@@ -88,10 +88,12 @@ export const MAIL_CLOCK_MS = 5_000;
  * is not an oversight. `blocked` and `mailboxError` are precisely the states that appear
  * UNDERNEATH a populated, healthy-looking mirror (`dto/types.ts` says so at the column), so a
  * poll that backed off once things looked fine would go quiet exactly when it was needed. It is
- * a read, and reads stay open deliberately (GOALS #11); 120 requests an hour per visible tab
- * sits inside the ~450 `/sync` budget `sync-scheduler.ts` already argued for.
+ * a read, and reads stay open deliberately — refusing one costs the same serverless invocation
+ * as serving it, so gating reads takes nothing off a hostile poller; 120 requests an hour per
+ * visible tab sits inside the ~450 `/sync` budget `sync-scheduler.ts` already argued for.
  *
- * A hidden tab reads nothing at all, the same rule `/sync` follows (GOALS #10).
+ * A hidden tab reads nothing at all, the same rule `/sync` follows: nobody is looking, so there
+ * is no revenue behind the cost.
  */
 export const FACTS_POLL_MS = 30_000;
 

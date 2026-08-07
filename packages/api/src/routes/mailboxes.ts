@@ -50,7 +50,7 @@ export const mailboxRoutes: Route[] = [
     // own account and writing nothing; this opens an IMAP socket to the user's provider and reads
     // a folder on it. Classing it `read` would also put it inside the set an UNVERIFIED account
     // may reach, which would make an unproven address able to make this process dial a mail server
-    // — the thing invariant 11 exists to refuse.
+    // — and an unverified account must not be able to make this service do paid work.
     cost: "connection",
     handler: async (req, deps, params) => {
       const ctx = serviceContext(deps, req);

@@ -972,7 +972,8 @@ export function OhboxView({
             this client, because the mirror is a window — and it comes with the way back rather
             than with a suggestion to go and search.
 
-            The no-collapse rule (invariant #6) is satisfied throughout: every message is a real
+            The no-collapse rule — never an "N more" count standing in for mail — is satisfied
+            throughout: every message is a real
             row, above the line or below it. */}
         {demo ? <div className="tail-row">{t("tail")}</div> : null}
         {!demo && older.available ? (

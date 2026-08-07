@@ -244,7 +244,7 @@ export interface EngineMessage extends EngineMessageExtras {
 /**
  * IS THIS MESSAGE PROTECTED — the one predicate that decides whether its raw body may sit at rest.
  *
- * Invariant #1: a sensitive message's body must never persist unredacted, on the server OR on the
+ * A sensitive message's body must never persist unredacted, on the server OR on the
  * client. A message can be cached and indexed while it is ORDINARY and later BECOME protected — a
  * server-side redaction pass, a late sensitivity reclassification arriving as a `message` update —
  * so the raw body it cached beforehand has to be shed. This predicate is the single place that
@@ -337,7 +337,7 @@ export interface UnsubscribeResult {
  * none to store, and the html can be refused by the sanitizer. `text` is what all three
  * render.
  *
- * `text` is ALREADY sensitivity-redacted server-side (invariant #1, `message-service.ts`
+ * `text` is ALREADY sensitivity-redacted server-side (`message-service.ts`
  * `getBody`: "returned as-is, never re-derived"). This client stores exactly what it was
  * given and never attempts a redaction of its own — a second implementation of that rule is
  * a second place for it to be wrong. The same holds for `html`: the redaction decision is
@@ -616,7 +616,7 @@ export interface ScreenerSenderDTO {
     withheld?: "withheld" | "out_of_credits" | "spend_unavailable" | "model_unavailable";
   } | null;
   /**
-   * NO-COLLAPSE (invariant #6): every held message, in full, oldest first —
+   * NO-COLLAPSE: every held message, in full, oldest first —
    * non-empty in every segment. There is deliberately no `heldCount` /
    * `lastSubject` / `lastBody` beside it: a count that is not `held.length`
    * can drift, and a "last body" is how held mail becomes hidden mail.
@@ -861,8 +861,8 @@ export type EngineMutation =
    * It shipped as `reply_send` and was generalized rather than copied: Compose needed
    * the same idempotency key, the same four-outcome failure surface, the same "a 200 is
    * inspected, not trusted" reading of the wire and the same double-send lock. A second
-   * implementation of "send an email" is two places for invariant #2 to be true in, which is
-   * one place too many. `inReplyTo` is the ONLY difference between the two callers.
+   * implementation of "send an email" is two places for "one press is one delivery" to be true
+   * in, which is one place too many. `inReplyTo` is the ONLY difference between the two callers.
    *
    * ── `inReplyTo: null` IS LOAD-BEARING, NOT A DEFAULT ───────────────────────────────────
    *

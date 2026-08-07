@@ -144,7 +144,7 @@ export type SnapshotFn = (params: { cursor?: string; limit?: number }) => Promis
  *
  * Declared STRUCTURALLY here, exactly as {@link ServerSearchCapableAdapter} is, and for the same
  * reason: absence is a real answer, not a broken adapter. The FixturesAdapter has no server and a
- * `?demo=1` tab must issue zero requests (invariant #6); an older HttpAdapter, or a Cloud that has
+ * `?demo=1` tab must issue zero requests; an older HttpAdapter, or a Cloud that has
  * not deployed the route, simply has no `snapshot` — and the engine falls back to `since=0`, which
  * is the path every client used before this existed and still converges to the same mirror.
  *
@@ -621,7 +621,8 @@ export class OhmailEngine {
     if (this.hydrating) return this.hydrating;
     this.hydrating = this.store
       .load()
-      // Reconcile invariant #1 before publishing: a body cached by an older engine (or by a
+      // Reconcile the no-raw-secret-at-rest rule before publishing: a body cached by an older
+      // engine (or by a
       // delta that arrived before the protect cascade shipped) for a message that is protected in
       // the mirror this load just read must not survive. See {@link purgeProtectedBodies}.
       .then(() => this.purgeProtectedBodies())
@@ -635,7 +636,7 @@ export class OhmailEngine {
   }
 
   /**
-   * INVARIANT #1 AT REST, RECONCILED ON LOAD.
+   * NO SENSITIVE BODY AT REST, RECONCILED ON LOAD.
    *
    * The delta cascade in {@link MirrorStore} purges a body the moment a message TRANSITIONS to
    * protected. This covers the two cases that transition cannot reach: a body cached by an engine
@@ -993,7 +994,8 @@ export class OhmailEngine {
    * `types` filter, so with `EngineOptions.types` set a seq belonging to a filtered-out entity
    * type is never reached and the wait never terminates. It also needs a fallback anyway —
    * `rule_delete`'s 404 and any absent or non-finite `X-Sync-Seq` give `seq: null` — and a wait
-   * loop is unbounded requests (invariant #10) where this is exactly one drain.
+   * loop is unbounded requests — API cost with nobody behind it — where this is exactly one
+   * drain.
    *
    * ## WHAT IT COSTS, WHICH IS NOTHING IN THE COMMON CASE
    *
@@ -1105,7 +1107,8 @@ export class OhmailEngine {
    * They re-run whenever their inputs change, and a failed fetch writes a record, which bumps
    * the mirror version, which re-renders — so a `failed` state that re-fetched on the default
    * path would be a request loop against a server that is already refusing, billed per
-   * attempt, for as long as the view stays open (invariant #10). Found by exactly that: a
+   * attempt, for as long as the view stays open, with nobody behind any of it. Found by exactly
+   * that: a
    * 500-ing adapter under a view whose callback identity changed per render spun until the
    * test timed out.
    *
@@ -1148,13 +1151,14 @@ export class OhmailEngine {
     /**
      * A PROTECTED MESSAGE HAS NO BODY TO ASK FOR — AND MUST HOLD NONE AT REST.
      *
-     * Its surface renders `ProtectedBlock` and no text whatever the mirror holds (invariant #1,
-     * and `MessagePane` is where that decision lives), so a fetch here could only ever produce a
+     * Its surface renders `ProtectedBlock` and no text whatever the mirror holds (`MessagePane`
+     * is where that decision lives), so a fetch here could only ever produce a
      * record nothing reads. Skipping it also keeps the demo's one body-less fixture from churning
      * a loading record every time it is selected.
      *
      * The second clause is the at-rest half. A message that cached a body while it was ORDINARY
-     * and then became protected is the raw secret invariant #1 forbids, sitting in IndexedDB (and,
+     * and then became protected is the raw secret sensitive mail is redacted to avoid, sitting
+     * in IndexedDB (and,
      * via {@link SearchIndex}, the local search index). The delta cascade in {@link MirrorStore}
      * purges on the transition; this is the belt-and-braces for a body cached by an older engine,
      * or one the transition missed — purge any held record before returning. `isProtectedMessage`
@@ -1187,8 +1191,8 @@ export class OhmailEngine {
      *   `undefined`  no build ever answered this record's question. Ask now.
      *   `null`       a build DID ask, and the answer was "this message has no html" — a
      *                plain-text mail, or a sensitive one whose html is deliberately not stored
-     *                (`pipeline.ts`). Re-asking would be a permanent billed poll (invariant
-     *                #10) against a server that will keep answering the same thing.
+     *                (`pipeline.ts`). Re-asking would be a permanent billed poll with nobody
+     *                behind it, against a server that will keep answering the same thing.
      *
      * It is a re-read, not a migration: {@link MessageBodyRecord} says why inventing `html:
      * null` for these rows is forbidden — it is indistinguishable from a message that genuinely
@@ -1484,7 +1488,8 @@ export class OhmailEngine {
          * wrong label: `useMailSend.absorb` (`apps/webapp/app/shell/mail-send.ts`) releases the
          * send lock on every status except `queued` and runs `settle` on `confirmed` ONLY, so the
          * draft survives and the next press mints a NEW Idempotency-Key — a SECOND delivery of
-         * the same mail (invariant #2). "Press Send, then switch apps" is enough to reach it.
+         * the same mail, which the send path exists to make impossible. "Press Send, then
+         * switch apps" is enough to reach it.
          *
          * So the drain's failure is swallowed, and that is strictly more truthful rather than
          * less: the overlay is dropped either way, so the screen is identical, and `confirmed` is
@@ -1557,7 +1562,7 @@ export class OhmailEngine {
   /**
    * Is there a server archive behind this client at all?
    *
-   * `false` for the demo (`?demo=1` is fixtures and zero network, invariants #6/#8) and for
+   * `false` for the demo (`?demo=1` is fixtures and zero network) and for
    * the desktop tier, whose master is the IMAP mailbox and which has no Cloud API. Both are
    * states the UI must be able to STATE, not states it should hide: "there is no archive
    * here" and "the archive has not answered yet" are different sentences.
@@ -1600,7 +1605,7 @@ export class OhmailEngine {
    * stored for the caller's own account, writes nothing, opens no socket and calls no metered
    * third party. It is not, however, free of judgement: it is one request per settled query,
    * fired from a debounce and never per keystroke, for the same reason `hydrateBody` fires on
-   * explicit intent only (invariant #10).
+   * explicit intent only: a paid request needs somebody behind it.
    */
   async searchServer(query: string, opts: { limit?: number } = {}): Promise<ServerSearchOutcome> {
     const fn = this.serverSearchFn;
@@ -1641,7 +1646,7 @@ export class OhmailEngine {
   /**
    * Is there anything BEHIND the end of this client's lists?
    *
-   * `false` for the demo (`?demo=1` is fixtures and zero network, invariants #6/#8) and for the
+   * `false` for the demo (`?demo=1` is fixtures and zero network) and for the
    * desktop tier, whose master is the IMAP mailbox and which keeps the whole of it on the device.
    * Both are states a list must be able to STATE: "you have reached the end of your mail" and "you
    * have reached the end of what this device keeps" are different sentences, and only one of them
@@ -1732,7 +1737,7 @@ export class OhmailEngine {
   /**
    * Can this client open attachments at all?
    *
-   * `false` for the demo (`?demo=1` is fixtures and zero network, invariants #6/#8), where the
+   * `false` for the demo (`?demo=1` is fixtures and zero network), where the
    * paperclip must not offer a control that cannot work. Resolved from the adapter's own optional
    * capability, so it cannot disagree with what the methods below will do.
    */
@@ -1746,7 +1751,7 @@ export class OhmailEngine {
    *
    * Separate from {@link OhmailEngine.loadAttachments} on purpose: React renders far more often
    * than it should fetch, so the render path reads state and the effect path asks for it. A method
-   * that fetched on read would issue a request per render (invariant #10).
+   * that fetched on read would issue a request per render, billed with nobody behind it.
    */
   attachmentsOf(messageId: string): AttachmentsOutcome {
     if (!this.attachmentsAvailable()) return { state: "unavailable" };

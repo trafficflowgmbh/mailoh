@@ -22,9 +22,9 @@
 -- html bytes; 53 rows held 248 MB between them — 48% of the database in 53 messages — and the
 -- largest single body was 19,276,606 bytes.
 --
--- That is a GOALS #3 violation before it is a sizing problem: the invariant says on-demand
--- attachment fetch "stores no bytes", and `packages/api/src/routes/attachments.ts` implements
--- exactly that. Inlining the bytes into the body stored them anyway, through a side door.
+-- That is a broken promise before it is a sizing problem: an on-demand attachment fetch opens a
+-- short-lived connection and stores no bytes, and `packages/api/src/routes/attachments.ts`
+-- implements exactly that. Inlining the bytes into the body stored them anyway, through a side door.
 --
 -- ══ WHY THIS FILE CARRIES NO BACKFILL ════════════════════════════════════════════════════
 --
@@ -70,5 +70,5 @@
 --
 -- `octet_length(NULL)` is NULL and a CHECK passes on NULL, so the nullable column needs no
 -- special-casing: a message with no html, and a sensitive message whose html is deliberately
--- never stored (GOALS #1), both satisfy this without an `IS NULL` arm.
+-- never stored (sensitive mail is stored redacted), both satisfy this without an `IS NULL` arm.
 ALTER TABLE "message_bodies" ADD CONSTRAINT "message_bodies_html_cap" CHECK (octet_length("html") <= 262144);

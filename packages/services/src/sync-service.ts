@@ -113,7 +113,8 @@ export class SyncService {
   }
 
   /**
-   * THE ACCOUNT'S HIGH-WATER **COMMITTED** SEQ — and the whole of invariant #4 lives here.
+   * THE ACCOUNT'S HIGH-WATER **COMMITTED** SEQ — and the whole of the gap-free delta contract
+   * lives here.
    *
    * ── WHAT MUST BE TRUE ────────────────────────────────────────────────────────────────────
    *
@@ -314,7 +315,8 @@ export class SyncService {
     const limit = Math.min(Math.max(1, opts.limit ?? DEFAULT_LIMIT), MAX_LIMIT);
     const cursor = opts.cursor && opts.cursor !== "" ? this.decodeSnapshotCursor(opts.cursor) : null;
 
-    // INVARIANT #4 — BEFORE ANY ENTITY READ. See `highWaterSeq` for what depends on this line
+    // THE GAP-FREE SEQ IS FIXED BEFORE ANY ENTITY READ. See `highWaterSeq` for what depends on
+    // this line
     // running first and nothing depending on it running at all if a cursor already fixed the point.
     const asOfSeq = cursor ? cursor.asOfSeq : await this.highWaterSeq(db, accountId);
     const seq = Number(asOfSeq);

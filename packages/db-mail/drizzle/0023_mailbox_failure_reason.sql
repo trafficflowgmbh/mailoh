@@ -23,14 +23,14 @@
 -- syscall errno (`ECONNREFUSED`, `ETIMEDOUT`), a TLS error constant, an SQLSTATE, or our own
 -- configured `host:port`. Everything else yields NULL.
 --
--- That is not caution, it is invariant 9. A throw out of `runSyncCycle` can be a parse or
+-- That is not caution, it is account isolation. A throw out of `runSyncCycle` can be a parse or
 -- constraint error that embeds RFC822 header bytes — sender names and subjects — and a failed
 -- login's server text can echo the login argument. Persisting `err.message` would put mail
--- content and credentials in a column the account's own user AND the admin console read, which
--- is the one thing GOALS #9 says must be impossible for staff. The same reasoning
--- `packages/core/src/log.ts` already applies to every log line ("`err` is serialised to CLASS +
--- CODE, never message + stack") — this column inherits that contract rather than inventing a
--- second, weaker one.
+-- content and credentials in a column the account's own user AND the admin console read — and an
+-- account's mail is reachable by that account's own users and by nobody else, operators
+-- included. The same reasoning `packages/core/src/log.ts` already applies to every log line
+-- ("`err` is serialised to CLASS + CODE, never message + stack") — this column inherits that
+-- contract rather than inventing a second, weaker one.
 --
 -- Because the redaction is at the WRITE, not at each projection, no reader has to remember to
 -- stay narrow. That is the difference between a rule and a habit.

@@ -93,7 +93,7 @@ export interface DecideOptions {
  * will ever fetch, because that is not a fact about the body record; it is a fact about the
  * MESSAGE, and it is `OhmailEngine.hydrateBody` that holds it.
  *
- *  · `protected` — invariant #1. `hydrateBody` returns without asking, and purges any body a
+ *  · `protected` — sensitive mail. `hydrateBody` returns without asking, and purges any body a
  *    previous build cached, because a protected message must hold no raw text at rest. There is
  *    no request, so there is nothing to wait for.
  *  · `absent`    — the id is not in the mirror. A fixture `screener_sender`'s held ids are not

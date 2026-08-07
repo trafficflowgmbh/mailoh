@@ -112,8 +112,9 @@ export interface MessageChrome {
    *
    * ── OPTIONAL, AND ABSENCE IS A REAL ANSWER ────────────────────────────────────────────
    *
-   * `undefined` means "this client has no attachment service" — `?demo=1` (fixtures, zero
-   * network, invariants #6/#8), the desktop shell, and any test that mounts a view without an
+   * `undefined` means "this client has no attachment service" — `?demo=1` (fixtures, and a
+   * self-contained surface makes no external request), the desktop shell, and any test that
+   * mounts a view without an
    * `EngineProvider`. The pane renders NO STRIP for it rather than an empty one, because an
    * empty strip is a different claim: it says this message has no files. A "Download all"
    * button over an archive nothing can build is exactly the shape of control this gap exists

@@ -62,7 +62,8 @@ export interface EngineAdapter {
    *
    * `null` is the FixturesAdapter's answer and it is not a stub: the demo world's message
    * rows carry `body` in the mirror already, so there is nothing to fetch and nothing that
-   * may touch the network (invariant #6). The engine writes no record for a `null`, which
+   * may touch the network — the demo is self-contained. The engine writes no record for a
+   * `null`, which
    * keeps `?demo=1` at exactly zero requests — `demo-zero-network.test.ts` asserts it.
    *
    * It is on the ADAPTER rather than beside the surfaces because there are four surfaces
@@ -91,7 +92,8 @@ export interface EngineAdapter {
    * `POST /messages/:id/unsubscribe` — RFC 8058 one-click, performed SERVER-SIDE (the reader's
    * IP and reading time never reach the sender). Optional for the reason `searchServer` is:
    * absence is a real answer. The FixturesAdapter has no server and must issue zero requests
-   * (invariant #6), so it keeps NOT having this, and a surface reads its absence as "this client
+   * — the demo is self-contained — so it keeps NOT having this, and a surface reads its absence
+   * as "this client
    * cannot unsubscribe" — offering no control rather than a dead one. A refusal THROWS (carrying
    * the server's sentence); a 2xx resolves the outcome. The URL is never a parameter — the server
    * reads it from the message's stored headers, which is what keeps this off the SSRF surface.
@@ -108,7 +110,8 @@ export interface EngineAdapter {
   //
   // ALL THREE ARE OPTIONAL, for the reason `searchServer` is: absence is a real answer. The
   // FixturesAdapter has no server to fetch from, and a `?demo=1` tab must issue zero requests
-  // (invariant #6) — so it must keep NOT having these, and the surface reads their absence as
+  // — the demo is self-contained — so it must keep NOT having these, and the surface reads
+  // their absence as
   // "this client cannot open attachments" instead of rendering a control that cannot work.
 
   /**

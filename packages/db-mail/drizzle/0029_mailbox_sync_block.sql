@@ -43,7 +43,8 @@
 -- in the worker — a code change either way — so the migration lands in the same slice as the code
 -- that emits it, and the ordering problem 0023 was avoiding cannot arise.
 --
--- So it gets a CHECK, like `disabled_reason` and unlike `error_code`. Same GOALS #9 reasoning as
+-- So it gets a CHECK, like `disabled_reason` and unlike `error_code`. Same account-isolation
+-- reasoning as
 -- 0027: the column is read by the account's own user and by the admin console, and the write site
 -- being allowlisted (`markMailboxSyncBlocked`) is the half that only holds for today's tree. The
 -- constraint is the half that survives a call site nobody has written yet.

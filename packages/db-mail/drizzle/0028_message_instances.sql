@@ -57,11 +57,13 @@
 -- It reads `messages.native_locator` — a value ingest itself wrote, unchanged — and re-states it
 -- in columns. It computes nothing. A FINGERPRINT backfill would compute, and it would compute a
 -- DIFFERENT answer than ingest does for the same message: `message_bodies.text` is redacted for
--- sensitive mail (GOALS #1), `html` has been through `prepareHtmlForStorage` and a 256 KiB cap,
+-- sensitive mail, which is stored redacted by design, `html` has been through
+-- `prepareHtmlForStorage` and a 256 KiB cap,
 -- `attachments` has no content digest before this migration, and `messages.to_addresses` is NEVER
 -- WRITTEN. Every row such a job touched would carry a key ingest cannot reproduce, so the first
 -- re-observation of that mail would insert a SECOND `messages` row — which no delta ever removes
--- (GOALS #4) — and mint a second `threads` row with it, because the re-entry guard in
+-- (the delta stream is append-only per account) — and mint a second `threads` row with it,
+-- because the re-entry guard in
 -- `pipeline.ts` is `stored.thread_id` and a brand-new row has none. The key format therefore
 -- migrates at READ time, per message, on the one path that holds the raw bytes: the dual-key
 -- lookup in `planChange`. `dedup_key NOT LIKE 'fp1:%'` is its progress query, and it only ever

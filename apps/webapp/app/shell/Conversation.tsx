@@ -39,7 +39,8 @@
  * ── BOUNDING, AND WHY THERE IS NO ACCORDION ─────────────────────────────────────────────
  *
  * Every message on the thread renders in full. Not "the newest five and a count": a count
- * standing in for mail nobody can open is the collapse invariant #6 forbids, and it is the
+ * standing in for mail nobody can open is the collapse this product forbids outright, and it is
+ * the
  * exact shape of the "N archived" placeholder this product refuses. The cost is bounded by
  * what the mirror actually holds, which for a SIBLING is the snippet.
  *

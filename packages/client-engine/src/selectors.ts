@@ -117,7 +117,7 @@ function byDateAsc(a: EngineMessage, b: EngineMessage): number {
  *
  * ── PROTECTED MAIL IS NOT SPECIAL-CASED HERE, DELIBERATELY ─────────────────────────────
  *
- * A sensitive message's stored body is redacted server-side (invariant #1), so the text
+ * A sensitive message's stored body is redacted server-side, so the text
  * this returns for one is already safe — and `message.protected` is routed through
  * `ProtectedBlock` by the SURFACE, unchanged, which is where that decision has always
  * lived. Moving it in here would mean two places deciding what a protected message shows,
@@ -465,7 +465,7 @@ function heldOf(reader: EntityReader, m: EngineMessage, now: Date): ScreenerHeld
  * none, so it sees pure derivation; the demo world keeps its richer DTOs (AI
  * suggestions, full bodies, spam detection metadata) exactly as before.
  *
- * NO-COLLAPSE (invariant #6): `held` enumerates EVERY message the sender has in that
+ * NO-COLLAPSE: `held` enumerates EVERY message the sender has in that
  * folder — there is no count standing in for mail nobody can open.
  *
  * ── A WAITING ROW'S REPRESENTATIVE, AND THE FLAG THAT SAYS WHERE IT REALLY IS ─────────────

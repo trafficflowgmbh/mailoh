@@ -50,7 +50,7 @@
 --
 -- ══ IT MOVES NO MAIL. IT WRITES AN INTENT. ═══════════════════════════════════════════════
 --
--- GOALS #3: the API never opens IMAP to apply organization, and neither does this pass. It
+-- The API never opens IMAP to apply organization, and neither does this pass. It
 -- writes `folder_state.desired_folder` plus a `move` change and stops; the worker's reconcile
 -- pass performs the physical move on its next cycle, through the one code path that already
 -- knows how to do it crash-safely. `rule-retro.no-imap.test.ts` fails if a client is

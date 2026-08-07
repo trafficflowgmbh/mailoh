@@ -148,7 +148,7 @@ export function ReadsView({
    *
    * NEITHER FETCHES THE PILE. `partition.fresh` plus `partition.seen` is the whole of Reads,
    * and a mount that fetched all of it would be a pile-wide prefetch billed per message for
-   * mail nobody looked at — which GOALS #10 forbids (no API cost without revenue behind it).
+   * mail nobody looked at — and there is no API cost without revenue behind it.
    * Its posture is explicit-intent fetches, and a card the reader has reached — as the cursor
    * or as lookahead — is the smallest honest unit of that. Both paths go through the same
    * idempotent, single-flight `hydrateBody`, so the two triggers never double-spend.

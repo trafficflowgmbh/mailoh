@@ -54,7 +54,8 @@
 --
 -- The pass writes `folder_state.desired_folder` and a `move` change and stops. The physical IMAP
 -- move is the worker's reconcile pass, on its next cycle, through the one code path that already
--- knows how to do it crash-safely. The mailbox is the master (GOALS #3): nothing in the API tier
+-- knows how to do it crash-safely. The IMAP mailbox is the master and the API never opens IMAP
+-- to apply organization: nothing in the API tier
 -- and nothing in this pass opens an IMAP connection, and `sensitive-rescreen.no-imap.test.ts`
 -- asserts it by failing the test if a client is constructed.
 --

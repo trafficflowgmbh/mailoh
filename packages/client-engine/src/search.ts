@@ -161,7 +161,7 @@ export class SearchIndex {
    */
   add(m: EngineMessage, hydrated?: string): void {
     this.messages.set(m.id, m);
-    // INVARIANT #1 — a PROTECTED message's raw body is never indexed, and never counted as
+    // A PROTECTED message's raw body is never indexed, and never counted as
     // covered. `store.ts` and `engine.ts` purge the cached `message_body` on the protect
     // transition and on load, so `hydrated` is normally already gone by the time `build` runs;
     // withholding `whole` here refuses to index the full text even if a record briefly survives
@@ -172,8 +172,9 @@ export class SearchIndex {
     for (const t of tokenize(m.subject)) this.index(t, m.id, FIELD_WEIGHT.subject);
     for (const t of tokenize(`${m.from.name ?? ""} ${m.from.address}`)) this.index(t, m.id, FIELD_WEIGHT.from);
     // The snippet IS indexed, protected or not: it is a REDACTED preview for a sensitive message
-    // (server-side, invariant #1), so it carries no secret, the two strings are not always
-    // prefix-related, and dropping it would lose terms on exactly the rows the invariant governs.
+    // (server-side, where sensitive mail is stored redacted), so it carries no secret, the two
+    // strings are not always prefix-related, and dropping it would lose terms on exactly the rows
+    // the redaction rule governs.
     for (const t of tokenize(`${m.snippet} ${whole ?? ""}`)) this.index(t, m.id, FIELD_WEIGHT.text);
   }
 

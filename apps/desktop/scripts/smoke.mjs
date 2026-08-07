@@ -13,7 +13,7 @@
  *   2. it draws: the rail, all eight views' entry points and real fixture mail
  *      are in the DOM, not an empty <div id="root">;
  *   3. nothing collapsed: no "N more" style placeholder stands in for mail
- *      (invariant #6 — the same rule the Swift audit enforces);
+ *      (all mail is always rendered, never summarised into a count);
  *   4. it is offline: the document requested nothing but its own two local
  *      files, and calling `fetch` from inside the page throws.
  *
@@ -206,7 +206,7 @@ check(
   /invented mail/i.test(text) && /nothing leaves this tab/i.test(text),
 );
 
-/* ── 3 · nothing collapsed (invariant #6) ──────────────────────────────── */
+/* ── 3 · nothing collapsed: every message renders in full ──────────────── */
 const collapsed = text.match(/\b\d+\s+(more|others?|collapsed|hidden)\b/i);
 check("no collapsed-mail placeholder", collapsed == null, collapsed?.[0] ?? "");
 

@@ -196,7 +196,8 @@ export function useMessageAttachments(
   useEffect(() => {
     if (!available || !messageId) return;
     // Metadata only: `cost: "read"`, one indexed row read, nothing reaches IMAP. The bytes
-    // are a separate, deliberate act — never speculative, never per row (invariant #10).
+    // are a separate, deliberate act — never speculative, never per row, because a paid fetch
+    // needs a person behind it.
     void engine.loadAttachments(messageId);
     return () => engine.releaseAttachments(messageId);
   }, [engine, messageId, available]);

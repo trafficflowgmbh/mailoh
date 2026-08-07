@@ -35,7 +35,7 @@ export const StreamShell = forwardRef<
      * A card has come within a lookahead of the viewport — hydrate it. Optional: a stream with
      * no bodies to fetch (Receipts today, the demo, a test) leaves it off and no observer is
      * armed. This is the ONLY viewport-driven fetch trigger; it is per-card and fires once per
-     * id, never pile-wide (GOALS #10's explicit-intent posture).
+     * id, never pile-wide: a paid fetch follows a person's explicit intent, never a scroll.
      */
     onNear?: (id: string) => void;
     /** Changes re-scan the container for [data-unseen] cards. */

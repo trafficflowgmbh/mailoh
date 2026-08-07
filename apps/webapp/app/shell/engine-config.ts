@@ -15,7 +15,8 @@ import { createSyncGate, registerSyncGate } from "./sync-scheduler";
  * pulls in React and the whole provider. `demo-gate.test.ts` could therefore only assert
  * the demo promise STRUCTURALLY — by matching source text — which proves the code says the
  * right thing and not that it does it. The promise is "`?demo=1` ⇒ fixtures only, zero
- * network, nothing leaves this tab" (invariants #6 and #8), and that is a claim about
+ * network, nothing leaves this tab" — a self-contained surface makes no external request at
+ * all — and that is a claim about
  * BEHAVIOUR: the only convincing test constructs the engine, runs it, and watches the
  * network.
  *

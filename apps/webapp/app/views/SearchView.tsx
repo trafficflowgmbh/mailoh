@@ -74,8 +74,9 @@ interface MergedHit {
 /**
  * One archive request per SETTLED query, never per keystroke.
  *
- * `GET /search` is `cost: "read"` and so is not gated for an unverified account, but invariant
- * #10 is about volume, not class: a request per keystroke would be ~7 RRF queries for the word
+ * `GET /search` is `cost: "read"` and so is not gated for an unverified account, but the rule
+ * against API cost with no revenue behind it is about volume, not class: a request per keystroke
+ * would be ~7 RRF queries for the word
  * "invoice" against a table that joins `message_bodies`. The local pass is what covers the
  * typing; this covers the question.
  */

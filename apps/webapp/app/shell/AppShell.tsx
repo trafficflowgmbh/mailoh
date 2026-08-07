@@ -274,8 +274,9 @@ export function openTargetFor(
  * argument. Every consumer's type is `(id, opts?: { retry?: boolean }) => void` and four of them
  * (`MessagePane`, `ScreenerView`, `ReadsView`, `ReceiptsView`) pass `{ retry: true }` from a
  * human pressing "try again". `OhmailEngine.hydrateBody` re-asks a FAILED body ONLY under that
- * flag (`engine.ts` — an automatic trigger must never re-poll a server that refused, invariant
- * #10), so with the flag dropped every retry button in the app was inert: a held message whose
+ * flag (`engine.ts` — an automatic trigger must never re-poll a server that refused, because a
+ * retry loop nobody asked for is API cost with nobody behind it), so with the flag dropped every
+ * retry button in the app was inert: a held message whose
  * body 500'd could not be recovered without reloading the tab, and in the Screener that is a
  * consent decision left standing on a one-line snippet. The declared type accepted `opts` and the
  * implementation ignored them — the "type-level guard that silently does not guard", so it is a
@@ -3186,7 +3187,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
          * makes a second press within one tick a no-op is a ref inside that hook
          * (`mail-send.ts:203-215`, which names a Reply Run step as exactly the caller a
          * button's `disabled` cannot save), and a second key is a second reservation and a
-         * second delivery to a real person. Invariant #2.
+         * second delivery to a real person. The send path never delivers twice.
          *
          * ── AN EMPTY TEXTAREA ───────────────────────────────────────────────────────────
          *

@@ -554,7 +554,8 @@ export function MessagePane({
    * NOTHING HERE TOUCHES THE WIRE. The payload is still `{inReplyTo, body}` with `body`
    * exactly what was typed (`http-adapter.ts` `mailSend`); quoting the parent would put its
    * text into outgoing mail, and a sensitive parent carries `no_forward` with a redacted
-   * stored body (invariant #1). This slice changed what the SCREEN shows and nothing else.
+   * stored body — sensitive mail is never forwarded and never stored unredacted. This slice
+   * changed what the SCREEN shows and nothing else.
    */
   const showConversation = conversation.length > 0;
 
@@ -628,7 +629,7 @@ export function MessagePane({
   const body = chrome.bodyOf(message);
 
   /**
-   * INVARIANT #1, AND IT IS THIS BRANCH.
+   * A PROTECTED MESSAGE RENDERS NO TEXT, AND IT IS THIS BRANCH THAT MAKES IT TRUE.
    *
    * `isProtected` is checked FIRST and `body` is not consulted inside it: a protected
    * message renders the block and no text at all, whatever the mirror or a hydration
@@ -682,7 +683,7 @@ export function MessagePane({
   /*
    * The strip travels WITH the body, so every place that renders the focused message
    * gets it and none of them has to remember. `isProtected` gates it for the same reason the
-   * body is gated above: invariant #1 says this pane renders no protected content, and a file
+   * body is gated above: this pane renders no protected content at all, and a file
    * a sender attached is content.
    */
   const attachments = isProtected ? undefined : chrome.attachments;
@@ -851,7 +852,8 @@ export function MessagePane({
       ) : (
         // `focusedBody`, not `isProtected ? focusedBody : undefined`. The `undefined` arm
         // was what fell through to `ReadingPane`'s own `body` string; `focusedBody` already
-        // answers both cases, and invariant #1 is unmoved — it is decided where it always was,
+        // answers both cases, and the protected rule is unmoved — it is decided where it
+        // always was,
         // by the `isProtected` branch at the top of this component, which is still first and
         // still never consults `body`.
         focusedMessage
