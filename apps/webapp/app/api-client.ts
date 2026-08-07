@@ -233,6 +233,25 @@ export interface CreateMailboxBody {
     };
 }
 
+export interface UpdateMailboxBody {
+    displayName?: string | null;
+    status?: "connected" | "disabled";
+    imap?: {
+        host?: string;
+        port?: number;
+        secure?: boolean;
+        user?: string;
+        pass: string;
+    };
+    smtp?: {
+        host?: string;
+        port?: number;
+        secure?: boolean;
+        user?: string;
+        pass: string;
+    };
+}
+
 export const mailboxes: {
     list: () => Promise<{
         items: MailboxDTO[];
@@ -241,6 +260,7 @@ export const mailboxes: {
         status: string;
     }>;
     create: (b: CreateMailboxBody) => Promise<MailboxDTO>;
+    update: (id: string, b: UpdateMailboxBody) => Promise<MailboxDTO>;
     organizer: (id: string) => Promise<OrganizerPeek>;
     takeover: (id: string) => Promise<MailboxTakeover>;
 } = absent;
@@ -298,6 +318,7 @@ export interface ScreeningPreferenceWire {
     ohboxPolicy: "people_only" | "people_and_replied" | null;
     ohboxBar: string | null;
     defaultBar: string;
+    screenerAutoApply: boolean;
 }
 
 export const screeningSettings: {
@@ -305,6 +326,7 @@ export const screeningSettings: {
     set: (body: {
         ohboxPolicy?: ScreeningPreferenceWire["ohboxPolicy"];
         ohboxBar?: string | null;
+        screenerAutoApply?: boolean;
     }) => Promise<ScreeningPreferenceWire>;
 } = absent;
 
