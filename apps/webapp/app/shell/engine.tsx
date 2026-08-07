@@ -14,6 +14,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -93,6 +94,11 @@ interface EngineBinding {
  * is not weakened by one step: an answer that does not match, or does not come, tears the engine
  * down and lands on the same refusal surface as before.
  *
+ * "Immediately" means the first frame the browser paints, and NOT the first render — the server
+ * rendered this page without that cookie, so the render that hydrates its markup has to say what
+ * the server said. See `browserPass` below for the one render of difference and why it costs
+ * nothing.
+ *
  * `resolving` is still the honest state for a browser with no remembered account, and it is the
  * only state the desktop client ever takes here.
  */
@@ -124,6 +130,22 @@ function resolveDemo(serverDemo: boolean): boolean {
   return isDemoRequested(window.location.search);
 }
 
+/**
+ * `useLayoutEffect` in a browser; `useEffect` where there is nothing to lay out.
+ *
+ * The choice is made ONCE, at module scope, because React requires the hooks a component calls to
+ * be the same on every render — a condition inside the component would be a different hook on the
+ * server and in the browser. Rendering `useLayoutEffect` on a server is also a warning in its own
+ * right ("it does nothing there"), and it is a fair one: there is no commit and no paint, so the
+ * effect that runs is neither.
+ *
+ * What the browser branch buys is the ORDER. A layout effect runs inside the commit, before the
+ * browser paints and before passive effects, so a state flip made there is on screen in the same
+ * frame — which is the whole reason the warm open can be moved off the hydration render without
+ * anybody seeing an extra one.
+ */
+const useAfterHydration = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
 export function EngineProvider({
   demo: serverDemo,
   engine: provided,
@@ -136,6 +158,14 @@ export function EngineProvider({
   resolveOwner?: OwnerResolver;
   children: ReactNode;
 }) {
+  // A mode change after mount (a client-side navigation from `/` to `/?demo=1`, or the
+  // reverse) must REPLACE the engine, not keep the one built for the other mode. Capturing
+  // it once was how a live→demo navigation kept the network engine alive behind a page that
+  // says "nothing leaves this tab". Turning the demo OFF drops back to `"resolving"` rather
+  // than to a live engine, because the account id has to be re-established before anything
+  // may touch persistence again.
+  const desired = resolveDemo(serverDemo);
+
   /**
    * The initializer runs during the FIRST render on each side — which on the client is the
    * hydration render, where `window.location` is already the user's real URL. So the DEMO
@@ -143,20 +173,8 @@ export function EngineProvider({
    * single request) can run: there is no window in which a `?demo=1` page holds an
    * HttpAdapter, and the demo still paints without waiting for anything.
    *
-   * The LIVE engine is built here TOO, but only when the browser remembers whose mailbox it
-   * holds. `readOwner()` is a synchronous cookie read with no side effects, which is what makes
-   * it legal in a render and what makes the mirror paint in the first frame instead of after a
-   * round trip. It is the same shape of decision the demo takes one line above: a browser-only
-   * source, read where the browser's real state is guaranteed to exist.
-   *
-   * Two conditions gate it, and both are load-bearing:
-   *
-   *  · a remembered id. Without one there is no name for the mirror, and guessing one is the
-   *    bug this whole seam exists to prevent. `"resolving"` is that fact, spelled.
-   *  · a `resolveOwner`. A build with no way to ASK cannot be allowed to open a mailbox on a
-   *    cookie alone — the confirmation is what makes the optimism safe, so a client that cannot
-   *    confirm does not get to be optimistic. This is also what keeps the desktop client, which
-   *    passes no resolver and has no cookie either, on exactly the path it was on.
+   * `"resolving"` is what everything else starts as, INCLUDING a browser that remembers whose
+   * mailbox this is. The warm open is one render later and {@link browserPass} is why.
    */
   const [binding, setBinding] = useState<Binding>(() => {
     const demo = resolveDemo(serverDemo);
@@ -173,18 +191,70 @@ export function EngineProvider({
      * mailbox; there is no owner to look up and no session to confirm.
      */
     if (provided) return { status: "ready", demo: false, engine: provided };
-    const remembered = resolveOwner ? readOwner() : null;
-    if (remembered === null) return { status: "resolving" };
-    return { status: "warm", owner: remembered, engine: createEngine(false, undefined, remembered) };
+    return { status: "resolving" };
   });
 
-  // A mode change after mount (a client-side navigation from `/` to `/?demo=1`, or the
-  // reverse) must REPLACE the engine, not keep the one built for the other mode. Capturing
-  // it once was how a live→demo navigation kept the network engine alive behind a page that
-  // says "nothing leaves this tab". Turning the demo OFF drops back to `"resolving"` rather
-  // than to a live engine, because the account id has to be re-established before anything
-  // may touch persistence again.
-  const desired = resolveDemo(serverDemo);
+  /**
+   * ═══ THE HYDRATION RENDER BELONGS TO THE SERVER, AND EXACTLY ONE THING HERE FORGOT ═══════
+   *
+   * `false` on the first render on each side, `true` from the second on the client — a
+   * deliberate boundary between "what both sides can know" and "what only a browser knows".
+   *
+   * ── WHAT IT FIXES ────────────────────────────────────────────────────────────────────────
+   *
+   * The warm open used to happen in the initializer above: `readOwner()` in the first render,
+   * which on the client is the HYDRATION render. The server cannot read that cookie and so had
+   * rendered the near-empty session gate, while the client's first render produced the entire
+   * mail client. React compares the two, finds a different tree at every level, and reports it —
+   * eight hydration mismatches and one "the whole root is switching to client rendering" per
+   * signed-in load. That last one is not a warning: it THROWS AWAY the server's markup and
+   * re-renders everything from scratch, which is a real cost paid on the exact load the warm
+   * open exists to make fast.
+   *
+   * ── WHY IT IS NOT A SUPPRESSED WARNING ───────────────────────────────────────────────────
+   *
+   * `suppressHydrationWarning` silences the report and keeps the mismatch, which here is the
+   * whole application: React would still discard and re-render. The divergence has to be moved,
+   * not muted, and the place to move it to is the boundary below — the first render matches
+   * because it makes the same claim the server made, and the browser's own knowledge is applied
+   * on the render after it.
+   *
+   * ── AND WHY IT COSTS NOTHING THE WARM OPEN WAS BUYING ────────────────────────────────────
+   *
+   * A LAYOUT effect, not a passive one. It runs in the same commit, before the browser paints,
+   * so the extra render is not a frame anybody sees: hydration commits the gate, this flips, the
+   * mail renders, and the first paint of the page is the mail. What the warm open promised was
+   * "paint from the device rather than wait for a round trip", and no round trip has moved.
+   */
+  const [browserPass, setBrowserPass] = useState(false);
+  useAfterHydration(() => {
+    setBrowserPass(true);
+  }, []);
+
+  /**
+   * THE WARM OPEN, one render after hydration.
+   *
+   * `readOwner()` is a synchronous cookie read with no side effects, which is what makes it
+   * legal in a render, and this is React's own "adjusting state when a prop changes" shape — the
+   * component re-renders before anything is committed, so nothing paints in between.
+   *
+   * Three conditions gate it, and every one is load-bearing:
+   *
+   *  · past the hydration render. See {@link browserPass}.
+   *  · a remembered id. Without one there is no name for the mirror, and guessing one is the
+   *    bug this whole seam exists to prevent. `"resolving"` is that fact, spelled.
+   *  · a `resolveOwner`. A build with no way to ASK cannot be allowed to open a mailbox on a
+   *    cookie alone — the confirmation is what makes the optimism safe, so a client that cannot
+   *    confirm does not get to be optimistic. This is also what keeps the desktop client, which
+   *    passes no resolver and has no cookie either, on exactly the path it was on.
+   */
+  if (browserPass && binding.status === "resolving" && !desired && !provided && resolveOwner) {
+    const remembered = readOwner();
+    if (remembered !== null) {
+      setBinding({ status: "warm", owner: remembered, engine: createEngine(false, undefined, remembered) });
+    }
+  }
+
   useEffect(() => {
     /**
      * A HOST THAT HANDS IN A DIFFERENT ENGINE IS SAYING "THIS IS A DIFFERENT MAILBOX NOW", and
@@ -239,6 +309,18 @@ export function EngineProvider({
    */
   useEffect(() => {
     if (binding.status !== "resolving" && binding.status !== "warm") return;
+    /**
+     * NOT ON THE HYDRATION COMMIT — and this line is what keeps the check to ONE request.
+     *
+     * The warm open is decided on the render after hydration ({@link browserPass}), so on the
+     * commit before it every browser looks like a browser with no remembered account. Asking
+     * there would spend a session check against `"resolving"` and then, a moment later, another
+     * one against the `"warm"` binding this effect's own dependency list would have re-run it
+     * for. Waiting one commit costs nothing — the flip is a layout effect, so it happens before
+     * the browser has painted — and it means the question is asked once, against the binding
+     * that is actually on screen.
+     */
+    if (!browserPass) return;
     // No resolver ⇒ this build cannot establish an owner, so it cannot open a persistent
     // mailbox. Refusing is the only correct answer; guessing an owner is the bug.
     if (!resolveOwner) {
@@ -303,7 +385,7 @@ export function EngineProvider({
     // the engine off it, and a dependency on the status alone would let this effect close over a
     // stale one. The early return above is what keeps that cheap — every binding that is not
     // `resolving` or `warm` re-runs the effect and leaves immediately.
-  }, [binding, resolveOwner]);
+  }, [binding, browserPass, resolveOwner]);
 
   /**
    * What the sync loop is doing. Only a LIVE engine ever moves it off its resting value —
