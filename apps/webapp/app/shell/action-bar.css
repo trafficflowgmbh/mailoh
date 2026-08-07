@@ -136,6 +136,21 @@
   transform: translateY(-1px);
 }
 
+/* "Pick a date" in the resurface panel — a capsule label wrapping a native date input, so the
+   OS picker does the calendar and the row keeps its own type. The input is borderless and
+   inherits, so only the value and the picker glyph show inside the capsule. */
+.abar-date { cursor: pointer; }
+.abar-date-input {
+  font: inherit;
+  font-size: 11.5px;
+  border: 0;
+  background: transparent;
+  color: var(--ink3);
+  cursor: pointer;
+  padding: 0;
+  min-width: 0;
+}
+
 .abar-b.primary {
   background: var(--accent);
   color: var(--on-accent);

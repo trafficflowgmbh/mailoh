@@ -13,7 +13,7 @@ import { AttachmentStrip } from "../components/AttachmentStrip";
 import { isPreviewable } from "../components/AttachmentPreview";
 import { MessageBody } from "../components/MessageBody";
 import { ConversationEntries, ConversationHead } from "./Conversation";
-import { PLACE_LABEL, avatarHue, displayTime, hueOf, initialsOf, metaLine, rowAddress, senderName, tagsOfMessage } from "./format";
+import { PLACE_LABEL, avatarHue, dayNine, dayValue, displayTime, hueOf, initialsOf, metaLine, nextWeekNine, rowAddress, senderName, tagsOfMessage, tomorrowNine } from "./format";
 import { InlineReply } from "./InlineReply";
 import { chordKeys, useBinding, useKeyPress } from "./keymap";
 import { useMessageChrome } from "./message-chrome";
@@ -41,6 +41,14 @@ export type MessageAction =
   | "later"
   | "aside"
   | "resurface"
+  /**
+   * Resurface AT a chosen instant. Plain `"resurface"` is the horizon-less default the keyboard
+   * and the palette still dispatch (the shell resolves it to next Friday); the popover on the
+   * bar's Resurface button feeds a specific ISO through this variant — tomorrow, next week, or a
+   * picked day. Encoded in the action rather than added as a second `onAction` argument for the
+   * reason `move:${MoveTarget}` is: every pass-through of `onAction` keeps compiling unchanged.
+   */
+  | `resurface:${string}`
   | "draft"
   | "unread"
   | `move:${MoveTarget}`;
@@ -81,7 +89,7 @@ export type BulkAction =
  * It was a `moving` boolean. A second disclosure (More) made two booleans able to
  * be true at once, which is a state the bar has no rendering for — a union cannot express it.
  */
-type BarPanel = "move" | "more";
+type BarPanel = "move" | "more" | "resurface";
 
 /**
  * A verb's keycap, READ FROM THE LIVE REGISTRY.
@@ -153,12 +161,15 @@ function Key({ chord }: { chord: string }) {
  */
 function ActionBar({
   message,
+  now,
   panel,
   onPanel,
   onAction,
   onScreen,
 }: {
   message: EngineMessage;
+  /** The clock the resurface presets are computed against — tomorrow/next week from here. */
+  now: Date;
   panel: BarPanel | null;
   onPanel: (next: BarPanel | null) => void;
   onAction: (action: MessageAction) => void;
@@ -216,7 +227,11 @@ function ActionBar({
         {t("actionSetAside")}
         <Key chord="e" />
       </button>
-      <button type="button" className="abar-b" onClick={() => onAction("resurface")}>
+      {/* Resurface OPENS A HORIZON CHOOSER — it is the one "not now" verb that answers "how
+          long?", so a single click cannot mean it. `b` still stands for it: the key is the
+          keyboard's quick default (the shell resolves plain `resurface` to next Friday), and
+          the panel is where a specific when is chosen. */}
+      <button type="button" className="abar-b" onClick={() => onPanel("resurface")}>
         {t("actionResurface")}
         <Key chord="b" />
       </button>
@@ -242,6 +257,49 @@ function ActionBar({
       </button>
     </>
   );
+
+  if (panel === "resurface") {
+    /**
+     * THE HORIZON CHOOSER — three ways to say when, feeding a concrete instant into the action.
+     *
+     * Tomorrow and next week are computed from `now` at 09:00 UTC (the hour every stored
+     * `bubbleUpAt` uses, so the label reads back the same). "Pick a date" is the native date
+     * input, floored at tomorrow so the picker cannot choose a horizon in the past. Each choice
+     * closes the panel and dispatches `resurface:<iso>`; the shell mutates and states the day.
+     */
+    const tomorrow = tomorrowNine(now);
+    const nextWeek = nextWeekNine(now);
+    const pick = (iso: string) => {
+      onPanel(null);
+      onAction(`resurface:${iso}`);
+    };
+    return (
+      <div className="abar">
+        <div className="abar-panel">
+          <span className="abar-lab">{t("resurfaceWhen")}</span>
+          <button type="button" className="abar-b abar-solo" onClick={() => pick(tomorrow)}>
+            {t("resurfaceTomorrow")}
+          </button>
+          <button type="button" className="abar-b abar-solo" onClick={() => pick(nextWeek)}>
+            {t("resurfaceNextWeek")}
+          </button>
+          <label className="abar-b abar-solo abar-date">
+            {t("resurfacePick")}
+            <input
+              type="date"
+              className="abar-date-input"
+              min={dayValue(tomorrow)}
+              aria-label={t("resurfacePick")}
+              onChange={(e) => e.currentTarget.value && pick(dayNine(e.currentTarget.value))}
+            />
+          </label>
+          <button type="button" className="abar-b" onClick={() => onPanel(null)}>
+            {t("moveCancel")}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (panel === "move") {
     return (
@@ -636,6 +694,7 @@ export function MessagePane({
       actions={
         <ActionBar
           message={message}
+          now={now}
           panel={panel}
           onPanel={setPanel}
           onAction={onAction}

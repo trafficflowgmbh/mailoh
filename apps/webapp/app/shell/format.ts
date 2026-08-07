@@ -119,7 +119,7 @@ export function resurfaceLabel(when: string): string {
   return `${WEEKDAY_SHORT[d.getUTCDay()]} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
 }
 
-/** The demo's resurface slot: the next Friday 09:00 UTC after `base`. */
+/** The resurface fallback: the next Friday 09:00 UTC after `base` (the keyboard/palette default). */
 export function nextFridayNine(base: Date): string {
   const d = new Date(base);
   let diff = (5 - d.getUTCDay() + 7) % 7;
@@ -127,6 +127,45 @@ export function nextFridayNine(base: Date): string {
   d.setUTCDate(d.getUTCDate() + diff);
   d.setUTCHours(9, 0, 0, 0);
   return d.toISOString();
+}
+
+/**
+ * ═══ THE RESURFACE HORIZONS ═════════════════════════════════════════════════════════════
+ *
+ * The action carries a chosen instant now, so the presets are computed here rather than baked
+ * at the one call site `nextFridayNine` used to serve. All land at 09:00 UTC — the same clock
+ * `nextFridayNine` picked and the hour every stored `bubbleUpAt` uses, so `resurfaceLabel`
+ * reads them back the same way whichever preset produced them.
+ */
+
+/** Tomorrow, 09:00 UTC. */
+export function tomorrowNine(base: Date): string {
+  const d = new Date(base);
+  d.setUTCDate(d.getUTCDate() + 1);
+  d.setUTCHours(9, 0, 0, 0);
+  return d.toISOString();
+}
+
+/** The coming Monday, 09:00 UTC — and never "later today": a Monday resolves to the next one. */
+export function nextWeekNine(base: Date): string {
+  const d = new Date(base);
+  let diff = (1 - d.getUTCDay() + 7) % 7; // 1 = Monday
+  if (diff === 0) diff = 7;
+  d.setUTCDate(d.getUTCDate() + diff);
+  d.setUTCHours(9, 0, 0, 0);
+  return d.toISOString();
+}
+
+/** A picked calendar day ("YYYY-MM-DD" from an `<input type="date">`) at 09:00 UTC. */
+export function dayNine(day: string): string {
+  const d = new Date(day);
+  d.setUTCHours(9, 0, 0, 0);
+  return d.toISOString();
+}
+
+/** The "YYYY-MM-DD" a date input wants, from an ISO instant — used to floor the picker at tomorrow. */
+export function dayValue(iso: string): string {
+  return iso.slice(0, 10);
 }
 
 export function senderName(m: EngineMessage): string {
