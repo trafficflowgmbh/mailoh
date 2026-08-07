@@ -16,11 +16,12 @@ import {
  * answers. This service names a gate it may be handed; it never builds one, and it must
  * compile in a deployment where no gate and no ledger exist. */
 import type { AiCreditGate } from "@trafficflow/db";
-import type { AdapterPort, ClassifierPort, Destination, NativeLocator } from "@trafficflow/core/mail";
-import { applyReconcileAction, effectForDestination } from "@trafficflow/core/mail";
+import type { AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy } from "@trafficflow/core/mail";
+import { applyReconcileAction, effectForDestination, resolveOhboxPolicy } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
+import { getScreeningPreference } from "./screening-preference.js";
 import { LearningService } from "./learning-service.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { Folder, Page, ScreenerItem } from "./dto/types.js";
@@ -182,32 +183,32 @@ const SUGGESTION_PROVENANCE = "screener_suggestion";
 const SUGGESTION_STATUS = "suggestion";
 
 /**
- * The most senders one purchase may cover.
+ * The most senders ONE `POST /screener/suggest` request may cover — the PER-REQUEST cap.
  *
  * A cap and not a truncation: over it the request is REFUSED (413), because a control that quotes
  * a price for the whole request and silently buys up to the cap has priced something the user did not do.
- * The client offers a ladder up to this number (`apps/webapp/.../screener-suggest.ts`,
- * `OFFERED_SIZES`), and every sender is spend-gated INDIVIDUALLY inside {@link ScreenerService.suggest}
- * — so a larger N costs proportionally more and never bypasses the credit check. The quote and
- * the charge both scale with N; neither is a per-batch shortcut.
+ * Every sender is spend-gated INDIVIDUALLY inside {@link ScreenerService.suggest} — so a larger N
+ * costs proportionally more and never bypasses the credit check. The quote and the charge both
+ * scale with N; neither is a per-batch shortcut.
  *
- * ── THIS IS LARGER THAN ONE SERVERLESS INVOCATION CAN CLASSIFY, AND THAT IS THE TRADE ────────
+ * ── SIZED TO FIT ONE SERVERLESS INVOCATION, ON PURPOSE ───────────────────────────────────────
  *
  * A real (non-dry) purchase of N senders makes N SERIAL model calls in the loop below, and the
- * Vercel host runs under `maxDuration = 60` (`apps/api-vercel/app/[[...path]]/route.ts`). At the
- * previous value of 50 a whole batch fit inside one invocation; 400 does not. It is bounded
- * anyway because the run is RESUMABLE by construction — spend and the stored suggestion are
- * written per message, before the next model call — so an invocation cut short bills only for
- * the senders it finished and leaves their answers on record. That request surfaces to the
- * client as a failure, and a later press (or the free `duplicate` retry, which re-asks nothing
- * already stored) continues from where it stopped rather than re-buying. A DRY RUN makes no
- * model call at all, so pricing a set of 400 is a single fast request whatever the cap is.
+ * Vercel host runs under `maxDuration = 60` (`apps/api-vercel/app/[[...path]]/route.ts`). 50 is
+ * the largest batch that classifies inside one invocation; a request larger than that is cut short
+ * with no progress the client can show. So this is the size of ONE request, not the size of one
+ * PURCHASE: the client's ladder offers batches well above it (up to its own `MAX_SUGGEST_BATCH`)
+ * and splits a purchase into several CAP-SIZED requests, pricing and buying each on its own
+ * (`apps/webapp/.../screener-suggest.ts`). Each request still fits the invocation, and the run
+ * is RESUMABLE per message anyway — spend and the stored suggestion are written before the next
+ * model call — so even a request cut short bills only what it finished and a re-press resumes for
+ * free (the `duplicate` retry re-asks nothing already stored). A DRY RUN makes no model call at
+ * all, so a cap-sized price is a single fast request.
  *
- * NOTE: the serverless deployment's dependency wiring still carries a comment describing the batch
- * as fitting inside a single invocation — true at the previous cap, stale at this one — and wants
- * the same correction.
+ * The client chunks a large selection into batches of this size, so a single request stays small
+ * enough to finish inside one invocation — a larger cap would risk a request that could not.
  */
-export const MAX_SUGGEST_SENDERS = 400;
+export const MAX_SUGGEST_SENDERS = 50;
 
 export interface ScreenerSuggestBody {
   /** The explicit sender set. Absent, empty or unparseable ⇒ 400; never "all". */
@@ -296,15 +297,15 @@ export interface ScreenerPage extends Page<ScreenerItem> {
     /** `senders.length × AI_ACTION_COST`. Stated, not implied. */
     credits: number;
     /**
-     * How many senders one `POST /screener/suggest` will accept —
-     * {@link MAX_SUGGEST_SENDERS}.
+     * How many senders one `POST /screener/suggest` will accept — {@link MAX_SUGGEST_SENDERS}.
      *
-     * It is published so the control's size ladder is bounded by READING this number rather than
-     * by hardcoding a constant that can drift. The webapp does not batch by the page at all — it
+     * It is published so the client learns the PER-REQUEST cap by READING it rather than
+     * hardcoding a constant that can drift. The webapp does not batch by the page at all — it
      * derives its Screener queue from the `/sync` mirror, which can hold far more than one page —
-     * so this cap is the only thing that tells it how large a single purchase may be. The cap now
-     * sits ABOVE `MAX_PAGE_LIMIT` (200), so a client that DID post a whole page back is under it
-     * rather than 413'd; the number remains the client's source of truth for the ladder's top.
+     * and it may offer a purchase LARGER than this cap; it then splits that purchase into requests
+     * of at most this many, pricing and buying each on its own (`screener-suggest.ts`). So this
+     * number is not the ladder's top — it is the size of one chunk of it, and the only thing that
+     * keeps a chunk under the 413.
      */
     maxPerRequest: number;
   };
@@ -460,8 +461,15 @@ export class ScreenerReadService {
     const windowed = await this.heldSenderPage(ctx, { after, limit: limit + 1 });
     const pageRows = windowed.slice(0, limit);
 
+    // The account's posture, resolved the same way the worker and the API read it — NULL/absent ⇒
+    // {@link resolveOhboxPolicy}'s lenient default. It changes only how a STORED verdict reads as
+    // Yes/No ({@link screenedOut}), never what was bought: a sender the model filed under Reads is
+    // "yes" while the posture is lenient and "no" once it is `people_only`, with no re-purchase.
+    const { ohboxPolicy } = await getScreeningPreference(ctx);
+    const posture = resolveOhboxPolicy(ohboxPolicy);
+
     // ONE extra query for the whole page, not one per row, and none at all for an empty page.
-    const stored = await this.storedSuggestions(ctx, pageRows.map((r) => r.messageId));
+    const stored = await this.storedSuggestions(ctx, pageRows.map((r) => r.messageId), posture);
 
     const items = pageRows.map((r) => toItem(r, stored.get(r.messageId) ?? null));
 
@@ -974,7 +982,7 @@ export class ScreenerReadService {
    * says the account leads every key, never a filter applied to a cross-account result.
    */
   protected async storedSuggestions(
-    ctx: ServiceContext, messageIds: string[],
+    ctx: ServiceContext, messageIds: string[], ohboxPolicy: OhboxPolicy,
   ): Promise<Map<string, ScreenerItem["aiSuggestion"]>> {
     const out = new Map<string, ScreenerItem["aiSuggestion"]>();
     if (messageIds.length === 0) return out;
@@ -996,7 +1004,7 @@ export class ScreenerReadService {
     for (const r of rows) {
       if (out.has(r.messageId)) continue;
       out.set(r.messageId, {
-        decision: screenedOut(r.destination, r.spam) ? "no" : "yes",
+        decision: screenedOut(r.destination, r.spam, ohboxPolicy) ? "no" : "yes",
         confidence: r.confidence ?? 0,
         rationale: r.rationale ?? "",
       });
@@ -1088,6 +1096,17 @@ export class ScreenerService extends ScreenerReadService {
       );
     }
 
+    // THE ACCOUNT'S OHBOX PREFERENCE, read ONCE for the whole call — the two axes the worker
+    // pipeline threads into `planChange`, mirrored here so a suggestion answers the same question
+    // routing does. The BAR (`ohboxBar`) reaches the model's USER turn on every classify below; the
+    // POSTURE tightens the Yes/No reading of what comes back ({@link screenedOut}). A NULL bar is
+    // OMITTED, never the UI placeholder — the truthy check the worker uses
+    // (the worker's `row?.bar ? … : omit`) — and a NULL posture resolves to the
+    // lenient default, so an account that set neither classifies exactly as before this change.
+    const pref = await getScreeningPreference(ctx);
+    const ohboxPolicy = resolveOhboxPolicy(pref.ohboxPolicy);
+    const ohboxBar = pref.ohboxBar ?? undefined;
+
     // ONE query for the whole set, and the representative per sender chosen by the SAME rule
     // `list` presents — otherwise the page prices one message and the purchase buys another.
     const rows = await this.heldRows(
@@ -1109,7 +1128,7 @@ export class ScreenerService extends ScreenerReadService {
     }
     // What is already bought. Read ONCE for the set, and the reason it is read at all is that a
     // `duplicate` costs the user nothing and costs US a model call.
-    const stored = await this.storedSuggestions(ctx, [...rep.values()].map((r) => r.messageId));
+    const stored = await this.storedSuggestions(ctx, [...rep.values()].map((r) => r.messageId), ohboxPolicy);
 
     const gate = this.credits?.(asTx(ctx), ctx.accountId);
     const suggestions: ScreenerSuggestion[] = [];
@@ -1170,6 +1189,11 @@ export class ScreenerService extends ScreenerReadService {
           snippet: r.snippet,
           headersDigest: "",
           fewShot: [],
+          // The account's own "who belongs in my Ohbox" words, into the model's USER turn only —
+          // the same field `planChange` threads on the routing path. Absent ⇒ omitted (never the
+          // placeholder), and `classifyUserPayload` drops a blank, so a NULL bar is byte-identical
+          // to the pre-bar request. It sharpens what the model proposes; it never itself files mail.
+          ohboxBar,
         });
       } catch (err) {
         console.error(`[screener] AI suggestion failed for message ${r.messageId}:`, err);
@@ -1184,7 +1208,7 @@ export class ScreenerService extends ScreenerReadService {
       suggestions.push({
         sender,
         messageId: r.messageId,
-        decision: screenedOut(result.destination, result.spam) ? "no" : "yes",
+        decision: screenedOut(result.destination, result.spam, ohboxPolicy) ? "no" : "yes",
         confidence: result.confidence,
         rationale: result.rationale,
       });
@@ -1287,9 +1311,28 @@ interface ClassifierResultLike {
   spam: boolean;
 }
 
-/** The Yes/No reading of a classifier verdict — ONE definition, written once and read once. */
-function screenedOut(destination: string, spam: boolean): boolean {
-  return spam || destination === "ohmail/Screened" || destination === "ohmail/Quarantine";
+/**
+ * The Yes/No reading of a classifier verdict, UNDER THE ACCOUNT'S OHBOX POSTURE — ONE definition,
+ * written once and read at both the fresh (`suggest`) and the stored (`storedSuggestions`) sites so
+ * a bought suggestion cannot read "no" when fresh and "yes" on the next page load.
+ *
+ * The two hard "no"s are posture-independent: spam, or a destination the model itself put beyond
+ * the gate (`ohmail/Screened` / `ohmail/Quarantine`).
+ *
+ * **POSTURE TIGHTENS "YES".** Under `people_only` the account keeps its Ohbox for real people and
+ * the service mail it actually acts on, so a first-contact sender the model files into an AUTOMATED
+ * pile (`ohmail/Reads` / `ohmail/Receipts`) is NOT admitted — it reads "no". This is the same two
+ * piles, and only those two, that `pipeline.ts`'s `people_only` demotion moves out of the Ohbox
+ * ({@link policyDemotion} → {@link headerHeuristic} answers Reads/Receipts); it never touches INBOX,
+ * the Screener, or a denial. The LENIENT default — `people_and_replied`, which every NULL preference
+ * resolves to via {@link resolveOhboxPolicy} — demotes nobody, so Reads/Receipts stay "yes" exactly
+ * as before this posture existed, and an account that never set a posture classifies as it did.
+ */
+function screenedOut(destination: string, spam: boolean, ohboxPolicy: OhboxPolicy): boolean {
+  if (spam || destination === "ohmail/Screened" || destination === "ohmail/Quarantine") return true;
+  if (ohboxPolicy === "people_only"
+    && (destination === "ohmail/Reads" || destination === "ohmail/Receipts")) return true;
+  return false;
 }
 
 /**
