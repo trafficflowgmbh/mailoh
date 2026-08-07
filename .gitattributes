@@ -1,0 +1,16 @@
+# THE UPDATER FIXTURES ARE BYTES, NOT TEXT.
+#
+# `src-tauri/src/updater_tests.rs` verifies a committed minisign signature over a
+# committed payload. The payload is 169 bytes of which exactly one is a newline,
+# and it contains no NUL — so git's own heuristic classifies it as text, and a
+# checkout on Windows (where the runners set core.autocrlf=true) rewrites that
+# one byte to CRLF. The file is then 170 bytes, the signature no longer covers
+# it, and `valid_payload_is_accepted` fails on the assert.
+#
+# That failure reads as "the pubkey and the fixture disagree", which is the one
+# thing it is not: the same commit passes on macOS and Linux and fails only on
+# Windows, because only Windows changed the bytes on the way in.
+#
+# `-text` means never convert, in either direction, on any platform. It is the
+# only correct setting for a file whose exact bytes are the thing under test.
+apps/desktop/test/fixtures/updater/* -text
