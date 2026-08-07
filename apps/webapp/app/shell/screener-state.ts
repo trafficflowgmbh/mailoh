@@ -30,11 +30,24 @@
  * beside it was clobbered as often as not. `POST /screener/:id` now takes
  * `dest`, all five destinations ride the decision itself, and the only thing
  * still composed on top is `mark_seen` for "&read" — a flag, not a folder.
+ *
+ * GATE-PHYSICAL vs PAST THE GATE (#116). `derived` is not the whole switch.
+ * The queue is built from the PROJECTED mirror, so a row can represent an
+ * active-undecided sender whose mail is physically in the INBOX and merely
+ * PRESENTED at the gate. A decide on that rep is a no-op that claims success —
+ * the server 404s it, the engine rolls it back with nothing sent. So `commit`
+ * re-reads the RAW mirror: a rep genuinely at `ohmail/Screener` takes the
+ * decide above; one that only presents there is routed PAST THE GATE, through
+ * the sender sheet's own `planScreeningChange`/`dispatchScreeningChange` —
+ * a `rule_create` (destination INBOX for a screen-in) with `applyRetro`,
+ * AWAITED so the toast is chosen from what the server returned. Once the rule
+ * lands, the whole sender's bag presents in the Ohbox with zero server moves.
  */
 import { useMemo, useReducer, useRef } from "react";
 import { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
+  physicalFolderOf,
   screenerSegments,
   senderKey,
   type EngineMessage,
@@ -45,6 +58,12 @@ import {
   type ScreenerSenderDTO,
 } from "@ohmail/client-engine";
 import type { SuggestionOverlay } from "./screener-suggest";
+import {
+  dispatchScreeningChange,
+  planScreeningChange,
+  senderScreening,
+} from "./sender-screening";
+import { PLACE_LABEL } from "./format";
 import {
   DECISION_DONE_LABEL,
   DECISION_QUIET,
@@ -207,6 +226,10 @@ export function useScreenerState(
   presented?: EntityReader,
 ): ScreenerState {
   const t = useTranslations("screener");
+  // The past-the-gate branch of `commit` speaks the sender-sheet's own sentences (`toastRuled`,
+  // `toastRuleFailed`, …), chosen from what the server actually returned — so it reads them from
+  // the `screening` namespace, exactly as `AppShell#changeScreening` does.
+  const ts = useTranslations("screening");
   const [, bump] = useReducer((c: number) => c + 1, 0);
   const store = useRef({
     pending: new Map<string, PendingEntry>(),
@@ -257,64 +280,88 @@ export function useScreenerState(
     }
     s.overrides.delete(id);
     const derived = entry.sender.derived === true;
-    // Spam must ride the NO branch on a derived row: `yes` is the verb that ADMITS a sender,
-    // and the server now refuses `{decision:"yes", dest:"ohmail/Quarantine"}` outright (400)
-    // rather than guessing which half the caller meant. The old "yes unless screened" mapping
-    // filed spam into the Ohbox on a live account, which is the failure that predicate exists
-    // for.
-    //
-    // Fixture rows keep the demo's own semantics — spam rides `yes` there, so the local effect
-    // materialises the held mail straight into Quarantine instead of moving the sender to the
-    // screened-out ledger. That pairing (`decision:"yes"` with `dest:"spam"`) is the one shape
-    // the server would refuse, and it cannot reach it: a fixture row exists only under
-    // `FixturesAdapter`, which serves `mutationEffects` in-process and never opens a socket.
-    const decision: "yes" | "no" =
-      entry.dest === "screened" || (derived && entry.dest === "spam") ? "no" : "yes";
     const heldIds = heldMessageIds(entry.sender);
 
-    void engine.mutate({
-      kind: "screener_decide",
-      senderId: id,
-      decision,
-      // ── THE DESTINATION RIDES THE DECIDE NOW, ON BOTH BRANCHES ────────────────────────────
-      //
-      // It used to be sent only on a `yes`, which left `spam` — the one destination that rides
-      // `no` on a derived row — with no way to say `ohmail/Quarantine`, so the server filed it
-      // to `ohmail/Screened` and the follow-up `move` below was supposed to finish the job.
-      // Sent unconditionally, the server files where the user pressed on all five.
-      dest: entry.dest as ScreenDest,
-      ...(decision === "yes" ? { read: entry.read } : {}),
-      scope: entry.scope,
-    });
+    // ── WHERE IS THE REPRESENTATIVE, ACTUALLY? READ THE RAW MIRROR ────────────────────────────
+    //
+    // The queue is built from the PROJECTED reader, in which an active-undecided sender's INBOX
+    // mail is PRESENTED in the Screener (`consentPartition`). A `screener_decide` on such a rep
+    // is a NO-OP that claims success — the exact #116 shape: `derivedScreenerEffects` returns
+    // nothing for a rep whose PHYSICAL folder is not `ohmail/Screener`, so `Engine.mutate` rolls
+    // it back WITHOUT sending, and the wire would 404 it anyway (`heldRowById` requires
+    // `desired_folder = 'ohmail/Screener'`). Every Aug-4 bulk-moved undecided+active sender is
+    // this shape.
+    //
+    // So the branch reads the RAW mirror (`engine.read()`), NEVER `queueReader` / the projected
+    // reader — that reader would report the INBOX rep AS gate-physical, which is the dangerous
+    // branch. A fixture (non-derived) row is always taken through the decide path: it is served
+    // in-process by `FixturesAdapter` and never opens a socket.
+    const rawRep = engine.read().get<EngineMessage>("message", id);
+    const gatePhysical =
+      !derived || (rawRep != null && physicalFolderOf(rawRep) === FOLDER_OF_VIEW.screener);
 
-    if (derived) {
-      // ── THE COMPENSATING `move` IS GONE, AND ITS ABSENCE IS THE FIX ──────────────────────
+    if (gatePhysical) {
+      // ── GATE-PHYSICAL: the decide, EXACTLY as before ────────────────────────────────────────
       //
-      // This used to fire one `move` per held message for any destination the wire could not
-      // name — Reads, Receipts, Quarantine — dispatched unawaited beside the decide. It lost:
-      // `decide` reads its held rows outside its transaction and then upserts `desired_folder`
-      // inside it, so a `move` that committed in that window was stamped back to the decide's
-      // own folder. The observable damage was a rule that named the decide's destination rather
-      // than the one the user picked, and bulk mail sitting in the Ohbox for senders the user
-      // had admitted with **Reads** — the wrong answer, persisted, with nothing to attribute it
-      // to.
+      // Spam must ride the NO branch on a derived row: `yes` is the verb that ADMITS a sender, and
+      // the server now refuses `{decision:"yes", dest:"ohmail/Quarantine"}` outright (400) rather
+      // than guessing which half the caller meant. The old "yes unless screened" mapping filed spam
+      // into the Ohbox on a live account, which is the failure that predicate exists for.
       //
-      // Two independent requests writing one field cannot be ordered into correctness from a
-      // browser, so the destination travels WITH the decision instead. The server also refuses
-      // to re-route a row that has left the gate, which is what protects a shipped desktop
-      // mirror that still composes the old pair.
+      // Fixture rows keep the demo's own semantics — spam rides `yes` there, so the local effect
+      // materialises the held mail straight into Quarantine instead of moving the sender to the
+      // screened-out ledger. That pairing (`decision:"yes"` with `dest:"spam"`) is the one shape the
+      // server would refuse, and it cannot reach it: a fixture row exists only under
+      // `FixturesAdapter`, which serves `mutationEffects` in-process and never opens a socket.
+      const decision: "yes" | "no" =
+        entry.dest === "screened" || (derived && entry.dest === "spam") ? "no" : "yes";
+      // The destination rides the decide on BOTH branches (SCR-READ), so the server files where the
+      // user pressed on all five; nothing is composed on top but "&read", which is a flag below.
+      void engine.mutate({
+        kind: "screener_decide",
+        senderId: id,
+        decision,
+        dest: entry.dest as ScreenDest,
+        ...(decision === "yes" ? { read: entry.read } : {}),
+        scope: entry.scope,
+      });
+    } else {
+      // ── PAST THE GATE: a rule, not a decide (#116) ──────────────────────────────────────────
       //
-      // "&read" survives, and deliberately: it is not a folder. `read` is still not a field on
-      // `POST /screener/:id`, so the seen half stays the same `PATCH /messages` batch the Ohbox
-      // uses — a flag, not a destination, so it cannot be clobbered by one.
-      if (entry.read) {
-        for (let i = 0; i < heldIds.length; i += MARK_SEEN_MAX) {
-          void engine.mutate({
-            kind: "mark_seen",
-            messageIds: heldIds.slice(i, i + MARK_SEEN_MAX),
-            unread: false,
-          });
-        }
+      // The sender's mail is physically in the INBOX (or spread), presented in the Screener
+      // because they are active and undecided. The decide cannot touch it, so a screen-IN goes
+      // through the SAME past-the-gate ladder the sender sheet uses: `rule_create` (destination
+      // INBOX for an Ohbox decision) with `applyRetro`, plus capped `move`s for anything not
+      // already in place. Once the rule lands in the mirror, `decidedDestination` → `placeOf =
+      // INBOX`, and the whole sender's bag presents in the Ohbox with ZERO server-side moves.
+      //
+      // Fed from the RAW-reader `senderScreening`, and the mutations are AWAITED so the toast is
+      // the one the server actually earned — never the unawaited "Ruled" over nothing this bug
+      // was. The decide path's own optimistic toast was already raised at `decide()` time; this
+      // confirms the real outcome when the undo window closes, and says so on a refusal.
+      const sender = senderScreening(engine.read(), id);
+      if (sender) {
+        const dest = entry.dest;
+        const plan = planScreeningChange(sender, dest, entry.scope, true);
+        const who = entry.scope === "domain" ? sender.domain : sender.address;
+        const place = PLACE_LABEL[dest] ?? dest;
+        void dispatchScreeningChange(plan, (m) => engine.mutate(m)).then((key) => {
+          toast(ts(key, { sender: who, place, count: plan.moved }));
+        });
+      }
+    }
+
+    // "&read" is a flag, not a folder, so it cannot be clobbered by either branch — a Yes files
+    // the sender's mail already-seen. `read` is still not a field on `POST /screener/:id`, so the
+    // seen half is the same `PATCH /messages` batch the Ohbox uses. Derived rows only; a fixture
+    // row's held ids are not message ids. It is clamped away for the demoting piles in `decide`.
+    if (derived && entry.read) {
+      for (let i = 0; i < heldIds.length; i += MARK_SEEN_MAX) {
+        void engine.mutate({
+          kind: "mark_seen",
+          messageIds: heldIds.slice(i, i + MARK_SEEN_MAX),
+          unread: false,
+        });
       }
     }
     bump();

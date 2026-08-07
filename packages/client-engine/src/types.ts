@@ -564,6 +564,21 @@ export interface ScreenerSenderDTO {
    * UI must not guess which kind of row it has.
    */
   derived?: true;
+  /**
+   * WHETHER THE REPRESENTATIVE IS PHYSICALLY AT THE GATE (`ohmail/Screener`) — waiting rows only.
+   *
+   * `screenerSegments` runs over the PROJECTED reader, in which an active-undecided sender's
+   * INBOX mail is PRESENTED in the Screener even though it never left the INBOX. Such a row's
+   * representative is physically in the INBOX, so `POST /screener/:id` would 404 it and
+   * `derivedScreenerEffects` refuses it locally — a decide on it is a no-op that claims success.
+   * `false` marks exactly that case, so the commit path routes the decision PAST THE GATE
+   * (`rule_create`) instead. `true` when the rep is genuinely held; absent on a fixture row.
+   *
+   * It is the observable record of that split, not its authority: `screener-state.ts#commit`
+   * re-reads the RAW mirror at commit time, because this DTO was computed at an earlier render
+   * and the projection can move under it.
+   */
+  gatePhysical?: boolean;
   updatedAt: ISODateTime;
 }
 

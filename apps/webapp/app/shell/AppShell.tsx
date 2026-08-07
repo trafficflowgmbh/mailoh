@@ -201,12 +201,18 @@ const LOCATE_TIMEOUT_MS = 2000;
 export type OpenTarget =
   | { kind: "ohbox"; id: string; reader: boolean }
   | { kind: "stream"; view: "reads" | "receipts"; id: string }
-  | { kind: "screener"; segment: ScreenerSegmentId; row: string | null }
+  // `row` is NON-NULL by construction: a Screener surface can only show a message THROUGH its
+  // sender row, so when no row is held the target is the reader instead — never a rowless
+  // screener arm. The type is the invariant `openTargetFor` keeps: it never names a surface
+  // that cannot show the message.
+  | { kind: "screener"; segment: ScreenerSegmentId; row: string }
   | { kind: "reader"; id: string };
 
 /**
  * @param narrow   the reading column is `display:none` — under 900px, `app.css`.
- * @param rowFor   the Screener row that speaks for this sender, or null when none is held.
+ * @param rowFor   the Screener row that speaks for this sender, or null when none is held. A
+ *                 null answer routes the hit to the READER, not to a rowless Screener queue —
+ *                 see the screener arm.
  * @param placeOf  the consent cutline's presentation map, or undefined when there is no
  *                 partition (demo, desktop, or before `GET /consent` lands). See below.
  *
@@ -245,7 +251,13 @@ export function openTargetFor(
   if (view === "screener" || view === "screened" || view === "spam") {
     const segment: ScreenerSegmentId =
       view === "screener" ? "waiting" : view === "screened" ? "screened" : "spam";
-    return { kind: "screener", segment, row: rowFor(m, segment) };
+    const row = rowFor(m, segment);
+    // A Screener surface can only show a message THROUGH its sender row. When this client holds
+    // no row for the sender — an archive-only hit, or a sender the queue does not mint one for —
+    // naming the segment would drop the user at a list the message is not in and flash nothing.
+    // So fall to the reader, in place: the same answer History gives a pile-less hit, and the
+    // invariant that `openTargetFor` never names a surface that cannot show the message.
+    return row ? { kind: "screener", segment, row } : { kind: "reader", id: m.id };
   }
   // A folder no view owns. `Folder` is a closed six-member union today, so this is not
   // reachable from the wire — see `openMessage` for why it is written anyway.
@@ -1828,7 +1840,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    *     you at a queue of strangers when you asked about one of them. Reached whenever the
    *     PRESENTATION is the Screener, which is not the same set as "physically in a Screener
    *     folder" — an undecided sender's INBOX mail lands here, which is the whole of the
-   *     presentation fix (`openTargetFor`).
+   *     presentation fix (`openTargetFor`). A hit whose sender the queue holds NO row for is
+   *     routed to the reader instead of a rowless queue — see `openTargetFor`.
    *   · **History, or a folder this client has no view for** — the reader, over wherever you
    *     are. History is now a REACHABLE case, not just the defensive one: a dormant-undecided
    *     message presents in History (`placeOf` is `null`), belongs to no pile, and so opens in
@@ -1857,13 +1870,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           go(target.view);
           return;
         case "screener":
-          if (target.row) {
-            const row = target.row;
-            setScnSel((s) => ({ ...s, [target.segment]: row }));
-            // The SENDER row's id, not the message's: that is what this view puts in
-            // `data-id`, and the flash has to name the thing on screen.
-            setLocated(row);
-          }
+          // `target.row` is non-null by construction (see `OpenTarget`): a rowless screener hit
+          // is routed to the reader by `openTargetFor`, never here.
+          setScnSel((s) => ({ ...s, [target.segment]: target.row }));
+          // The SENDER row's id, not the message's: that is what this view puts in
+          // `data-id`, and the flash has to name the thing on screen.
+          setLocated(target.row);
           goScreener(target.segment);
           return;
         default:

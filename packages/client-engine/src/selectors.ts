@@ -413,34 +413,36 @@ function heldOf(reader: EntityReader, m: EngineMessage, now: Date): ScreenerHeld
  * NO-COLLAPSE (invariant #6): `held` enumerates EVERY message the sender has in that
  * folder — there is no count standing in for mail nobody can open.
  *
- * ── A WAITING ROW'S REPRESENTATIVE MUST BE PHYSICALLY AT THE GATE ─────────────────────────
+ * ── A WAITING ROW'S REPRESENTATIVE, AND THE FLAG THAT SAYS WHERE IT REALLY IS ─────────────
  *
  * When this runs over a PROJECTED reader (`presentationReader`), the waiting bucket also holds
  * mail that is physically in the INBOX: `consentPartition` presents an active undecided sender's
  * INBOX mail in the Screener, because a decision about that sender is genuinely wanted. Grouping
- * is right to include it — but the ROW ID may not come from it.
+ * is right to include it, and the ROW MUST STILL BE MINTED — but where its id comes from decides
+ * how the decision is carried out.
  *
- * The row id is the message `POST /screener/:id` resolves, and both ends of that call require
- * the message to be physically at the gate. `heldRowById` inherits `desired_folder =
- * 'ohmail/Screener'`, so an INBOX message id is a 404 on the wire; and `derivedScreenerEffects`
- * refuses locally for the same reason (`mutations.ts` — `rep.folder !== FOLDER_OF_VIEW.screener`
- * ⇒ no effects). A row minted on an INBOX representative therefore RENDERS EVERY CONTROL AND
- * PERFORMS NONE OF THEM, which is worse than not offering the row: the surface claims an act it
- * cannot carry out, and no test that only asserts the row exists can see it.
+ * The id is the message `POST /screener/:id` resolves, and both ends of that call require the
+ * message to be physically at the gate. `heldRowById` inherits `desired_folder = 'ohmail/Screener'`,
+ * so an INBOX message id is a 404 on the wire; and `derivedScreenerEffects` refuses locally for
+ * the same reason (`mutations.ts` — `rep.folder !== FOLDER_OF_VIEW.screener` ⇒ no effects). So the
+ * rep is the newest GATE-PHYSICAL message when the sender has any; otherwise `newestFirst[0]`, an
+ * INBOX message, and the row is marked `gatePhysical:false`.
  *
- * So the waiting rep is the newest message whose PHYSICAL folder is the Screener, and a sender
- * with none gets no waiting row at all. `held` still carries the sender's whole bag including
- * their INBOX mail — those ids feed `mark_seen` and `move`, which resolve against the engine's
- * own store by id and never read a folder off this reader.
+ * That flag is what keeps the row from "renders every control and performs none": the commit path
+ * (`screener-state.ts`) reads it — actually, re-reads the raw mirror — and routes a `gatePhysical:false`
+ * decision PAST THE GATE as a `rule_create` (destination INBOX for a screen-in) with `applyRetro`,
+ * so once the rule lands the sender's whole bag presents in the Ohbox with zero server moves. This
+ * is why the earlier gap — "a sender whose mail is ONLY in the INBOX is reachable only by search" —
+ * is now closed on the client, with no change to the gate's `desired_folder` predicate at the server.
+ *
+ * `held` still carries the sender's whole bag including their INBOX mail — those ids feed
+ * `mark_seen` and `move`, which resolve against the engine's own store by id and never read a
+ * folder off this reader.
  *
  * Inert over a raw mirror, which is why `screener-derived.test.ts` is untouched: without a
  * projection every waiting-bucket message already has `folder === 'ohmail/Screener'` and
- * `physicalFolder` is unset, so the filter keeps all of them and the rep does not move.
- *
- * KNOWN GAP, stated because the number is not zero: a sender whose mail is ONLY in the INBOX is
- * presented in the Screener by the partition and gets no row here, so their mail is reachable
- * only by search. Closing it needs the gate's `desired_folder` predicate to widen at the server,
- * which is a wire-contract change and not this function's to make.
+ * `physicalFolder` is unset, so the gate-physical rep IS `newestFirst[0]` and `gatePhysical` is
+ * true — the rep does not move and no past-the-gate branch is reached.
  */
 export function screenerSegments(reader: EntityReader, now: Date = new Date()): ScreenerSegments {
   const grouped: Record<ScreenerSegment, Map<string, EngineMessage[]>> = {
@@ -469,13 +471,16 @@ export function screenerSegments(reader: EntityReader, now: Date = new Date()): 
     const rows: Array<{ key: string; rep: EngineMessage; dto: ScreenerSenderDTO }> = [];
     for (const [key, bucket] of grouped[segment]) {
       const newestFirst = [...bucket].sort(byDateDesc);
-      // See the header: a WAITING row's id has to be a message the gate will resolve, so the
-      // representative comes from the sender's gate-physical mail even when a newer message of
-      // theirs is presented here from the INBOX. No gate-physical mail ⇒ no row.
-      const rep = segment === "waiting"
-        ? newestFirst.find((m) => (m.physicalFolder ?? m.folder) === FOLDER_OF_VIEW.screener)
-        : newestFirst[0];
+      // See the header. A WAITING row's id should be a message the gate can resolve, so the rep
+      // is the sender's newest GATE-PHYSICAL mail when they have any. When they have none — an
+      // active-undecided sender whose mail is all in the INBOX, PRESENTED here by the cutline —
+      // the row is STILL minted, on `newestFirst[0]`, and marked `gatePhysical:false` so the
+      // commit path routes it past the gate (a rule) rather than a decide that 404s. No longer
+      // suppressed: the sender is decidable rather than findable only by search.
+      const gateRep = newestFirst.find((m) => (m.physicalFolder ?? m.folder) === FOLDER_OF_VIEW.screener);
+      const rep = segment === "waiting" ? (gateRep ?? newestFirst[0]) : newestFirst[0];
       if (!rep) continue;
+      const gatePhysical = (rep.physicalFolder ?? rep.folder) === FOLDER_OF_VIEW.screener;
       const name = rep.from.name || rep.from.address;
       const repDate = rep.date ? new Date(rep.date) : null;
       rows.push({
@@ -498,6 +503,7 @@ export function screenerSegments(reader: EntityReader, now: Date = new Date()): 
             ? { screenedOn: `${repDate.getUTCDate()} ${MONTH_SHORT[repDate.getUTCMonth()]}` }
             : {}),
           derived: true,
+          gatePhysical,
           updatedAt: rep.updatedAt,
         },
       });
