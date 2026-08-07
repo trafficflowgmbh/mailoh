@@ -69,6 +69,7 @@ import {
   useEngineVersion,
   type OwnerResolver,
 } from "./engine";
+import { useOlderMail } from "./older-mail";
 import { PLACE_LABEL, avatarHue, firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
 import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
 import { AttachmentPreview } from "../components/AttachmentPreview";
@@ -569,6 +570,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     () => (consentView ? presentationReader(reader, consentView) : reader),
     [reader, consentView],
   );
+
+  /**
+   * MAIL FROM BEYOND WHAT THIS DEVICE KEPT — one keyset page at a time, on an explicit ask.
+   *
+   * The browser's mirror is a window over a server that still holds everything, so the bottom of
+   * a pile is a boundary rather than an end. This is how the Ohbox reaches past it; see
+   * `older-mail.ts` for why nothing fires speculatively and why the rows are never written to
+   * the mirror.
+   *
+   * Inert on a client whose mirror IS the mailbox: `listOlderAvailable()` is false for the demo
+   * and for the standalone desktop client, and the view renders no control at all in that case.
+   */
+  const older = useOlderMail(engine, "ohbox", version);
 
   /* ── engine-derived world (recomputed exactly when the mirror moves) ── */
   const ohbox = useMemo(() => ohboxView(presented), [presented, version]);
@@ -2722,6 +2736,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
                 bulk={bulkVerbs}
+                /* Mail from beyond what this device kept — see `shell/older-mail.ts`. Built in
+                   the shell because the hook needs the engine, and this view is mounted without
+                   one by several tests. It is inert on a client whose mirror IS the mailbox. */
+                older={older}
               />
             ) : null}
 

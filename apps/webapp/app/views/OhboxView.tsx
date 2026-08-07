@@ -23,6 +23,7 @@ import { PLACE_LABEL, avatarOf, rowAddress, displayTime, senderName, tagsOfMessa
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useMailState } from "../shell/MailStateProvider";
+import type { OlderMail } from "../shell/older-mail";
 import { MessagePane, MOVE_TARGETS, type BulkAction, type MessageAction, type MoveTarget } from "../shell/MessagePane";
 import type { ScreeningDest } from "../shell/sender-screening";
 import "../shell/action-bar.css";
@@ -78,6 +79,7 @@ export function OhboxView({
   onAction,
   onAddTag,
   bulk,
+  older,
 }: {
   /** Fixture world or a real mailbox — decides the "older mail" tail. See its use below. */
   demo: boolean;
@@ -124,6 +126,20 @@ export function OhboxView({
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
   /** The verbs a multi-selection offers. */
   bulk: BulkVerbs;
+  /**
+   * WHAT LIES BEYOND THE END OF THIS DEVICE'S WINDOW, and how to reach it. See
+   * `app/shell/older-mail.ts`.
+   *
+   * A PROP with no default, for the reason `settled` has none: the only safe default would be
+   * "there is nothing older", which is the sentence a windowed client must never say by
+   * accident. Required, and a caller that forgets it is a type error at the one shipped call
+   * site rather than a list that quietly stops at ninety days.
+   *
+   * It arrives from the shell rather than from a hook called here because this view is mounted
+   * with no engine at all by several tests, deliberately — the same seam every other engine
+   * fact on this pane comes through.
+   */
+  older: OlderMail;
 }) {
   const t = useTranslations("ohbox");
 
@@ -741,14 +757,78 @@ export function OhboxView({
         {/* The view's own fact — this list is empty — combined with a state derived once, up
             in the shell. `doorbellCount` is the Screener's waiting count, already a prop. */}
         {all.length === 0 ? <SyncState waiting={doorbellCount} settled={settled} /> : null}
-        {/* DEMO ONLY, and it was not. "Older mail stays on your server — find it in Search."
-            is true of Mila's fixture world, which holds a hand-made slice of a mailbox. It is
-            FALSE of a live account: the worker syncs every folder from cursor zero, so what is
-            on the server is what is in the mirror, and telling a paying customer their old
-            mail is somewhere else is the kind of claim CLAUDE.md forbids shipping. The
-            no-collapse rule (invariant #6) is satisfied either way — every message is a real
-            row above. */}
+        {/* MAIL FROM BEYOND WHAT THIS DEVICE KEPT.
+
+            Rendered BELOW the local window and under its own group label, because that is what
+            it is: rows that came from the server a moment ago and are not in the mirror. They
+            are not merged into "Earlier" — a reader who scrolls past the label has been told
+            where the boundary is, and a list that hid it would be claiming the device holds
+            more than it does.
+
+            They carry the mirror's own row wherever it has one (see `older-mail.ts`), so a
+            message somebody files here behaves exactly like one above the line. */}
+        {older.items.length > 0 ? (
+          <>
+            <ListGroupLabel>{t("olderTitle")}</ListGroupLabel>
+            <ListRows multiSelectable ariaLabel={t("olderTitle")}>{older.items.map(row)}</ListRows>
+          </>
+        ) : null}
+        {/* THE TAIL, AND IT SAYS THREE DIFFERENT TRUE THINGS DEPENDING ON THE CLIENT.
+
+            The demo keeps its own sentence. "Older mail stays on your server — find it in
+            Search." is true of Mila's fixture world, a hand-made slice of a mailbox with a
+            beginning; there is no server behind it to load anything from.
+
+            A client that keeps the WHOLE mailbox — the standalone desktop client — gets
+            nothing at all. Its list ends where its mail ends, and an affordance to load more
+            would be an offer it cannot keep. That is `older.available === false`, read from the
+            engine rather than guessed from the mode.
+
+            A windowed client gets the control and a sentence that says what it is offering.
+            That sentence used to be shipped to live accounts as a claim, unconditionally, and
+            it was FALSE then: the mirror held every message, so telling a paying customer their
+            old mail was somewhere else was a claim the code contradicted. It is true now, of
+            this client, because the mirror is a window — and it comes with the way back rather
+            than with a suggestion to go and search.
+
+            The no-collapse rule (invariant #6) is satisfied throughout: every message is a real
+            row, above the line or below it. */}
         {demo ? <div className="tail-row">{t("tail")}</div> : null}
+        {!demo && older.available ? (
+          <div className="tail-row" role="status">
+            {older.error !== null ? (
+              <>
+                {t("olderFailed", { reason: older.error })}{" "}
+                <button type="button" className="btn ghost" onClick={older.loadMore}>
+                  {t("olderRetry")}
+                </button>
+              </>
+            ) : older.loading ? (
+              <span className="mbx-wait">
+                <span className="mbx-spin" aria-hidden="true" />
+                {t("olderLoading")}
+              </span>
+            ) : (
+              <>
+                {/* THE HONEST COVERAGE LINE. Three states, and the one that must never be
+                    guessed is `exhausted`: "That is everything on your server" is a claim about
+                    somebody's whole mailbox, and it is said only because the server answered a
+                    page with no cursor after it. An empty page, a refusal and a network failure
+                    are all different, and none of them says this. */}
+                {older.items.length > 0
+                  ? t("olderShowing", { count: older.items.length })
+                  : t("olderPrompt")}{" "}
+                {older.exhausted ? (
+                  t("olderEnd")
+                ) : (
+                  <button type="button" className="btn ghost" onClick={older.loadMore}>
+                    {t("olderAction")}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        ) : null}
       </ListPane>
       {/* NO `onEnterReader` ON THE PANE. `ReadingPane` renders a small
           "Open reading mode" button when it is given one, and this column is the ONE place
