@@ -8,13 +8,53 @@ Dates are the dates the work actually landed; every entry corresponds to commits
 you can read in `git log`.
 
 A note on what a version means here: **0.x is a preview.** From 0.4.0 the macOS build
-is a working mail client that connects to your mailbox; the Windows and Linux builds
-are still an interface preview. See [Status](README.md#status--read-this-first).
+was a working mail client that connects to your mailbox; from 0.7.0 every build is.
+See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-The engine port to the Windows and Linux shell, so they connect too. See
-[Roadmap](README.md#roadmap) and issue #1.
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.7.0] — 2026-08-07
+
+**One app, on macOS, Windows and Linux.** macOS shipped a second, separate client written
+in Swift until now, drawing the same screens from its own sources. It is retired. All
+three platforms now build from one application, so a line in these notes is true
+everywhere rather than on one platform. The retired client's source stays in the
+repository's history.
+
+**Windows and Linux connect to your mailbox.** They were an interface preview running on
+fixtures. The build you download now carries the mail engine: it speaks IMAP over TLS to
+your own server, mirrors your mailbox to a database on your computer, and files new mail
+into `ohmail/` folders on the server itself, where every other mail app you own can see
+it. Your mail password is sealed under a per-install key held in your operating system's
+own keystore.
+
+**Two ways in, on every platform.** Connect your own IMAP mailbox directly, or sign in to
+ohmail Cloud and read a mailbox Cloud already organises. In both cases the mail already
+mirrored to your computer stays readable when the network drops.
+
+**The app carries its own Node runtime.** The mail engine is a Node program and the
+download contains the official Node build for your platform, checksum-verified against
+nodejs.org's own manifest by the run that made your installer. Nothing to install first,
+nothing on your `PATH` for the app to depend on.
+
+**If you are on macOS and already have ohmail installed,** the update is a handover: the
+app you have is a different program that shared this one's identity, and it offers you
+this release through the update prompt it has always used. Your mailbox, your settings
+and your stored mail password are untouched — the new app reads them where they are.
+
+**Attachments.** Closing a PDF preview no longer takes the app down, and pressing an
+attachment downloads it.
+
+**Screening.** A first-contact sender the suggestion wants HELD is no longer shown as one
+it wants admitted. The three-way answer is now carried end to end, and "apply all" leaves
+the held ones alone — a consent gate must not grant consent in bulk on a verdict that
+said "ask a human".
+
+Unsigned on every platform: see the install notes in the README before you double-click
+anything.
 
 ## [0.6.1] — 2026-08-07
 
