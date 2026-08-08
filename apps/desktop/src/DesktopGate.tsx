@@ -38,11 +38,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
-import { Button } from "@ohmail/ui";
 
 import { AppShell } from "../../webapp/app/shell/AppShell";
 import { go } from "../../webapp/app/shell/routing";
 import { DoorChooser } from "./DoorChooser.js";
+import { GateNotice } from "./GateNotice.js";
 import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
 import { gateFor, mailMount, readShell, type Shell } from "./doors.js";
 import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
@@ -171,22 +171,9 @@ export function DesktopGate() {
   }
 
   if (gate.kind === "notice") {
-    return (
-      <div className="gate">
-        <div className="gate-card">
-          <span className="wordmark"><b>ohmail</b><em>.</em></span>
-          <h1>ohmail cannot open your mailbox</h1>
-          <p>{gate.reason}</p>
-          <div className="gate-actions">
-            <Button onClick={() => void refresh()}>Try again</Button>
-          </div>
-          <p className="gate-foot">
-            Your mail is untouched. It is on your own server, or in your hosted account, and this
-            app has not changed either.
-          </p>
-        </div>
-      </div>
-    );
+    /* The same card the boot check and the error boundary draw — one apology, three ways of
+       reaching it, differing only in the sentence and the button. See `GateNotice.tsx`. */
+    return <GateNotice reason={gate.reason} actionLabel="Try again" onAction={() => void refresh()} />;
   }
 
   if (gate.kind === "choose") {

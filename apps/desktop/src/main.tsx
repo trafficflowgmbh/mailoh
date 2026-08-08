@@ -32,6 +32,8 @@ import "../../webapp/app/app.css";
 
 import { connectLocalEngine } from "./bridge-fetch.js";
 import { DesktopGate } from "./DesktopGate.js";
+import { errorSentence, GateBoundary } from "./GateBoundary.js";
+import { GateNotice } from "./GateNotice.js";
 import { installOfflineGuard } from "./offline-guard.js";
 
 installOfflineGuard();
@@ -47,16 +49,35 @@ installOfflineGuard();
    rather than merely skipped: grep the preview's output for `engine_request`
    and there is nothing to find.
 
-   The call is a boot-time check and nothing more. It proves two things at once
-   and reports them to the log: that this window can reach the shell at all, and
-   that this build compiled the real client rather than the preview's stub —
-   whose constructor throws. The engine the MAIL runs on is built by
-   `DesktopGate`, once the shell has said which mailbox is being served. */
-if (__OHMAIL_LOCAL_ENGINE__) {
-  void connectLocalEngine().then(
-    (status) => console.info(`ohmail: local engine — ${status.state}`),
-    (err: unknown) => console.warn(`ohmail: no local engine — ${String(err)}`),
-  );
+   The call is a boot-time check. It proves two things at once: that this window
+   can reach the shell at all, and that this build compiled the real client
+   rather than the preview's stub, whose constructor throws. The engine the MAIL
+   runs on is built by `DesktopGate`, once the shell has said which mailbox is
+   being served.
+
+   ── ITS FAILURE REACHES THE SCREEN, AND THAT IS NOT A REFINEMENT ─────────────
+
+   The rejection arm used to be `console.warn`, and a released build spent its
+   whole life failing this check on every launch, into a console nobody in a
+   packaged app can open, before going white a few seconds later for the same
+   reason. The check was right and worth nothing. A boot check whose failure is a
+   log line is not a check, so this one draws the same notice the gate draws.
+
+   `waitForBoot` is what lets it: the render below is held for the length of one
+   status call, so a failure REPLACES the first paint instead of racing it. The
+   cost is bounded and small — the shell answers this over a pipe on the same
+   machine — and the alternative is the door chooser appearing and then being
+   taken away, which reads as the app changing its mind. */
+async function waitForBoot(): Promise<string | null> {
+  if (!__OHMAIL_LOCAL_ENGINE__) return null;
+  try {
+    const status = await connectLocalEngine();
+    console.info(`ohmail: local engine — ${status.state}`);
+    return null;
+  } catch (err: unknown) {
+    console.warn(`ohmail: no local engine — ${String(err)}`);
+    return errorSentence(err);
+  }
 }
 
 /* The pre-paint theme stamp. `themeInitScript()` from @ohmail/ui exists for
@@ -73,18 +94,56 @@ try {
 const root = document.getElementById("root");
 if (!root) throw new Error("ohmail Desktop: #root is missing from index.html");
 
-createRoot(root).render(
-  <StrictMode>
-    <IntlProvider
-      locale="en"
-      messages={messages}
-      timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
-    >
-      <ThemeProvider storageKey="ohmail.theme">
-        <ToastHost>
-          {__OHMAIL_LOCAL_ENGINE__ ? <DesktopGate /> : <AppShell demo />}
-        </ToastHost>
-      </ThemeProvider>
-    </IntlProvider>
-  </StrictMode>,
-);
+/**
+ * PAINT, AND REPAINT IF THE BOOT CHECK COMES BACK BAD.
+ *
+ * NOT a top-level `await` on the check, and this is a real constraint rather than a style
+ * preference: the render check loads this bundle as a CLASSIC script in a headless DOM, where a
+ * top-level await is a syntax error that aborts the whole file and draws nothing — the same trap
+ * `vite.config.ts` already neutralises `import.meta.url` for. So the window paints immediately,
+ * which costs nothing: `DesktopGate`'s first render has no answer from the shell yet and draws one
+ * quiet line, and the notice replaces that rather than replacing a chooser somebody had started
+ * reading.
+ *
+ * Repainted only on FAILURE. The success path never calls this twice, so the gate is mounted once
+ * and keeps its state.
+ */
+const reactRoot = createRoot(root);
+
+const paint = (bootFailure: string | null): void =>
+  reactRoot.render(
+    <StrictMode>
+      <IntlProvider
+        locale="en"
+        messages={messages}
+        timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
+      >
+        <ThemeProvider storageKey="ohmail.theme">
+          <ToastHost>
+            {/* THE BOUNDARY IS OUTSIDE THE GATE, and it has to be: a component cannot catch its
+                own render, and the throw this exists for comes from `DesktopGate` building the
+                client engine. `GateBoundary.tsx` has the released build that went white for want
+                of it. */}
+            <GateBoundary>
+              {bootFailure !== null ? (
+                <GateNotice
+                  reason={bootFailure}
+                  actionLabel="Reload"
+                  onAction={() => location.reload()}
+                />
+              ) : __OHMAIL_LOCAL_ENGINE__ ? (
+                <DesktopGate />
+              ) : (
+                <AppShell demo />
+              )}
+            </GateBoundary>
+          </ToastHost>
+        </ThemeProvider>
+      </IntlProvider>
+    </StrictMode>,
+  );
+
+paint(null);
+void waitForBoot().then((failure) => {
+  if (failure !== null) paint(failure);
+});

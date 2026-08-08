@@ -68,7 +68,7 @@ describe("tauri.conf.json", () => {
     // preview, and reusing the number would leave the two sets of checksums
     // ambiguous about which artifact they describe. A version is how a
     // downloader names what they have.
-    expect(conf.version).toBe("0.7.1");
+    expect(conf.version).toBe("0.7.2");
     expect(conf.identifier).toBe("io.ohmail.desktop");
   });
 
@@ -828,7 +828,10 @@ describe("the UI bundle's build config", () => {
     expect(vite).toMatch(/__OHMAIL_LOCAL_ENGINE__: JSON\.stringify\(LOCAL_ENGINE\)/);
 
     const main = read("src/main.tsx");
-    expect(main).toMatch(/if \(__OHMAIL_LOCAL_ENGINE__\)/);
+    // The boot check is behind the same literal, so the preview carries neither the check nor the
+    // bridge it would call. It reads as an early return now that its failure has to reach the
+    // screen rather than a log line, but the branch is the same one.
+    expect(main).toMatch(/if \(!__OHMAIL_LOCAL_ENGINE__\) return null;/);
     // The preview still installs the offline guard, and so does the other one: `invoke` is not
     // `fetch`, so the bridge does not need the network APIs back.
     expect(main).toMatch(/installOfflineGuard\(\)/);
@@ -855,18 +858,24 @@ describe("the UI bundle's build config", () => {
     expect(bridge).toMatch(/new HttpAdapter\(\{ baseUrl: "", fetch: bridgeFetch \}\)/);
   });
 
-  it("the stub declares EVERY method EngineAdapter requires — the mirror IS this file", () => {
+  it("the stub declares EVERY method EngineAdapter requires — the preview compiles it as the adapter", () => {
     /**
      * THE GAP THIS CLOSES, found when `fetchBody` was added to `EngineAdapter`.
      *
-     * `no-http-adapter.ts` is published OVER
-     * `packages/client-engine/src/adapters/http-adapter.ts` in the desktop mirror
-     * (`scripts/publish-desktop.mjs`'s `DEST_ALIASES`). In THAT repository the stub is
-     * `HttpAdapter`, so a method the real interface requires and the stub omits is a
-     * typecheck failure there — while `pnpm typecheck` here stays green, because `tsc` reads
-     * no Vite aliases and resolves the real file. The stub's own header claimed the interface
-     * changing "would still fail if this could not satisfy it"; that was true of the mirror
-     * and unobservable from here, which is the worst combination.
+     * In the PREVIEW build `vite.config.ts` aliases `./adapters/http-adapter.js` to
+     * `no-http-adapter.ts`, so in that bundle the stub IS `HttpAdapter` — and a method the real
+     * interface requires and the stub omits is a failure in that artifact alone, while
+     * `pnpm typecheck` here stays green, because `tsc` reads no Vite aliases and resolves the
+     * real file. The stub's own header claimed the interface changing "would still fail if this
+     * could not satisfy it"; that was true of a build nothing here compiles, which is the worst
+     * combination.
+     *
+     * The justification used to be the MIRROR rather than the preview — the stub was published
+     * over the real module's path, so the public repository's `tsc` read it as `HttpAdapter`.
+     * That substitution is gone: the real adapter publishes at its own path now, because the
+     * engine-bearing artifact constructs it and a stub there blanked the window. The assertion
+     * survives the change of reason unaltered, and is still worth having for the artifact that
+     * still does alias.
      *
      * So the method set is compared against the interface's own declaration rather than
      * remembered. Red by deleting `fetchBody` from the stub, or by adding a method to
@@ -942,7 +951,15 @@ describe("the UI bundle's build config", () => {
     // which is a gate around it rather than a fork of it — the branch is on the build-time
     // literal, so the preview's bundle contains neither the gate nor anything it reaches.
     expect(main).toMatch(/<AppShell demo \/>/);
-    expect(main).toMatch(/__OHMAIL_LOCAL_ENGINE__ \? <DesktopGate \/> : <AppShell demo \/>/);
+    expect(main).toMatch(
+      /__OHMAIL_LOCAL_ENGINE__ \? \(\s*<DesktopGate \/>\s*\) : \(\s*<AppShell demo \/>\s*\)/,
+    );
+    /* …AND THE WHOLE MOUNT IS INSIDE THE BOUNDARY. Not decoration: `DesktopGate` builds the
+       client engine during a render, and a released build shipped with a constructor that threw
+       there — which unmounted the tree and drew an empty window, on machines that had signed in
+       successfully. A boundary cannot catch its own render, so this has to be OUTSIDE the gate,
+       which means here. See `GateBoundary.tsx`. */
+    expect(main).toMatch(/<GateBoundary>/);
     // …and the gate mounts the shared shell too, rather than a screen of its own.
     expect(read("src/DesktopGate.tsx")).toMatch(/from "\.\.\/\.\.\/webapp\/app\/shell\/AppShell"/);
   });
