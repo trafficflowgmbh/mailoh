@@ -1155,28 +1155,126 @@ fn a_key(seed: char) -> String {
 fn this_apps_own_key_wins_and_nothing_else_is_consulted() {
     let store = Keystore::default();
     let key = a_key('a');
-    let got = resolve_install_key(
-        &|| {
+    let got = resolve_install_key(&Keystores {
+        file: &|| {
+            store.note("file");
+            Stored::Empty
+        },
+        own: &|| {
             store.note("own");
             Stored::Key(key.clone())
         },
-        &|| {
+        older: &|| {
             store.note("older");
             Stored::Key(a_key('b'))
         },
-        &|_| {
+        write_keystore: &|_| {
             store.note("adopt");
             Ok(())
         },
-        &|| {
+        write_file: &|_| {
+            store.note("mirror");
+            Ok(())
+        },
+        mint: &|| {
             store.note("mint");
             Ok(a_key('c'))
         },
-    );
+    });
     assert_eq!(got, Ok(key));
     // Not merely "the right key": the older item is not even READ on the ordinary launch, which is
-    // what keeps a migration from costing a keychain round trip on every start for ever.
-    assert_eq!(store.calls(), vec!["own"]);
+    // what keeps a migration from costing a keychain round trip on every start for ever. The file is
+    // read before it and written after it — the mirror is what makes the NEXT launch promptless once
+    // this app's signature changes, and it is the only extra work an ordinary launch does.
+    assert_eq!(store.calls(), vec!["file", "own", "mirror"]);
+}
+
+#[test]
+fn a_key_in_the_file_is_used_and_the_keystore_is_not_consulted_at_all() {
+    // THE ANTI-FLIP-FLOP. Once the file holds a key, a password has been sealed under it. A launch
+    // that asked the keystore first and got the PRE-fallback key back would seal the next password
+    // under a key that does not open the last one — the exact silent orphaning the whole of
+    // `resolve_install_key` is arranged to prevent, arrived at from the other direction.
+    let store = Keystore::default();
+    let key = a_key('d');
+    let got = resolve_install_key(&Keystores {
+        file: &|| {
+            store.note("file");
+            Stored::Key(key.clone())
+        },
+        own: &|| {
+            store.note("own");
+            Stored::Key(a_key('b'))
+        },
+        older: &|| {
+            store.note("older");
+            Stored::Key(a_key('e'))
+        },
+        ..Default::default()
+    });
+    assert_eq!(got, Ok(key));
+    assert_eq!(store.calls(), vec!["file"], "nothing but the file was touched");
+}
+
+#[test]
+fn a_keystore_that_will_not_give_up_this_apps_key_falls_back_to_the_file() {
+    // THE DEFECT THIS EXISTS TO PREVENT, and it is a loop rather than a single failure.
+    //
+    // An ad-hoc signed app has no Team ID, so macOS records which code may read a keychain item as
+    // `cdhash:…` — the hash of that exact binary. Every rebuild changes it, so every update is a
+    // different application as far as the keychain is concerned, and it is refused the item the
+    // previous version wrote. Refusing the launch there meant: the engine never started, so no
+    // password could be sealed, so typing the password again did not stick, so the next restart
+    // failed identically. There was no way out from inside the app.
+    let store = Keystore::default();
+    let minted = a_key('a');
+    let got = resolve_install_key(&Keystores {
+        file: &|| {
+            store.note("file");
+            Stored::Empty
+        },
+        own: &|| {
+            store.note("own");
+            Stored::Refused("Platform failure: UNIX[No space left on device]".to_string())
+        },
+        older: &|| {
+            store.note("older");
+            panic!("a keystore that refused this app's own item cannot answer for an older one")
+        },
+        write_keystore: &|_| {
+            store.note("adopt");
+            panic!("a key written back into a keystore that just refused would be unreadable again")
+        },
+        write_file: &|key| {
+            store.note(&format!("mirror {key}"));
+            Ok(())
+        },
+        mint: &|| {
+            store.note("mint");
+            Ok(minted.clone())
+        },
+    });
+    assert_eq!(got, Ok(minted.clone()), "the launch continues with a key it can keep");
+    assert_eq!(
+        store.calls(),
+        vec!["file".to_string(), "own".to_string(), "mint".to_string(), format!("mirror {minted}")],
+        "the fresh key went to the file and nowhere near the keystore that refused"
+    );
+}
+
+#[test]
+fn a_refused_keystore_and_an_unwritable_file_says_so_rather_than_starting_without_a_key() {
+    // The one remaining way to have no key at all. It must name BOTH halves: a message that blamed
+    // only the keychain would send somebody to fix the thing that is no longer the obstacle.
+    let got = resolve_install_key(&Keystores {
+        own: &|| Stored::Refused("the keychain is locked".to_string()),
+        write_file: &|_| Err("the disk is read-only".to_string()),
+        mint: &|| Ok(a_key('c')),
+        ..Default::default()
+    });
+    let err = got.expect_err("a launch with nowhere to keep its key reported success");
+    assert!(err.contains("the keychain is locked"), "the keystore's refusal is named: {err}");
+    assert!(err.contains("the disk is read-only"), "the file's refusal is named too: {err}");
 }
 
 #[test]
@@ -1187,29 +1285,39 @@ fn the_key_an_earlier_version_stored_is_adopted_rather_than_replaced() {
     // why.
     let store = Keystore::default();
     let existing = a_key('7');
-    let got = resolve_install_key(
-        &|| {
+    let got = resolve_install_key(&Keystores {
+        own: &|| {
             store.note("own");
             Stored::Empty
         },
-        &|| {
+        older: &|| {
             store.note("older");
             Stored::Key(existing.clone())
         },
-        &|key| {
+        write_keystore: &|key| {
             store.note(&format!("adopt {key}"));
             Ok(())
         },
-        &|| {
+        write_file: &|key| {
+            store.note(&format!("mirror {key}"));
+            Ok(())
+        },
+        mint: &|| {
             store.note("mint");
             Ok(a_key('c'))
         },
-    );
+        ..Default::default()
+    });
     assert_eq!(got, Ok(existing.clone()), "the launch uses the key that opens the stored password");
     assert_eq!(
         store.calls(),
-        vec!["own".to_string(), "older".to_string(), format!("adopt {existing}")],
-        "the older key was read, copied, and nothing was minted"
+        vec![
+            "own".to_string(),
+            "older".to_string(),
+            format!("adopt {existing}"),
+            format!("mirror {existing}"),
+        ],
+        "the older key was read, copied to both places, and nothing was minted"
     );
 }
 
@@ -1218,39 +1326,61 @@ fn a_copy_that_fails_does_not_cost_the_launch() {
     // The key is in hand and it opens what it opened before. Refusing to start over a bookkeeping
     // failure would trade a working mailbox for a syscall saved on the next launch.
     let existing = a_key('9');
-    let got = resolve_install_key(
-        &|| Stored::Empty,
-        &|| Stored::Key(existing.clone()),
-        &|_| Err("the keystore is read-only".to_string()),
-        &|| panic!("nothing may be minted once an existing key has been read"),
-    );
-    assert_eq!(got, Ok(existing));
+    let got = resolve_install_key(&Keystores {
+        older: &|| Stored::Key(existing.clone()),
+        write_keystore: &|_| Err("the keystore is read-only".to_string()),
+        write_file: &|_| Err("the folder is read-only".to_string()),
+        mint: &|| panic!("nothing may be minted once an existing key has been read"),
+        ..Default::default()
+    });
+    assert_eq!(got, Ok(existing), "neither copy failing costs the launch");
 }
 
 #[test]
 fn nothing_older_and_nothing_of_ours_mints_exactly_one_key() {
     let store = Keystore::default();
     let minted = a_key('f');
-    let got = resolve_install_key(
-        &|| {
+    let got = resolve_install_key(&Keystores {
+        own: &|| {
             store.note("own");
             Stored::Empty
         },
-        &|| {
+        older: &|| {
             store.note("older");
             Stored::Empty
         },
-        &|_| {
+        write_keystore: &|_| {
             store.note("adopt");
             Ok(())
         },
-        &|| {
+        write_file: &|_| {
+            store.note("mirror");
+            Ok(())
+        },
+        mint: &|| {
             store.note("mint");
             Ok(minted.clone())
         },
-    );
+        ..Default::default()
+    });
     assert_eq!(got, Ok(minted));
-    assert_eq!(store.calls(), vec!["own", "older", "mint"]);
+    // A first run on a working keystore still puts the key THERE first. The file is a mirror of it,
+    // not a replacement for it, on every machine where the keystore does its job.
+    assert_eq!(store.calls(), vec!["own", "older", "mint", "adopt", "mirror"]);
+}
+
+#[test]
+fn a_first_run_whose_keystore_will_not_take_the_key_refuses_rather_than_running_without_one() {
+    // `write_keystore` failing here is not the bookkeeping failure that `a_copy_that_fails` covers:
+    // there is no existing key in hand, so a launch that shrugged this off would serve, accept a
+    // password, and have nowhere to put it.
+    let got = resolve_install_key(&Keystores {
+        write_keystore: &|_| Err("the keystore would not store a key".to_string()),
+        mint: &|| Ok(a_key('c')),
+        ..Default::default()
+    });
+    let err = got.expect_err("a mint that was never stored was reported as success");
+    assert!(err.contains("would not store a key"), "the refusal says what failed: {err}");
 }
 
 #[test]
@@ -1258,27 +1388,61 @@ fn an_item_of_ours_that_is_not_a_key_refuses_without_looking_further() {
     // Something wrote it. Minting over it, or quietly using a different key instead, would seal the
     // next password under a key that does not open the last one.
     let store = Keystore::default();
-    let got = resolve_install_key(
-        &|| {
+    let got = resolve_install_key(&Keystores {
+        file: &|| {
+            store.note("file");
+            Stored::Empty
+        },
+        own: &|| {
             store.note("own");
             Stored::Foreign
         },
-        &|| {
+        older: &|| {
             store.note("older");
             Stored::Key(a_key('b'))
         },
-        &|_| {
+        write_keystore: &|_| {
             store.note("adopt");
             Ok(())
         },
-        &|| {
+        write_file: &|_| {
+            store.note("mirror");
+            Ok(())
+        },
+        mint: &|| {
             store.note("mint");
             Ok(a_key('c'))
         },
-    );
+    });
     let err = got.expect_err("a foreign item was accepted");
     assert!(err.contains(KEYSTORE_ENTRY), "the refusal names the item to remove: {err}");
-    assert_eq!(store.calls(), vec!["own"]);
+    assert_eq!(store.calls(), vec!["file", "own"]);
+}
+
+#[test]
+fn a_key_file_of_the_wrong_shape_is_stepped_over_rather_than_obeyed() {
+    // Unlike the keystore item above, junk in the file is not evidence that something sealed a
+    // password under it — the file is this app's own and nothing else writes there. Refusing would
+    // turn a stray edit or a truncated write into an app that will not open at all.
+    let store = Keystore::default();
+    let key = a_key('b');
+    let got = resolve_install_key(&Keystores {
+        file: &|| {
+            store.note("file");
+            Stored::Foreign
+        },
+        own: &|| {
+            store.note("own");
+            Stored::Key(key.clone())
+        },
+        write_file: &|_| {
+            store.note("mirror");
+            Ok(())
+        },
+        ..Default::default()
+    });
+    assert_eq!(got, Ok(key));
+    assert_eq!(store.calls(), vec!["file", "own", "mirror"], "the good key overwrites the junk");
 }
 
 #[test]
@@ -1286,12 +1450,11 @@ fn an_older_item_that_will_not_be_read_stops_the_launch_rather_than_minting_over
     // The one branch where minting is actively harmful. The first lookup already proved the
     // keystore answers, so an error on the second means there IS an item here that this binary was
     // not allowed to read — and a fresh key would silently orphan whatever it seals.
-    let got = resolve_install_key(
-        &|| Stored::Empty,
-        &|| Stored::Refused("access denied".to_string()),
-        &|_| Ok(()),
-        &|| panic!("a key was minted over an item that could not be read"),
-    );
+    let got = resolve_install_key(&Keystores {
+        older: &|| Stored::Refused("access denied".to_string()),
+        mint: &|| panic!("a key was minted over an item that could not be read"),
+        ..Default::default()
+    });
     let err = got.expect_err("a refused older item was ignored");
     assert!(err.contains("unreadable"), "the refusal says what minting would cost: {err}");
 }
@@ -1300,20 +1463,28 @@ fn an_older_item_that_will_not_be_read_stops_the_launch_rather_than_minting_over
 fn an_older_item_of_the_wrong_shape_is_not_adopted() {
     let store = Keystore::default();
     let minted = a_key('e');
-    let got = resolve_install_key(
-        &|| Stored::Empty,
-        &|| Stored::Foreign,
-        &|_| {
-            store.note("adopt");
+    let got = resolve_install_key(&Keystores {
+        older: &|| Stored::Foreign,
+        write_keystore: &|key| {
+            store.note(&format!("adopt {key}"));
             Ok(())
         },
-        &|| {
+        write_file: &|key| {
+            store.note(&format!("mirror {key}"));
+            Ok(())
+        },
+        mint: &|| {
             store.note("mint");
             Ok(minted.clone())
         },
+        ..Default::default()
+    });
+    assert_eq!(got, Ok(minted.clone()));
+    assert_eq!(
+        store.calls(),
+        vec!["mint".to_string(), format!("adopt {minted}"), format!("mirror {minted}")],
+        "the minted key is stored, and nothing that is not a key is copied anywhere"
     );
-    assert_eq!(got, Ok(minted));
-    assert_eq!(store.calls(), vec!["mint"], "nothing that is not a key is copied anywhere");
 }
 
 #[cfg(target_os = "macos")]
@@ -1326,6 +1497,101 @@ fn the_older_coordinates_are_the_ones_the_earlier_version_wrote() {
     assert_eq!(LEGACY_KEYSTORE_ENTRY, "kek.v1");
     // And they are not this app's own, or the "look one place further" would be looking at itself.
     assert_ne!(LEGACY_KEYSTORE_SERVICE, KEYSTORE_SERVICE);
+}
+
+// ── The key file ────────────────────────────────────────────────────────────────────────────
+//
+// Driven against a real directory rather than through closures, because the things that can go
+// wrong here are the file's own properties: its mode, and whether what was written comes back.
+
+#[test]
+fn the_key_file_is_written_private_and_reads_back() {
+    let f = Fixture::new("keyfile");
+    let key = a_key('3');
+    write_key_file(Some(&f.dir), &key).expect("write the key file");
+
+    assert_eq!(look_up_file(Some(&f.dir)), Stored::Key(key.clone()), "what went in comes back");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(f.dir.join(KEYSTORE_FILE)).expect("stat").permissions().mode();
+        // The key that opens the stored mailbox password. Group and other get nothing at all.
+        assert_eq!(mode & 0o777, 0o600, "the key file is readable only by its owner");
+    }
+}
+
+#[test]
+fn a_key_file_left_readable_by_others_is_tightened_when_it_is_rewritten() {
+    // A backup tool that restores permissions, or an earlier build that was less careful, must not
+    // leave the key world-readable for the rest of the install's life.
+    let f = Fixture::new("keyfile-mode");
+    let path = f.dir.join(KEYSTORE_FILE);
+    fs::write(&path, a_key('1')).expect("an existing, wide-open key file");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("widen it");
+        write_key_file(Some(&f.dir), &a_key('2')).expect("rewrite");
+        let mode = fs::metadata(&path).expect("stat").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "rewriting a wide-open key file closes it");
+    }
+}
+
+#[test]
+fn no_key_file_and_no_data_directory_are_both_simply_empty() {
+    let f = Fixture::new("keyfile-absent");
+    assert_eq!(look_up_file(Some(&f.dir)), Stored::Empty, "a directory with no key file");
+    assert_eq!(look_up_file(None), Stored::Empty, "no directory at all");
+    // And a file that is not a key is stepped over rather than refused — see the resolver test.
+    fs::write(f.dir.join(KEYSTORE_FILE), "not a key").expect("write junk");
+    assert_eq!(look_up_file(Some(&f.dir)), Stored::Foreign);
+}
+
+#[test]
+fn a_key_file_survives_the_restart_that_the_keychain_did_not() {
+    // THE WHOLE POINT, end to end and against a real directory: a keystore that refuses this app's
+    // own item leaves a key behind that the NEXT launch finds without asking anyone anything. The
+    // second resolve is given a keystore that refuses just as hard, and must not mint again — a
+    // second mint would be a second key, and the password sealed under the first would not open.
+    let f = Fixture::new("keyfile-restart");
+    let refuses = || Stored::Refused("Platform failure: UNIX[No space left on device]".to_string());
+
+    let first = resolve_install_key(&Keystores {
+        file: &|| look_up_file(Some(&f.dir)),
+        own: &refuses,
+        write_file: &|key| write_key_file(Some(&f.dir), key),
+        mint: &|| Ok(a_key('c')),
+        ..Default::default()
+    })
+    .expect("the first launch recovers");
+
+    let second = resolve_install_key(&Keystores {
+        file: &|| look_up_file(Some(&f.dir)),
+        own: &refuses,
+        write_file: &|_| panic!("the second launch wrote a key file it should have read"),
+        mint: &|| panic!("the second launch minted a second key"),
+        ..Default::default()
+    })
+    .expect("the restart works");
+
+    assert_eq!(first, second, "the restart uses the same key, so what was sealed still opens");
+}
+
+#[test]
+fn the_message_for_a_refused_keychain_does_not_send_anybody_to_free_up_disk_space() {
+    // macOS reports a keychain item it will not hand over as `errSecErrnoBase + ENOSPC`, so the
+    // keyring crate renders a refusal as "No space left on device" on a machine with plenty. The
+    // raw string is kept — it is what a search engine will match — and the correction travels with
+    // it, because the fix for a full disk cannot fix this and wastes the one person who can.
+    let plain = plainly("Platform failure: UNIX[No space left on device]");
+    assert!(plain.contains("No space left on device"), "the platform's own words are kept: {plain}");
+    assert!(plain.contains("does not mean the disk is full"), "and contradicted: {plain}");
+    assert!(plain.contains("keychain"), "and attributed to the keychain: {plain}");
+
+    // Everything else is passed through untouched — a message this does not understand must not be
+    // decorated with a guess.
+    assert_eq!(plainly("the keychain is locked"), "the keychain is locked");
 }
 
 // ── The log file ────────────────────────────────────────────────────────────────────────────

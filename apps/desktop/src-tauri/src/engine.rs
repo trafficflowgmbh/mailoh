@@ -900,7 +900,7 @@ impl ShellPaths {
         let from_env = std::env::var(KEK_VAR).ok().filter(|v| !v.trim().is_empty());
         let key = match from_env {
             Some(key) => Ok(key),
-            None => install_key(),
+            None => install_key(self.app_data.as_deref()),
         };
         let key = match key {
             Ok(key) => key,
@@ -2154,6 +2154,40 @@ enum Stored {
     Refused(String),
 }
 
+/// Every way this function is allowed to touch a keystore, and nothing else.
+///
+/// A struct rather than six positional closures because the ORDER below is the whole of the
+/// correctness, and a call site that reads `own:` / `older:` / `file:` states which place is being
+/// described. The `Default` is "every keystore is empty and nothing may be minted", so a test names
+/// only the steps it is about and any step it forgot is inert rather than quietly plausible.
+struct Keystores<'a> {
+    /// This app's own file beside its data. See [`KEYSTORE_FILE`].
+    file: &'a dyn Fn() -> Stored,
+    /// This app's item in the operating system's keystore.
+    own: &'a dyn Fn() -> Stored,
+    /// Where an earlier version of this app kept the same key.
+    older: &'a dyn Fn() -> Stored,
+    /// Put a key in the operating system's keystore, proving it reads back.
+    write_keystore: &'a dyn Fn(&str) -> Result<(), String>,
+    /// Put a key in the file, proving it reads back. `Err` on platforms that have no such file.
+    write_file: &'a dyn Fn(&str) -> Result<(), String>,
+    /// Fresh random bytes. Stores nothing — the two writers above are the only writers.
+    mint: &'a dyn Fn() -> Result<String, String>,
+}
+
+impl Default for Keystores<'_> {
+    fn default() -> Self {
+        Keystores {
+            file: &|| Stored::Empty,
+            own: &|| Stored::Empty,
+            older: &|| Stored::Empty,
+            write_keystore: &|_| Ok(()),
+            write_file: &|_| Ok(()),
+            mint: &|| Err("nothing may be minted here".to_string()),
+        }
+    }
+}
+
 /// Decide which key this launch uses, given only the ability to look, to copy and to mint.
 ///
 /// Split out from [`install_key`] so the ORDER can be tested without a keychain: the order is the
@@ -2162,31 +2196,57 @@ enum Stored {
 ///
 /// ── THE ORDER, AND WHY EACH STEP IS WHERE IT IS ─────────────────────────────────────────────
 ///
-///  1. **This app's own item.** A key here is the answer and nothing else is consulted — a machine
-///     that has already run this build is the ordinary case, and it must not pay for the migration
-///     below on every launch.
-///  2. **A present-but-wrong item refuses, and does not fall through.** Overwriting it would mint a
+///  1. **The file, first, and authoritative once it exists.** See [`KEYSTORE_FILE`] for why there
+///     is a file at all. It is read BEFORE the operating system's keystore, and that order is not
+///     a preference — it is the only order that cannot orphan a password. The file is written when
+///     the keystore holds no key or would not give one up; if a later launch consulted the keystore
+///     first and that keystore had meanwhile started answering again, it would hand back the key
+///     from BEFORE the fallback, and the password sealed under the file's key would not open. One
+///     of the two has to win every time, and it has to be the one that is always readable.
+///  2. **This app's own keystore item.** A key here is the answer — and it is mirrored into the
+///     file on the way out, so that the NEXT launch is promptless even if this app's signature has
+///     changed in between. Mirroring while the key is still readable is what makes the fallback
+///     cost nothing: the alternative is to write the file only once the keystore has already
+///     refused, by which time the key that opens the stored password is exactly what is missing.
+///  3. **A present-but-wrong item refuses, and does not fall through.** Overwriting it would mint a
 ///     key that cannot open the credential the previous one sealed, turning a recoverable state
 ///     ("re-enter your password") into a silent one. So does looking at the older item instead:
 ///     whatever is in this one, something wrote it.
-///  3. **The older item, before minting.** See [`LEGACY_KEYSTORE_SERVICE`]. Copied into this app's
+///  4. **A keystore that will not give up this app's own key falls back to the file.** It does not
+///     stop the launch. The keystore has answered "no" about THIS app's coordinates, so the older
+///     item below is unreadable for the same reason and a key minted back into the keystore would
+///     be unreadable on the next launch for the same reason again — that is the loop this branch
+///     exists to break. A fresh key goes in the file, where nothing about this app's signature can
+///     make it unreadable, and the launch continues so the person can type their password once and
+///     have it stick. The file write is REQUIRED here: without it there is nowhere left, and
+///     pretending otherwise is what makes a password vanish between restarts.
+///  5. **The older item, before minting.** See [`LEGACY_KEYSTORE_SERVICE`]. Copied into this app's
 ///     coordinates, never moved, and a copy that fails is logged rather than fatal — the key was
 ///     read, it opens the credential, and refusing the launch over a bookkeeping failure would cost
 ///     the user a working mailbox to save a syscall on the next launch.
-///  4. **A refusal from the older item stops the launch.** This is the one branch where minting
-///     would be actively harmful: step 1 has already proved the keystore is reachable, so an error
-///     HERE means there is an item that this binary was not allowed to read. Minting over that
-///     silently orphans a sealed password; saying so lets somebody grant the access or delete the
-///     item on purpose.
-///  5. **Only then, a fresh key.**
-fn resolve_install_key(
-    own: &dyn Fn() -> Stored,
-    older: &dyn Fn() -> Stored,
-    adopt: &dyn Fn(&str) -> Result<(), String>,
-    mint: &dyn Fn() -> Result<String, String>,
-) -> Result<String, String> {
-    match own() {
-        Stored::Key(key) => return Ok(key),
+///  6. **A refusal from the older item stops the launch.** This is the one branch where minting
+///     would be actively harmful: step 2 has already proved the keystore ANSWERS about this app's
+///     own coordinates, so an error HERE means there is an item that this binary was not allowed to
+///     read. Minting over that silently orphans a sealed password; saying so lets somebody grant
+///     the access or delete the item on purpose.
+///  7. **Only then, a fresh key.**
+fn resolve_install_key(k: &Keystores) -> Result<String, String> {
+    if let Stored::Key(key) = (k.file)() {
+        return Ok(key);
+    }
+
+    let refusal = match (k.own)() {
+        Stored::Key(key) => {
+            // Best-effort, and deliberately not fatal: the key is in hand and this launch works
+            // either way. What the mirror buys is the launch AFTER the next update.
+            if let Err(reason) = (k.write_file)(&key) {
+                log_line(format_args!(
+                    "this install's key could not be mirrored to {KEYSTORE_FILE} ({reason}) — the app \
+                     works, but a future update may have to ask for your mailbox password again"
+                ));
+            }
+            return Ok(key);
+        }
         Stored::Foreign => {
             return Err(format!(
                 "the {KEYSTORE_SERVICE} key in this computer's keystore is not a key this app wrote. \
@@ -2194,15 +2254,29 @@ fn resolve_install_key(
                  be asked for your mailbox password once more, and no mail is affected"
             ))
         }
-        Stored::Refused(err) => {
-            return Err(format!("this computer's keystore would not give up this app's key ({err})"))
-        }
-        Stored::Empty => {}
+        Stored::Refused(err) => Some(err),
+        Stored::Empty => None,
+    };
+
+    if let Some(err) = refusal {
+        let key = (k.mint)()?;
+        (k.write_file)(&key).map_err(|file| {
+            format!(
+                "this computer's keystore would not give up this app's key ({err}), and a key file \
+                 could not be written beside this app's data either ({file})"
+            )
+        })?;
+        log_line(format_args!(
+            "this computer's keystore would not give up this app's key ({err}), so this install's key \
+             is now kept in {KEYSTORE_FILE} beside its data instead. If you are asked for your mailbox \
+             password once more, that is why — it will be remembered from then on"
+        ));
+        return Ok(key);
     }
 
-    match older() {
+    match (k.older)() {
         Stored::Key(key) => {
-            if let Err(reason) = adopt(&key) {
+            if let Err(reason) = (k.write_keystore)(&key) {
                 // Not fatal. The key is in hand and it opens what it opened before; the copy is an
                 // optimisation for later launches, and a launch that works is worth more than one.
                 log_line(format_args!(
@@ -2215,6 +2289,8 @@ fn resolve_install_key(
                      and the original was left where it is"
                 ));
             }
+            // Mirrored for the same reason as step 2, and just as non-fatally.
+            let _ = (k.write_file)(&key);
             Ok(key)
         }
         Stored::Refused(err) => Err(format!(
@@ -2222,7 +2298,15 @@ fn resolve_install_key(
              up ({err}). Allow ohmail access to it when asked and open the app again — minting a new key \
              instead would leave your stored mailbox password unreadable"
         )),
-        Stored::Foreign | Stored::Empty => mint(),
+        Stored::Foreign | Stored::Empty => {
+            let key = (k.mint)()?;
+            // The keystore ANSWERED about this app's own coordinates at step 2, so it is working
+            // and a key it accepts is the right place for a first run. The write must prove itself:
+            // a mint that is not stored is a password that vanishes at the next restart.
+            (k.write_keystore)(&key)?;
+            let _ = (k.write_file)(&key);
+            Ok(key)
+        }
     }
 }
 
@@ -2232,7 +2316,10 @@ fn look_up(entry: &keyring::Entry) -> Stored {
         Ok(existing) if is_key(&existing) => Stored::Key(existing),
         Ok(_) => Stored::Foreign,
         Err(keyring::Error::NoEntry) => Stored::Empty,
-        Err(err) => Stored::Refused(err.to_string()),
+        // Translated HERE, at the edge, so every message built from a refusal downstream — the log
+        // line, the fallback's composed error, the `NoKey` sentence on screen — says the same true
+        // thing without each of them having to know about macOS errno statuses.
+        Err(err) => Stored::Refused(plainly(&err.to_string())),
     }
 }
 
@@ -2273,27 +2360,153 @@ fn store_and_read_back(entry: &keyring::Entry, key: &str) -> Result<(), String> 
     }
 }
 
-/// Read this install's key — adopting the one an earlier version stored, or minting on first run.
+/// Say what a keystore error MEANS, where the platform's own words are actively misleading.
+///
+/// macOS reports a refused keychain item through an errno-shaped `OSStatus` — `errSecErrnoBase`
+/// (100000) plus a POSIX errno — and the errno it picks up for a denied read is 28, `ENOSPC`. So a
+/// keychain that will not hand over an item surfaces, through the keyring crate, as
+/// `Platform failure: UNIX[No space left on device]` on a machine with hundreds of gigabytes free.
+/// `SecCopyErrorMessageString(100028)` is exactly that string, and a write to the same keychain in
+/// the same second succeeds — the disk is not the problem and never was.
+///
+/// Printed unedited it sends people to delete files, which cannot help, and hides the one fact that
+/// would: an app whose signature changed can no longer read what its previous signature wrote.
+fn plainly(err: &str) -> String {
+    if err.contains("No space left on device") {
+        return format!(
+            "{err} — which is how macOS reports a keychain item it will not hand over, and does not \
+             mean the disk is full"
+        );
+    }
+    err.to_string()
+}
+
+/// Where this install's key is kept when the operating system's keystore will not keep it.
+///
+/// ── WHY A FILE EXISTS AT ALL, WHEN THERE IS A PERFECTLY GOOD KEYCHAIN ───────────────────────
+///
+/// Because on macOS the keychain cannot do this job for these builds, and that is a property of
+/// how they are signed rather than a bug to be fixed here.
+///
+/// macOS records, against every keychain item, which code may read it. For an application signed
+/// with a Team ID it records `teamid:…`, which is stable for the life of the product. For an
+/// AD-HOC signed application there is no team to record, so it records `cdhash:…` — the hash of
+/// that exact binary. Every rebuild produces a different binary and therefore a different cdhash,
+/// so **each new version of an ad-hoc signed app is, to the keychain, a different application** and
+/// is refused the item the previous one wrote. It is refused through the errno-shaped status
+/// [`plainly`] exists to translate.
+///
+/// The failure that produced this file: after an update the app could not read its own key, and
+/// [`resolve_install_key`] correctly refused to mint over an item it could not read — so the engine
+/// never started, so nothing could seal a password, so re-entering the password did not stick, and
+/// the next restart failed identically. A loop with no way out from inside the app.
+///
+/// ── WHAT IT COSTS, STATED PLAINLY ────────────────────────────────────────────────────────────
+///
+/// The key sits in a file next to the data it protects, readable by this user, where the keychain
+/// would have kept it behind the login password. That is a real reduction and it is not disguised
+/// here. Three things bound it: the file is `0600`; it holds only the key that seals the stored
+/// mailbox password, which is re-derived by typing that password again; and it sits beside a local
+/// mirror that is an ordinary unencrypted database, so anything that can read this file can already
+/// read the mail. The mailbox on the user's own server remains the master.
+///
+/// The keychain is still tried first on a machine where it works, and still written on every path
+/// that mints — a Developer ID signed build, or any platform whose keystore is stable across
+/// updates, never reads this file because [`resolve_install_key`] never has cause to write it.
+pub const KEYSTORE_FILE: &str = "install-key";
+
+/// One look at the file. `Empty` when there is no file, or no directory to hold one.
+fn look_up_file(app_data: Option<&Path>) -> Stored {
+    let Some(path) = app_data.map(|d| d.join(KEYSTORE_FILE)) else {
+        return Stored::Empty;
+    };
+    match fs::read_to_string(&path) {
+        Ok(text) => {
+            let text = text.trim();
+            if is_key(text) {
+                Stored::Key(text.to_string())
+            } else {
+                // Not `Refused`: a file of the wrong shape is not somebody's sealed key and must
+                // not stop a launch. The keystore below is asked, and a good key overwrites this.
+                Stored::Foreign
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Stored::Empty,
+        Err(err) => Stored::Refused(err.to_string()),
+    }
+}
+
+/// Write the key to the file, at `0600`, and prove it can be read back.
+///
+/// Created with the mode already set rather than written and then `chmod`ed — a key that is briefly
+/// world-readable is a key that leaked, and the window is exactly as long as somebody's backup
+/// daemon needs. The same readback discipline as [`store_and_read_back`], for the same reason: a
+/// write that reports success and reads back empty costs the password the user is about to type.
+fn write_key_file(app_data: Option<&Path>, key: &str) -> Result<(), String> {
+    let Some(dir) = app_data else {
+        return Err("this app has no data directory to keep a key in".to_string());
+    };
+    fs::create_dir_all(dir)
+        .map_err(|err| format!("the folder for this app's data could not be made ({err})"))?;
+    let path = dir.join(KEYSTORE_FILE);
+
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&path)
+        .map_err(|err| format!("a key file could not be made beside this app's data ({err})"))?;
+    file.write_all(key.as_bytes())
+        .map_err(|err| format!("this app's key file could not be written ({err})"))?;
+    file.sync_all()
+        .map_err(|err| format!("this app's key file could not be flushed to disk ({err})"))?;
+    drop(file);
+
+    // An existing file keeps the mode it was created with, so a file from an earlier run — or one
+    // restored by a backup tool that widened it — is tightened here rather than trusted.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            .map_err(|err| format!("this app's key file could not be made private ({err})"))?;
+    }
+
+    match look_up_file(app_data) {
+        Stored::Key(stored) if stored == key => Ok(()),
+        _ => Err(
+            "this app's key file was written and did not read back, so a password stored now could \
+             not be read after a restart"
+                .to_string(),
+        ),
+    }
+}
+
+/// Read this install's key — from the file, this app's keystore item, the one an earlier version
+/// stored, or minted on first run, in that order and for the reasons on [`resolve_install_key`].
 ///
 /// Compiled only under the `local-engine` feature, like everything else in this file — the preview
 /// stores nothing and therefore needs nowhere to store it.
-fn install_key() -> Result<String, String> {
+fn install_key(app_data: Option<&Path>) -> Result<String, String> {
     let entry = keyring::Entry::new(KEYSTORE_SERVICE, KEYSTORE_ENTRY)
         .map_err(|err| format!("this computer's keystore could not be opened ({err})"))?;
 
-    resolve_install_key(
-        &|| look_up(&entry),
-        &look_up_older,
-        &|key| store_and_read_back(&entry, key),
-        &|| {
+    resolve_install_key(&Keystores {
+        file: &|| look_up_file(app_data),
+        own: &|| look_up(&entry),
+        older: &look_up_older,
+        write_keystore: &|key| store_and_read_back(&entry, key),
+        write_file: &|key| write_key_file(app_data, key),
+        mint: &|| {
             let mut bytes = [0u8; 32];
             getrandom::fill(&mut bytes)
                 .map_err(|err| format!("this computer would not supply random bytes for a new key ({err})"))?;
-            let key: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-            store_and_read_back(&entry, &key)?;
-            Ok(key)
+            Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
         },
-    )
+    })
 }
 
 // ── What the window may ask ──────────────────────────────────────────────────────────────────
