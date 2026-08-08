@@ -68,7 +68,7 @@ describe("tauri.conf.json", () => {
     // preview, and reusing the number would leave the two sets of checksums
     // ambiguous about which artifact they describe. A version is how a
     // downloader names what they have.
-    expect(conf.version).toBe("0.7.2");
+    expect(conf.version).toBe("0.7.3");
     expect(conf.identifier).toBe("io.ohmail.desktop");
   });
 
@@ -556,14 +556,26 @@ describe("the Rust side", () => {
    * which every branch of `plan_with` is driven through in the Rust suite. It reads no contents and
    * it opens nothing.
    */
-  it("touches the filesystem to write its log, and to look at two paths", () => {
+  it("touches the filesystem to write its log, its key file, and to look at two paths", () => {
     const engine = read("src-tauri/src/engine.rs");
     const allowed = new Set([
-      "fs::create_dir_all", // the log directory, on first run
+      "fs::create_dir_all", // the log directory, on first run — and the data directory, for the key file
       "fs::rename", // rotation: one generation kept
       "fs::metadata", // `look`: is the engine there, and is the runtime runnable
       "fs::Metadata", // …and its type, in the one helper that reads the mode
-      "fs::PermissionsExt", // the execute bit, on Unix
+      "fs::PermissionsExt", // the execute bit, on Unix — and the key file's own mode
+      /* ── THE KEY FILE'S FIVE, AND THE CONSUMER THEY WERE ADDED FOR ─────────────────────────
+       * The per-install key is mirrored to a file beside the app's data, because an ad-hoc
+       * signed build is refused its own keystore item as soon as its binary changes and the
+       * stored mailbox password would be orphaned on every update. That mirror is the ONLY new
+       * consumer of the filesystem in this module, and these are the calls it needs:
+       * one open that creates the file with its mode already set, one write, one re-tightening
+       * of an existing file's mode, and one read back. Anything beyond them still fails. */
+      "fs::OpenOptions", // create the key file
+      "fs::OpenOptionsExt", // …with `0600` at creation, never write-then-chmod
+      "fs::set_permissions", // re-tighten a file an earlier run or a backup tool widened
+      "fs::Permissions", // …the mode handed to it
+      "fs::read_to_string", // read the key back — the one read in this module
     ]);
     const used = [...engine.matchAll(/\bfs::(\w+)/g)].map((m) => `fs::${m[1]}`);
     // The harness bites only if it found something to classify.
@@ -583,8 +595,22 @@ describe("the Rust side", () => {
     // which is the widening this entry exists to make visible rather than the one call it permits.
     expect(engine.match(/fs::metadata/g)).toHaveLength(1);
     expect(engine).toMatch(/pub fn look\(path: &Path\) -> Found/);
-    // It classifies and never reads: nothing here opens a file or lists a directory.
-    expect(engine).not.toMatch(/fs::read|fs::File::open|read_dir/);
+    // `look` classifies and never reads. The module's ONE read is the key file's own read-back,
+    // so the ban is narrowed to a count rather than dropped: a second `read_to_string`, a
+    // `File::open` or a directory listing is a new capability and fails here as it always did.
+    expect(engine.match(/fs::read_to_string/g)).toHaveLength(1);
+    expect(engine).not.toMatch(/fs::File::open|read_dir/);
+
+    /* ── THE KEY FILE IS PRIVATE AT CREATION, NOT PRIVATE SHORTLY AFTERWARDS ───────────────
+     * A key written world-readable and chmoded a moment later has already leaked to anything
+     * watching the directory, and the window is exactly as long as a backup daemon needs. The
+     * mode is asserted at BOTH places it is set: on the open that creates the file, and on the
+     * re-tightening that covers a file an earlier run left behind. Losing either one is a
+     * silent downgrade of the only thing protecting the key once the keystore has refused. */
+    expect(engine).toMatch(/options\.mode\(0o600\)/);
+    expect(engine).toMatch(/Permissions::from_mode\(0o600\)/);
+    // …and the key file is the only path this module composes under the data directory.
+    expect(engine).toMatch(/KEYSTORE_FILE: &str = /);
   });
 
   /**

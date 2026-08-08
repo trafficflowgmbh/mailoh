@@ -10,7 +10,7 @@ One app, on macOS, Windows and Linux.
 Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/badge/download-v0.7.2-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.2)
+[![latest release](https://img.shields.io/badge/download-v0.7.3-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.3)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -44,9 +44,9 @@ push. It is a commercial service with a codebase of its own, built by the same
 people, and the desktop app neither asks for it nor needs it.
 [Desktop or Cloud](#desktop-or-cloud) is the full comparison, prices included.
 
-## The current release — v0.7.2
+## The current release — v0.7.3
 
-**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.2)**
+**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.3)**
 `ohmail.dmg` for macOS, an NSIS `-setup.exe` for Windows, an `.AppImage` and a
 `.deb` for Linux. Every file was built by GitHub Actions from the tree this tag
 points at, and the run that made them prints the SHA-256 of each one. Nothing is
@@ -58,9 +58,15 @@ engine: it connects to your own IMAP mail server over TLS, mirrors your mailbox 
 a database on your computer, and organises new mail into `ohmail/` folders on the
 server itself — a Screener for first-time senders, Reads, Receipts, and the rest —
 so the filing is visible in every other mail app you own. It asks for your server
-and password on first launch; the password is sealed under a per-install key held
-in your operating system's own keystore (Keychain on macOS, Credential Manager on
-Windows, the Secret Service on Linux). In this **local mode** nothing leaves your
+and password on first launch; the password is sealed under a per-install key kept
+in your computer's keystore (Keychain on macOS, Credential Manager on Windows, the
+Secret Service on Linux) **and mirrored to a file beside the app's data that only
+your user account can read**. The mirror is not belt-and-braces: an app without a
+developer certificate is refused its own keystore item after every update, and
+without a copy it can still read, your stored password would be lost each time.
+Where that happens the key lives in the file rather than behind your login
+password — a real reduction, stated here rather than buried, and it sits beside a
+local mail mirror that is an ordinary unencrypted database. In this **local mode** nothing leaves your
 computer but the IMAP connection to your provider, the signed update check, and —
 only if you turn it on — your own AI key or a local Ollama: no telemetry, no
 analytics. You can instead sign in to **ohmail Cloud** (the optional hosted
@@ -73,18 +79,20 @@ nodejs.org's own published checksums by the run that made your installer — so
 there is nothing to install first and nothing on your `PATH` for the app to
 depend on.
 
-**What is new since v0.7.1: the app opens your mail.** Every earlier build of this
-release line went to an empty white window a few seconds after you connected a
-mailbox — the connection itself worked, and the mail was already on your machine,
-and then there was nothing to look at. The cause was in how this repository is
-assembled rather than in the app, and it is fixed and checked for: an installer
-whose bundle carries the stand-in that caused it now fails to build. A window that
-cannot draw for any other reason says so, with the reason, instead of showing you
-nothing.
+**What is new since v0.7.2: signing in sticks.** Every update used to cost you
+your stored mailbox password, because an unsigned app is refused its own keystore
+item once its binary changes — and on macOS a keystore lookup could put up a login
+prompt before the app had a window, hanging the launch for minutes. The key now
+lives in a file beside the app's data as well, written while it is still readable,
+and the app never lets the keystore ask you anything. **This update itself asks for
+your mailbox password once**, because the key an earlier version wrote cannot be
+read back; from then on it is remembered.
 
-**Mail also renders at its natural size now**, reflowing to the reading column instead of
-being shrunk to fit, and a conversation shows every message in full rather than a
-truncated snippet. See the [changelog](CHANGELOG.md) for the rest.
+**The command palette and theme control moved into the sidebar**, and the message
+actions are a floating pill at the bottom of the reader instead of an opaque strip
+across the mail. Your Ohbox no longer says it is empty while it is still loading,
+and a large mailbox now finishes importing rather than reporting a backlog for
+ever. See the [changelog](CHANGELOG.md) for the rest.
 
 **If you are on macOS and already have ohmail installed**, the update is a
 handover: the app you have is a different program — a native client that shared
@@ -107,7 +115,7 @@ thing to read the install notes about.
 |---|---|
 | **Connects to your mailbox** | ✅ Yes, on macOS, Windows and Linux. The bundled engine speaks IMAP over TLS, mirrors your mailbox to a local store, and files new mail into `ohmail/` folders on your server. |
 | **What it talks to** | Local mode: your IMAP server, the signed update feed, and — only if you turn it on — your own Anthropic key or a local Ollama. Cloud mode: ohmail.app, the hosted service you sign into, as a viewer. No telemetry, no analytics. |
-| **Credentials** | Your mail password, sealed under a per-install key in your operating system's keystore, never written in the clear. |
+| **Credentials** | Your mail password, sealed under a per-install key and never written in the clear. The key is kept in your computer's keystore and mirrored to a file only your user account can read, because an unsigned app is refused its own keystore item after every update. |
 | **Runs, and is worth looking at** | Every surface is real: Ohbox, Screener, Reads, Receipts, triage piles, tags, search, compose, settings — light and dark, down to a 390 pt window, keyboard-first. |
 | **Tested** | The interface model, the rules and design tokens, and the engine's sync, lease and organise logic are covered by the test suite; every platform's packaging job opens the artifact it just built and starts the engine inside it; and the release engine was verified connecting to and organising a real IMAP mailbox. |
 | 🔜 Next | Signed builds — a real Apple Developer ID and an Authenticode certificate. Today's are unsigned, so first launch needs the approval described in the install notes. The app already updates itself over a signed feed on all three platforms. |

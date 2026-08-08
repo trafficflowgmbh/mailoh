@@ -16,6 +16,88 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.7.3] — 2026-08-08
+
+### Signing in sticks across updates
+
+**An update used to cost you your stored mailbox password, every time.** The app seals that
+password under a key of its own and keeps the key in your computer's keystore. macOS records
+which program is allowed to read a keystore item, and for an application with no developer
+certificate what it records is the hash of that exact binary — so every new version is a
+different program as far as the keystore is concerned, and is refused the key the previous
+version wrote. What you saw was a launch that failed with a message about disk space on a machine
+with plenty free, and a password that would not stick however many times you typed it: the app
+could not read the key, so it could not seal a new password under it either.
+
+The key is now kept in a file beside the app's data, readable only by your own user account, and
+it is written there while the key is still readable rather than after it has been lost. That file
+is read before the keystore is consulted — a machine whose keystore had started answering again
+would otherwise hand back the key from before the fallback, which unseals nothing. The keystore
+is still tried first on a machine where it works, and still written on every path that mints.
+
+This is a real reduction and it is worth stating plainly rather than burying: where the keystore
+refuses, the key that seals your stored mailbox password sits in a file instead of behind your
+login password. It sits beside a local mail mirror that is an ordinary unencrypted database, and
+your mailbox on your own server remains the master copy of everything.
+
+**Because of that, this update asks for your mailbox password once.** The key written by an
+earlier version cannot be read back on a machine whose keystore refuses it — that is the whole
+defect — so the first launch after updating asks for the password again, and remembers it from
+then on. On macOS that is every install, because the app is unsigned.
+
+**And a keystore lookup can no longer hang the launch.** When macOS will not let a program read a
+keystore item, its first move is not to return an error: it puts up a dialog asking for your
+login password and waits for an answer. That happened while the app was still working out what to
+start, before it had a window of its own to explain itself in — measured at over ten minutes on
+one machine, where the same lookup fails in microseconds once it is told not to ask. The app now
+looks without letting the keystore ask you anything. The cost is that a keystore which is merely
+locked is treated as a refusal, which only reaches an install that has never once got far enough
+to write the file.
+
+### The reader and the sidebar
+
+**The message actions float at the bottom of the reader.** Reply, archive, junk and the rest sat
+in an opaque strip drawn across the message, which made a false floor where the text appeared to
+end — and on a message too short to scroll it never reached the bottom at all, leaving a row of
+verbs stranded in the middle of an empty panel. It is a floating pill now, resting just off the
+bottom edge whether the message scrolls or not, carrying its own background instead of painting
+over the mail. Nothing is hidden behind it: scrolling to the end brings the last paragraph to
+rest above it. While you are writing a reply it stands down to a plain row, so it does not
+compete with the Send button you are reaching for.
+
+**The command palette and the theme control live in the sidebar.** They used to sit in a capsule
+pinned over the bottom of the window, which meant every scrolling list had to keep a band of
+empty space beneath itself so its last row was not underneath them. They are rows at the foot of
+the navigation sidebar now — one line, with the theme control as an icon at its end — and on a
+phone they ride the navigation drawer. Removing that reserved band from four surfaces is what
+gave the action bar room to be the right shape.
+
+### Honest states
+
+**Your Ohbox never claims to be empty while it is still loading.** On first open it could stand
+for the better part of a minute reading "Nothing in your Ohbox. This device keeps your recent
+mail. The rest is on your server", with a control offering to load older mail — and then your
+mail would arrive. The first sentence was already held back until the app had read its local copy
+once; the rest of the pane was not. "This device keeps your recent mail" says where your mail is,
+which is not something the app knows before it has looked, and the only button on the page
+pointed backwards past mail that was on its way. The sentence and the control now wait together
+for the same thing the first sentence waits for.
+
+### Large mailboxes finish importing
+
+**A big folder no longer starves the ones behind it.** One sync pass reads every folder you watch
+against a single budget of read/unread and flag changes, and it used to spend that budget in
+folder order, each folder taking all it could. A folder holding thousands of changed messages
+needs many passes to drain, and while it did, no folder behind it was ever asked — so every cycle
+reported a backlog, the mailbox never reached the state that records a first import as finished,
+and it went on describing itself as importing while doing no work.
+
+The budget is shared now. Every folder that still owes changes gets an equal portion of what is
+left, and one that cannot use its portion hands it to the folders behind it, so a pass still
+spends the whole budget. One owing folder per cycle is exempted from the share in rotation, so
+the front of the queue keeps moving and no folder is permanently last. Which folder is read first
+is unchanged — that order is what keeps new mail arriving quickly.
+
 ## [0.7.2] — 2026-08-08
 
 ### The one that matters: the app opens your mail
@@ -512,7 +594,14 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.4.0-preview...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.3
+[0.7.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.2
+[0.7.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.1
+[0.7.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.0
+[0.6.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.6.1
+[0.6.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.6.0
+[0.5.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.5.0
 [0.4.0-preview]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.4.0-preview
 [0.3.0-preview]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.3.0-preview
 [0.2.0-preview]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.2.0-preview

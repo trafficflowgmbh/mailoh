@@ -67,10 +67,15 @@ to, to ohmail Cloud):**
 - The packaging step reads every host string in the shipped binary and **fails the build on
   any host outside an explicit allow-list** — `api.ohmail.app`, the signed update feed, and
   the local-engine pipe — so a telemetry or third-party endpoint cannot ship unremarked.
-- **Credentials**: your mail password is sealed under a per-install AES key held in
-  your login **Keychain** and is never written to disk in the clear. Reports about
-  the credential envelope, the Keychain use, or TLS/certificate handling are exactly
-  what we want.
+- **Credentials**: your mail password is sealed under a per-install AES key and is never
+  written to disk in the clear. That key is kept in your computer's keystore — the login
+  **Keychain** on macOS — **and mirrored to a `0600` file beside the app's data**, because
+  an application without a developer certificate is refused its own keystore item as soon
+  as its binary changes, which is every update. Where the keystore refuses, the file is the
+  only copy: the key is then protected by file permissions rather than by your login
+  password, and it sits beside a local mail mirror that is an ordinary unencrypted database.
+  Reports about the credential envelope, the key file, the keystore use, or TLS/certificate
+  handling are exactly what we want.
 - It **renders mail as HTML** and blocks remote content, so the tracking pixels that
   report when and where you opened a message do not load. HTML-rendering and
   remote-content issues are in scope.
