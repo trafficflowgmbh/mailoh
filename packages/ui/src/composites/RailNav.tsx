@@ -109,10 +109,15 @@ export interface RailNavProps {
    * The rail is where the app's own chrome already lives, so they sit at the end of it, above the
    * account line.
    *
-   * `ReactNode` and not a typed list: the rows are the host's, written in the rail's own
+   * `ReactNode` and not a typed list: the controls are the host's, written in the rail's own
    * vocabulary (`.ritem`, with a keycap in `.cnt` exactly as the Search row carries "/"), and
    * `RailNav` only gives them a place and a hairline. **Optional and default-absent** — the
    * desktop shell renders the same rail with no dock and is untouched by this.
+   *
+   * The dock lays out as ONE FLEX ROW (`rail.css`): a host marks the control that should take
+   * the line with `.dock-cmd` and any icon-width control with `.dock-theme`. A host that marks
+   * neither gets children sized by their own content, which is the sane default rather than a
+   * broken one.
    */
   dock?: ReactNode;
   /** Bottom line — the account address. */

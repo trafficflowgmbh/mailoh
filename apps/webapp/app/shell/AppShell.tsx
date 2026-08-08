@@ -2746,24 +2746,36 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * keycap in `.cnt`, exactly as the Search row carries "/". A row that looks like a rail row
    * and is a rail row needs no new idiom to learn and no second stylesheet to keep in step.
    *
-   * The theme row's label is VISIBLE text rather than an `aria-label` on an icon-only button —
-   * a rail is a list of labelled rows, and one silent glyph among them would be the only thing
-   * here you have to hover to identify.
+   * ONE LINE, NOT TWO. Command keeps the full-width row and its keycap; the theme control is an
+   * icon at the right end of that same line. Two stacked rows spent a second line of the rail's
+   * foot on a control that is a single glyph's worth of meaning, and pushed the account line up
+   * by that much on every viewport.
+   *
+   * The theme button is therefore the one thing here WITHOUT visible text, so it carries its
+   * name twice over: `aria-label` for assistive tech and the palette-less keyboard path, `title`
+   * for the pointer user who needs to identify a lone glyph. Dropping either leaves a button
+   * whose only description is a sun. The palette still carries the same action by name
+   * ("Toggle light / dark"), so nothing about switching the theme is reachable only by icon.
    *
    * On a phone these ride the navigation drawer, which is the same rail. See `touch-keys.css`
-   * for why the keycap goes away there and the label does not.
+   * for why the keycap goes away there and the Command label does not.
    */
   const railDock = (
     <>
-      <button type="button" className="ritem" onClick={palette.openPalette}>
+      <button type="button" className="ritem dock-cmd" onClick={palette.openPalette}>
         {t("dock.command")}
         <span className="cnt">
           <Kbd>⌘K</Kbd>
         </span>
       </button>
-      <button type="button" className="ritem" onClick={theme.toggle}>
+      <button
+        type="button"
+        className="ritem dock-theme"
+        onClick={theme.toggle}
+        aria-label={t("dock.theme")}
+        title={t("dock.theme")}
+      >
         <Icon name="sun" />
-        {t("dock.theme")}
       </button>
     </>
   );

@@ -92,7 +92,30 @@
  *
  * SHORT VIEWPORTS: `.rail` scrolls (`overflow-y:auto`), so on a short window the dock scrolls
  * with everything else. Deliberately NOT pinned inside the scroller — a `position:sticky` foot
- * would cover the mailbox list at exactly the height where the list needs every line it has. */
-.rail-dock{margin-top:auto;padding-top:10px;box-shadow:inset 0 1px 0 var(--hair-soft)}
+ * would cover the mailbox list at exactly the height where the list needs every line it has.
+ *
+ * ONE LINE. The dock is a flex ROW: the labelled control takes the line and anything that is a
+ * lone glyph rides the right end of it at its own width. Two stacked rows spent a second line of
+ * the foot on one icon's worth of meaning and pushed the account address up by that much.
+ *
+ * `flex:1 1 0` and not `1 1 auto` on the labelled row: `.ritem` declares `width:100%`, which an
+ * `auto` basis would resolve to the FULL container width, so both children would start over-wide
+ * and only shrink back — the icon would lose its square. A zero basis makes "everything left" the
+ * definition rather than the outcome. `min-width:0` lets that row shrink past its own content
+ * width — a flex item's floor is `min-content` otherwise, so a long label would push the icon off
+ * the end of the rail rather than the row giving way. */
+.rail-dock{margin-top:auto;padding-top:10px;box-shadow:inset 0 1px 0 var(--hair-soft);
+  display:flex;align-items:stretch;gap:4px}
+.rail-dock .ritem{width:auto}
+.rail-dock .dock-cmd{flex:1 1 0;min-width:0}
+/* Square, centred, and quiet at rest. `align-items:stretch` on the row rather than `center` is
+   what keeps the rail's rhythm: the labelled row sets the height, the icon button takes the same
+   one, and the two hover fills are therefore the same pill rather than one a few pixels shorter.
+   Inline padding is pulled in to the icon because there is no text to set off.
+   `--ink3` at rest is the same weight the rail gives a count, and hover/focus inherit `.ritem`'s
+   own `--ink` + `--tint` — one hover language for the whole rail, and legible in both themes
+   because all three are theme tokens rather than fixed colours. */
+.rail-dock .dock-theme{flex:0 0 auto;padding:6px 7px;justify-content:center;color:var(--ink3)}
+.rail-dock .dock-theme:hover{color:var(--ink)}
 .rail-dock + .rail-mail{margin-top:0}
 .rail-mail{margin-top:auto;padding:14px 8px 0;font-size:10.5px;color:var(--ink3)}
