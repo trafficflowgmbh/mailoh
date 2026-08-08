@@ -58,6 +58,23 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // guard compares this array against what the sources READ, not against what they display.
   // Omitting it would put `body.loading` in the binary where a sentence belongs.
   "about", "body", "compose", "dock", "ohbox", "palette", "rail", "reads", "receipts",
+  // `attachments` and `mailBody` belong to the two components the reading pane is composed
+  // from — the paperclip strip and the sanitized HTML body — and they are the one place where
+  // "what the sources READ" is not yet "what the sources CALL". Neither component calls
+  // `useTranslations` today: each renders from a local `COPY` constant whose header names the
+  // namespace it will take and the one-line swap that will take it. The guard reads the source
+  // text, so it counts the namespace the shim names, and listing it here is what keeps that
+  // swap a one-line change instead of a shipped regression. The two surfaces are the reason it
+  // would be a regression rather than a nuisance: both are unreachable in the fixtures-only
+  // preview — no attachment bytes, no bodies — and reachable on every real message with a file
+  // and every real HTML body in an engine-bearing build, so a swap that landed without the
+  // namespace would render `attachments.downloadAll` to a reader while passing everything the
+  // preview is able to exercise.
+  //
+  // `en.json` holds both, so neither trips the abort below. `mailBody` holds FEWER keys than
+  // its shim does — the dark-viewer toggle exists only in the constant — so taking that exit is
+  // a catalogue edit as well as a call-site edit.
+  "attachments", "mailBody",
   // `draftReply`, `history` and `seed` are the three the shell started reading without this
   // array following, which is precisely the omission `desktop-messages.test.ts` exists to
   // catch — and it was catching it: the guard has been red since those surfaces landed.
@@ -149,10 +166,20 @@ function shellMessagesOnly(): Plugin {
  *     `useTranslations`. Aliasing the framework wrapper away keeps the ICU
  *     semantics byte-identical instead of re-implementing plurals in a shim.
  *
- *  2. `./adapters/http-adapter.js` → `src/no-http-adapter.ts`. This is the whole
- *     zero-network story: the Cloud sync client is not merely unused here, it is
- *     not in the module graph, and `scripts/publish-desktop.mjs` does not publish
- *     the file at all — the public tree cannot contain it.
+ *  2. `./adapters/http-adapter.js` → `src/no-http-adapter.ts`, IN THE PREVIEW ONLY.
+ *     That artifact has no engine to talk to, so its sync client is not merely
+ *     unused, it is not in the module graph: grep the preview's output and there
+ *     is no request builder to find.
+ *
+ *     The ENGINE build resolves the real module, and must — it is the client that
+ *     runs the mail against the engine on this machine, over the bridge. That is
+ *     what the `LOCAL_ENGINE ? [] : [alias]` below says, and it is why the real
+ *     module is published: a binary that carries it has to offer it. This note
+ *     used to claim the file was published nowhere, which stayed true right up
+ *     until a second artifact existed, and then shipped a window that went blank
+ *     the moment a mailbox served, because the stub was standing in for a class
+ *     the artifact constructs. `scan-artifact.mjs` now asserts which of the two
+ *     each bundle contains, in both directions.
  *
  *  3. Every third-party package the SHARED sources import is pinned to THIS
  *     package's copy by absolute path — react and react-dom, and the rich text

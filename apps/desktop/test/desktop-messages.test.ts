@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 import { SHELL_MESSAGE_NAMESPACES } from "../vite.config.js";
 
 /**
@@ -25,19 +26,110 @@ const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = path.resolve(APP, "../..");
 const read = (rel: string) => fs.readFileSync(path.join(REPO, rel), "utf8");
 
-/** Every file that ends up in the desktop bundle and could read a translation. */
-const SOURCE_DIRS = [
+/**
+ * ── THE SCAN ROOTS ARE DERIVED FROM THE PAYLOAD, NOT RESTATED HERE ─────────────────────────
+ *
+ * They used to be four paths written out by hand. The list was right the day it was written
+ * and did not move when the payload did: `apps/webapp/app/components` was added to
+ * `scripts/publish-desktop.mjs` afterwards — its entry there says "Found by the import-
+ * resolvability gate, not by a reader" — and this scan never followed it. So the two
+ * components the reading pane is composed from, `AttachmentStrip` and `MessageBody`, sat
+ * outside every check in this file. Same shape as the list behind the v0.7.2 blank screen:
+ * correct when written, silently stale afterwards, and nothing in between says so.
+ *
+ * So the roots come from `PAYLOAD` itself. Every entry whose extension filter admits `.tsx`
+ * is a directory of React sources the desktop bundle compiles, and that is exactly the set
+ * that can read a translation; a directory added to the payload joins this scan on the same
+ * commit rather than whenever somebody notices.
+ *
+ * The walk still takes `.ts` as well as `.tsx`, so a root published as `.tsx`-only is
+ * over-scanned by its `.ts` siblings. That is the safe direction: over-scanning can only put
+ * a spare namespace in the binary, under-scanning is what renders a raw key to a reader.
+ *
+ * ── WHY THE ARRAY IS PARSED AND NOT IMPORTED ──
+ *
+ * `publish-desktop.mjs` has no main guard — it works at the top level, and importing it runs
+ * the generated-stub check and the engine gates, which is a publish's preflight and not a
+ * test's. So the literal is extracted as source text and evaluated in a `node:vm` context
+ * with no globals: the entries are strings and plain objects and need nothing from outside.
+ * `test/desktop-mirror-excludes-the-engine.test.ts` reads the same array by the same route,
+ * for the same reason.
+ *
+ * EVERY WAY THE EXTRACTION CAN FAIL THROWS, and that is the point rather than caution. A scan
+ * over zero directories reads zero files and finds zero namespaces, and the comparison below
+ * would then pass against an empty set — the guard reporting success at precisely the moment
+ * it lost the ability to look. That is the defect being fixed here, so the fix must not
+ * reintroduce it one layer down.
+ *
+ * ── AND ONE PLACE WHERE THE PUBLISHER GENUINELY IS NOT THERE ──
+ *
+ * This file is itself published, and this repository's own README says to run it. The publisher
+ * is workspace machinery and is not published, so in a public checkout the extraction has
+ * nothing to read — which is a different state from "the extraction broke", and must not be
+ * reported as one. There the roots come from {@link MIRROR_SOURCE_DIRS} below, which is the
+ * same set written out; the case that compares the two runs wherever the publisher IS present,
+ * so the written-out copy cannot drift from the payload it stands in for. A file is missing is
+ * an answer, a file is missing and the guard shrugged is not.
+ */
+const PUBLISHER = "scripts/publish-desktop.mjs";
+const HAVE_PUBLISHER = fs.existsSync(path.join(REPO, PUBLISHER));
+
+/**
+ * The roots a checkout without the publisher uses, and the copy the case below holds the
+ * derivation to. Written out ONCE, in one place, checked on every run that can check it —
+ * rather than the four-path list this file used to open with, which nothing compared to
+ * anything and which is how `apps/webapp/app/components` stayed missing.
+ */
+const MIRROR_SOURCE_DIRS = [
+  "apps/desktop/src",
+  "apps/webapp/app/components",
   "apps/webapp/app/shell",
   "apps/webapp/app/views",
   "packages/ui/src",
-  "apps/desktop/src",
 ];
+
+function payloadTsxDirs(): string[] {
+  const src = fs.readFileSync(path.join(REPO, PUBLISHER), "utf8");
+  const m = src.match(/const PAYLOAD = \[([\s\S]*?)\n\];/);
+  if (!m) throw new Error(`could not extract PAYLOAD from ${PUBLISHER}`);
+  const payload = vm.runInNewContext(`[${m[1]}]`) as { from: string; ext?: string[] }[];
+  if (!Array.isArray(payload) || payload.length < 20) {
+    throw new Error(
+      `PAYLOAD parsed to ${Array.isArray(payload) ? `${payload.length} entries` : typeof payload} — ` +
+        "the extraction is broken, not the payload",
+    );
+  }
+  const dirs = payload.filter((e) => e.ext?.includes(".tsx")).map((e) => e.from);
+  if (dirs.length < 4) {
+    throw new Error(
+      `the .tsx extension filter matched ${dirs.length} PAYLOAD entr${dirs.length === 1 ? "y" : "ies"} — ` +
+        "the desktop bundle is built from more directories than that, so the filter has stopped matching",
+    );
+  }
+  return dirs;
+}
+
+/**
+ * `apps/desktop/src` is already in that derived set — it is a PAYLOAD entry of its own, and it
+ * admits `.tsx` — and it is named again because it is in the bundle for a different reason
+ * from the other four. Those are the SHARED webapp and design-system sources the mirror
+ * publishes so the bundle can be built from them; this one is the desktop's own entry point,
+ * in the bundle because it IS the bundle's root. Naming it keeps it in the scan if that
+ * entry's extension filter ever narrows to `.ts`, which would otherwise drop the shell's root
+ * out of the scan without a word. Deduped, so today it changes nothing.
+ */
+const SOURCE_DIRS = HAVE_PUBLISHER
+  ? [...new Set([...payloadTsxDirs(), "apps/desktop/src"])].sort()
+  : MIRROR_SOURCE_DIRS;
 
 function sourceFiles(): string[] {
   const out: string[] = [];
   const walk = (dir: string) => {
     const abs = path.join(REPO, dir);
-    if (!fs.existsSync(abs)) return;
+    // A missing scan root THROWS. It used to be skipped, which meant a root that had been
+    // renamed or removed contributed nothing and every case below went on passing over
+    // whatever was left — the vacuous-scan failure, one directory at a time.
+    if (!fs.existsSync(abs)) throw new Error(`scan root ${dir} does not exist`);
     for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
       const rel = `${dir}/${e.name}`;
       if (e.isDirectory()) walk(rel);
@@ -71,6 +163,37 @@ function namespacesUsed(): Set<string> {
 }
 
 describe("desktop message filter", () => {
+  /**
+   * The scan looked at something. Every other case here compares one derived set against
+   * another, and both derivations are empty-safe: an extraction that stopped matching, or a
+   * walk over roots that are no longer there, produces `[]` on both sides and agrees with
+   * itself. So the harness is asserted before its findings are trusted.
+   *
+   * `apps/webapp/app/components` is named rather than counted because it is the directory
+   * whose absence was the defect: it holds the paperclip strip and the HTML body, the two
+   * surfaces every real message goes through.
+   */
+  it("the scan roots are real directories and the walk found real files", () => {
+    expect(SOURCE_DIRS).toContain("apps/webapp/app/components");
+    expect(SOURCE_DIRS.length).toBeGreaterThanOrEqual(5);
+    for (const d of SOURCE_DIRS) {
+      expect(fs.statSync(path.join(REPO, d)).isDirectory(), `${d} is not a directory`).toBe(true);
+    }
+    expect(sourceFiles().length).toBeGreaterThan(40);
+    expect(namespacesUsed().size).toBeGreaterThan(10);
+  });
+
+  /**
+   * The written-out roots still say what the payload says. This is the case that keeps the
+   * derivation and its stand-in from becoming two lists — the failure the derivation was
+   * introduced to end, reintroduced by the fallback that lets a public checkout run at all.
+   * It runs wherever the publisher is present, which is every checkout where the payload can
+   * be edited in the first place.
+   */
+  it.runIf(HAVE_PUBLISHER)("the written-out roots match the ones derived from the payload", () => {
+    expect([...MIRROR_SOURCE_DIRS].sort()).toEqual([...new Set([...payloadTsxDirs(), "apps/desktop/src"])].sort());
+  });
+
   it("SHELL_MESSAGE_NAMESPACES is exactly what the sources read", () => {
     const used = [...namespacesUsed()].sort();
     expect(used).toEqual([...SHELL_MESSAGE_NAMESPACES].sort());
