@@ -158,7 +158,10 @@ export function MailStateProvider({
    * RE-BASELINES the sampler instead of folding a rise. The initial load establishes the baseline;
    * it is not growth. A genuine first import is still announced: `deriveMailState`'s import FLOOR
    * reads the server's own `initialImportCompletedAt`, which a growth-only reading cannot, and it
-   * speaks the whole time that stamp is null. Once the first drain settles, live arrivals are
+   * speaks for as long as that stamp is null and the import is still plausible — absolutely for the
+   * first day after a connect, and past that only while this tab cannot show otherwise (see
+   * `importFloorSpeaks`; an unbounded floor held a permanent false "Syncing" over a finished
+   * mailbox whose worker never reported a drained cycle). Once the first drain settles, live arrivals are
    * measured from the count actually on the device, so the hydration jump can no longer be mistaken
    * for an import.
    */

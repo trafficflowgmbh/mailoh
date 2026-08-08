@@ -54,6 +54,23 @@
  * The line "reads no server timestamp" that used to stand here was true of the growth signal and
  * is why the floor is a SEPARATE arm from {@link isImporting} rather than a third case inside it.
  *
+ * ── AND THE FLOOR IS BOUNDED, BECAUSE "NOT KNOWN TO BE FINISHED" IS NOT "IN PROGRESS" ───
+ *
+ * That floor was unconditional as first written, and the sentence above — "speaks regardless of the
+ * mirror" — was true without limit. It cost a permanent falsehood. Nothing obliges the worker ever
+ * to reach a no-backlog cycle, and a mailbox was observed going four days without one while
+ * `connected` and syncing normally, so the strip reported an import in progress for ever over a
+ * mirror that was complete, current and readable — and because the arm uses `some`, that one
+ * mailbox spoke for a second, properly stamped one beside it.
+ *
+ * A null stamp is an UNKNOWN, and this module's founding argument — that a column which cannot bear
+ * a positive reading must not be given one — applies to this stamp exactly as it applies to
+ * `lastSyncAt`. So the floor is obeyed absolutely for {@link IMPORT_FLOOR_MAX_MS} after a mailbox is
+ * connected, which covers every import anyone has measured, and past that it must be CORROBORATED
+ * by facts this client owns: a completed drain, a loop with no failures, and a mirror that has not
+ * moved. {@link importFloorSpeaks} is the whole of it, and it is deliberately not a third case
+ * inside {@link isImporting}: the growth arm still reads no server timestamp at all.
+ *
  * ── WHY THE DERIVATION IS HERE AND NOT IN A VIEW ────────────────────────────────────────
  *
  * `SyncBar.tsx` records that the failure sentence was found three times, because each fix
@@ -191,7 +208,12 @@ export interface MailboxFacts {
    * per-mailbox (not shared across the pass) and late (stamped only once a cycle drains with no
    * backlog), so its two failure modes do not apply. {@link deriveMailState} reads it as a FLOOR,
    * and ONLY as `=== null`: a null means the import is not known to be finished, which keeps
-   * `importing` speaking whatever the mirror is doing. A missing field — an older server that has
+   * `importing` speaking whatever the mirror is doing — for {@link IMPORT_FLOOR_MAX_MS} after the
+   * mailbox is connected, and past that only while this client cannot corroborate otherwise. It has
+   * a THIRD failure mode the other two do not, and the bound is the answer to it: the write depends
+   * on the worker reaching a cycle with no backlog, which is not guaranteed to happen at all, and a
+   * mailbox that never gets there was measured holding a permanent "Syncing your mail" over a
+   * finished mirror. See {@link importFloorSpeaks}. A missing field — an older server that has
    * not deployed the column — reads as `undefined`, which is not `=== null`, so a deploy skew
    * degrades to the prior growth-only behaviour rather than a false "still importing". See the
    * header.
@@ -416,6 +438,102 @@ export function isGrowing(g: MirrorGrowth, now: number): boolean {
 export function isImporting(g: MirrorGrowth, bootstrapping: boolean, now: number): boolean {
   if (g.importing) return now - g.lastRiseAt < IMPORT_END_IDLE_MS;
   return isGrowing(g, now) && bootstrapping;
+}
+
+/**
+ * How long the import FLOOR is trusted with no corroboration at all.
+ *
+ * Twenty-four hours, and the number's job is to DOMINATE any genuine first import rather than to
+ * estimate one. The measurements this file already records are the scale it has to beat: a first
+ * attach at around six minutes, twice; a few thousand messages drained in minutes; attaches are
+ * SERIAL, so a second mailbox legitimately waits behind the first with nothing stamped the whole
+ * time. A day is an order of magnitude past all of it, which is what makes the window safe to
+ * treat as absolute — inside it the floor is obeyed exactly as it was before this bound existed.
+ *
+ * Exported so a test can drive either side of it rather than sleeping past a literal it cannot see.
+ */
+export const IMPORT_FLOOR_MAX_MS = 86_400_000;
+
+/**
+ * Does the server's unwritten stamp still entitle the strip to say "importing" about THIS mailbox?
+ *
+ * ── THE DEFECT THIS EXISTS TO END ───────────────────────────────────────────────────────
+ *
+ * `initial_import_completed_at` is written by the worker on the first cycle that drains with no
+ * backlog, and by nothing else. A mailbox that never reaches such a cycle is therefore never
+ * stamped — and the floor, as first written, read that as "still importing" FOR EVER. The shape of
+ * it: a mailbox connected days earlier, `connected`, its `last_sync_at` minutes old, its mirror
+ * fully drained and motionless, and the strip still announcing an import in progress over mail the
+ * reader could already open. Worse where an account has more than one mailbox — the floor's `some`
+ * let a single unstamped mailbox speak for every healthy one beside it.
+ *
+ * The stamp is documented as readable ONLY as `=== null`, meaning "not KNOWN to be finished". This
+ * function is where that reading stops being turned into a positive, counted, clocked claim about
+ * work in flight on evidence that is merely absent. A null is an unknown, and an unknown that has
+ * outlived every plausible import — against a client that has drained and a mirror that has not
+ * moved — is not grounds for a sentence about what the app is doing right now.
+ *
+ * ── WHY RELEASING IT DOES NOT BRING BACK THE PARTIAL MAILBOX ────────────────────────────
+ *
+ * Two structural reasons, and neither is a judgement call:
+ *
+ *  1. Inside {@link IMPORT_FLOOR_MAX_MS} the floor is ABSOLUTE — no corroboration is consulted and
+ *     the behaviour is bit-for-bit what it was. The case the floor was written for (a tab meeting a
+ *     partial server state minutes to hours after a connect) lives entirely inside that window.
+ *  2. PAST the window, a server import that is genuinely still running re-enters through the growth
+ *     arm above this one, which outranks it: {@link growthStep} re-qualifies a run at two rises and
+ *     {@link IMPORT_MIN_DELTA} added, and a real backfill crosses that in seconds.
+ *
+ * What is left is exactly the case this bound is for: a mailbox older than the window whose server
+ * import is not producing anything. That IS a server-side fault — but a permanent false "Syncing"
+ * is the worse way to render it, and it is not a claim this client can honestly make.
+ *
+ * ── THE CORROBORATION IS THE WHOLE SYNC STATUS, NOT A BOOLEAN ───────────────────────────
+ *
+ * `bootstrapping` goes false only after `engine.syncOnce()` RESOLVES, and that call commits the
+ * snapshot and then pages until `hasMore` is false — so `!bootstrapping` is precisely "this tab has
+ * completed a full drain at least once". `failures === 0` is required WITH it and is not
+ * belt-and-braces: the `failing` state is only reached at `failureStreak` consecutive failures, so
+ * a mailbox one or two failed drains deep reaches this arm with a mirror that is frozen for the
+ * WRONG REASON. A still `lastRiseAt` is then the absence of observation rather than evidence of a
+ * quiet server, and releasing the floor on it would be reading a broken instrument as a reading.
+ * The scheduler sets `failures = 0` and `bootstrapping = false` in the same success, so together
+ * they mean "this tab has drained, and the most recent attempt worked".
+ *
+ * Taken as the struct rather than a pre-computed boolean deliberately: a bare `drained` parameter
+ * is invertible at the call site with both polarities green against a resting fixture.
+ */
+export function importFloorSpeaks(
+  mailbox: MailboxFacts,
+  growth: MirrorGrowth,
+  sync: { bootstrapping: boolean; failures: number },
+  now: number,
+): boolean {
+  // `!== null` and not `!= null`, which is the deploy-skew rule the header and {@link
+  // MailboxFacts.initialImportCompletedAt} both turn on: a server older than the column omits the
+  // field, it arrives as `undefined`, and `undefined !== null` is true — so an absent stamp leaves
+  // this function immediately and the ladder degrades to growth-only rather than announcing a
+  // false import over every settled mailbox on the account.
+  if (mailbox.initialImportCompletedAt !== null) return false;
+
+  // Inside the window the floor is absolute. `Number.isFinite` fails for an unparseable or absent
+  // `createdAt`, and that case DELIBERATELY takes the corroborated path below rather than the
+  // absolute one: the alternative is a mailbox whose clock cannot be read holding a permanent
+  // banner, which is the defect this function exists to remove, and the corroboration is what
+  // makes skipping the window safe. Pinned by a test so it stays a decision rather than an
+  // accident of `now - NaN < bound` evaluating false.
+  const connectedAt = new Date(mailbox.createdAt).getTime();
+  if (Number.isFinite(connectedAt) && now - connectedAt < IMPORT_FLOOR_MAX_MS) return true;
+
+  // Past the window the client must have something of its own to say. It has not drained, or its
+  // last drain failed: it has observed nothing it can rely on, so the server's claim stands.
+  if (sync.bootstrapping || sync.failures > 0) return true;
+
+  // Drained, healthy — so a mirror that is still moving is the import itself, and a mirror that has
+  // been still for {@link IMPORT_END_IDLE_MS} is a server handing over nothing. `seedGrowth` leaves
+  // `lastRiseAt` at `-Infinity`, so a tab that opens onto a settled mirror and never sees a rise
+  // reads as still, which is the case that produced the report.
+  return now - growth.lastRiseAt < IMPORT_END_IDLE_MS;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -927,8 +1045,22 @@ function climb(input: MailStateInputs): MailState {
   // the same `typeof`-shaped care the stand-down arm above takes for `disabledReason`.
   //
   // `some` AND NOT `every`, which is the opposite of `noCycleYet` one arm up, because the sentence
-  // is: "importing" over a partially-full mirror is TRUE when even one mailbox is still importing,
-  // whereas "nothing has arrived" over a mirror the other mailbox already filled would be false.
+  // is: "importing" over a partially-full mirror is TRUE while even one mailbox's FLOOR STILL
+  // SPEAKS, whereas "nothing has arrived" over a mirror the other mailbox already filled would be
+  // false. The release is judged PER MAILBOX inside that `some` and never account-wide: a mailbox
+  // connected five minutes ago must keep an absolute floor even while a four-day-old sibling on the
+  // same account releases, and an account-wide test would strip the protection from the young one.
+  //
+  // ── THE FLOOR IS BOUNDED, AND WHY IT HAD TO BE ─────────────────────────────────────────
+  //
+  // As first written this arm trusted an unwritten stamp for ever. Nothing guarantees the worker
+  // ever reaches a no-backlog cycle, and a mailbox was observed going four days without one while
+  // syncing healthily — so the strip announced an import permanently, over a mirror that was
+  // complete, current and readable, and the `some` here spread that across a second mailbox that
+  // was properly stamped. {@link importFloorSpeaks} owns the
+  // bound and its full argument; the short version is that inside a day the floor is untouched,
+  // and past it the client must be able to corroborate with a completed drain, a healthy loop and
+  // a motionless mirror before it stops repeating a claim the server never made.
   //
   // `mirrored > 0` is the gate, and it is what confines this to the case it exists for. The defect
   // is a PARTIAL mailbox — mail on screen with a hole in it — reading as complete, so there has to
@@ -939,7 +1071,11 @@ function climb(input: MailStateInputs): MailState {
   // mirror with zero rows in it. Below `awaiting` and gated on the same `mirrored > 0` the Screener
   // pointer uses, so when the mirror has content the answer is exactly one of: still importing
   // (here) or done and pointing at the Screener (below).
-  if (mirrored > 0 && connected.some((m) => m.initialImportCompletedAt === null)) {
+  // `clock: true` is load-bearing on THIS arm in a way it is not on the others: the floor's release
+  // is driven by elapsed time and by nothing else, so it repaints only because `MailStateProvider`
+  // beats the clock while `state.clock` is true. Drop it and the bound above still passes every
+  // unit test and never fires on an idle tab.
+  if (mirrored > 0 && connected.some((m) => importFloorSpeaks(m, growth, sync, now))) {
     return { ...QUIET, key: "importing", clock: true, count: mirrored };
   }
 
