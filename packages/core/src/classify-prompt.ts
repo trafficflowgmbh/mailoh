@@ -163,6 +163,72 @@ export const SCREEN_DESTINATIONS: Destination[] = [
  *
  * These are written as CRITERIA, deliberately. Four remembered examples would classify four
  * senders and generalise to nothing; the Screener has 1,698 of them.
+ *
+ * ── THE SCREENED/QUARANTINE BOUNDARY IS THE RELATIONSHIP, NOT THE BUSINESS ───────────────────
+ *
+ * Adopted 2026-08-08, and it OVERTURNS a specific piece of reasoning rather than a folder.
+ *
+ * The two bullets used to contradict each other. `ohmail/Screened` claimed "cold sales
+ * approaches, unrequested promotions" by name and imperatively; `ohmail/Quarantine` claimed the
+ * same mail conditionally — "Quarantine is available" — behind a relationship test. A model
+ * resolving that contradiction takes the imperative branch, and it did: on a live account, cold
+ * business-development outreach came back `ohmail/Screened` at 0.95 reasoning, in as many words,
+ * *"it's legitimate business mail, just unwanted"*, and a travel site's promotional blast came
+ * back `ohmail/Screened` at 0.95 as *"bulk commercial marketing you didn't request"*. The owner's
+ * ruling on both was the same word: spam.
+ *
+ * **The clause overturned is the legitimacy defence.** That a sender is a real, registered,
+ * reputable company does not rescue unsolicited commercial contact — legitimacy is not
+ * permission. So unsolicited commercial mail (promotional bulk with no prior relationship, cold
+ * sales and BD outreach, a newsletter nobody subscribed to) is Quarantine, and `ohmail/Screened`
+ * is now GATED on a real prior relationship: a business the person was a customer, guest, client
+ * or member of, whose mail is merely unwanted.
+ *
+ * **The relationship must be evident IN THE MESSAGE, and that is the load-bearing half.** The
+ * screening user turn carries `from`, `subject`, a redacted `snippet` and an empty
+ * `headersDigest`, with `fewShot: []` — so "did this person ever book with them" is a question
+ * the model cannot answer and must not be asked. What it CAN see is whether the mail addresses a
+ * named guest or customer, or names a stay, an order, a booking or an account. That is why a
+ * hotel writing to a named past guest is Screened while a travel site's generic blast is not,
+ * even though both are plausibly places the person has spent money: the burden of proof is on the
+ * message. The same operationalisation is applied to Quarantine's "a service the person actually
+ * uses" clause, which is otherwise equally unanswerable and would rescue the blast.
+ *
+ * **"A stranger writing personally is not junk" was QUALIFIED, not deleted.** Deleting it
+ * re-opens a measured failure — a tightening of the Quarantine bullet once pulled a real person
+ * out of the Ohbox at 0.72 for lacking a relationship, taking the validation set from 17/18 to
+ * 15/18. So the clause is qualified by PURPOSE: a stranger writing personally about anything
+ * other than selling is still not junk; a stranger writing personally in order to sell is. That
+ * is the meetorbitprism case, and it is also why the word "relationship" appears in this prompt
+ * only inside clauses about COMMERCIAL mail — let it escape into the INBOX criteria and the model
+ * starts demanding a relationship of people, which is precisely what "one human to another,
+ * whether or not they have met" exists to prevent.
+ *
+ * ### What this calibration COST, measured rather than assumed
+ *
+ * Validated live against the mailbox the ruling came from, 28 senders, before and after. The
+ * boundary moved as intended on every case it was aimed at, and two things moved that were not
+ * aimed at. Both are recorded here instead of tuned away, because the last attempt to tune a
+ * deviation out of this prompt took the set from 17/18 to 15/18 by moving an unrelated boundary.
+ *
+ *  · **One receipt in three now files to Reads.** A payment confirmation whose subject reads
+ *    "We've received your payment for <id>" went from `ohmail/Receipts` 0.99 to `ohmail/Reads`
+ *    0.98 and stayed there across four runs; the other two receipts held at 0.95–0.99. The
+ *    Receipts bullet is byte-identical, and the model's rationale cites the automated-mail rule
+ *    ("it's not from a person, so it belongs in Reads"), not either bullet that changed. So the
+ *    cost of stating the junk criteria at this length is that the most notification-shaped
+ *    receipt loses its fork. Both outcomes keep it out of the Ohbox and both are durable filings.
+ *  · **Promotional mail from a vendor the person pays is now Quarantine, not Screened.** A
+ *    conference invitation from an infrastructure provider they actively use came back
+ *    `ohmail/Quarantine` 0.92. This one is the ruling working as written rather than a defect:
+ *    the message names no account or subscription, so it carries no evidence of the
+ *    relationship, and the criteria say the burden of proof is on the message. It is the same
+ *    shape as the travel blast the owner called spam. Worth knowing it generalises this far.
+ *
+ * A third case is unchanged by this calibration and is NOT its doing: a newsletter the person
+ * did subscribe to is indistinguishable, from `from`/`subject`/`snippet` alone, from one nobody
+ * asked for, and files to Quarantine under both the old prompt and this one. Nothing in the
+ * message says "you signed up", so no criteria written against the message can separate them.
  */
 export const SCREENING_PREFIX = [
   "You are helping someone screen a first-contact sender for ohmail. This sender is waiting at",
@@ -185,17 +251,26 @@ export const SCREENING_PREFIX = [
   "- ohmail/Receipts: order confirmations, invoices, payment and shipping notices, statements,",
   "  booking confirmations. Keep, do not read. A shop the person has never written to still files",
   "  here when the mail is a receipt for something they bought.",
-  "- ohmail/Screened: legitimate mail from a sender this person does not want to hear from —",
-  "  cold sales approaches, unrequested promotions, automated notification floods they never",
-  "  asked for. A venue, hotel, restaurant or shop mailing its own promotions and news to a past",
-  "  visitor belongs here too: being somewhere once is not a subscription, and that mail is the",
-  "  business selling, not serving. Not junk; just unwanted.",
+  "- ohmail/Screened: unwanted mail from a business this person has a REAL PRIOR RELATIONSHIP",
+  "  with — one they have been a customer, guest, client or member of — still sending them things",
+  "  they did not ask for. The relationship has to be VISIBLE IN THIS MESSAGE, because the message",
+  "  is all you can see: it addresses them by name as a known customer or guest, or names a past",
+  "  stay, a membership or an account of theirs.",
+  "  A venue, hotel, restaurant or shop mailing its own promotions and news to a past visitor",
+  "  belongs here: being somewhere once is not a subscription, and that mail is the business",
+  "  selling rather than serving — but it is a business they dealt with, so it is not junk; just",
+  "  unwanted. Automated notification floods they never asked for belong here too.",
   "- ohmail/Quarantine: junk. A forged or deceptive sender, phishing, a message whose purpose is",
-  "  to trick the reader — and also bulk commercial mail sent to someone who never asked for it",
-  "  and has no relationship with the sender they would recognise. The test is the RELATIONSHIP,",
-  "  not the tone: mail from a service the person actually uses is not junk however promotional it",
-  "  is, and a stranger writing to them personally is not junk however unwelcome. Where a mailing",
-  "  is bulk, commercial, and unrequested by anyone at this address, Quarantine is available.",
+  "  to trick the reader — and also UNSOLICITED COMMERCIAL MAIL: promotional bulk sent to someone",
+  "  who never asked for it, a newsletter nobody at this address subscribed to, and cold sales or",
+  "  business-development outreach from a stranger. That the sender is a real, registered,",
+  "  reputable business does not rescue it — legitimacy is not permission.",
+  "  The test is the RELATIONSHIP, not the tone: mail from a service the person actually uses —",
+  "  shown by this message naming their own account or subscription — is not junk",
+  "  however promotional it is, and a stranger writing to them personally about anything other",
+  "  than selling is not junk however unwelcome. But a stranger writing personally IN ORDER TO",
+  "  SELL is. Where a mailing is bulk, commercial, and unrequested by anyone at this address, it",
+  "  is junk.",
   "",
   "Set \"spam\" true only for ohmail/Quarantine, and false for every other destination.",
   "",
