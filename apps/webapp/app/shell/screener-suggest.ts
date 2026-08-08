@@ -74,13 +74,18 @@ export interface SenderSuggestion {
    * A purchase does not always come back with a verdict for every sender it was asked about, and
    * the surface used to render those rows exactly as it rendered a sender nobody had bought advice
    * for — blank. The person had paid, watched the run finish, and found rows that looked skipped,
-   * with nothing anywhere saying why. Some of them were mail we will never send to a model at all,
-   * so no amount of pressing the button again would have changed it.
+   * with nothing anywhere saying why.
+   *
+   * It was called `withheld`, and the rename is the AI-OPEN ruling arriving in the type system.
+   * Every remaining reason — the balance ran out, AI is off for the account, the model faulted —
+   * is a fact about the RUN, and every one of them is fixed by pressing again later. None of them
+   * is a fact about the mail, which is what "withheld" said and what this product no longer does
+   * on a path a person asked for.
    *
    * Present ⇒ `dest` is `screener` and there is nothing to act on, only something to say. Absent ⇒
    * this is an ordinary suggestion.
    */
-  withheld?: SuggestSkipShown;
+  noAnswer?: SuggestSkipShown;
 }
 
 /**
@@ -162,6 +167,19 @@ export interface AutoOptInControl {
 
 export interface ScreenerSuggestions {
   suggestions: SuggestionOverlay;
+  /**
+   * PUT ANSWERS INTO THE OVERLAY FROM SOMEWHERE THAT IS NOT THIS HOOK.
+   *
+   * There is exactly one overlay on screen — `useScreenerState` joins it onto the rows, and the
+   * chips, the suggested count, "Apply all" and Enter-accept are all read from it. So a host that
+   * buys suggestions its own way has to land them HERE or they are answers nothing can display:
+   * the desktop app talks to an engine on the same machine over a channel this file cannot use,
+   * and its control is its own (see `apps/desktop/src/local-suggest.tsx`).
+   *
+   * Deliberately the only seam of its kind. It adds no way to spend and no way to decide — it
+   * takes rows that have already been answered for and shows them.
+   */
+  absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   /**
    * Bind the control to a sender list — the waiting rows with no suggestion, in queue order.
    *
@@ -800,7 +818,8 @@ export function useScreenerSuggestions(opts: {
     };
   };
 
-  return { suggestions, forSenders, autoOptIn };
+  // `merge` is the whole of `absorb`, exposed rather than reimplemented — see the interface.
+  return { suggestions, absorb: merge, forSenders, autoOptIn };
 }
 
 /**
@@ -847,7 +866,12 @@ const VIEW_DEST: Record<string, SenderSuggestion["dest"]> = {
   "ohmail/Quarantine": "spam",
 };
 
-function toSuggestion(a: {
+/**
+ * Exported for the desktop control, which buys the same answers over its own transport and must
+ * read them with the SAME table. A second copy of this mapping is a second place for a new wire
+ * value to be silently declined into "Screened", which is the defect the switch below records.
+ */
+export function toSuggestion(a: {
   decision: "yes" | "no" | "hold"; destination?: string; confidence: number; rationale: string;
 }): SenderSuggestion {
   // A `hold` is a non-answer whatever folder travels beside it, so it is read first and the
@@ -870,14 +894,14 @@ function toSuggestion(a: {
  * `not_held` is deliberately absent: that sender is no longer at the gate, so their row is not on
  * screen to carry a chip. Every other reason describes a row the person is still looking at.
  */
-function toSkips(skipped: Array<{ sender: string; reason: ScreenerSkipReason }>) {
+export function toSkips(skipped: Array<{ sender: string; reason: ScreenerSkipReason }>) {
   return skipped
     .filter((s) => s.reason !== "not_held")
     .map((s) => ({
       address: s.sender,
       suggestion: {
         dest: "screener" as const, confidence: 0, rationale: "",
-        withheld: s.reason as SuggestSkipShown,
+        noAnswer: s.reason as SuggestSkipShown,
       },
     }));
 }
@@ -892,12 +916,13 @@ function summarize(
   },
   t: (key: string, values?: Record<string, string | number>) => string,
 ): string {
-  const withheld = res.skipped.filter((s) => s.reason === "withheld").length;
+  // The "N senders held back from the model" clause was here, counting `withheld` skips. Both the
+  // reason and its sentence are gone with the AI-OPEN ruling; a run can no longer hold anything
+  // back on the strength of what the mail looks like, so there is no count to state.
   const parts = [
     t("suggest.doneCount", { count: res.suggestions.length, credits: res.charged }),
     res.stopped === "out_of_credits" ? t("suggest.stoppedCredits") : null,
     res.stopped === "spend_unavailable" ? t("suggest.stoppedUnavailable") : null,
-    withheld > 0 ? t("suggest.withheld", { count: withheld }) : null,
   ].filter(Boolean);
   return parts.join(" ");
 }

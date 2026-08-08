@@ -8,7 +8,7 @@
  * stay reversible; auto-detected spam is held viewable, never deleted
  * silently. On mobile the preview opens full-screen.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import type {
   BodyState,
@@ -178,6 +178,7 @@ function Empty({ segment, settled }: { segment: ScreenerSegmentId; settled: bool
 export function ScreenerView({
   state,
   suggest,
+  suggestNode,
   segment,
   selection,
   settled,
@@ -195,6 +196,21 @@ export function ScreenerView({
    * the control is not offered at all rather than offered and inert.
    */
   suggest?: SuggestBatchControl;
+  /**
+   * A CONTROL THE HOST BROUGHT, in place of the one above.
+   *
+   * Same seam as the injected Settings panes, and it exists for the same reason: this file is
+   * compiled into a browser tab and into the desktop app, and the two are not asking the same
+   * question. A hosted account buys suggestions out of an allowance, so the control above names a
+   * price before it spends. A standalone install has no account and no allowance — the model is
+   * one its owner set up — so the price is not merely a different number, it is a thing that does
+   * not exist. Wording that around a shared control would put desktop vocabulary in this file and
+   * account vocabulary in that binary, both wrong.
+   *
+   * When present it REPLACES {@link suggest}: never both, because two controls over one queue is
+   * two ways to ask the same question with different words on them.
+   */
+  suggestNode?: ReactNode;
   /**
    * The remote-image consent chrome, threaded to every held preview so the Screener's
    * "Show images" path is the reading pane's, unchanged. ABSENT on a client with no server
@@ -469,7 +485,7 @@ export function ScreenerView({
                   // model declined says the decision is yours; a row that never reached a model
                   // says so. All three used to be two, and the third read as nothing at all —
                   // which is how mail we never send to AI came to look like mail we forgot.
-                  destLabel: w.ai.withheld
+                  destLabel: w.ai.noAnswer
                     ? t("aiNoAnswerChip")
                     : w.ai.dest === "screener"
                       ? t("aiHoldChip")
@@ -584,7 +600,7 @@ export function ScreenerView({
                     opposite acts: this one BUYS advice, that one ACTS on advice already
                     bought. They are both visible while some senders have a suggestion and
                     others do not, which is the ordinary state of a queue being worked. */}
-                {suggest ? <SuggestControl control={suggest} /> : null}
+                {suggestNode ?? (suggest ? <SuggestControl control={suggest} /> : null)}
                 <Button variant="ghost" kbdHint="s" onClick={() => state.markAllSpam(scopeOf)}>
                   {t("markAllSpam")}
                 </Button>
@@ -1062,8 +1078,8 @@ function WaitingPreview({
             {/* A sender the run could not answer for says WHY, and says it here rather than
                 leaving the row blank. There is no confidence and no rationale to print — nothing
                 was asked — so this branch is one sentence and stops. */}
-            {sender.ai.withheld ? (
-              <span>{t(`aiSkip.${sender.ai.withheld}`)}</span>
+            {sender.ai.noAnswer ? (
+              <span>{t(`aiSkip.${sender.ai.noAnswer}`)}</span>
             ) : sender.ai.dest === "screener" ? (
               <span>
                 {t("aiHolds")}{" "}

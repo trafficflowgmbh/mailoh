@@ -434,7 +434,7 @@ export interface ScreenerWirePage {
     };
 }
 
-export type ScreenerSkipReason = "not_held" | "withheld" | "out_of_credits" | "spend_unavailable" | "model_unavailable";
+export type ScreenerSkipReason = "not_held" | "out_of_credits" | "spend_unavailable" | "model_unavailable";
 
 export interface ScreenerSuggestWire {
     dryRun: boolean;

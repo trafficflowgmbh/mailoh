@@ -96,7 +96,14 @@ describe("desktop message filter", () => {
     );
     // The three Cloud prices, and the metering vocabulary that only Cloud has.
     expect(kept).not.toMatch(/\$\s?(9|15|29)\b/);
-    expect(kept).not.toMatch(/AI actions/i);
+    // SINGULAR TOO. This read `/AI actions/i` and two shipped strings walked straight
+    // through it — `screener.suggest.autoCost` ("one AI action from your plan") and
+    // `draftReply.offerBody` ("1 AI action from your plan"). A ban on the plural of a
+    // metering unit is not a ban on the unit: copy that prices ONE of something is
+    // exactly the copy that names it in the singular. Both are now worded against the
+    // budget rather than the purchasable unit, and the pattern is anchored so the next
+    // one cannot slip through the same gap.
+    expect(kept).not.toMatch(/AI actions?/i);
     // …and the filter is not vacuous: the app's own copy is still there.
     expect(kept).toMatch(/[A-Za-z]{40,}|\w+\s+\w+\s+\w+/);
   });

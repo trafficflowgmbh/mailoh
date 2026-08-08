@@ -134,7 +134,7 @@ export const ohbox: MessageFixture[] = [
       label: "Verification code",
       redactedNote: "(redacted)",
       policy:
-        "Protected — never sent to AI, never forwarded, stored redacted. Codes live and die on your device.",
+        "Protected — the code is stripped before AI, never forwarded, stored redacted. Codes live and die on your device.",
     },
     rationale: "Protected class: verification — filed by structure, content untouched",
   },

@@ -305,16 +305,15 @@
       "stoppedAt": "Bought {done} of {total}. {reason}",
       "confirm": "Suggest",
       "cancel": "Cancel",
-      "nothing": "Nothing to buy here — these senders already have a suggestion, or their mail is held back from the model.",
+      "nothing": "Nothing to buy here — these senders already have a suggestion.",
       "failed": "Something went wrong. Please try again.",
       "doneCount": "{count, plural, =0 {No suggestions returned} one {1 suggestion} other {# suggestions}} · {credits, plural, =0 {no credits} one {1 credit} other {# credits}} spent.",
       "stoppedCredits": "Stopped — credits ran out.",
       "stoppedUnavailable": "Stopped — AI spending is unavailable on this account.",
-      "withheld": "{count, plural, one {1 sender held back from the model} other {# senders held back from the model}}.",
       "aria": "How many waiting senders to suggest for",
       "autoTitle": "Suggest for new senders automatically",
       "autoWhat": "When you open the Screener, ohmail buys a suggestion for the first {count, plural, one {sender} other {# senders}} waiting without a decision, and shows what it thinks and why.",
-      "autoCost": "Each sender costs one AI action from your plan. Opening the Screener again buys the next few.",
+      "autoCost": "Each sender uses one unit of your AI budget. Opening the Screener again buys the next few.",
       "autoDecides": "It decides nothing. Every sender still waits for you, and no mail moves until you say so.",
       "autoOff": "Off. New senders wait in the Screener until you decide.",
       "autoOn": "On since {when}.",
@@ -332,7 +331,6 @@
     "aiHoldChip": "Needs you",
     "aiNoAnswerChip": "No answer",
     "aiSkip": {
-      "withheld": "This one is never sent to AI — it looks like it carries a login or a code. Your decision.",
       "out_of_credits": "The AI budget ran out before this sender was reached.",
       "spend_unavailable": "AI is switched off for this account, so this sender was not asked about.",
       "model_unavailable": "The model did not answer for this sender. Asking again costs nothing."
@@ -563,7 +561,7 @@
   "draftReply": {
     "verb": "Draft reply",
     "offerTitle": "Draft a reply with AI",
-    "offerBody": "This uses 1 AI action from your plan. The draft lands in the editor — nothing is sent.",
+    "offerBody": "This uses one unit of your AI budget. The draft lands in the editor — nothing is sent.",
     "confirm": "Draft it",
     "cancel": "Not now",
     "running": "Drafting…",
@@ -794,7 +792,7 @@
     "rowCodeWho": "Cinderlock",
     "rowCodeMeta": "Your verification code",
     "rowCodeBody": "Verification code ······",
-    "rowCodeLine": "Never sent to AI — in either state. Structural, not a setting.",
+    "rowCodeLine": "The code is stripped before AI — in either state. Structural, not a setting.",
     "rowRuleWho": "Paperbird",
     "rowRuleMeta": "Weekly digest · 12 stories",
     "rowRuleChip": "Reads",
@@ -803,7 +801,7 @@
     "pointGradTitle": "Patterns graduate into rules",
     "pointGrad": "Decide the same way three times and ohmail asks to make it a rule. You approve it once — from then on it runs deterministically, with no AI at all.",
     "pointOtpTitle": "Codes are sacred",
-    "pointOtp": "When mail carries a verification code or login link, it is never sent to AI, never forwarded, and stored redacted — structurally, with no setting to turn it off.",
+    "pointOtp": "When mail carries a verification code or login link, the code is stripped before anything reaches AI, and the mail is never forwarded and stored redacted — structurally, with no setting to turn it off.",
     "pointByoTitle": "Your key, your machine — or ours",
     "pointByo": "On macOS the desktop app runs against your own server — your mail stays on your machine, with no ohmail server in the loop. Pointing its AI at your own API key or a local model is coming next, not wired yet. On Cloud: a monthly bag of AI actions is included, and mail keeps flowing rules-only when it runs out.",
     "illusRules": "Rules · most mail",
@@ -966,7 +964,7 @@
     "cloudNote": "Why a cloud exists at all: your phone can’t keep a connection to your mailbox open all day — the battery and the operating system won’t allow it. Something has to stay awake to notice new mail and tap you on the shoulder. That is what Cloud is for — push, the web app, and the mobile apps when they land — and doing that job is why it holds a copy of your mail rather than only your rules.",
     "aiTerm": "AI",
     "aiOptional": "optional, both tiers",
-    "aiBody": "AI requests go to Anthropic under commercial API terms: your mail is never used to train models, and Anthropic retains requests only briefly under its standard policy (currently up to 30 days). We have not yet negotiated a zero-retention agreement, and we will say so here when we do. Sensitive mail — verification codes, logins — is never sent to AI at all. That's structural, not a setting. A live model has been connected in production exactly once, against the founder's own mailbox; the managed AI actions switch on for everyone with the beta, and the metering and spend limits that govern them are already in place."
+    "aiBody": "AI requests go to Anthropic under commercial API terms: your mail is never used to train models, and Anthropic retains requests only briefly under its standard policy (currently up to 30 days). We have not yet negotiated a zero-retention agreement, and we will say so here when we do. Where mail carries a credential — a verification code, a login link, a reset token — the credential is stripped before the request is built, and automatic background routing skips that mail entirely. That's structural, not a setting. A live model has been connected in production exactly once, against the founder's own mailbox; the managed AI actions switch on for everyone with the beta, and the metering and spend limits that govern them are already in place."
   },
   "providers": {
     "title": "If it speaks IMAP, ohmail organizes it.",
