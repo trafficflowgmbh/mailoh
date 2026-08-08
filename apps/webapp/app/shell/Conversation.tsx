@@ -41,47 +41,50 @@
  * Every message on the thread renders in full. Not "the newest five and a count": a count
  * standing in for mail nobody can open is the collapse this product forbids outright, and it is
  * the
- * exact shape of the "N archived" placeholder this product refuses. The cost is bounded by
- * what the mirror actually holds, which for a SIBLING is the snippet.
+ * exact shape of the "N archived" placeholder this product refuses.
  *
- * ── AND THAT IS NOW A CHOICE RATHER THAN A LIMIT ─────────────────────────────────────────
+ * ── AND "IN FULL" NOW MEANS THE MAIL, NOT ONE LINE OF IT ────────────────────────────────
  *
- * This paragraph used to say "the same degradation `heldOf()` documents for the Screener",
- * and that sentence has stopped being true: `heldOf` hydrates. `GET /messages/:id/body` is
- * reachable from the client now, so the siblings COULD be filled — and they are deliberately
- * not.
+ * This header used to carry a paragraph deciding NOT to hydrate siblings — "siblings stay
+ * snippets, the affordance is owed to whichever slice next has a reason to open one". That
+ * decision is reversed, and what reversed it is what the column actually looked like: ordinary
+ * business letters on a thread, each ending mid-word. Every one of them was behaving exactly as
+ * designed, and the design was wrong. A snippet rendered inside full message anatomy does not
+ * read as a preview — it reads as a mail that has been truncated, which is precisely the claim
+ * `MessageBody` and `bodyOf` were built to stop the product making.
  *
- * The FOCUSED message is hydrated (`MessagePane` reads `bodyOf`); its siblings are context
- * around it. Fetching a whole thread because one message was opened is per-message billed
- * reads for mail nobody asked to read, which is the pile-wide prefetch this product refuses —
- * and a couple of dozen full bodies, which a long thread really can be, in one scrolling column
- * is not a reading surface either. The expand-on-click affordance that was designed
- * and dropped here was dropped because on Cloud it revealed the identical text it hid; that
- * reason is gone, so a per-sibling expand is a REAL option.
+ * The old argument was cost: "fetching a whole thread because one message was opened is
+ * per-message billed reads for mail nobody asked to read". It does not survive contact with
+ * the numbers. A conversation is a handful of messages, not a pile — the reader opened the
+ * thread, so its members are the mail they DID ask for — and `OhmailEngine.hydrateBody`
+ * already single-flights per message, skips anything it holds, and bounds the fan-out at
+ * `MAX_CONCURRENT_BODIES`. The Screener preview hydrates a sender's entire held list through
+ * the same call; a thread is smaller than that by an order of magnitude.
  *
- * The work that owns this column's layout was to answer that — and the answer is NO, not yet,
- * stated here rather than left as an open "owed". Its whole job was to stop the reader being
- * shown the same mail twice; adding a per-sibling fetch-and-expand in the same breath would have put a second,
- * billed, failable interaction into the column under test. Siblings stay snippets. The
- * affordance is owed to whichever slice next has a reason to open a sibling, and it inherits
- * `bodyOf` and `hydrateBody` ready-made.
+ * ── AND THEY RENDER THROUGH THE SAME VIEWER AS THE FOCUSED MESSAGE ──────────────────────
+ *
+ * Not "the same text, plainer". The identical {@link MessageBody} component, so a sibling
+ * inherits the sanitizer, the sandboxed frame, remote-content blocking, dark adaptation and
+ * the reflow path with nothing re-implemented and nothing to keep in step. `BodyText`'s header
+ * made this argument first — "the fix landing on the pane while the thread below it keeps
+ * dumping raw text is a shape this repo has shipped five times" — and a viewer on the pane
+ * above a column of plain-text dumps was that shape again, one level up.
+ *
+ * The snippet survives as ONE thing only: the LOADING state, which is what it always honestly
+ * was. A body that fails to load says so and offers Retry, exactly as the focused message
+ * does. Neither state may pass as the mail.
+ *
+ * PROTECTED MAIL IS UNMOVED. A protected sibling renders its label and no content, decided by
+ * the same expression as before and BEFORE any body is consulted — see {@link ConversationEntries}.
  */
+import { useEffect } from "react";
 import { useTranslations } from "next-intl";
+import { Button } from "@ohmail/ui";
 import type { EngineMessage } from "@ohmail/client-engine";
+import { MessageBody } from "../components/MessageBody";
 import { BodyText } from "./BodyText";
 import { displayTime, rowAddress, senderName } from "./format";
-
-/**
- * What a SIBLING entry shows for a body — never a protected message's contents.
- *
- * Named `entryBody` rather than `bodyOf`: `bodyOf` is the engine selector
- * every open-context surface uses, and two functions with one name meaning different things
- * in one app is how the wrong one gets called. This one deliberately does NOT consult a
- * `message_body` record — see the header for why siblings are not hydrated.
- */
-function entryBody(m: EngineMessage, protectedLabel: string): string {
-  return m.protected ? protectedLabel : (m.body ?? m.snippet);
-}
+import { useMessageChrome } from "./message-chrome";
 
 /**
  * A subject with its reply prefixes stripped, case-folded — used ONLY to decide whether an
@@ -121,34 +124,104 @@ export function ConversationEntries({
   now: Date;
 }) {
   const t = useTranslations("reply");
+  /** Hydration state copy, shared with the pane, the Reads cards and the Screener preview. */
+  const tb = useTranslations("body");
+  const chrome = useMessageChrome();
+  const { hydrateBody } = chrome;
+
+  /**
+   * ── ASK FOR EVERY SIBLING'S BODY, ONCE ─────────────────────────────────────────────────
+   *
+   * Keyed on the joined id list rather than on `messages`, which is a fresh array on every
+   * render (`MessagePane` filters it inline, deliberately — see there). An array dep would
+   * re-fire this on every mirror version bump, and every bump is caused by the very writes
+   * these calls produce.
+   *
+   * NO BOUNDING HERE, AND THAT IS NOT AN OVERSIGHT. `OhmailEngine.hydrateBody` single-flights
+   * per message, returns immediately for anything already held or protected, and gates the rest
+   * through `bodySlot` at `MAX_CONCURRENT_BODIES`. A second limiter in this file would be the
+   * shape this repo keeps warning about: two guards read as belt-and-braces and behave as
+   * neither, because deleting either leaves the suite green.
+   *
+   * PROTECTED SIBLINGS ARE ASKED FOR TOO, on purpose. `hydrateBody` performs no fetch for one —
+   * it notes the message as rendered, which is true, and PURGES any body an older build cached
+   * before the message became sensitive. Filtering them out here would skip that purge for
+   * exactly the messages it exists for.
+   */
+  const key = messages.map((m) => m.id).join(",");
+  useEffect(() => {
+    for (const id of key ? key.split(",") : []) hydrateBody(id);
+  }, [key, hydrateBody]);
+
   if (messages.length === 0) return null;
   const alreadySaid = threadSubject ? subjectKey(threadSubject) : null;
 
   return (
     <>
-      {messages.map((m) => (
-        <article key={m.id} className="hmail" data-conv-id={m.id}>
-          <div className="hm-line">
-            <b>{senderName(m)}</b>
-            {rowAddress(m) ? <span className="addr">{rowAddress(m)}</span> : null}
-            {/* A message with no `Date:` header has no stamp, and this rendered the
-                slot anyway: an empty `.t` element with the row's stamp styling and nothing
-                in it. `MessageRow` already guards the same slot the same way. */}
-            {displayTime(m, now) ? <span className="t num">{displayTime(m, now)}</span> : null}
-          </div>
-          {alreadySaid === subjectKey(m.subject) ? null : <h3>{m.subject}</h3>}
-          {/* THE SAME `BodyText` THE FOCUSED MESSAGE USES, and that is the point of
-              touching this file at all. The pane's body and the siblings' bodies are the same
-              prose problem seen twice; fixing only the pane leaves a fixed message sitting in a
-              thread of raw dumps, which is the "built, tested, unreachable" shape this repo has
-              shipped five times. A sibling's text is a SNIPPET (see the header — siblings are
-              deliberately not hydrated), so in practice it is one paragraph; what it gains is
-              the wrap rule and a real anchor when the snippet ends mid-URL. */}
-          <div className="hm-body">
-            <BodyText text={entryBody(m, t("quotedProtected"))} />
-          </div>
-        </article>
-      ))}
+      {messages.map((m) => {
+        /**
+         * DECIDED FIRST, AND NO BODY IS CONSULTED INSIDE IT. The same expression `MessagePane`
+         * uses for the focused message, and it is checked before `bodyOf` is called at all, so a
+         * protected sibling renders its label and no content whatever the mirror happens to hold.
+         */
+        const isProtected = m.protected != null;
+        const body = isProtected ? null : chrome.bodyOf(m);
+        return (
+          <article key={m.id} className="hmail" data-conv-id={m.id}>
+            <div className="hm-line">
+              <b>{senderName(m)}</b>
+              {rowAddress(m) ? <span className="addr">{rowAddress(m)}</span> : null}
+              {/* A message with no `Date:` header has no stamp, and this rendered the
+                  slot anyway: an empty `.t` element with the row's stamp styling and nothing
+                  in it. `MessageRow` already guards the same slot the same way. */}
+              {displayTime(m, now) ? <span className="t num">{displayTime(m, now)}</span> : null}
+            </div>
+            {alreadySaid === subjectKey(m.subject) ? null : <h3>{m.subject}</h3>}
+            {isProtected || body === null ? (
+              <div className="hm-body">
+                <BodyText text={t("quotedProtected")} />
+              </div>
+            ) : (
+              <>
+                {/* THE SAME VIEWER THE FOCUSED MESSAGE USES — see the header. `hm-rich` widens
+                    the slot to the app's mail measure: `.hm-body`'s 62ch is a measure for a
+                    line of preview prose, and an html mail rendered inside it would sit in a
+                    column narrower than the one the same mail gets when it is the message you
+                    opened. */}
+                <div className="hm-body hm-rich">
+                  <MessageBody
+                    messageId={m.id}
+                    text={body.text}
+                    html={body.html}
+                    remoteLoaded={
+                      body.loadedRemoteContent || (chrome.remoteImages?.consented(m.id) ?? false)
+                    }
+                    imageProxy={chrome.remoteImages ? chrome.remoteImages.proxyFor(m.id) : null}
+                    onLoadRemote={
+                      chrome.remoteImages ? () => chrome.remoteImages!.consent(m.id) : undefined
+                    }
+                  />
+                </div>
+                {/* WHAT THE TEXT ABOVE IS, whenever it is not the mail. `snippet` says nothing,
+                    for the same reason it says nothing in the pane: the effect above has already
+                    asked, so it is a sub-frame state, and a sentence that appears and vanishes
+                    within one frame is noise. `loading` and `failed` are real states a reader
+                    can sit in, and the failure carries the way out — the pane's own dead end,
+                    reached from the other side. */}
+                {body.state === "loading" ? <p className="hm-state">{tb("loading")}</p> : null}
+                {body.state === "failed" ? (
+                  <p className="hm-state warn">
+                    {tb("failed")}{" "}
+                    <Button variant="ghost" onClick={() => hydrateBody(m.id, { retry: true })}>
+                      {tb("retry")}
+                    </Button>
+                  </p>
+                ) : null}
+              </>
+            )}
+          </article>
+        );
+      })}
     </>
   );
 }

@@ -802,6 +802,102 @@ export function cssColor(c: Rgb): string {
 
 // ── the sanitizer ──────────────────────────────────────────────────────────────────────
 
+// ── simple or rigid: which of the two layouts this mail is ─────────────────────────────
+
+/**
+ * ── REFLOW, DON'T SHRINK. WHICH MAIL GETS WHICH, AND WHY THERE ARE ONLY TWO ANSWERS ─────
+ *
+ * Scale-to-fit was the only answer this viewer had, and it was the wrong one for most mail: it
+ * produced messages that scrolled sideways and messages set in type too small to read
+ * comfortably, which are two symptoms of one mechanism. The frame is measured, found wider than
+ * the column, and the WHOLE DOCUMENT is shrunk — text included, whatever made it wide. A plain
+ * business letter carrying one long tracked link measured wide for that one link and was then
+ * rendered at 0.6 for its entire length.
+ *
+ * So the mail is classified first, and the two classes get different treatment:
+ *
+ *   SIMPLE  no fixed canvas. Personal, business and transactional mail — the overwhelming
+ *           majority of a real mailbox. It is REFLOWED: every declared width is capped at the
+ *           column, long words break, and the text renders at the app's own reading size. A
+ *           document with no fixed canvas has nothing to lose by reflowing, so this costs the
+ *           sender's design nothing and buys the reader a native-sized, unscrolled column.
+ *
+ *   RIGID   a fixed layout canvas wider than a reading column — the 600/700 px newsletter
+ *           grid. Reflowing one of those does not produce a narrower newsletter, it produces
+ *           a collapsed pile of cells, so it keeps the shipped scale-to-fit with its
+ *           {@link MIN_FIT_SCALE} floor. Nothing about that path changes.
+ *
+ * ── ONE RULE DECIDES IT, AND IT IS THE ONE THE SENDER ACTUALLY WRITES ───────────────────
+ *
+ * A fixed newsletter canvas is always DECLARED — `<table width="600">`, `style="width:600px"`,
+ * or `.card{width:600px}` in the sender's own stylesheet. That declaration is the class. There
+ * is no heuristic about cell counts or nesting depth: a two-column grid built at percentages
+ * reflows perfectly well and is SIMPLE, and a single-column card declared at 600 px is RIGID
+ * even though it has one column, because shrinking it is what keeps its padding and its images
+ * in proportion.
+ *
+ * `max-width` is deliberately NOT a fixed width. `max-width:600px` is a cap that already
+ * reflows below its value — it is the responsive spelling, and treating it as rigid would put
+ * the best-behaved mail in the class built for the worst-behaved.
+ *
+ * READ FROM THE FINAL DOCUMENT AND THE NEUTRALISED STYLESHEET, for the reason {@link
+ * SanitizedMail.light} is: the answer has to be about the document the frame will build, not
+ * about the html that arrived.
+ */
+export const RIGID_MIN_PX = 520;
+
+/**
+ * The elements a fixed CANVAS is declared on. An `<img width="700">` is not a canvas — an
+ * oversized picture caps to the column and keeps its aspect ratio, which is a reflow that
+ * costs nothing — so images are deliberately absent and a mail is not called rigid for
+ * carrying one.
+ */
+const CANVAS_TAGS = "table,tr,td,th,col,colgroup,div,center";
+
+/**
+ * The widest `width` / `min-width` DECLARATION in a chunk of css, in pixels; 0 when there is
+ * none.
+ *
+ * Anchored at a declaration boundary (`;`, `{`, or the start of a style attribute), which is
+ * what keeps two near-misses out:
+ *   `max-width:600px`            a cap, not a canvas — `-` is not a boundary, so it never matches.
+ *   `@media (max-width:620px)`   a QUERY about the viewport, inside `(`, which is not a
+ *                                boundary either. Every responsive newsletter contains one.
+ */
+function widestFixedWidthPx(css: string): number {
+  const re = /(?:^|[;{])\s*(?:min-)?width\s*:\s*(\d+(?:\.\d+)?)\s*px/gi;
+  let widest = 0;
+  for (let m = re.exec(css); m; m = re.exec(css)) {
+    const n = Number(m[1]);
+    if (n > widest) widest = n;
+  }
+  return widest;
+}
+
+/** An html `width="600"` / `width="600px"` as a number. `null` for `"100%"` and for junk. */
+function widthAttrPx(v: string | null): number | null {
+  if (v == null) return null;
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(?:px)?\s*$/.exec(v);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Does this document declare a fixed layout canvas wider than a reading column?
+ *
+ * Exported so the classification can be watched directly against real mail rather than
+ * inferred from a rendered frame — see the reflow guards in `message-body.test.ts`.
+ */
+export function isRigidLayout(root: Element, styleText: string): boolean {
+  if (widestFixedWidthPx(styleText) >= RIGID_MIN_PX) return true;
+  for (const el of root.querySelectorAll(CANVAS_TAGS)) {
+    const attr = widthAttrPx(el.getAttribute("width"));
+    if (attr !== null && attr >= RIGID_MIN_PX) return true;
+    const style = el.getAttribute("style");
+    if (style && widestFixedWidthPx(style) >= RIGID_MIN_PX) return true;
+  }
+  return false;
+}
+
 export interface SanitizeOptions {
   /**
    * How to reach a remote image, or `null` for "you may not". `null` is the default and the
@@ -837,6 +933,17 @@ export interface SanitizedMail {
    * that the answer is about the document the frame will actually build.
    */
   light: boolean;
+  /**
+   * MAY THIS MAIL BE LAID OUT AT THE COLUMN'S WIDTH INSTEAD OF SHRUNK TO IT? The one input to
+   * the reflow path — see {@link isRigidLayout} for the rule and for why there are two classes.
+   *
+   * `true` for mail that declares no fixed canvas, which is most mail. `false` for the
+   * fixed-width newsletter grid, which keeps the scale-to-fit it has always had.
+   *
+   * It travels with the sanitized result for the same reason {@link light} does: it is a
+   * reading of THIS document, and the component would otherwise have to re-parse the html.
+   */
+  reflow: boolean;
   /**
    * The paper {@link light} was decided from, or `null` when the mail declared none. Carried
    * for the tests and for anyone debugging a message that inverted when it should not have;
@@ -916,11 +1023,14 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   const sheets: string[] = [];
   const proxy = opts.imageProxy ?? null;
 
-  // `light: true` on both refusals is not a reading of anything — neither path renders a frame,
-  // so nothing consults it. It is stated rather than left optional so the field is total.
-  if (!sanitizerAvailable()) return { html: "", blocked, sheets, light: true, background: null };
+  // `light: true` and `reflow: false` on both refusals are not readings of anything — neither
+  // path renders a frame, so nothing consults either. They are stated rather than left optional
+  // so the fields are total.
+  if (!sanitizerAvailable()) {
+    return { html: "", blocked, sheets, light: true, reflow: false, background: null };
+  }
   if (html.length > MAX_HTML_CHARS) {
-    return { html: "", blocked, sheets, light: true, background: null, oversize: true };
+    return { html: "", blocked, sheets, light: true, reflow: false, background: null, oversize: true };
   }
 
   const seen = new Set<string>();
@@ -1165,15 +1275,24 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     }) as unknown as HTMLElement | null;
 
   // `IS_EMPTY_INPUT` returns null under `RETURN_DOM`, which is a message with no html left.
-  if (!sanitized) return { html: "", blocked, sheets, light: true, background: null };
+  if (!sanitized) return { html: "", blocked, sheets, light: true, reflow: false, background: null };
 
   // ── THE POST-PASS. Over the document the frame will have, not the one we handed over. ──
   for (const node of sanitized.querySelectorAll("*")) onAttributes(node);
 
   // Read AFTER the post-pass, from the final document, for the same reason the post-pass runs
-  // there: what the reader is shown is what this must be an answer about.
+  // there: what the reader is shown is what this must be an answer about. Both are READS — the
+  // post-pass above is the last thing that writes, and it writes attributes only, which is the
+  // rule this whole function is arranged around.
   const background = effectiveBackground(parsed.body, sanitized, styleText);
-  return { html: sanitized.innerHTML, blocked, sheets, light: mailIsLight(background), background };
+  return {
+    html: sanitized.innerHTML,
+    blocked,
+    sheets,
+    light: mailIsLight(background),
+    reflow: !isRigidLayout(sanitized, styleText),
+    background,
+  };
 }
 
 // ── the document ───────────────────────────────────────────────────────────────────────
@@ -1225,9 +1344,32 @@ export function frameCsp(imagesLoaded: boolean): string {
 }
 
 /**
+ * THE APP'S OWN READING SIZE, so a reflowed mail is set in the same type as the rest of the
+ * product rather than in the frame's own idea of a default.
+ *
+ * These two values are `.msg-body`'s (`packages/ui/src/composites/message.css`) and they are
+ * duplicated here because the frame is a separate document that inherits nothing from the app.
+ * A duplicated constant drifts, so it is not left to be noticed: `message-body.test.ts` PARSES
+ * `.msg-body` out of that stylesheet and asserts these two strings against it, which makes the
+ * drift a red test rather than a mail that is subtly the wrong size.
+ *
+ * It is the base only, and deliberately unqualified — a sender who sets their own sizes still
+ * wins, exactly as they do for every other rule in this sheet. What it fixes is the mail that
+ * declares nothing, which is the mail this reflow path exists for.
+ */
+export const NATIVE_FONT_SIZE = "14.5px";
+export const NATIVE_LINE_HEIGHT = "1.72";
+
+/**
  * The stylesheet the frame starts from — the sheet the letter is printed on, and nothing
  * more. It must lose to anything the sender declares, which is why every rule here is
- * unqualified and none of them is `!important`.
+ * unqualified and — with the two documented exceptions below — none of them is `!important`.
+ *
+ * The exceptions are both LAYOUT DECISIONS rather than style preferences, and that is the line:
+ * `:root,:root>body{height:auto}` because the frame is measured under a probe viewport, and the
+ * reflow block at the bottom because capping a declared width at the column IS the reflow. A
+ * rule that lost to the sender there would do nothing at all, since the width it has to beat is
+ * the width the sender declared.
  *
  * `img:not([width])` rather than a blanket `img{max-width:100%}`: bulk mail lays itself out
  * with `width=` attributes on images inside fixed-width tables, and clamping those collapses
@@ -1334,6 +1476,39 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
    makes the element a containing block for fixed and absolutely positioned descendants, so
    applying scale(1) unconditionally would change how ordinary mail lays out for no gain. */
 :root[data-ohmail-scaled] body{transform-origin:0 0;transform:scale(var(--ohmail-scale,1))}
+/* ── REFLOW, GATED ON THE THIRD ROOT ATTRIBUTE ─────────────────────────────────────────
+   The other answer to a mail that is wider than its column, and the one most mail should have
+   been getting all along: lay it out AT the column instead of laying it out at its natural
+   width and shrinking the result. Dormant in every document like the dark and scale rules, and
+   switched by :root[data-ohmail-reflow] alone — see isRigidLayout(), which is what decides it,
+   and measure(), which reads the same attribute back off the live root and does not fit a
+   document that carries it.
+
+   The universal selector rather than a list of tags. A width can be declared on anything, and
+   an enumerated list is a list somebody has to remember to extend; max-width does not apply to
+   non-replaced inline elements, so in practice this reaches exactly the boxes that can be too
+   wide. It never makes anything NARROWER than its container — max-width:100% is a cap, so a
+   mail that already fits is untouched by it — which is why one blanket rule is safe here and a
+   blanket width:auto would not have been: that would collapse a full-width wrapper to its
+   contents.
+
+   min-width on cells because a min-width is the other way to pin a table wider than its
+   container, and it beats max-width when the two disagree. table-layout:auto because a fixed
+   table lays its columns out from the first row's declared widths and ignores the cap. And
+   img{height:auto} because clamping a picture's WIDTH without releasing its height attribute
+   is how a photograph arrives stretched.
+
+   overflow-wrap:anywhere and not break-word, and this is the half that fixes the mail nobody
+   would call wide: anywhere is the value that also reduces an element's MIN-CONTENT size, so
+   one long tracked link inside an ordinary letter stops forcing the whole document wide. That
+   single link is what used to make a plain message measure 900px and render at 0.6. */
+:root[data-ohmail-reflow] body{font-size:${NATIVE_FONT_SIZE};line-height:${NATIVE_LINE_HEIGHT};
+  overflow-wrap:anywhere}
+:root[data-ohmail-reflow] *{max-width:100% !important}
+:root[data-ohmail-reflow] td,:root[data-ohmail-reflow] th{min-width:0 !important}
+:root[data-ohmail-reflow] table{table-layout:auto !important}
+:root[data-ohmail-reflow] img{height:auto !important}
+:root[data-ohmail-reflow] pre{white-space:pre-wrap !important}
 `;
 
 /**
@@ -1351,14 +1526,25 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
  */
 export function buildMailDocument(
   bodyHtml: string,
-  opts: { imagesLoaded?: boolean; dark?: boolean; paper?: Rgb | null } = {},
+  opts: { imagesLoaded?: boolean; dark?: boolean; reflow?: boolean; paper?: Rgb | null } = {},
 ): string {
   // The paper rides on the ROOT ELEMENT and is independent of `dark`, so the light and dark
   // builds of the same message still differ by the attribute alone — which is the equality
   // `message-body.test.ts` pins and the reason the live flip can be a `toggleAttribute`.
   const paper = opts.paper ? ` style="--ohmail-paper:${cssColor(opts.paper)}"` : "";
+  /**
+   * REFLOW IS THE SAME MECHANISM AS DARK: one attribute, a block of dormant rules. It defaults
+   * OFF here rather than on, so a caller that does not classify gets exactly the document this
+   * function has always built — the classification lives in {@link sanitizeMailHtml}, and a
+   * default of `true` would let a caller reflow a newsletter by forgetting a field.
+   *
+   * It is baked into the srcdoc rather than toggled live, because unlike `dark` it is a
+   * property of the DOCUMENT and not of the reader's theme: it can only change when the html
+   * changes, and when the html changes the frame is rebuilt anyway.
+   */
+  const reflow = opts.reflow === true ? " data-ohmail-reflow=\"1\"" : "";
   return [
-    `<!doctype html><html${opts.dark === true ? " data-ohmail-dark=\"1\"" : ""}${paper}><head><meta charset="utf-8">`,
+    `<!doctype html><html${opts.dark === true ? " data-ohmail-dark=\"1\"" : ""}${reflow}${paper}><head><meta charset="utf-8">`,
     `<meta http-equiv="Content-Security-Policy" content="${frameCsp(opts.imagesLoaded === true)}">`,
     // Belongs to the same promise as the CSP: if a consented image is ever fetched through
     // the proxy, not even the path of the page the reader is on travels with it.
@@ -1422,8 +1608,22 @@ export const MIN_FIT_SCALE = 0.6;
  * A zero or negative reading (a frame that is not laid out, a detached document, jsdom) is 1:
  * "do not scale" is the only safe answer to "I could not measure", and it is what keeps this
  * from writing a transform under the unit suite.
+ *
+ * ── `reflow` IS THE FIRST TERM, AND IT IS AN ANSWER RATHER THAN A HINT ──────────────────
+ *
+ * A reflowed mail has already been laid out at the column's width (see the reflow block in
+ * {@link FRAME_CSS}), so a scale is not a second-best fit for it — it is a shrink applied to a
+ * document that already fits, which is exactly the reported defect. There is deliberately no
+ * "reflow first, then scale whatever still overflows" fallback: that would put every mail back
+ * one long word away from being rendered at 0.6, and the residual case is a genuinely wide
+ * element (a data table, a code block) which gets a scrollbar and stays readable. Readability
+ * wins over fit here for the same reason {@link MIN_FIT_SCALE} exists.
+ *
+ * The term lives HERE and not in {@link measure} so that the decision is arithmetic that a unit
+ * test can watch fail. Deleting it leaves a simple mail scaled, and the guard goes red.
  */
-export function fitScale(columnPx: number, naturalPx: number): number {
+export function fitScale(columnPx: number, naturalPx: number, reflow = false): number {
+  if (reflow) return 1;
   if (!Number.isFinite(columnPx) || !Number.isFinite(naturalPx)) return 1;
   if (columnPx <= 0 || naturalPx <= 0) return 1;
   if (naturalPx <= columnPx) return 1;
@@ -1561,9 +1761,10 @@ export function MessageBody({
   const mail = useMemo(() => {
     if (!html) return null;
     if (!mounted || !sanitizerAvailable()) return { state: "unsupported" as const };
-    const { html: clean, blocked, sheets, oversize, light, background } = sanitizeMailHtml(html, {
-      imageProxy: proxy,
-    });
+    const { html: clean, blocked, sheets, oversize, light, reflow, background } = sanitizeMailHtml(
+      html,
+      { imageProxy: proxy },
+    );
     // A message too large to neutralise renders as TEXT, with a reason. Never as a blank
     // frame, and never by taking however long the neutralising would have taken.
     if (oversize) return { state: "oversize" as const };
@@ -1585,6 +1786,10 @@ export function MessageBody({
       doc: buildMailDocument(clean, {
         imagesLoaded: proxy != null,
         dark: darkWanted && light,
+        // Baked in, never toggled: unlike `dark` this is a property of the document rather than
+        // of the theme, so it can only change when `html` changes — and that already rebuilds
+        // the frame. See `isRigidLayout` for what decides it.
+        reflow,
         // The mail's own paper, so a message this viewer declines to invert does not sit on a
         // white sheet it never asked for. Ignored whenever the filter is on — see FRAME_CSS.
         paper: background,
@@ -1724,7 +1929,13 @@ export function MessageBody({
     // `clientWidth` of the FRAME is the column; `scrollWidth` of the frame's root is the widest
     // the mail actually needs, and it is already clamped up to the viewport, so it is never
     // less than the column and the scale is never above 1.
-    const scale = fitScale(frame.clientWidth, root.scrollWidth);
+    //
+    // READ OFF THE LIVE ROOT rather than closed over. The attribute is baked into the srcdoc by
+    // `buildMailDocument`, so the document itself carries the answer and this callback stays
+    // dependency-free — which is what keeps it out of the ResizeObserver's teardown/rebuild
+    // cycle. A reflowed mail is never fitted; see `fitScale`.
+    const reflow = root.hasAttribute("data-ohmail-reflow");
+    const scale = fitScale(frame.clientWidth, root.scrollWidth, reflow);
     // Measured BEFORE the transform is applied, then scaled by the same factor — a transform is
     // a paint-time operation and never changes `offsetHeight`, so the frame would otherwise be
     // told to reserve the mail's full unscaled height and leave a gap under a fitted message.

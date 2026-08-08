@@ -821,6 +821,16 @@ body.reading .shell {
   white-space: pre-line;
   max-width: 62ch;
 }
+/* A sibling on a conversation whose body has been hydrated renders through the SAME viewer as
+   the focused message, so its slot takes the same measure the focused message gets rather than
+   the preview measure above. 62ch is right for a line of held-mail preview and wrong for a
+   letter: the identical mail would otherwise be laid out in a narrower column as a sibling than
+   as the message you opened, which is the seam a reader would notice first.
+   `--msg-measure` is declared on `.msg` (packages/ui/.../message.css) and inherits down. */
+.hm-body.hm-rich {
+  max-width: var(--msg-measure);
+  white-space: normal;
+}
 /* Whether the text above is the whole held message. Set apart from `.hm-body` and
    quieter than it: the product speaking about the mail, never mistakable for the mail. */
 .hm-state {
