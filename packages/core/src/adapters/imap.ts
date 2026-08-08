@@ -996,13 +996,47 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           // starts at the drain's resume UID and the modseq stays the one the drain began on.
           const from = drain?.resumeUid ?? 1;
           const since = drain?.sinceModseq ?? prev!.highestModseq;
-          let lastFlagUid = 0;
+          // ── THE RESUME POINT IS WHAT THIS PASS EXAMINED, NOT WHAT IT ACCEPTED ────────────
+          //
+          // Seeded at `from - 1` — one below where the pass starts — so that
+          // `resumeUid: lastFlagUid + 1` below reads "no progress this pass" when nothing was
+          // accepted. It used to start at 0, which made that same expression write
+          // `resumeUid: 1`: not "no progress" but START OVER, discarding every UID the drain had
+          // already reported on earlier cycles.
+          //
+          // That mattered because THE BUDGET IS SHARED ACROSS FOLDERS (see its declaration). A
+          // folder reaching this loop with `budget.flags` already spent by INBOX broke on its
+          // first known UID having accepted nothing, rewound to 1, and — `flagsTruncated` holding
+          // the folder cursor — re-read the identical range from the start on the next cycle. The
+          // stall is not that starvation is continuous; it is that a drain needing four clean
+          // cycles and reset by an INBOX burst every third NEVER finishes, so `hasBacklog` is true
+          // for ever — and the stamp that records a first import as complete, which the organizer
+          // writes only on a cycle that ends with no backlog, is therefore never written. A mailbox
+          // in that state stays in it: fully drained, motionless, and still described as importing.
+          //
+          // RESIDUAL, STATED AND DELIBERATELY NOT CHASED: a folder starved on EVERY cycle still
+          // makes no progress. It no longer LOSES any, so any cycle with budget left over
+          // advances it, and the folder ahead cannot eat the budget for ever — a folder with more
+          // than `budget.flags` changes truncates and is itself the honest backlog, while one
+          // with fewer leaves a remainder. An anti-stall floor here (admit the first candidate of
+          // each folder however spent the budget, which is what `fetchCapped` does for creates)
+          // was written and then dropped: it made this seed unobservable — with the floor in
+          // place, `flagsTruncated` implies something was accepted, so `lastFlagUid` can never
+          // still hold the seed — and a guard that cannot be watched fail is not one.
+          let lastFlagUid = from - 1;
           for await (const m of this.client.fetch(
             `${from}:*`,
             { uid: true, flags: true },
             { uid: true, changedSince: BigInt(since) },
           )) {
-            if (!effectiveKnown.has(m.uid)) continue;
+            // NOT A SKIP — an unknown UID was EXAMINED, and unknown-ness is the answer. It is a
+            // create, sourced by the known-set diff above with its flags attached, so this pass
+            // owes it nothing; leaving the cursor behind it only re-reads it from the server on
+            // every later pass of the same drain. Safe to step over for the same reason it is
+            // safe to ignore: `advanceTo` is the modseq observed when the drain STARTED, so it
+            // is at or above this UID's modseq, and a flag change on it after the drain ends is
+            // re-reported by the ordinary `changedSince` on the next cycle.
+            if (!effectiveKnown.has(m.uid)) { lastFlagUid = m.uid; continue; }
             if (budget.flags <= 0) { flagsTruncated = true; break; }
             flagChanges.push({
               type: "flag",
