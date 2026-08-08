@@ -80,7 +80,11 @@ and then there was nothing to look at. The cause was in how this repository is
 assembled rather than in the app, and it is fixed and checked for: an installer
 whose bundle carries the stand-in that caused it now fails to build. A window that
 cannot draw for any other reason says so, with the reason, instead of showing you
-nothing. See the [changelog](CHANGELOG.md) for the rest.
+nothing.
+
+**Mail also renders at its natural size now**, reflowing to the reading column instead of
+being shrunk to fit, and a conversation shows every message in full rather than a
+truncated snippet. See the [changelog](CHANGELOG.md) for the rest.
 
 **If you are on macOS and already have ohmail installed**, the update is a
 handover: the app you have is a different program — a native client that shared

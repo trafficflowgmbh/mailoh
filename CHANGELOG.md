@@ -44,6 +44,25 @@ platforms.
 puts a message on screen with the reason in it, instead of nothing at all. An empty window is
 indistinguishable from one that is still loading, and there was no way to tell them apart.
 
+### Reading
+
+**Mail renders at its natural size.** The viewer had one answer to a message wider than its
+column: measure it, then scale the whole document down, text included, whatever made it wide. A
+plain letter carrying a single long tracked link measured wide for that link alone and was shrunk
+for its entire length — which is how a reading surface ends up both scrolling sideways and set in
+type too small to read. Mail is classified now: a message that declares no fixed layout is laid out
+at the column, at the app's own reading size, with long words broken and pictures kept in
+proportion. A fixed-width newsletter grid keeps the scale-to-fit it has always had, because
+reflowing one of those produces a collapsed pile of cells rather than a narrower newsletter.
+
+**A conversation shows every message in full.** A thread rendered its other messages from their
+snippets, so opening one showed letters ending mid-word inside full message anatomy — which does
+not read as a preview, it reads as mail that has been truncated. The siblings are fetched and
+rendered through the same viewer as the message you opened, so they inherit the sanitizer, the
+sandboxed frame, remote-content blocking and dark adaptation with nothing to keep in step. The
+snippet is now the loading state, which is what it always honestly was, and a body that will not
+load says so and offers a retry instead of passing a fragment off as the message.
+
 ### Reading and filing
 
 **Your Ohbox opens nothing until you open something.** Arriving at the Ohbox used to open the
