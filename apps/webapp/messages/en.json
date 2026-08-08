@@ -333,7 +333,7 @@
     "aiNoAnswerChip": "No answer",
     "aiSkip": {
       "withheld": "This one is never sent to AI — it looks like it carries a login or a code. Your decision.",
-      "out_of_credits": "Your AI actions ran out before this sender.",
+      "out_of_credits": "The AI budget ran out before this sender was reached.",
       "spend_unavailable": "AI is switched off for this account, so this sender was not asked about.",
       "model_unavailable": "The model did not answer for this sender. Asking again costs nothing."
     },
