@@ -632,11 +632,30 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     // request that simply failed would silently hide somebody's mail. Unpartitioned is what
     // the product did before consent existed — every message in the pile its folder names —
     // so a tab that cannot reach the endpoint degrades to showing MORE, never less.
+    //
+    // ── UNLESS THERE IS NO SERVER TO ANSWER, WHICH IS THE DESKTOP ────────────────────────
+    //
+    // `consent.standalone` is that case and only that case: a build with no Cloud API behind
+    // it, where the fetch above never runs and `known` is false for the life of the process.
+    // The known-gate's reason does not reach it — there IS no stored window to guess at, so
+    // `DEFAULT_DORMANCY_DAYS` (what `consent.dormancyDays` already holds) is not a default
+    // standing in for the truth, it is the truth. Read as "the answer has not arrived", the
+    // gate switched the cutline off for the whole desktop tier: the Screener drew over the raw
+    // mirror, there was no History pile at all, and every sender a backfill had already filed
+    // into the Screener folder queued for ever. `screener-state.ts`'s past-the-gate branch was
+    // inert there too — it only fires on a row the projection marked, and nothing was
+    // projected.
+    //
+    // The web path is untouched. A browser tab with no API base never reaches this line:
+    // `createEngine` throws `EngineUnarmedError` rather than serve fixtures to a live account.
     () =>
-      demo || !consent.known
+      demo || !(consent.known || consent.standalone)
         ? null
         : consentPartition(reader, { now, dormancyDays: consent.dormancyDays, ownAddresses }),
-    [demo, consent.known, reader, version, now, consent.dormancyDays, ownAddresses],
+    [
+      demo, consent.known, consent.standalone, reader, version, now, consent.dormancyDays,
+      ownAddresses,
+    ],
   );
   /**
    * The same mirror, with every message sitting where it is PRESENTED.

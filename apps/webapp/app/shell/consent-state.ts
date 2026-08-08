@@ -57,6 +57,33 @@ export interface ConsentState {
   autoSuggestAt: string | null;
   /** False until the first answer lands — an onboarding step must not flash before then. */
   known: boolean;
+  /**
+   * THERE IS NO CONSENT ENDPOINT BEHIND THIS BUILD, AND THERE NEVER WILL BE — the desktop.
+   *
+   * {@link known} answers "has the server told us the window yet?", and everything gated on it
+   * is gated for one reason: partitioning on a GUESSED window would move mail into History on
+   * the strength of a default the account may not be using, and a request that merely failed
+   * would silently hide somebody's mail. Both halves of that reason presuppose a stored window
+   * this client has not yet read.
+   *
+   * On a standalone install there is no stored window. `apiConfigured()` is false, the fetch
+   * never runs, `known` is false for the life of the process — and the shell read that as "the
+   * answer has not arrived", switched the cutline off, and drew the Screener over the raw
+   * mirror. No History pile at all, and every sender whose mail had already been filed into the
+   * Screener folder sat in the queue for ever. `DEFAULT_DORMANCY_DAYS` is not a guess here: it
+   * is the only window this build has, the one the engine uses unasked, and the one the dial
+   * would have to be turned away from — but there is no dial, because there is nowhere to
+   * store the number.
+   *
+   * NOT reachable on the web. A live browser tab with no API base never renders this shell at
+   * all: `createEngine` throws `EngineUnarmedError` rather than fall back to fixtures. So this
+   * is true exactly where an engine was handed in — the desktop's seam — and the known-gate
+   * still governs everywhere a server exists.
+   *
+   * False on the demo, which is `active: false`: the demo is a fixture world with no decisions
+   * in it, and `AppShell` refuses to partition it for reasons of its own.
+   */
+  standalone: boolean;
 }
 
 const RESTING: ConsentState = {
@@ -66,6 +93,7 @@ const RESTING: ConsentState = {
   autoSuggest: false,
   autoSuggestAt: null,
   known: false,
+  standalone: false,
 };
 
 /**
@@ -126,6 +154,7 @@ export function useConsentState(active: boolean): ConsentState & {
           // Normalised to null so `undefined` (an API from before mail 0040) cannot reach a view.
           autoSuggestAt: wire.autoSuggestAt ?? null,
           known: true,
+          standalone: false,
         });
       } catch {
         // Deliberately silent — see the header.
@@ -152,5 +181,8 @@ export function useConsentState(active: boolean): ConsentState & {
     return res.dormancyDays;
   }, []);
 
-  return { ...state, setAutoSuggest, setDormancyDays };
+  // Derived rather than stored, so it cannot be left behind by a `setState` that forgot it: it
+  // is a fact about the BUILD and the mode, and both are settled before the first render.
+  // `active` is `!demo`; see {@link ConsentState.standalone}.
+  return { ...state, standalone: active && !apiConfigured(), setAutoSuggest, setDormancyDays };
 }
