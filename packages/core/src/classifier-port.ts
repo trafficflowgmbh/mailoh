@@ -45,6 +45,29 @@ export interface ClassifierInput {
    * itself. Absent ⇒ the model classifies on the taxonomy alone, exactly as before.
    */
   ohboxBar?: string;
+  /**
+   * WHO SCREENED THESE BYTES, AND THEREFORE WHAT THE SINK DOES IF THEY STILL LOOK SENSITIVE.
+   *
+   * Absent (the default everywhere it is not written) ⇒ `"refuse"`: the outbound screen throws a
+   * `SensitivePayloadRefusal` on credential material. That is the automatic routing path and it
+   * is unchanged.
+   *
+   * `"prescreened"` ⇒ the CALLER has already run `redactForModel` over `subject` and `snippet`,
+   * and is asking on behalf of a person who pressed a button. What is withheld from a model is
+   * the credential VALUE; that a message concerns authentication is not a secret, and it is
+   * exactly what the person is asking the model to notice.
+   *
+   * ── IT IS OPTIONAL, AND THE POLARITY IS WRITTEN SO THAT ABSENT MEANS SAFE ──────────────────
+   *
+   * The check is spelled `!== "prescreened"` rather than `=== "refuse"`, and that is not a style
+   * choice. Almost no test file in this repo is typechecked (CLAUDE.md; `packages/core/test` and
+   * `packages/services/test` include `src` only), so every `ClassifierInput` literal in ~3,250
+   * tests that omits this field is `undefined` at runtime rather than a compile error. Under
+   * `=== "refuse"` all of them would silently exercise the permissive branch and the refusal
+   * guard would report success while guarding nothing. Under `!== "prescreened"` they all take
+   * the refusing branch, which is the branch those tests are asserting about.
+   */
+  outbound?: "refuse" | "prescreened";
 }
 
 export interface ClassifierResult {

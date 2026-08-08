@@ -19,7 +19,7 @@ import type { AiCreditGate } from "@trafficflow/db";
 import type { AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy } from "@trafficflow/core/mail";
 import {
   applyReconcileAction, CLASSIFY_DESTINATIONS, effectForDestination, rationaleHoldsAtGate,
-  resolveOhboxPolicy,
+  redactForModel, resolveOhboxPolicy,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
@@ -272,10 +272,14 @@ export interface ScreenerSuggestion {
  */
 export type ScreenerSuggestSkip =
   | "not_held"            // no mail from this sender is at the gate
-  | "withheld"            // no_ai / sensitive — never reaches a model (the no-AI invariant)
   | "out_of_credits"      // the balance ran out part-way through the set
   | "spend_unavailable"   // subscription state, AI switched off, or a gate fault
   | "model_unavailable";  // charged, the model faulted; the free retry honours it
+// `"withheld"` was here — a sender skipped because their mail looked like it carried a credential.
+// It is GONE rather than retained-and-never-emitted, and the compile errors that removal caused at
+// every consumer were the point: a value nothing can produce is a branch every reader has to keep
+// reasoning about, and the UI's copy for it ("This one is never sent to AI") is a promise the
+// product no longer makes on this path. See the AI-OPEN ruling on `ScreenerService.suggest`.
 
 export interface ScreenerSuggestResult {
   /** Whether this was a price check. `true` ⇒ nothing ran, nothing moved, nothing was stored. */
@@ -354,35 +358,35 @@ interface ScreenerRow {
   observedFolder: string;
   nativeLocator: NativeLocator;
   updatedAt: Date;
-  /**
-   * May this row's subject/snippet be shown to a model? Computed from `no_ai` and
-   * `sensitivity_category` in {@link ScreenerService.heldRows}' own SELECT, so the answer
-   * travels WITH the row rather than being a lookup someone downstream has to remember.
-   */
-  aiEligible: boolean;
 }
 
 /**
  * The columns a {@link ScreenerRow} is built from — named ONCE.
  *
- * Two queries now produce this row: {@link ScreenerReadService.heldRows} (the whole bag, for
+ * Two queries produce this row: {@link ScreenerReadService.heldRows} (the whole bag, for
  * `decide`) and {@link ScreenerReadService.heldSenderPage} (one bounded page, for `list`). They
- * share this projection and {@link toScreenerRow} so the two cannot drift into disagreeing
- * about what a held row IS — in particular about `aiEligible`, which is what stands between a
- * `no_ai` message and a third-party model.
+ * share this projection and {@link toScreenerRow} so the two cannot drift into disagreeing about
+ * what a held row IS.
+ *
+ * `no_ai` and `sensitivity_category` USED to be selected here, to compute an `aiEligible` flag
+ * that travelled on the row and gated the model call. Both are gone with the flag under the
+ * AI-OPEN ruling, and the field was deleted rather than left unread on purpose: an unread
+ * eligibility boolean sitting on the row is an invitation to gate on it again, and the guard that
+ * keeps this open is `screener-ai-open.test.ts`, which plants the old gate and watches it go red.
+ * The COLUMNS themselves are untouched in the database and still drive stored redaction — this is
+ * a statement about what the Screener's suggestion path reads, not about what the mail is.
  */
 const HELD_COLUMNS = {
   messageId: messages.id, threadId: messages.threadId, fromAddress: messages.fromAddress,
   subject: messages.subject, snippet: messages.snippet, date: messages.date,
   nativeLocator: messages.nativeLocator, observedFolder: folderState.observedFolder,
   updatedAt: messages.updatedAt,
-  noAi: messages.noAi, sensitivityCategory: messages.sensitivityCategory,
 } as const;
 
 function toScreenerRow(r: {
   messageId: string; threadId: string | null; fromAddress: string; subject: string;
   snippet: string; date: Date | null; nativeLocator: unknown; observedFolder: string;
-  updatedAt: Date; noAi: boolean; sensitivityCategory: string | null;
+  updatedAt: Date;
 }): ScreenerRow {
   return {
     messageId: r.messageId,
@@ -394,7 +398,6 @@ function toScreenerRow(r: {
     observedFolder: r.observedFolder,
     nativeLocator: (r.nativeLocator as NativeLocator | null) ?? { folder: r.observedFolder, ref: "0:0" },
     updatedAt: r.updatedAt,
-    aiEligible: r.noAi === false && r.sensitivityCategory === null,
   };
 }
 
@@ -506,14 +509,20 @@ export class ScreenerReadService {
 
     const items = pageRows.map((r) => toItem(r, stored.get(r.messageId) ?? null));
 
-    // The quote. A sender is priced when the model may see it (`aiEligible`) and has not
-    // already been paid for (`!stored`). Both facts are in hand — this costs no query.
+    // The quote. A sender is priced when they have not already been paid for (`!stored`) — and
+    // that is now the WHOLE rule. The fact is in hand, so this costs no query.
+    //
+    // It used to also require `r.aiEligible`, and the two halves had to agree with `suggest`'s
+    // own loop or the page would price a set the purchase would not buy. They still have to
+    // agree, and they do — by both having one clause. Under the AI-OPEN ruling every held sender
+    // is suggestable, so a quote that subtracted the credential-bearing ones would under-price a
+    // purchase that then charged for them.
     //
     // A sender whose stored suggestion belongs to an OLDER representative is priced again, and
     // that is right: the rep rotates when they send again, so the suggestion on offer is about
     // mail the model has not read. It is also charged again, under that message's own source.
     const suggestable = pageRows
-      .filter((r) => r.aiEligible && !stored.has(r.messageId))
+      .filter((r) => !stored.has(r.messageId))
       .map((r) => r.fromAddress.toLowerCase());
 
     const last = pageRows[pageRows.length - 1];
@@ -810,19 +819,19 @@ export class ScreenerReadService {
   }
 
   /**
-   * All messages currently held in the Screener (desired folder = ohmail/Screener), each
-   * carrying its own AI eligibility.
+   * All messages currently held in the Screener (desired folder = ohmail/Screener).
    *
-   * **The sensitivity flags narrow the SUGGESTION, never the QUEUE**, and the difference is
-   * deliberate. Putting `no_ai = false AND sensitivity_category IS NULL` in this WHERE — the
-   * shape `DraftingService.retrieveThreadContext` uses, and the obvious symmetry to reach for —
-   * would be wrong twice over here: it would HIDE a held sensitive message from the queue the
-   * user is meant to triage, and `decide` reads the same rows, so that sender could never be
-   * screened at all (404) and their mail would stay stuck in `ohmail/Screener` for ever.
+   * **The sensitivity flags narrow NOTHING here, and they never did.** This WHERE has never
+   * carried `no_ai = false AND sensitivity_category IS NULL` — the shape
+   * `DraftingService.retrieveThreadContext` uses, and the obvious symmetry to reach for — because
+   * it would be wrong twice over: it would HIDE a held sensitive message from the queue the user
+   * is meant to triage, and `decide` reads the same rows, so that sender could never be screened
+   * at all (404) and their mail would stay stuck in `ohmail/Screener` for ever.
    *
-   * The exclusion belongs at the model boundary instead, and it is still structural rather than
-   * conventional: the SELECT computes `aiEligible` and it travels ON the row, so
-   * {@link ScreenerService.suggest} cannot reach a classifier without having consulted it.
+   * What HAS changed is what happened downstream. The SELECT used to compute an `aiEligible`
+   * flag that travelled on the row so {@link ScreenerService.suggest} could refuse to ask about
+   * it. Under the AI-OPEN ruling it asks about all of them, and the credential material is
+   * redacted at the sink instead.
    */
   protected async heldRows(ctx: ServiceContext, extra?: SQL): Promise<ScreenerRow[]> {
     const filters: SQL[] = [
@@ -1082,13 +1091,39 @@ export class ScreenerService extends ScreenerReadService {
    * thousand senders — a four-figure spend one malformed body away. Absent evidence must not
    * select the expensive branch.
    *
-   * ## The order of the gates is the enforcement (unchanged from `pipeline.ts`)
+   * ## AI-OPEN — THE OWNER'S RULING OF 2026-08-08, AND WHAT IT REPLACED
    *
-   * sensitivity → money → model. A `no_ai` or non-`ordinary` row is skipped `withheld` BEFORE
-   * the spend question is asked, so the no-AI invariant holds in its strong form: a withheld message
-   * produces no metering row at all. The eligibility travels ON the row out of
-   * {@link ScreenerReadService.heldRows}' own SELECT, so this method cannot reach the model
-   * without having consulted it.
+   * "There is not one single message for AI to not read justified… scan everything and remove the
+   * exceptions; if someone wants to use AI, they can, if not, they won't."
+   *
+   * This method used to run `sensitivity → money → model`, skipping a `no_ai` or non-`ordinary`
+   * row as `"withheld"` before the spend question was asked. **Every held sender is now
+   * suggestable.** The consent argument that justified the exception does not survive contact with
+   * what this endpoint is: nobody reaches it by accident. A person selected a set of senders, was
+   * quoted a price, and pressed a button labelled "Suggest". Withholding there is not protecting
+   * them from a disclosure they did not choose — it is declining to perform the one they did.
+   *
+   * What it cost, measured on the account that reported it: **293 of 1,698 waiting senders** could
+   * not be suggested for, and the surface told them so in a sentence
+   * ("This one is never sent to AI — it looks like it carries a login or a code") that read as a
+   * safety promise while being, for most of those senders, a false positive in a detector.
+   *
+   * ## What still protects the credential, and where it moved to
+   *
+   * REDACTION, which is the half that was always doing the real work. `pipeline.ts` stores the
+   * body and the snippet of this class of mail redacted, and the loop below applies the SAME
+   * transform — `redactForModel`, over the live bytes — to the subject and the snippet before any
+   * port sees them. So the model sees what the user's own client shows them, one representation
+   * rather than two, and the code itself never leaves the building.
+   *
+   * The automatic routing path in `pipeline.ts` is UNCHANGED and still refuses. Nobody presses
+   * anything there, so there is no consent to point at; see `SensitivePayloadPolicy`.
+   *
+   * ## The order of the remaining gates
+   *
+   * money → model, and the sink can no longer throw on this path. That pairing is deliberate:
+   * a sink that refused AFTER `gate.spend()` would charge a credit and return
+   * `model_unavailable`.
    *
    * ## Two clicks do not pay twice, at THREE independent layers
    *
@@ -1175,8 +1210,21 @@ export class ScreenerService extends ScreenerReadService {
     for (const sender of senders) {
       const r = rep.get(sender);
       if (!r) { skipped.push({ sender, reason: "not_held" }); continue; }
-      // Sensitivity FIRST — before the money question, never after it.
-      if (!r.aiEligible) { skipped.push({ sender, reason: "withheld" }); continue; }
+      // ── THERE IS NO SENSITIVITY GATE HERE ANY MORE. THAT IS THE FEATURE ────────────────────
+      //
+      // This line read `if (!r.aiEligible) { skipped.push({ sender, reason: "withheld" }); … }`
+      // and it was the whole of the withholding on the user-requested path. It is gone under the
+      // AI-OPEN ruling (see the method docblock). Nothing replaces it: every held sender the
+      // caller names is priced, charged and asked about, and the credential material is dealt
+      // with by REDACTING the payload at the sink (`classifyUserPayload(input, "redact")`),
+      // which is the same transform that produced the snippet stored on `r` in the first place.
+      //
+      // Removing it in isolation would have been a billing defect rather than a policy change,
+      // and that is worth stating where the money is: `gate.spend()` is eight lines below, and
+      // the sink used to THROW for exactly these rows. A withheld sender would have been debited,
+      // then caught as `model_unavailable`, and the user would have paid a credit for a sentence
+      // saying the model did not answer. The sink's `"redact"` policy is what makes this line's
+      // removal safe, not the other way round.
 
       // ALREADY BOUGHT — answer from the store. Not `quoted`, because a control must not price
       // what it will not be charged for, and not `skipped`, because the caller asked a question
@@ -1216,6 +1264,26 @@ export class ScreenerService extends ScreenerReadService {
 
       let result;
       try {
+        // ── THE CREDENTIAL IS REMOVED HERE, AT THE CALLER, AND NOT ONE LAYER DOWN ────────────
+        //
+        // `redactForModel` runs the outbound screen over these exact bytes and, only where it
+        // fires, replaces code-shaped and token-shaped runs with `[REDACTED]` — the same
+        // transform `classifySensitivity` used to produce the stored body and the stored
+        // snippet. So there is ONE redacted representation of this message: the one on disk, the
+        // one on the user's screen, and the one on the wire.
+        //
+        // **Why here and not in the classifier's parameter builder**, which is where it is
+        // tempting to put it: `classifier` is a PORT. `makeHaikuClassifier` is one implementation
+        // of it; the sidecar's local Ollama and Anthropic providers are two more, and they
+        // receive this object directly. A redaction applied inside the bundled builder would
+        // protect exactly one of the three and leave a local model reading the raw code.
+        //
+        // It is not gated on `messages.no_ai`. That column is known-wrong for historical rows
+        // (`sensitive-backfill.ts` exists for it and repaired 2,111 in August) and `r.subject` is
+        // stored RAW even where the body was stored redacted — which is the field an OTP is
+        // usually in. The bytes are always current; the flag is a claim about them.
+        const safe = redactForModel(r.subject, r.snippet);
+
         // THE SCREENING QUESTION, not the routing one — see `classify-prompt.ts`. Routing asks
         // "which folder does this belong in", and `ohmail/Screener` is that taxonomy's own
         // definition of a first-contact sender, which is every row this loop can reach. Asking it
@@ -1228,10 +1296,15 @@ export class ScreenerService extends ScreenerReadService {
         const ask = classifier.screen?.bind(classifier) ?? classifier.classify.bind(classifier);
         result = await ask({
           from: { name: null, address: r.fromAddress },
-          subject: r.subject,
-          snippet: r.snippet,
+          subject: safe.subject,
+          snippet: safe.snippet,
           headersDigest: "",
           fewShot: [],
+          // The declaration that goes WITH the redaction above, and the only thing that stops the
+          // outbound sink refusing a payload this method has already made safe. Absent everywhere
+          // else, which is what keeps the automatic routing path refusing — see
+          // `ClassifierInput.outbound`.
+          outbound: "prescreened" as const,
           // The account's own "who belongs in my Ohbox" words, into the model's USER turn only —
           // the same field `planChange` threads on the routing path. Absent ⇒ omitted (never the
           // placeholder), and `classifyUserPayload` drops a blank, so a NULL bar is byte-identical

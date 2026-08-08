@@ -603,17 +603,21 @@ export interface ScreenerSenderDTO {
   /**
    * The advice on record for this sender, or `null` when none was ever bought.
    *
-   * `withheld` is the third thing this field can say, and it exists because the other two could
-   * not say it. A run that could not answer for a sender — most often because the mail is one we
-   * never send to a model at all — left the row looking exactly like a row nobody had asked
-   * about, on a surface the person had just paid to fill in. Present ⇒ `dest` is `screener`,
-   * there is nothing to act on, and the reason is the whole of the content.
+   * `noAnswer` is the third thing this field can say, and it exists because the other two could
+   * not say it. A run that could not answer for a sender left the row looking exactly like a row
+   * nobody had asked about, on a surface the person had just paid to fill in. Present ⇒ `dest` is
+   * `screener`, there is nothing to act on, and the reason is the whole of the content.
+   *
+   * It was `withheld`, with a `"withheld"` member meaning "this mail is one we never send to a
+   * model". Under the AI-OPEN ruling of 2026-08-08 there is no such mail on a path a person asked
+   * for, so both the member and the name are gone. Every reason left is a fact about the RUN and
+   * every one of them is answered by asking again.
    */
   ai: {
     dest: OhmailView | "screened" | "spam";
     confidence: number;
     rationale: string;
-    withheld?: "withheld" | "out_of_credits" | "spend_unavailable" | "model_unavailable";
+    noAnswer?: "out_of_credits" | "spend_unavailable" | "model_unavailable";
   } | null;
   /**
    * NO-COLLAPSE: every held message, in full, oldest first —

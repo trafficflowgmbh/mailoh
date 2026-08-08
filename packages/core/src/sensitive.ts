@@ -1309,6 +1309,24 @@ function redactAuthUrls(text: string): string {
   });
 }
 
+/**
+ * THE REDACTION, AS ONE FUNCTION — the transform that produces every redacted representation
+ * this codebase stores or sends.
+ *
+ * It was a closure inside {@link classifySensitivity} and it now has a second caller, so it is
+ * named here rather than copied there. That matters more than tidiness: the stored body, the
+ * stored snippet and — since the AI-open ruling of 2026-08-08 — the payload a user-requested
+ * model call carries are **the same bytes**, produced by one function. Two spellings of "redact"
+ * is how a credential comes to be blanked on the screen and sent in the clear on the wire.
+ *
+ * The order is load-bearing. {@link redactAuthUrls} runs FIRST, because it rewrites whole URL
+ * tails; running {@link CODE} first would blank a digit run inside a token and leave the rest of
+ * the token intact, which is a partially-redacted secret rather than a redacted one.
+ */
+export function redactSensitiveText(text: string): string {
+  return redactAuthUrls(text).replace(CODE, "[REDACTED]");
+}
+
 /* ══════════════════════════════════════════════════════════════════════════════════════════
  * 8. THE DECISION
  * ════════════════════════════════════════════════════════════════════════════════════════ */
@@ -1471,7 +1489,7 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
   const credentialWithheld = !sensitive && withheldFromModel
     && (reasons.has("credential_shape") || reasons.has("auth_url_token") || reasons.has("unsupported_script"));
   const storeRedactedBody = sensitive || credentialWithheld;
-  const redactText = (t: string): string => redactAuthUrls(t).replace(CODE, "[REDACTED]");
+  const redactText = redactSensitiveText;
 
   return {
     sensitive,
@@ -1518,6 +1536,112 @@ export interface OutboundScreen {
  * asymmetry is deliberate — the sink refuses what must never be sent, the upstream decides what
  * we are not sure about.
  */
+/** What {@link redactForModel} hands back: the two fields to send, and whether it changed them. */
+export interface ModelSafeText {
+  subject: string;
+  snippet: string;
+  /** True ⇒ the screen fired and both fields were run through {@link redactSensitiveText}. */
+  redacted: boolean;
+}
+
+/**
+ * ── MAKE A PAYLOAD SENDABLE, FOR A CALLER WHOSE USER ASKED ───────────────────────────────────
+ *
+ * The AI-OPEN half of the sensitivity rule, as amended on 2026-08-08.
+ * {@link screenOutboundText} answers "does this carry credential material"; this answers "then
+ * what do I send", and the answer on a path a person pressed a button on is: the same bytes with
+ * the credential VALUE removed. What is withheld from a model is the value, never the subject
+ * matter — that a message concerns a password reset is not a secret, and it is exactly what the
+ * user is paying the model to notice.
+ *
+ * ## It is CONDITIONAL, and that is the whole reason it is a function rather than two calls
+ *
+ * {@link CODE} contains `[A-Z0-9]{6,10}`, which matches `URGENT`, `WELCOME`, `REMINDER` and
+ * `NEWSLETTER`, and any 4–8 digit run — an order number, a year range, a price. Its own docblock
+ * says it is "only ever applied to mail already judged sensitive, so its breadth costs nothing on
+ * ordinary mail", and that sentence is load-bearing: running it over every Screener row would
+ * blank ordinary subjects and quietly degrade every suggestion in the product, for the 83% of
+ * senders this ruling was never about. So the screen decides, per payload, whether the redactor
+ * runs at all.
+ *
+ * ## It reads the BYTES, never `messages.no_ai`
+ *
+ * Two reasons, and the second is the stronger. The stored flag is known-wrong for historical rows
+ * — an earlier version of this detector flagged mail it should not have, and a one-off repair pass
+ * had to be written and run to correct thousands of them. And `messages.subject` is stored RAW even
+ * for rows whose body was stored redacted, so a
+ * decision keyed off the stored redaction state would miss the field the code is usually in. The
+ * subject stays raw on disk deliberately: "Your code is 482913" is the single most useful subject
+ * line in a mailbox and the message list must show it. Redaction for a model is a different
+ * question from redaction for storage, asked at a different moment, over the same bytes.
+ *
+ * ## There is no residue check
+ *
+ * Redaction removes code-shaped and token-shaped runs. The detector also fires on authentication
+ * VOCABULARY, which redaction cannot remove because words are not values. A "did it come out
+ * clean" test would therefore refuse every password reset and every "verify your email" — the
+ * exception the ruling removed, reinstated under a new name — so `redacted` is reported as a fact
+ * and never used as a veto.
+ */
+export function redactForModel(subject: string, snippet: string): ModelSafeText {
+  if (screenOutboundText(subject, snippet).safe) return { subject, snippet, redacted: false };
+  const clean = (t: string): string => redactUrlTails(redactSensitiveText(t));
+  return { subject: clean(subject), snippet: clean(snippet), redacted: true };
+}
+
+/**
+ * ── THE CLICK-TRACKER HOLE, AND WHY THE MODEL PATH REDACTS MORE THAN STORAGE ─────────────────
+ *
+ * {@link redactAuthUrls} only rewrites a URL whose OWN path or query names an authentication
+ * marker. Measured against the live account on 2026-08-08, before this shipped: a password-reset
+ * mail from `app@thechosen.tv` carried its reset link as
+ * `http://url7965.thechosen.tv/ls/click?upn=<base64 of the real URL>` — an ESP click-tracking
+ * wrapper. `/ls/click` is not an authentication marker and `upn` is not an authentication
+ * parameter, so the marker missed, the token survived, and the magic link would have gone to the
+ * model intact. Ten of the previously-withheld senders had a run like this.
+ *
+ * It never mattered before because the old policy withheld the whole message on the VOCABULARY
+ * match ("Reset password"), so nothing about the URL was reachable. Opening the path is what makes
+ * the wrapper load-bearing, and a privacy page that says "the credential is removed before any AI
+ * request is built" is only true if this is closed too.
+ *
+ * So on a payload the screen has ALREADY flagged, every opaque-looking run in the TAIL of every
+ * URL is blanked, marker or no marker. The cost is stated rather than waved at: a long readable
+ * path segment in a credential-bearing mail reads as a token and is blanked. That is the trade the
+ * `OPAQUE_TOKEN` docblock already argues for — *"redaction runs only on a message ALREADY judged
+ * to carry a credential, and its only error is blanking a few characters of a URL nobody will
+ * read"*.
+ *
+ * **The HOST is kept**, deliberately. `thechosen.tv` is the single most useful routing signal in
+ * the payload and it is not a secret; blanking it would protect nothing and make the suggestion
+ * worse. Only what follows the authority is rewritten.
+ *
+ * **It is NOT applied to storage**, and that asymmetry is the conservative choice rather than an
+ * oversight. `classifySensitivity`'s output is pinned by a corpus and is what a person reads in
+ * their own client; widening it is a separate decision with its own before/after evidence. The
+ * model path is allowed to be strictly more redacted than the stored one — never less.
+ */
+const URL_RUN = /https?:\/\/[^\s<>"')\]]+/gi;
+/** Everything after the authority: the first `/`, `?` or `#` and onward. */
+const URL_TAIL = /^(https?:\/\/[^/?#\s]*)([\s\S]*)$/i;
+const TAIL_SEGMENT = /[A-Za-z0-9_\-.~+%=]{16,}/g;
+
+function redactUrlTails(text: string): string {
+  URL_RUN.lastIndex = 0;
+  return text.replace(URL_RUN, (url) => {
+    const m = URL_TAIL.exec(url);
+    if (!m) return url;
+    const [, authority, tail] = m;
+    if (!tail) return url;
+    TAIL_SEGMENT.lastIndex = 0;
+    // `looksLikeOpaqueToken` is reused rather than restated: it is the same "long, and carrying
+    // something words in URLs do not" test, and a second spelling of it here is how the two come
+    // to disagree about the next token shape somebody reports.
+    return authority + tail.replace(TAIL_SEGMENT, (seg) =>
+      looksLikeOpaqueToken(seg) ? "[REDACTED]" : seg);
+  });
+}
+
 export function screenOutboundText(...parts: Array<string | null | undefined>): OutboundScreen {
   const raw = parts.filter((p): p is string => typeof p === "string" && p.length > 0).join("\n");
   if (!raw) return { safe: true, category: null, reason: null };
