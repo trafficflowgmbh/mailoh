@@ -100,6 +100,21 @@ export interface RailNavProps {
   onNavigateTag?: (id: string) => void;
   mailboxesLabel?: string;
   mailboxes?: RailMailbox[];
+  /**
+   * THE SHELL'S OWN CONTROLS, AT THE FOOT OF THE RAIL.
+   *
+   * Things that act on the app rather than on mail — opening the command palette, switching the
+   * theme. They used to float in a fixed capsule centred over the bottom of the page, which cost
+   * every scrolling surface a clearance band and put two controls permanently on top of the mail.
+   * The rail is where the app's own chrome already lives, so they sit at the end of it, above the
+   * account line.
+   *
+   * `ReactNode` and not a typed list: the rows are the host's, written in the rail's own
+   * vocabulary (`.ritem`, with a keycap in `.cnt` exactly as the Search row carries "/"), and
+   * `RailNav` only gives them a place and a hairline. **Optional and default-absent** — the
+   * desktop shell renders the same rail with no dock and is untouched by this.
+   */
+  dock?: ReactNode;
   /** Bottom line — the account address. */
   footer?: ReactNode;
   ariaLabel?: string;
@@ -145,6 +160,7 @@ export function RailNav({
   onNavigateTag,
   mailboxesLabel = "Mailboxes",
   mailboxes,
+  dock,
   footer,
   ariaLabel = "Main",
   className,
@@ -262,6 +278,7 @@ export function RailNav({
         </div>
       ) : null}
 
+      {dock ? <div className="rail-dock">{dock}</div> : null}
       {footer ? <div className="rail-mail">{footer}</div> : null}
     </nav>
   );

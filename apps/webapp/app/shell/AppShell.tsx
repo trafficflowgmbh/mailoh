@@ -2,7 +2,7 @@
 
 /**
  * The ohmail client shell: rail + views over ONE engine, the reader
- * exhale, the Reply Run, the ⌘K palette, the tag picker, the dock and
+ * exhale, the Reply Run, the ⌘K palette, the tag picker and
  * the demo ribbon. Every list, count and mutation runs through
  * @ohmail/client-engine — the shell only owns view state.
  */
@@ -47,11 +47,9 @@ import {
 import {
   Button,
   CommandPalette,
-  Dock,
-  DockIcon,
-  DockKey,
   FocusReplyOverlay,
   Icon,
+  Kbd,
   RailNav,
   Reader,
   SettingsSection,
@@ -2735,6 +2733,41 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     [senderMenu, reader, version],
   );
 
+  /**
+   * THE TWO APP-LEVEL CONTROLS, AT THE FOOT OF THE RAIL.
+   *
+   * They were a fixed capsule floating bottom-centre over every view. That cost two things: a
+   * clearance band at the bottom of every scrolling surface so the last row was not under the
+   * pill (132px, in four stylesheets), and two controls permanently on top of somebody's mail.
+   * Neither acts on mail — one opens the palette, one switches the theme — so they belong with
+   * the rest of the app's own chrome, which is the rail.
+   *
+   * Written in the RAIL'S vocabulary, not in a component of their own: `.ritem` rows with the
+   * keycap in `.cnt`, exactly as the Search row carries "/". A row that looks like a rail row
+   * and is a rail row needs no new idiom to learn and no second stylesheet to keep in step.
+   *
+   * The theme row's label is VISIBLE text rather than an `aria-label` on an icon-only button —
+   * a rail is a list of labelled rows, and one silent glyph among them would be the only thing
+   * here you have to hover to identify.
+   *
+   * On a phone these ride the navigation drawer, which is the same rail. See `touch-keys.css`
+   * for why the keycap goes away there and the label does not.
+   */
+  const railDock = (
+    <>
+      <button type="button" className="ritem" onClick={palette.openPalette}>
+        {t("dock.command")}
+        <span className="cnt">
+          <Kbd>⌘K</Kbd>
+        </span>
+      </button>
+      <button type="button" className="ritem" onClick={theme.toggle}>
+        <Icon name="sun" />
+        {t("dock.theme")}
+      </button>
+    </>
+  );
+
   return (
     // `MailStateProvider` used to open here. It is now ABOVE this component
     // (`MailStateHost`) so the shell can READ the mailbox facts as well as publish them — see
@@ -2815,6 +2848,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
               name: (m as { name?: string }).name ?? m.address,
               hint: (m as { railHint?: string }).railHint ?? m.provider,
             }))}
+            dock={railDock}
             footer={account?.email}
             ariaLabel={t("rail.ariaMain")}
           />
@@ -3361,19 +3395,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       <ShortcutSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       {/* THE (i) PANEL IS GONE, AND ITS CONTENT IS NOT.
-          It was a floating dock button opening a dialog over the mail, holding three facts
+          It was a floating button opening a dialog over the mail, holding three facts
           that are settings — which mailbox is connected, when it last synced, which build —
           and it was the only place they were readable. Facts do not need an overlay. They
           are a Settings pane now (`aboutSection`, below), which is where somebody looks for
-          them and where they can be linked to; the dock is back to the two controls that
-          act on what is on screen rather than describe it. */}
-
-      {/* floating dock */}
-      <Dock>
-        <DockKey label={t("dock.command")} kbdHint="⌘K" onPress={palette.openPalette} />
-        <span className="dock-sep" />
-        <DockIcon icon="sun" label={t("dock.theme")} onPress={theme.toggle} />
-      </Dock>
+          them and where they can be linked to; the two controls that act on what is on
+          screen rather than describe it are at the foot of the rail (`railDock`). */}
     </div>
     </MessageChromeProvider>
   );

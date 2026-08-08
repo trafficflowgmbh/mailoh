@@ -21,7 +21,7 @@ export interface ReaderProps {
 
 /**
  * Reading mode — the exhale. While open, `reading` is set on <body> so
- * app chrome using the .shell / .dock classes recedes exactly like the
+ * app chrome marked with the .shell class recedes exactly like the
  * prototype. Escape and a backdrop click both return.
  */
 export function Reader({

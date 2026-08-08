@@ -78,4 +78,21 @@
 .mbx i{width:4px;height:4px;border-radius:50%;background:var(--ink3);flex:none;font-style:normal;align-self:center;opacity:.7}
 .mbx .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mbx small{color:var(--ink3);font-size:10.5px;margin-left:auto;padding-left:6px;flex:none}
+/* THE APP'S OWN CONTROLS, AT THE FOOT OF THE RAIL — see `dock` in `RailNav.tsx`.
+ *
+ * `margin-top:auto` takes the rail's slack, so the group sits at the bottom whatever the route
+ * list above it is doing. `.rail-dock + .rail-mail{margin-top:0}` is the load-bearing half: both
+ * this and the account line ask for `auto`, and two auto margins SPLIT the free space between
+ * them — the dock would float in the middle of the gap rather than resting on the account line.
+ * Only the first one takes it.
+ *
+ * The inset hairline is the whole separation. No box, no fill: these are rail rows that happen
+ * to act on the app instead of navigating, and dressing them as a widget would make the rail
+ * read as two components.
+ *
+ * SHORT VIEWPORTS: `.rail` scrolls (`overflow-y:auto`), so on a short window the dock scrolls
+ * with everything else. Deliberately NOT pinned inside the scroller — a `position:sticky` foot
+ * would cover the mailbox list at exactly the height where the list needs every line it has. */
+.rail-dock{margin-top:auto;padding-top:10px;box-shadow:inset 0 1px 0 var(--hair-soft)}
+.rail-dock + .rail-mail{margin-top:0}
 .rail-mail{margin-top:auto;padding:14px 8px 0;font-size:10.5px;color:var(--ink3)}

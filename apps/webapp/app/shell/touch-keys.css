@@ -5,7 +5,9 @@
  *
  *   1. a **⌘K pill in the mobile top bar**, whose entire label is a chord;
  *   2. **"esc to return"** over the reading overlay;
- *   3. the dock's **"Command ⌘K"**, a real button wearing a keycap nobody can press.
+ *   3. the **"Command ⌘K"** control, a real button wearing a keycap nobody can press. (It was
+ *      a floating capsule when this was walked; it is a row at the foot of the rail now, and
+ *      the third rule below followed it there.)
  *
  * Each one is the same defect this slice's five siblings are: a statement the product cannot
  * keep. "⌘K" on a phone is not merely unhelpful, it names an action the reader has no way to
@@ -42,10 +44,11 @@
 
 @media (pointer: coarse) {
   /* THE TOP-BAR ⌘K PILL. Hidden outright rather than relabelled: its label is the chord, so
-     there is nothing left of it once the chord goes. Nothing is lost — the dock's "Command"
-     button below opens the same palette and is on screen in every view at this width
-     (`dock.css` only moves it up to `bottom:32px` under 900px; the sole rule that hides it is
-     `body.reading`, where a modal is open over everything). */
+     there is nothing left of it once the chord goes. Nothing is lost — the same palette is one
+     row of the NAVIGATION DRAWER away. At this width the rail is the drawer the ☰ button on the
+     left of this same top bar opens, and the "Command" row sits at its foot (`.rail-dock`,
+     `rail.css`) in every view. Two taps instead of one, on a control whose advertised trigger
+     was a chord this device cannot type. */
   .topbar > .tb-btn:last-child {
     display: none;
   }
@@ -73,11 +76,14 @@
     display: none;
   }
 
-  /* THE DOCK PILL BECOMES A LABELLED BUTTON — which it very nearly already is. `DockKey`
-     renders `{label}{kbdHint && <Kbd>}`, so dropping the keycap leaves "Command", and the
-     flex `gap` collapses with it because gaps only apply between rendered items. The button,
-     its accessible name and its action are untouched. */
-  .dock .dock-k kbd {
+  /* THE RAIL'S COMMAND ROW BECOMES A PLAIN LABELLED ROW — which it very nearly already is.
+     The row renders `{label}<span class="cnt"><kbd>⌘K</kbd></span>`, the same idiom the Search
+     row uses for "/", so dropping the keycap leaves "Command" and an empty `.cnt` holding the
+     count column open. The button, its accessible name and its action are untouched.
+
+     Scoped to `.rail-dock` and not to `.ritem kbd`, because the Search row's "/" is a
+     NAVIGATION key hint that this file has never claimed to hide — one question at a time. */
+  .rail-dock .ritem kbd {
     display: none;
   }
 }

@@ -68,8 +68,9 @@ body.reading .shell {
    over the deck padding (the grid cell stretches to absorb them, and `.stage`/`.view`/`.deck`
    keep `overflow: visible` so panel shadows in other views still breathe). `padding-top: 18px`
    holds the first card exactly where it sits today — the stream's own 2px plus the deck's 16px —
-   and `padding-bottom` stays the 132px dock clearance. The ≤900px block (further down) and
-   `.read-col` are untouched. */
+   and `padding-bottom` stays whatever `stream.css` reserves for the last card's shadow falloff
+   (48px, since the floating capsule that used to need 132px moved into the rail). The ≤900px
+   block (further down) and `.read-col` are untouched. */
 @media (min-width: 901px) {
   .view-reads .stream,
   .view-receipts .stream {
@@ -378,9 +379,10 @@ body.reading .shell {
    reader must act on — so they float as a small pill in the bottom-left corner rather than a
    full-width strip across the top of every view. "Syncing your mail" is not worth a banner over
    somebody's mail; the warn/error/stopped states above still are, and keep the strip in flow.
-   Bottom-LEFT clears the centred dock and toast (both bottom-centre); z-dock keeps it above the
-   deck but under every sheet and the toast. A pure-white shadow-sculpted surface — flat fill,
-   no backdrop-filter, as the design system requires. Fixed, so it leaves the deck its full
+   Bottom-LEFT clears the toast, which is bottom-centre; `--z-dock` keeps it above the deck but
+   under every sheet and the toast (the token outlived the floating capsule it was named for —
+   it is the layer, not the component). A pure-white shadow-sculpted surface — flat fill, no
+   backdrop-filter, as the design system requires. Fixed, so it leaves the deck its full
    height. */
 .sync-bar.busy {
   position: fixed;
@@ -2070,23 +2072,24 @@ body.reading .shell {
   .view-receipts .list-col {
     display: none;
   }
-  /* DOCK CLEARANCE IS SAFE-AREA-AWARE ON A PHONE. The floating ⌘K dock is fixed at
-     `bottom:32px` (`dock.css`); a device with a home indicator adds a bottom safe-area inset
-     below that, which the fixed 120/132px clearances did not account for — so the last list row
-     could sit under the pill on a notched phone at 390px even though it clears on a flat
-     viewport. Folding `env(safe-area-inset-bottom)` into each scroll list's bottom padding
-     restores the clearance there. `env(...,0px)` resolves to 0 on desktop and non-notched
-     phones, so nothing moves anywhere else. */
+  /* THE BOTTOM OF A SCROLL LIST IS STILL SAFE-AREA-AWARE, AND IT NO LONGER CLEARS ANYTHING.
+     These were 120/132/96px because a ⌘K capsule floated at `bottom:32px` over every view and
+     the last row had to stay out from under it. The capsule is a group at the foot of the rail
+     now, which on a phone means it rides the navigation drawer and is never over the list — so
+     what is left to reserve is the falloff of the last row's shadow (48px, matching the desktop
+     rules these override) and, on the seed card, a breath under its Confirm / Not now row.
+     `env(safe-area-inset-bottom)` stays: a home indicator still eats the bottom of the
+     scrollport, and `env(...,0px)` resolves to 0 everywhere else. */
   .view .stream {
-    padding: 0 6px calc(120px + env(safe-area-inset-bottom, 0px));
+    padding: 0 6px calc(48px + env(safe-area-inset-bottom, 0px));
   }
   .view .scroller {
-    padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
   }
   /* The sent-mail seed review scrolls the whole card (`.view-seed { overflow:auto }`), and its
-     Confirm / Not now actions sit at the bottom of it — under the dock without clearance. */
+     Confirm / Not now actions sit at the bottom of it. */
   .view-seed {
-    padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
   }
   .stream-top {
     display: flex;
@@ -2149,10 +2152,6 @@ body.reading .shell {
     z-index: var(--z-read);
     border-radius: 0;
     padding-bottom: 60px;
-  }
-  body.scn-full-open .dock {
-    opacity: 0;
-    pointer-events: none;
   }
   .scn-mails {
     padding: 16px 18px 60px;

@@ -88,8 +88,6 @@ export { Doorbell } from "./composites/Doorbell.js";
 export type { DoorbellProps } from "./composites/Doorbell.js";
 export { CommandPalette } from "./composites/CommandPalette.js";
 export type { CommandPaletteProps, Command } from "./composites/CommandPalette.js";
-export { Dock, DockKey, DockIcon, DockSep } from "./composites/Dock.js";
-export type { DockProps, DockKeyProps, DockIconProps } from "./composites/Dock.js";
 export { ProtectedBlock } from "./composites/ProtectedBlock.js";
 export type { ProtectedBlockProps } from "./composites/ProtectedBlock.js";
 export { SearchBox, Facets, SearchHit } from "./composites/SearchBox.js";

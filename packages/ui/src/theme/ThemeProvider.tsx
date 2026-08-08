@@ -33,7 +33,7 @@ export interface ThemeContextValue {
   /** What is actually rendered right now. */
   resolved: ResolvedTheme;
   setTheme: (preference: ThemePreference) => void;
-  /** Flip the effective theme, like the dock's sun button. */
+  /** Flip the effective theme, like the rail's sun row. */
   toggle: () => void;
 }
 

@@ -1,8 +1,28 @@
 /* reading column + message anatomy */
+/* NO BOTTOM PADDING, AND THAT IS A CHANGE OF JOB RATHER THAN A TIDY-UP.
+ *
+ * This was 132px, reserving room under a capsule that floated over the bottom of every view.
+ * The capsule moved into the rail, and the padding had to go with it for a second reason: the
+ * action bar's resting position is now the BOTTOM OF THIS COLUMN (`.read-col > .msg` fills the
+ * scrollport and `.msg-actions` takes the slack), and padding here would push that resting
+ * position 132px up the panel — which is precisely the "the bar hangs in the middle of an empty
+ * panel" defect this replaces. The bar's own 12px is the whole gap now. */
 .read-col{
-  min-width:0;min-height:0;overflow-y:auto;padding-bottom:132px;
+  min-width:0;min-height:0;overflow-y:auto;padding-bottom:0;
   background:var(--panel);border-radius:20px;box-shadow:var(--lift-1);
 }
+/* THE MESSAGE FILLS THE COLUMN EVEN WHEN THE MAIL DOES NOT.
+ *
+ * A two-line message is a two-line box, so a bar parked at the end of it sits wherever the text
+ * happens to stop — a pill floating in the middle of an empty panel. `min-height:100%` makes the
+ * message as tall as the scrollport, the column direction gives `.msg-actions` an `auto` margin
+ * to eat, and the bar comes to rest against the bottom exactly where `position:sticky` would
+ * pin it on a long message. ONE geometry for both cases: pinned and at rest are the same 12px.
+ *
+ * Scoped to `.read-col >` deliberately. The reader overlay's card is sized by its own content
+ * and must not be stretched, and the Screener's `.scn-read` hosts its own bar. */
+.read-col > .msg{min-height:100%;display:flex;flex-direction:column}
+.read-col .msg-actions{margin-top:auto}
 /* THE MESSAGE, AND THE TWO THINGS IT PUBLISHES TO ITS OWN PARTS.
  *
  * ── `--msg-measure`: THE MAIL MEASURE, AS A LENGTH THAT CAN BE SHARED ──────────────────
@@ -27,18 +47,17 @@
  * widens both together or neither, instead of letting the bar run out to a column width while
  * the text stops at its measure.
  *
- * ── `--msg-paper`: WHAT THIS MESSAGE IS PRINTED ON ────────────────────────────────────────
+ * ── AND THERE IS NO `--msg-paper` ANY MORE ────────────────────────────────────────────────
  *
- * The action bar is sticky now, so it has to be OPAQUE — a translucent strip with the mail
- * sliding under it is unreadable in both directions. `background: inherit` cannot do it (this
- * element is transparent and the colour belongs to the column behind it), so each surface names
- * its own paper: the reading column's panel here, the reader overlay's float in `reader.css`.
- * One variable, two answers, and the bar reads whichever it is standing on.
+ * There was, while the bar was a full-width opaque strip that mail scrolled under: it had to
+ * paint the surface it was standing on, and that surface differs between the reading column
+ * (`--panel`) and the reader overlay (`--float`). The bar is a floating PILL now — it carries
+ * its own `--float` ground and its own lift, so it is opaque by being an object rather than by
+ * impersonating the page behind it, and there is nothing left for either surface to declare.
  */
 .msg{
   --msg-measure:621px;
-  --msg-paper:var(--panel);
-  max-width:640px;width:100%;margin:0 auto;padding:26px 34px 48px;
+  max-width:640px;width:100%;margin:0 auto;padding:26px 34px 12px;
 }
 .msg-from{display:flex;align-items:center;gap:9px;font-size:12.5px}
 .msg-from b{font-weight:600}
@@ -84,7 +103,7 @@
   transition:transform .15s var(--swift), box-shadow .2s var(--swift)}
 .attach:hover{transform:translateY(-1px);box-shadow:var(--lift-2)}
 .attach small{color:var(--ink3)}
-/* ═══ THE ACTION BAR IS DOCKED, NOT PARKED AT THE END OF THE MAIL ═══════════════════════
+/* ═══ THE ACTION BAR FLOATS OVER THE MAIL, IT IS NOT A STRIP ACROSS IT ═══════════════════
  *
  * Reply, the read switch and the rest used to sit after the last paragraph, so on anything
  * longer than a screen they were somewhere below the fold: reading a message and then answering
@@ -99,38 +118,64 @@
  * one rule is correct in the column, in the overlay, and at every width, with no second
  * implementation and no media query deciding which one is in force.
  *
- * IT MUST BE OPAQUE, because mail scrolls underneath it — hence `--msg-paper` (see `.msg`) and
- * the inset hairline, which is the one mark that says "this strip is in front of the text"
- * without drawing a box around it.
+ * ── WHAT WAS WRONG, AND IT WAS THE RESTING POSITION RATHER THAN THE STICKINESS ────────────
  *
- * THE 34px GAP IS NOW PADDING, INSIDE THE BOX. It used to be `margin-top`, which is transparent:
- * a pinned bar with a margin above it shows a 34px window of the mail sliding past between the
- * hairline and the buttons. Padding belongs to the bar, travels with it, and is painted.
- * 14px rather than 34px, because a docked strip is a toolbar and takes a toolbar's rhythm; the
- * full 34px comes back below, in the one state where the bar is the end of the article again.
+ * `bottom:0` pins correctly, but a sticky box only leaves its flow position once the scroll
+ * reaches it — and this one's flow position was 180px up the panel, because `.read-col` padded
+ * 132px underneath and `.msg` another 48px. On a message short enough not to scroll, the bar
+ * never pins and simply sits where it lies: a row of verbs stranded in the middle of an empty
+ * white panel. The fix is geometric and is in three places — `.read-col`'s padding is 0, `.msg`
+ * fills the scrollport and hands its slack to this box (both above), and `bottom` matches the
+ * 12px `.msg` now pads. **Pinned and at rest are the same 12px off the bottom edge**, so there
+ * is no longer a state where the bar is somewhere else.
+ *
+ * ── AND IT IS A PILL, WHICH IS WHY THIS BOX PAINTS NOTHING ────────────────────────────────
+ *
+ * The opaque full-width strip with an inset hairline is gone. It had to be opaque because mail
+ * scrolled under it, and being opaque made it a false floor across the message: text stopped at
+ * a line that was not the end of anything. The bar's SKIN moved onto `.abar` in
+ * `apps/webapp/app/shell/action-bar.css` — `width:fit-content`, a 99px radius, `--float` and
+ * `--lift-3`, the same treatment the floating capsule at the bottom of the page used to wear.
+ * So this box is now only a positioner: no background, no shadow, no padding of its own.
+ *
+ * `margin-top` is safe again for the same reason. It was forbidden while the bar was opaque (a
+ * transparent margin above a pinned strip is a 34px window onto the mail sliding past); a pill
+ * has mail visible all around it by design, so 24px of air above it is just air.
+ *
+ * CONTENT IS NEVER HIDDEN BEHIND IT, and that is by construction rather than by clearance: the
+ * bar stays IN FLOW at the end of the message, so the last paragraph is above it and scrolling
+ * to the end brings the text to rest clear of the pill.
  */
 .msg-actions{
   display:flex;flex-wrap:wrap;gap:7px;
-  position:sticky;bottom:0;z-index:1;
+  position:sticky;bottom:12px;z-index:1;
   max-width:var(--msg-measure);
-  margin:0;padding:14px 0 12px;
-  background:var(--msg-paper);
-  box-shadow:inset 0 1px 0 var(--hair-soft);
+  margin-top:24px;padding:0;
 }
 /* THE REPLY EDITOR IS OPEN: THE BAR STANDS DOWN.
  *
  * The editor renders after the bar and carries its own Send row, so a bar pinned to the bottom
- * would float over the control the user is reaching for — the one place a docked toolbar is
+ * would float over the control the user is reaching for — the one place a floating toolbar is
  * plainly wrong. While a reply is open the message is not being read, it is being answered, so
- * the bar returns to the flow at its natural position above the editor and gives back the 34px
- * that separates it from the mail. `:has()` because the state lives in a sibling further down
- * the tree; there is no class on `.msg` to key off, and adding one would put the same fact in
- * two places. */
+ * the bar returns to the flow at its natural position above the editor and takes the 34px that
+ * separates it from the mail. `:has()` because the state lives in a sibling further down the
+ * tree; there is no class on `.msg` to key off, and adding one would put the same fact in two
+ * places.
+ *
+ * THE PILL STANDS DOWN WITH IT. A capsule floating above an open editor reads as a second,
+ * competing control surface, so the skin comes off and the bar is a plain full-width row of
+ * verbs again — which is what it was before it started floating, and what the end of an article
+ * should look like. Written on `> .abar` because that is where the skin lives now. */
 .msg:has(.reply) .msg-actions{
   position:static;
+  margin-top:34px;
+}
+.msg:has(.reply) .msg-actions > .abar{
   background:none;
   box-shadow:none;
-  padding:34px 0 0;
+  width:100%;
+  margin:0;
+  padding:0;
 }
 /* the small open-reader affordance in the from-line */
 .msg-open{width:26px;height:26px;display:grid;place-items:center;border-radius:99px;color:var(--ink2);

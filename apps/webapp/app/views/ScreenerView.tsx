@@ -284,11 +284,12 @@ export function ScreenerView({
       last.getBoundingClientRect().top - read.getBoundingClientRect().top + read.scrollTop - 14;
   }, [activeId, segment]);
 
-  // Mobile full-screen preview hides the dock (prototype scn-full).
-  useEffect(() => {
-    document.body.classList.toggle("scn-full-open", full);
-    return () => document.body.classList.remove("scn-full-open");
-  }, [full]);
+  /* `scn-full-open` used to be set on <body> here, and the one rule that read it hid the
+     floating ⌘K capsule while the mobile full-screen preview was up. The capsule is a group at
+     the foot of the rail now — on a phone it rides the navigation drawer, which the preview
+     already covers — so there is nothing to hide and nothing left reading the class. Removed
+     rather than left set: a body class no stylesheet matches is a state the app claims to have
+     and does not. */
 
   /**
    * THE SELECTED SENDER'S HELD MAIL, IN FULL.

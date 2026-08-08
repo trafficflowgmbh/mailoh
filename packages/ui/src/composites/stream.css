@@ -1,5 +1,5 @@
 /* reads skim stream — the newsletters themselves, clamped, on the canvas */
-.stream{min-width:0;min-height:0;overflow-y:auto;padding:2px 12px 132px;scroll-behavior:smooth}
+.stream{min-width:0;min-height:0;overflow-y:auto;padding:2px 12px 48px;scroll-behavior:smooth}
 .stream-hints{max-width:620px;margin:0 auto;padding:10px 26px 14px;font-size:11px;color:var(--ink3);
   display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 .scast{max-width:620px;margin:0 auto 20px;background:var(--float);border-radius:22px;

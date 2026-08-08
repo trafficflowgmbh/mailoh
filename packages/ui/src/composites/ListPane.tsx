@@ -27,7 +27,7 @@ export interface ListPaneProps {
 
 /**
  * The list column shared by Ohbox · Reads · Receipts · Screener · Tag:
- * lift-1 panel, view header, scroller with dock clearance.
+ * lift-1 panel, view header, scroller with shadow-falloff clearance.
  * Returns the pane; re-scan for new unseen rows via the returned
  * observer of `useSeenOnScroll` when composing manually.
  */

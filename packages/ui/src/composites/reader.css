@@ -1,16 +1,16 @@
 /* READING — the exhale. The message floats free on lift-3; everything
-   else recedes. If the app marks its chrome with .shell / .dock, the
-   body.reading rules below dim it (opt-in by class use). */
+   else recedes. If the app marks its chrome with .shell, the
+   body.reading rule below dims it (opt-in by class use). */
 .reader{position:fixed;inset:0;z-index:var(--z-read);overflow-y:auto;overscroll-behavior:contain;
   padding:8vh 24px 12vh}
 .reader .msg{
   max-width:660px;padding:46px 52px 40px;animation:exhale .5s var(--spring);
   background:var(--float);border-radius:28px;box-shadow:var(--lift-3);
-  /* The paper the sticky action bar prints on here. The overlay's card is `--float`, not the
-     reading column's `--panel`, and the bar has to match whichever surface it is standing on or
-     it reads as a foreign strip laid over the message. See `.msg` in `message.css`. */
-  --msg-paper:var(--float);
 }
+/* THE SHEET'S BOTTOM EDGE IS NOT THE SCREEN'S. On a phone the overlay is the whole viewport, so
+   a bar resting 12px off the bottom rests 12px into the home indicator's strip. `env(...,0px)`
+   is 0 on desktop and on flat phones, so this only moves where there is something to clear. */
+.reader .msg-actions{bottom:calc(12px + env(safe-area-inset-bottom,0px))}
 @keyframes exhale{from{opacity:0;transform:translateY(18px) scale(.99)}to{opacity:1;transform:none}}
 .reader .msg h2{font-size:29px;margin:18px 0 16px}
 .reader .msg-body{font-size:15.5px;line-height:1.78}
@@ -18,22 +18,32 @@
    the 16px `.reader .msg h2` already uses below itself. Same rhythm, one size louder. */
 .reader .msg-p{margin-bottom:16px}
 .reader .msg-p:last-child{margin-bottom:0}
-/* THE EXHALE, NARROWED TO THE BUTTONS ONCE THE BAR BECAME OPAQUE.
+/* THE EXHALE, NARROWED TO THE ROW OF CONTROLS AND NOT THE THING THEY SIT ON.
  *
- * The reader is the exhale: the bar rests quiet and one mouse movement brings it back. That was
- * `opacity` on `.msg-actions` itself, which was harmless while the bar was a transparent row at
- * the end of the message. It is not harmless now that the bar is sticky and paints its own
- * paper — a 35% strip with mail sliding under it is two texts on top of each other, and neither
- * is readable. So the fade applies to the CONTENT and the paper stays solid. Same resting state,
- * same recovery, nothing bleeding through. */
-.reader .msg-actions > .abar{opacity:.35;transition:opacity .3s var(--swift)}
-.reader .msg:hover .msg-actions > .abar, .reader .msg:focus-within .msg-actions > .abar{opacity:1}
+ * The reader is the exhale: the bar rests quiet and one mouse movement brings it back. It has
+ * been narrowed twice, each time by the same argument — WHATEVER IS CURRENTLY THE PAPER MUST
+ * NOT FADE, because a 35% surface with mail behind it is two texts on top of each other and
+ * neither is readable.
+ *
+ * First it moved off `.msg-actions` onto `.abar`, when `.msg-actions` was the opaque strip. It
+ * has to move again now, because the skin moved AGAIN: `.abar` is the floating pill, so fading
+ * it is exactly the defect that correction was made to remove. The fade belongs on whatever the
+ * pill CONTAINS — `.abar-row` at rest, `.abar-panel` when Resurface or Move has taken the row's
+ * place. The pill's own ground and lift stay solid at every moment.
+ *
+ * The rule to carry forward if this is ever restructured again: fade the controls, never the
+ * surface they are printed on. */
+.reader .msg-actions .abar-row,
+.reader .msg-actions .abar-panel{opacity:.35;transition:opacity .3s var(--swift)}
+.reader .msg:hover .msg-actions .abar-row,
+.reader .msg:hover .msg-actions .abar-panel,
+.reader .msg:focus-within .msg-actions .abar-row,
+.reader .msg:focus-within .msg-actions .abar-panel{opacity:1}
 .reader-hint{position:fixed;top:18px;left:50%;translate:-50%;font-size:11px;color:var(--ink3);
   display:flex;gap:8px;align-items:center;pointer-events:none;z-index:var(--z-read);
   animation:hint 3.6s var(--swift) .2s both}
 @keyframes hint{0%{opacity:0}10%{opacity:1}82%{opacity:1}100%{opacity:0}}
 body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
-body.reading .dock{opacity:0;pointer-events:none;translate:-50% 10px}
 @media (max-width: 900px){
   .reader{padding:4vh 12px 10vh}
   .reader .msg{padding:30px 22px 26px}

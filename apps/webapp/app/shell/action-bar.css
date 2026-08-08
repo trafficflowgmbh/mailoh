@@ -23,7 +23,8 @@
  * 242px and 350px are the same bar in the same product at the SAME viewport class — the
  * first is a 1000px desktop, the second a 390px phone. A viewport media query cannot tell
  * them apart and would dress the roomier surface as the tighter one. The bar therefore
- * asks its OWN width, and `.abar` is the container that answers.
+ * asks its OWN width, and a `container` named `abar` is what answers — `.msg-actions` for a
+ * message's bar, `.abar` itself for a selection's. See the two blocks below.
  *
  * ── THE STRUCTURAL FIX, WHICH IS NOT A BREAKPOINT ─────────────────────────────────────
  *
@@ -35,12 +36,51 @@
  * That is the one rule to keep if these numbers are ever re-tuned.
  */
 
-/* `.msg-actions` (packages/ui, not ours to edit) is `display:flex;flex-wrap:wrap`. Giving
-   it exactly ONE child that fills the line makes its own wrap unreachable — the bar's
-   layout is decided here and nowhere else. */
+/* ── THE BAR IS A FLOATING PILL, AND THAT COSTS ONE STRUCTURAL MOVE ───────────────────
+ *
+ * `.abar` used to be BOTH the container the density ladder measures and the box that fills
+ * the line. It cannot be both any more. A pill is as wide as its contents, and
+ * `container-type: inline-size` FORBIDS content-based sizing — an element cannot ask "how
+ * wide am I" and then answer "as wide as what is in me". Set `width: fit-content` on the
+ * container and the browser resolves it against the containing block instead: a full-width
+ * capsule, which is the strip this replaces.
+ *
+ * So the container moves UP, to `.msg-actions`. Its content box is the same ≤572px `.abar`
+ * was filling (`.msg` caps at 640px and pads 34px a side), so **the 456/601 ladder at the
+ * foot of this file measures exactly what it measured before and its tiers stay true** —
+ * that is why the container could move without re-measuring anything.
+ *
+ * `container-type: normal` on the pill is the other half and it is not tidiness: without it
+ * `.abar` is still a container named `abar`, it is the NEARER one, and every query below
+ * would resolve against the pill's own fit-content width — a circular measurement that
+ * settles at the narrowest tier for ever.
+ *
+ * `.abar` keeps `position: relative` (below), so `.mmenu` still anchors to the pill's right
+ * edge rather than to the full-width row — the menu now drops from the end of the capsule,
+ * which is where the button that opens it is. */
+.msg-actions {
+  container: abar / inline-size;
+}
 .msg-actions > .abar {
-  flex: 1 1 100%;
-  min-width: 0;
+  container-type: normal;
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
+  padding: 6px;
+  border-radius: 99px;
+  background: var(--float);
+  box-shadow: var(--lift-3);
+}
+
+/* THE PANEL CASE IS THE ONE EXCEPTION, AND IT IS A SHAPE PROBLEM. Resurface and Move replace
+   the row with `.abar-panel`, which is `flex-wrap: wrap` on purpose — a menu that clipped its
+   own last item would be the defect this bar exists to remove. A 99px radius on a box that has
+   gone to two lines is not a pill, it is a blob: the corner arc is half the height, so the ends
+   bulge into ellipses. Full width and a 22px radius instead — the same figure the reader's card
+   uses — so a wrapped panel reads as a panel and not as a stretched capsule. */
+.msg-actions > .abar:has(> .abar-panel) {
+  width: 100%;
+  border-radius: 22px;
 }
 
 /* ── THE SAME BAR OVER A SELECTION ─────────────────────────────────────────────────── 
@@ -54,7 +94,17 @@
  * The three overrides below are `.pick-bar`'s own button and span rules reaching into the
  * bar — it styles `button` and `span` bare, which is correct for the two controls it was
  * written for and wrong for a bar with fifteen. Narrowed rather than reversed: the accent
- * treatment on Clear and on the count is untouched. */
+ * treatment on Clear and on the count is untouched.
+ *
+ * ── AND THIS PATH IS DELIBERATELY UNTOUCHED BY THE PILL ABOVE ──────────────────────────
+ *
+ * State of play, because it is easy to read the block above as global: a selection bar's
+ * `.abar` is still `width:100%`, still `container-type:inline-size`, and still the container
+ * its OWN density queries resolve against — `@container abar` binds to the nearest ancestor
+ * container named `abar`, which for a bar inside `.pick-bar` is the bar itself. The pill
+ * treatment lives entirely under `.msg-actions >`. That is right rather than an oversight:
+ * `.pick-bar` is already a strip of its own with a count and a Clear beside the verbs, and a
+ * capsule floating inside a strip would be a second surface over the first. */
 .pick-bar > .abar {
   flex: 1 1 100%;
   min-width: 0;
@@ -77,7 +127,9 @@
   /* The anchor for the disclosure menu. `container-type` already makes this a containing block
      for positioned descendants, but relying on that would make the menu's placement depend on a
      side effect of containment rather than on something this file says. Stated, so removing the
-     container query would not silently move a menu into the page. */
+     container query would not silently move a menu into the page — and that is no longer a
+     hypothetical: a message's bar sets `container-type: normal` above, so this declaration is
+     the ONLY thing holding the menu to the pill. */
   position: relative;
 }
 
@@ -249,14 +301,16 @@
 /* ── THE DISCLOSURE MENU ──────────────────────────────────────────────────────────────────
  *
  * UPWARD and RIGHT-ALIGNED, and both are consequences of where the bar is rather than taste.
- * The bar is docked at the bottom of the reading area, so a menu opening downward would leave
- * the column on its first item; and the button that opens it is the last control in the row, so
+ * The bar rests at the bottom of the reading area, so a menu opening downward would leave the
+ * column on its first item; and the button that opens it is the last control in the row, so
  * `right: 0` on the bar is that button's right edge. The menu therefore grows back across the
  * bar it belongs to instead of out into the mail.
  *
- * `absolute` inside `.abar`, which is the container the density queries below ask about — that
- * is what lets one set of breakpoints decide both "this group stands in the row" and "this item
- * is in the menu". See `MoreMenu.tsx`.
+ * `absolute` inside `.abar`, whose `position: relative` is stated in its own rule for exactly
+ * this reason. That anchor became load-bearing when the bar turned into a fit-content pill:
+ * `.abar` is no longer the full width of the message, so `right: 0` is now the PILL's right
+ * edge — the menu drops from the end of the capsule, under the button that opened it, rather
+ * than from a column edge some distance away from it. See `MoreMenu.tsx`.
  */
 .mmenu {
   position: absolute;
@@ -314,12 +368,15 @@
  * Restored only where hover does not exist. The desktop exhale is deliberately untouched —
  * this narrows the rule to the devices its own mechanism works on, it does not overrule it.
  *
- * The selector follows the rule it narrows: the exhale moved onto `.abar` when the bar became
- * sticky and started painting its own paper (a 35% strip over scrolling mail is unreadable), so
- * this restores the same element rather than an ancestor that no longer carries the fade.
+ * The selector follows the rule it narrows, and that rule has moved twice. The fade sits on
+ * whatever the pill CONTAINS — `.abar-row` at rest, `.abar-panel` once Resurface or Move has
+ * taken the row's place — because fading the pill itself would fade the paper the controls are
+ * printed on. This restores the same two elements; a selector that lagged behind would restore
+ * an ancestor that no longer carries the fade, which is a rule that silently does nothing.
  */
 @media (hover: none) {
-  .reader .msg-actions > .abar { opacity: 1; }
+  .reader .msg-actions .abar-row,
+  .reader .msg-actions .abar-panel { opacity: 1; }
 }
 
 /* ── THE DENSITY LADDER ───────────────────────────────────────────────────────────────
@@ -371,11 +428,16 @@
  * messages is a different control from a single message's disclosure and keeps its own strip);
  * `.mmenu` is the message bar's menu. One set of numbers governs both.
  *
- * THE MEASURE MAKES THIS LADDER MATTER MORE, NOT LESS. `.abar` is its own container, so binding
- * the bar to the mail measure (`--msg-measure`, `packages/ui/.../message.css`) narrows what the
- * ladder is reading whenever that measure is narrower than the column. Fewer verbs stand in the
- * row and more of them are behind More — which is the ladder working, not a regression, and the
- * reason it is a container query rather than a viewport one. */
+ * THE MEASURE MAKES THIS LADDER MATTER MORE, NOT LESS. The bar's container is bound to the mail
+ * measure (`--msg-measure`, `packages/ui/.../message.css`), so the ladder reads a narrower width
+ * whenever that measure is narrower than the column. Fewer verbs stand in the row and more of
+ * them are behind More — which is the ladder working, not a regression, and the reason it is a
+ * container query rather than a viewport one.
+ *
+ * WHAT THE QUERIES MEASURE IS UNCHANGED BY THE PILL, and this is worth stating because it looks
+ * like it should have changed. The container moved from `.abar` to `.msg-actions`, but
+ * `.msg-actions` is the box `.abar` was filling at `width:100%` — same content box, same ≤572px,
+ * same tiers. The pill's own fit-content width is measured by nothing. */
 @container abar (min-width: 456px) {
   .abar-defer { display: flex; }
   .abar-panel .abar-p-defer { display: none; }
