@@ -31,12 +31,47 @@ const PRESENTED_FOLDERS = [
   "INBOX", "ohmail/Screener", "ohmail/Reads", "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine",
 ];
 
+/**
+ * The two folders a message can sit in without any decision standing behind it.
+ *
+ * MUST equal the client engine's `UNDECIDED_RESIDENCES`, and it is the half of the rule this
+ * file did not have. `inbound` admitted all six presented folders and classified every sender in
+ * them, so a sender whose only mail is in Reads, Receipts, Screened or Quarantine — mail somebody
+ * has already filed — was counted as still owed a decision. Measured against the client over the
+ * same rows: three active undecided senders here, one there.
+ *
+ * The client is the one that matches the written design, and says so at the bail it takes:
+ * *"Mail anywhere else — Reads, Receipts, Screened, Quarantine — is already where somebody put
+ * it. An explicit placement is itself an answer."* `GET /consent` reports this number to the
+ * user, so the server counting people nobody will ever be asked about is a number nobody can act
+ * on: the queue will never contain them.
+ *
+ * ── AND WHY THIS IS NOT SIMPLY `AND fs.desired_folder IN (…)` ON `inbound` ─────────────────
+ *
+ * That would restrict the ACTIVITY test as well, and the client does not. `senderActivity` runs
+ * over every presented folder before the residence bail is reached, so a sender with old read
+ * mail at the gate and unread mail in Reads is ACTIVE on the client. Narrowing `inbound` would
+ * make the server call them dormant — trading one disagreement for another, in a case the
+ * parity fixture would not have shown either. So the six-folder scan stays, and the residence
+ * test is a per-sender flag applied at the count.
+ */
+const UNDECIDED_RESIDENCES = ["INBOX", "ohmail/Screener"];
+
 export interface CutlineCounts {
-  /** Senders with a decision behind them, whichever way it went. */
+  /**
+   * Senders with a decision behind them, whichever way it went. Counted over every presented
+   * folder — a decision is a rule, and a rule is true of a sender wherever their mail sits.
+   */
   decidedSenders: number;
-  /** No decision, and either unread mail or something recent. These are the queue. */
+  /**
+   * No decision, mail still in an undecided residence, and either unread mail or something
+   * recent. These are the queue.
+   */
   activeUndecidedSenders: number;
-  /** No decision and nothing recent. They wait in History and are never asked about. */
+  /**
+   * No decision, mail still in an undecided residence, nothing recent. They wait in History and
+   * are never asked about.
+   */
   dormantUndecidedSenders: number;
 }
 
@@ -58,6 +93,7 @@ export async function cutlineCounts(
   const days = opts.dormancyDays ?? DEFAULT_DORMANCY_DAYS;
   const cutoff = new Date(ctx.now().getTime() - days * 24 * 60 * 60 * 1000);
   const folders = sql`(${sql.join(PRESENTED_FOLDERS.map((f) => sql`${f}`), sql`, `)})`;
+  const undecidedResidences = sql`(${sql.join(UNDECIDED_RESIDENCES.map((f) => sql`${f}`), sql`, `)})`;
 
   const rows = await ctx.db.execute<{
     decided: string; active_undecided: string; dormant_undecided: string;
@@ -78,7 +114,11 @@ export async function cutlineCounts(
     inbound as (
       select lower(m.from_address) addr,
              bool_or(m.unread) any_unread,
-             max(m.date) newest
+             max(m.date) newest,
+             -- Does this sender have ANY mail still sitting where no decision has been made?
+             -- Activity is measured over all six presented folders (above); membership in the
+             -- undecided counts is not. See UNDECIDED_RESIDENCES.
+             bool_or(fs.desired_folder in ${undecidedResidences}) as undecided_residence
         from messages m
         join folder_state fs on fs.message_id = m.id
        where m.account_id = ${ctx.accountId}::uuid
@@ -87,7 +127,7 @@ export async function cutlineCounts(
        group by 1
     ),
     classified as (
-      select i.addr,
+      select i.addr, i.undecided_residence,
              (exists (select 1 from decided_sender r where r.m = i.addr)
               or (position('@' in i.addr) > 0
                   and exists (select 1 from decided_domain d
@@ -96,8 +136,10 @@ export async function cutlineCounts(
         from inbound i
     )
     select count(*) filter (where decided)                        as decided,
-           count(*) filter (where not decided and active)         as active_undecided,
-           count(*) filter (where not decided and not active)     as dormant_undecided
+           count(*) filter (where not decided and undecided_residence and active)
+                                                                  as active_undecided,
+           count(*) filter (where not decided and undecided_residence and not active)
+                                                                  as dormant_undecided
       from classified
   `);
 
