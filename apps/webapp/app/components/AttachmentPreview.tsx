@@ -101,8 +101,12 @@ const COPY = {
   tooLargeTitle: "Too large to preview",
   tooLargeDetail: "This file is over the fetch limit for on-demand open.",
   failedTitle: "Couldn't fetch this file",
-  pdfErrorTitle: "Couldn't render this PDF",
-  pdfErrorDetail: "The file may be damaged. Download it to open in another app.",
+  pdfErrorTitle: "Can't show this PDF here",
+  /* NOT "the file may be damaged", which is what this said and which is false wherever the PDF
+     renderer is absent by design — the desktop builds alias it away, so the commonest reason to
+     see this line is a working file and a viewer that was never there. Blaming somebody's document
+     for the app's own limits sends them looking for a problem they do not have. */
+  pdfErrorDetail: "Download it to open in another app.",
   textTruncated: "— preview truncated. Download to read the rest.",
   count: (i: number, n: number) => `${i} of ${n}`,
   page: (p: number, n: number) => `${p} / ${n}`,
