@@ -7,6 +7,7 @@ import { rulesRoutes } from "./rules.js";
 import { messageRoutes } from "./messages.js";
 import { threadRoutes } from "./threads.js";
 import { screenerRoutes } from "./screener.js";
+import { screeningRoutes } from "./screening.js";
 import { approvalRoutes } from "./approvals.js";
 import { triageRoutes } from "./triage.js";
 import { searchRoutes } from "./search.js";
@@ -44,6 +45,23 @@ import { healthRoutes } from "./health.js";
  *  · `ai-settings` — the managed-AI off switch governs OUR spend on OUR models. Desktop is BYO.
  *  · `internal`, `admin` — an operator surface on one person's machine is only attack surface.
  *
+ * ── AND ONE THAT LOOKS ABSENT AND IS NOT: `screening` ───────────────────────────────────────
+ *
+ * `screeningRoutes` serves `GET/PATCH /account/screening` and IS mounted here, one line below the
+ * Screener it configures. It shares a path prefix with the `account` module above and shares
+ * nothing else: that module is erasure, this one is two columns on `account_settings` — the Ohbox
+ * posture and the mailbox owner's own words, the BAR. Both columns are mail-half (`mail 0042`), so every
+ * standalone install already has them, `getScreeningPreference` already reads them exactly as the
+ * hosted service does, and the bar already reaches the model in the user turn of the screening
+ * question. What was missing was the ability to WRITE one: the words were readable-and-unwritable
+ * on the one tier whose owner supplies the model that reads them.
+ *
+ * Its PATCH is `cost: "work"`, which classifies nothing here — the spend gate is a hosted concern
+ * and this host runs no gate — and is kept because `cost` is a property of the handler, not of the
+ * table it is mounted in. Cloud-mode desktop is untouched: that engine mounts `cloud-read.ts` plus
+ * a write-through proxy and never this array, so a mirrored account still reads and writes its
+ * preference on the hosted account, where `account_settings` actually lives.
+ *
  * `events` STAYS despite SSE being disabled in this host. Disabled, `GET /events` answers a
  * finite 503 that the client adapter already tolerates as "no wake signal, keep polling `/sync`".
  * Dropping the module would answer 404 instead, which is a different contract for no gain.
@@ -58,6 +76,7 @@ export const localRoutes: Route[] = [
   ...messageRoutes,
   ...threadRoutes,
   ...screenerRoutes,
+  ...screeningRoutes,
   ...approvalRoutes,
   ...triageRoutes,
   ...searchRoutes,
