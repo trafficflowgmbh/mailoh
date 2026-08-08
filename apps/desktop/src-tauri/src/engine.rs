@@ -2360,6 +2360,76 @@ fn store_and_read_back(entry: &keyring::Entry, key: &str) -> Result<(), String> 
     }
 }
 
+/// Ask the keychain without letting it ask the user anything.
+///
+/// ── WHY A LOOKUP MUST NOT BE ALLOWED TO PUT A WINDOW ON SCREEN ──────────────────────────────
+///
+/// When macOS will not let this binary read an item — see [`KEYSTORE_FILE`] for why a rebuild is
+/// enough to cause that — its FIRST move is not to return an error. It is to put up a dialog asking
+/// for the login password, and to block the calling thread until somebody answers.
+///
+/// The key is resolved while the shell is working out what to start, so that block is the app
+/// hanging on launch with no window of its own up yet: measured at over ten minutes, ended only by
+/// killing the process. With interaction turned off the same call returns `errSecAuthFailed`
+/// immediately and the fallback below has something to work with.
+///
+/// It is turned back on when this guard drops, including on the early returns out of
+/// [`resolve_install_key`] — the setting is process-wide, and leaving it off would silently change
+/// how every later keychain call behaves.
+///
+/// **What this costs:** a keychain that is merely LOCKED can no longer ask the user to unlock it,
+/// and is treated as a refusal. That is survivable here and nowhere near as bad as the hang,
+/// because a launch that ever succeeded has already mirrored the key into the file — so a locked
+/// keychain is only reached by an install that has never once got this far, which is exactly the
+/// case where there is nothing yet to orphan.
+#[cfg(target_os = "macos")]
+struct NoKeychainPrompts(u8);
+
+#[cfg(target_os = "macos")]
+mod security_ffi {
+    // Two symbols from a framework this process already links — `security-framework` is in the
+    // dependency graph under the keyring crate — so this adds no third-party code to audit.
+    #[link(name = "Security", kind = "framework")]
+    extern "C" {
+        pub fn SecKeychainGetUserInteractionAllowed(state: *mut u8) -> i32;
+        pub fn SecKeychainSetUserInteractionAllowed(state: u8) -> i32;
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl NoKeychainPrompts {
+    fn hold() -> Self {
+        let mut was: u8 = 1;
+        // A failure to READ the setting is not a reason to skip turning it off: the hang is the
+        // thing being prevented, and restoring "allowed" is the safe assumption either way.
+        unsafe {
+            security_ffi::SecKeychainGetUserInteractionAllowed(&mut was);
+            security_ffi::SecKeychainSetUserInteractionAllowed(0);
+        }
+        NoKeychainPrompts(was)
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for NoKeychainPrompts {
+    fn drop(&mut self) {
+        unsafe {
+            security_ffi::SecKeychainSetUserInteractionAllowed(self.0);
+        }
+    }
+}
+
+/// Nothing to suppress: no other platform's keystore blocks a lookup on a dialog.
+#[cfg(not(target_os = "macos"))]
+struct NoKeychainPrompts;
+
+#[cfg(not(target_os = "macos"))]
+impl NoKeychainPrompts {
+    fn hold() -> Self {
+        NoKeychainPrompts
+    }
+}
+
 /// Say what a keystore error MEANS, where the platform's own words are actively misleading.
 ///
 /// macOS reports a refused keychain item through an errno-shaped `OSStatus` — `errSecErrnoBase`
@@ -2491,6 +2561,9 @@ fn write_key_file(app_data: Option<&Path>, key: &str) -> Result<(), String> {
 /// Compiled only under the `local-engine` feature, like everything else in this file — the preview
 /// stores nothing and therefore needs nowhere to store it.
 fn install_key(app_data: Option<&Path>) -> Result<String, String> {
+    // Held across every lookup and every write below, and released when this function returns.
+    let _quiet = NoKeychainPrompts::hold();
+
     let entry = keyring::Entry::new(KEYSTORE_SERVICE, KEYSTORE_ENTRY)
         .map_err(|err| format!("this computer's keystore could not be opened ({err})"))?;
 

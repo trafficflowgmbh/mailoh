@@ -1578,6 +1578,28 @@ fn a_key_file_survives_the_restart_that_the_keychain_did_not() {
     assert_eq!(first, second, "the restart uses the same key, so what was sealed still opens");
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn a_keychain_lookup_cannot_put_a_dialog_on_screen_and_the_setting_is_put_back() {
+    // The hang this prevents is not hypothetical: with interaction allowed, reading an item this
+    // binary is not permitted to read blocks on a login-password dialog instead of returning an
+    // error, and the key is resolved before the app has a window of its own to show it in.
+    fn allowed() -> u8 {
+        let mut state: u8 = 9;
+        unsafe { security_ffi::SecKeychainGetUserInteractionAllowed(&mut state) };
+        state
+    }
+
+    let before = allowed();
+    {
+        let _quiet = NoKeychainPrompts::hold();
+        assert_eq!(allowed(), 0, "a lookup under this guard cannot block on a dialog");
+    }
+    // Process-wide, so leaving it off would quietly change every later keychain call in this
+    // process — including ones that legitimately want to ask.
+    assert_eq!(allowed(), before, "the setting is put back when the guard drops");
+}
+
 #[test]
 fn the_message_for_a_refused_keychain_does_not_send_anybody_to_free_up_disk_space() {
     // macOS reports a keychain item it will not hand over as `errSecErrnoBase + ENOSPC`, so the
