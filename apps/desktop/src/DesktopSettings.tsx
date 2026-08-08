@@ -26,6 +26,8 @@ import { useState } from "react";
 import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
 
 import { engineLogout, type EngineStatus } from "./bridge-fetch.js";
+import { DesktopAiSettings } from "./DesktopAiSettings.js";
+import type { LocalAiStatus } from "./local-ai.js";
 
 /** The label the Settings nav shows for this pane. Supplied with the node; see `SettingsView`. */
 export const DESKTOP_PANE_LABEL = "This install";
@@ -107,11 +109,17 @@ export function DesktopSettings({
   onSwitchDoor,
   /** Open the hosted sign-in form. Offered only on the cloud door. */
   onSignIn,
+  /**
+   * Published upward whenever the model settings below change, so the Screener's own suggest
+   * control learns about a key that was just saved without waiting for a relaunch.
+   */
+  onAiStatus,
 }: {
   status: EngineStatus;
   onStatus: (next: EngineStatus) => void;
   onSwitchDoor: () => void;
   onSignIn: () => void;
+  onAiStatus?: (next: LocalAiStatus | null) => void;
 }) {
   /* Two states, held as one value rather than two booleans: "resting" and "asked whether you
      meant it". The same shape the tag rows use, and for the reason given there — two booleans
@@ -203,6 +211,11 @@ export function DesktopSettings({
         Your password never passes through the app's window or its settings file: it goes straight
         to the mail engine, which seals it under a key held in this computer's keychain.
       </SettingsNote>
+
+      {/* The model, last, because it is the one part of this install that is optional. Everything
+          above describes a mailbox that has to work; this describes something you may never turn
+          on, and the app is complete without it. */}
+      <DesktopAiSettings door={status.mode ?? null} {...(onAiStatus ? { onStatus: onAiStatus } : {})} />
     </SettingsSection>
   );
 }

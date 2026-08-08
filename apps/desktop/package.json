@@ -13,6 +13,9 @@
     "app:build:engine": "node scripts/build-engine-app.mjs",
     "ui:typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
+    "//scan": "Reads the BUILT bundle for the surface that belongs to one of the two artifacts and not the other \u2014 the pane that points this install at a model of its own, and the Screener control that uses it. Both directions, so deleting the feature fails the engine build and leaking it fails the preview. Say which artifact you built; the script does not guess, because a leak reaches the bridge and would flip a guess. `app:build:engine` runs the engine one for you.",
+    "scan": "node scripts/scan-artifact.mjs --expect preview",
+    "scan:engine": "node scripts/scan-artifact.mjs --expect engine",
     "tauri": "tauri"
   },
   "//devDeps": "vitest is here because this project's own tests under test/ are published and import it \u2014 a clone should be able to run the suite it can read, not just look at it. MIT.",

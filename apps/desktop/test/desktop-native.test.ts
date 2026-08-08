@@ -244,15 +244,22 @@ describe("Settings → this install", () => {
     await mount(SERVING, (s) => { landed = s; });
 
     await click("Sign out");
-    // The first press is the question, and nothing has been asked of the shell yet.
-    expect(shell.asked).toHaveLength(0);
+    /* The first press is the question, and nothing about signing out has been asked of the shell.
+       Written as the exact list of what DID cross rather than as "nothing crossed", because this
+       pane also reads what model the install has when it opens (`DesktopAiSettings`) — a different
+       row, on a different route, that has no business being counted as a sign-out. A bare length
+       check would have made this test go red for a pane that was behaving correctly, and the way
+       out of that is to name the traffic, not to stop looking at it. */
+    expect(shell.asked.map((a) => `${String(a.payload?.method ?? a.command)} ${String(a.payload?.url ?? "")}`))
+      .toEqual(["GET /local/ai"]);
     expect(hostEl.textContent).toContain("Sign out of this mailbox?");
     // …and it says what stays, which is the thing somebody is actually asking.
     expect(hostEl.textContent).toMatch(/copy of your mail already on this Mac stays/);
     expect(hostEl.textContent).toMatch(/Nothing is removed from your mail server/);
 
     await click("Sign out");
-    expect(shell.asked.map((a) => a.command)).toEqual(["engine_logout"]);
+    expect(shell.asked.map((a) => a.command).filter((c) => c !== "engine_request"))
+      .toEqual(["engine_logout"]);
     expect(landed).toEqual({ state: "not_configured", mode: null, missing: ["config.json"] });
   });
 
@@ -261,7 +268,10 @@ describe("Settings → this install", () => {
     await mount(SERVING);
     await click("Sign out");
     await click("Cancel");
-    expect(shell.asked).toHaveLength(0);
+    // Same shape as above: the pane's own model read is named, so declining is still proved to
+    // have asked the shell for nothing.
+    expect(shell.asked.map((a) => `${String(a.payload?.method ?? a.command)} ${String(a.payload?.url ?? "")}`))
+      .toEqual(["GET /local/ai"]);
     expect(hostEl.textContent).not.toContain("Sign out of this mailbox?");
   });
 

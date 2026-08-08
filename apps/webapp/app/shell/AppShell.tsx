@@ -78,7 +78,7 @@ import { useMessageAttachments } from "./attachments";
 import { useRemoteImages } from "./remote-images";
 import { useConsentState } from "./consent-state";
 import { useScreenerState } from "./screener-state";
-import { useScreenerSuggestions } from "./screener-suggest";
+import { useScreenerSuggestions, type SenderSuggestion } from "./screener-suggest";
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
@@ -357,6 +357,7 @@ export function AppShell({
   securitySection,
   aboutSection,
   desktopSection,
+  screenerSuggest,
   onUnread,
 }: {
   demo: boolean;
@@ -420,6 +421,26 @@ export function AppShell({
    */
   desktopSection?: { label: string; node: ReactNode };
   /**
+   * THE SCREENER'S SUGGEST CONTROL, WHEN THE HOST HAS ITS OWN — the desktop's, and nobody else's.
+   *
+   * The control this shell builds asks a server what a set of senders would cost and shows the
+   * number before it offers a button, because a hosted account spends an allowance. A standalone
+   * install spends nothing: the model belongs to whoever installed it, reached over a channel this
+   * file cannot use. Its control is therefore a different control rather than the same one with
+   * different words, and it is handed in — the same seam as {@link desktopSection}, for the same
+   * reason, with the two extra capabilities a Settings pane does not need.
+   *
+   * `absorb` is what makes an injected control possible at all: there is exactly one suggestion
+   * overlay on screen and the rows, the count, "Apply all" and Enter-accept all read it, so a host
+   * that answers senders its own way lands them there or they are answers nothing can display.
+   *
+   * Present ⇒ this shell's own control is not offered. Never both.
+   */
+  screenerSuggest?: (ctx: {
+    senders: string[];
+    absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
+  }) => ReactNode;
+  /**
    * HOW MANY PIECES OF MAIL ARE WAITING FOR YOU — published, for a surface outside the page.
    *
    * The number the Ohbox's rail row already shows, handed out so a shell that has a dock icon
@@ -448,6 +469,7 @@ export function AppShell({
             securitySection={securitySection}
             aboutSection={aboutSection}
             desktopSection={desktopSection}
+            screenerSuggest={screenerSuggest}
             onUnread={onUnread}
           />
         </MailStateHost>
@@ -492,13 +514,17 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, onUnread }: {
+function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screenerSuggest, onUnread }: {
   accountSection?: ReactNode;
   mailboxSection?: ReactNode;
   billingSection?: ReactNode;
   securitySection?: ReactNode;
   aboutSection?: ReactNode;
   desktopSection?: { label: string; node: ReactNode };
+  screenerSuggest?: (ctx: {
+    senders: string[];
+    absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
+  }) => ReactNode;
   onUnread?: (unread: number) => void;
 }) {
   const demo = useDemoMode();
@@ -2858,9 +2884,35 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 state={screener}
                 /* Bound HERE, at the render, to the exact list the state computed this
                    frame — so the set that gets priced and the set that gets bought are one
-                   list rather than two computations that agree today. Withheld from the
-                   demo, which has no server to ask. */
-                suggest={demo ? undefined : suggestions.forSenders(screener.unsuggestedSenders)}
+                   list rather than two computations that agree today.
+
+                   WITHHELD WHEREVER THERE IS NO SERVER TO ASK, and `demo` was never the whole
+                   of that. The desktop app is not the demo — it shows somebody's real mail —
+                   and it has no Cloud API at all, so this control rendered there, offered a
+                   button, and answered every press with "that did not work": a control with
+                   nothing behind it, which is the one thing this surface must never be. The
+                   condition is now the same one `AutoOptInControl.supported` uses, and the
+                   host that DOES have a way to ask brings its own control below.
+
+                   Read off `autoOptIn.supported` rather than by calling `apiConfigured()` here,
+                   so "is there a server to ask" has ONE answer in this file and this shared
+                   shell keeps its standing rule of not importing the Cloud API client. */
+                suggest={
+                  demo || !autoOptIn.supported || screenerSuggest
+                    ? undefined
+                    : suggestions.forSenders(screener.unsuggestedSenders)
+                }
+                /* THE HOST'S OWN CONTROL, when it has one — see the prop's declaration. It is
+                   bound to the same list and lands its answers in the same overlay, so the
+                   rows, the count and "Apply all" cannot tell where the advice came from. */
+                suggestNode={
+                  demo || !screenerSuggest
+                    ? undefined
+                    : screenerSuggest({
+                        senders: screener.unsuggestedSenders,
+                        absorb: suggestions.absorb,
+                      })
+                }
                 segment={route.screenerSegment}
                 selection={scnSel}
                 onSelect={(segment, id) => setScnSel((s) => ({ ...s, [segment]: id }))}

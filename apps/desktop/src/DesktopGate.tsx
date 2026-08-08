@@ -45,6 +45,8 @@ import { go } from "../../webapp/app/shell/routing";
 import { DoorChooser } from "./DoorChooser.js";
 import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
 import { gateFor, mailMount, readShell, type Shell } from "./doors.js";
+import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
+import { LocalSuggest } from "./local-suggest.js";
 import { notify, onMenuNavigate, setBadge } from "./native.js";
 import { createLocalEngine, type EngineStatus } from "./bridge-fetch.js";
 
@@ -92,6 +94,43 @@ export function DesktopGate() {
      below would be skipped on the renders that return early — which is the "rendered fewer hooks
      than expected" crash, arriving on whichever render first took a different branch. */
   const onUnread = useUnreadSink();
+
+  /**
+   * WHAT THIS INSTALL HAS FOR A MODEL — read once, here, because two surfaces need the answer.
+   *
+   * The Settings pane is one of them and could read it for itself. The Screener's suggest control
+   * is the other, and it cannot: somebody who has never opened Settings still has to be told,
+   * where the control is, that there is nothing behind it yet. Reading it at the gate is what lets
+   * both say the same thing, and the pane publishes what it changes so saving a key makes the
+   * Screener's control live without a relaunch — the engine rebuilds its own services per request,
+   * so there is nothing to restart.
+   *
+   * `null` means "not on this door, or not asked yet". Only the standalone door has a local model
+   * to configure: an install pointed at a hosted account mirrors an account whose AI is that
+   * account's, and asking the engine there would be a request forwarded to a server that has no
+   * such route.
+   */
+  const [ai, setAi] = useState<LocalAiStatus | null>(null);
+  const door = shell?.kind === "status" ? (shell.status.mode ?? null) : null;
+  useEffect(() => {
+    if (door !== "local") {
+      setAi(null);
+      return;
+    }
+    let cancelled = false;
+    void readAiStatus().then(
+      (next) => {
+        if (!cancelled) setAi(next);
+      },
+      () => {
+        /* The engine is still coming up, or it did not answer. Left as "not asked yet": the
+           control says it is checking rather than claiming there is no model. */
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [door]);
 
   /**
    * THE CLIENT ENGINE ON SCREEN — one per mailbox, kept across a restart of the process behind it.
@@ -198,11 +237,32 @@ export function DesktopGate() {
                     onStatus={onStatus}
                     onSwitchDoor={() => setOverlay("doors")}
                     onSignIn={() => setOverlay("cloud")}
+                    onAiStatus={setAi}
                   />
                 ),
               }
             : undefined
         }
+        /* THE STANDALONE DOOR'S OWN SUGGEST CONTROL, and only that door's.
+           An install on the hosted door has an account with an allowance behind it, and the place
+           to spend one is the web app, where the balance and the way to add to it live. A spend
+           control here whose only failure is "you have run out", with nothing in this window that
+           could change that, is a purchase control missing its second half — so it is absent
+           rather than present and refusing.
+           `mode` is null while the shell has not answered, and that produces absence too: a
+           control chosen on a guess is a control that appears and then changes its mind. */
+        {...(status?.mode === "local"
+          ? {
+              screenerSuggest: ({ senders, absorb }) => (
+                <LocalSuggest
+                  senders={senders}
+                  absorb={absorb}
+                  ai={ai}
+                  onConfigure={() => go("settings")}
+                />
+              ),
+            }
+          : {})}
         onUnread={onUnread}
       />
       {overlay ? (

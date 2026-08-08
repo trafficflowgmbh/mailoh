@@ -972,6 +972,47 @@ describe("the UI bundle's build config", () => {
     expect(pane).toMatch(/engineLogout/);
   });
 
+  /**
+   * THE SCREENER'S SUGGEST CONTROL IS HANDED IN TOO, AND THE OLD ONE IS GATED ON A SERVER.
+   *
+   * The shared control prices a set of senders on a server before it offers a button, because a
+   * hosted account spends an allowance. This build has no server at all, and for the whole life of
+   * the local-engine artifact that control rendered anyway: it drew a button, and every press came
+   * back "that did not work". A control with nothing behind it, on somebody's real mail.
+   *
+   * Two halves, and both are asserted because either alone is satisfiable while the app is broken.
+   * The shared shell must WITHHOLD its own control where there is no server, and it must render a
+   * host's node when one is handed in — and it must still know nothing about how that node works,
+   * exactly as it knows nothing about the Settings pane's commands.
+   *
+   * Source-level on purpose. The behaviour is driven where it can be driven — the control's own
+   * suite here, and the shared client's own suite over the view that chooses between the two — but
+   * the WIRING between two files in two applications has no single place to render, and deleting it
+   * left every suite in both of them green.
+   */
+  it("hands the Screener's suggest control in, and withholds the hosted one where there is no server", () => {
+    const shell = fs.readFileSync(path.resolve(APP, "../webapp/app/shell/AppShell.tsx"), "utf8");
+    // The hosted control is withheld on the demo, on a host with no API, and on a host that
+    // brought its own. `autoOptIn.supported` is `apiConfigured()`, which is false in this build.
+    expect(shell).toMatch(/demo \|\| !autoOptIn\.supported \|\| screenerSuggest/);
+    // …and the host's node is bound to the same queue and the same overlay.
+    expect(shell).toMatch(/suggestNode=\{/);
+    expect(shell).toMatch(/absorb: suggestions\.absorb/);
+
+    const view = fs.readFileSync(path.resolve(APP, "../webapp/app/views/ScreenerView.tsx"), "utf8");
+    expect(view).toMatch(/suggestNode \?\? \(suggest \? <SuggestControl control=\{suggest\} \/> : null\)/);
+
+    // The shared files name none of it. No bridge, no provider, no local route — the same rule the
+    // Settings pane follows, and the reason a browser tab can compile these files at all.
+    for (const shared of [shell, view]) {
+      expect(shared).not.toMatch(/local\/ai|bridgeFetch|__TAURI|anthropic|ollama/i);
+    }
+
+    // The control itself lives here, where the engine is.
+    expect(read("src/local-suggest.tsx")).toMatch(/runSuggest/);
+    expect(read("src/local-suggest-run.ts")).toMatch(/\/screener\/suggest/);
+  });
+
   it("keeps the document CSP in step with the webview CSP", () => {
     const conf = readJson("src-tauri/tauri.conf.json") as never as {
       app: { security: { csp: string } };

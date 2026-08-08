@@ -87,6 +87,12 @@ run(process.execPath, [join(ROOT, "scripts", "stage-desktop-resources.mjs")], RO
 
 say("2/3 · build the engine-bearing UI bundle");
 run(process.execPath, [join(APP, "scripts", "build-ui.mjs"), "--engine"], APP);
+/* …and read what came out. The engine bundle carries a surface the preview must not have at all —
+ * the pane that points this install at a model of its own, and the Screener control that uses it —
+ * and a bundle built with the wrong flag is exactly how the two halves of this app end up
+ * mismatched with nothing failing until somebody opens the window. Cheap, and it runs where the
+ * artifact is made rather than where somebody remembers to check it. */
+run(process.execPath, [join(APP, "scripts", "scan-artifact.mjs"), "--expect", "engine"], APP);
 
 say("3/3 · build the app");
 /* `tauri` from this package's own `node_modules/.bin`, resolved through node rather than named as a
