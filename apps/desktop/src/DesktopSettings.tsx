@@ -27,6 +27,7 @@ import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } f
 
 import { engineLogout, type EngineStatus } from "./bridge-fetch.js";
 import { DesktopAiSettings } from "./DesktopAiSettings.js";
+import { DesktopScreeningWords } from "./DesktopScreeningWords.js";
 import type { LocalAiStatus } from "./local-ai.js";
 
 /** The label the Settings nav shows for this pane. Supplied with the node; see `SettingsView`. */
@@ -211,6 +212,12 @@ export function DesktopSettings({
         Your password never passes through the app's window or its settings file: it goes straight
         to the mail engine, which seals it under a key held in this computer's keychain.
       </SettingsNote>
+
+      {/* What belongs in this mailbox's Ohbox, in the words of the person who reads it. Above the
+          model rather than below it, because it is a property of the MAILBOX and not of the model:
+          it is worth writing on an install that will never set one up, and it is still there,
+          unchanged, the day one is chosen. */}
+      <DesktopScreeningWords door={status.mode ?? null} />
 
       {/* The model, last, because it is the one part of this install that is optional. Everything
           above describes a mailbox that has to work; this describes something you may never turn

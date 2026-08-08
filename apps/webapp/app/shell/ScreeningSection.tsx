@@ -3,19 +3,18 @@
 /**
  * "WHAT DESERVES MY OHBOX" — the editable screening preference, injected into the general pane.
  *
- * Two controls over one account setting (`GET/PATCH /account/screening`):
+ * Three controls over one account setting (`GET/PATCH /account/screening`):
  *
  *  · a POSTURE switch. ON = keep the Ohbox for what is relevant (real people, plus the service
  *    mail you act on) and file obvious bulk — newsletters, promotions — to Reads/Receipts. OFF =
  *    everything from a sender you have written to reaches the Ohbox (today's behaviour, and the
  *    default). It is framed around RELEVANCE, never "only real people", because the mechanism keeps
  *    relevant service mail — a receipt goes to Receipts, an alert can stay in the Ohbox.
- *  · a free-text BAR, in your own words, that reaches the AI's judgement of the ambiguous
- *    middle. When the account has never set one, the box is PREFILLED with the product default as
- *    editable text — you tweak the words you can see, rather than staring at a greyed placeholder
- *    and guessing what a blank box will do. "Save" stays inert until the text differs from the
- *    effective value (the stored bar, or the default when there is none), so an untouched prefill
- *    writes nothing; clearing the box entirely saves NULL, which reverts to that same default.
+ *  · an AUTO-APPLY opt-in, default off.
+ *  · a free-text BAR, in your own words, that reaches the AI's judgement of the ambiguous middle.
+ *    The control itself is {@link OhboxWords}, which the desktop's own settings pane renders too —
+ *    one editor over one column, with the transport handed in. Everything about how it behaves (the
+ *    editable prefill, the inert Save, what clearing the box means) is documented there.
  *
  * ── IT RE-FILES FUTURE MAIL, AND SAYS SO ────────────────────────────────────────────────────
  *
@@ -23,23 +22,25 @@
  * reach back into mail already in the Ohbox. (A one-click "tidy my Ohbox now" backlog pass is a
  * separate, later control — until it ships, the setting must not imply it moves the past.)
  *
- * ── THE SWITCH SHOWS THE STORED VALUE ───────────────────────────────────────────────────────
+ * ── THE SWITCHES SHOW THE STORED VALUE ──────────────────────────────────────────────────────
  *
- * Like `AutoSuggestRow`, it renders what the server answered, not the hoped-for value: the write
+ * Like `AutoSuggestRow`, they render what the server answered, not the hoped-for value: the write
  * is confirmed by re-reading the response. A failed write leaves the control where it was and shows
- * one plain sentence — there is no gate in front of this route to carry a more useful reason.
+ * one plain sentence — there is no gate in front of this route to carry a more useful reason. That
+ * line sits directly under the switches rather than under the bar, because the bar keeps its own:
+ * two controls that can each fail need two places to say so, or a stale "Saved." from one is read
+ * as an answer about the other.
  */
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
+import { SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
+import { OhboxWords } from "./OhboxWords";
 import { screeningSettings, type ScreeningPreferenceWire } from "../api-client";
-
-type Loaded = { pref: ScreeningPreferenceWire; draft: string };
 
 export function ScreeningSection() {
   const t = useTranslations("settings");
-  const [state, setState] = useState<Loaded | null>(null);
+  const [pref, setPref] = useState<ScreeningPreferenceWire | null>(null);
   const [pending, setPending] = useState(false);
   const [saved, setSaved] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -50,23 +51,22 @@ export function ScreeningSection() {
     alive.current = true;
     void (async () => {
       try {
-        const pref = await screeningSettings.get();
-        if (alive.current) setState({ pref, draft: pref.ohboxBar ?? pref.defaultBar });
+        const loaded = await screeningSettings.get();
+        if (alive.current) setPref(loaded);
       } catch {
         // Leave the section unrendered on a read fault rather than showing a broken control.
-        if (alive.current) setState(null);
+        if (alive.current) setPref(null);
       }
     })();
     return () => { alive.current = false; };
   }, []);
 
-  if (!state) return null;
-  const { pref, draft } = state;
+  if (!pref) return null;
   const relevanceOn = pref.ohboxPolicy === "people_only";
 
+  /** The two SWITCHES' write. The bar has its own — see {@link OhboxWords}. */
   const apply = (next: Partial<{
     ohboxPolicy: ScreeningPreferenceWire["ohboxPolicy"];
-    ohboxBar: string | null;
     screenerAutoApply: boolean;
   }>) => {
     if (pending) return;
@@ -75,9 +75,9 @@ export function ScreeningSection() {
     setSaved(false);
     void (async () => {
       try {
-        const pref = await screeningSettings.set(next);
+        const landed = await screeningSettings.set(next);
         if (!alive.current) return;
-        setState({ pref, draft: pref.ohboxBar ?? pref.defaultBar });
+        setPref(landed);
         setSaved(true);
       } catch {
         if (alive.current) setFailed(true);
@@ -86,10 +86,6 @@ export function ScreeningSection() {
       }
     })();
   };
-
-  // The baseline is the EFFECTIVE bar — the stored words, or the default the box was prefilled
-  // with when there are none. So an untouched prefill reads as unchanged and "Save" stays inert.
-  const barChanged = draft.trim() !== (pref.ohboxBar ?? pref.defaultBar).trim();
 
   return (
     <>
@@ -124,38 +120,19 @@ export function ScreeningSection() {
         }
       />
 
-      <div className="set-screening-bar">
-        <label className="set-note-inline" htmlFor="ohbox-bar">{t("screening.barLabel")}</label>
-        <textarea
-          id="ohbox-bar"
-          className="set-screening-textarea"
-          rows={4}
-          value={draft}
-          placeholder={pref.defaultBar}
-          disabled={pending}
-          onChange={(e) => setState({ pref, draft: e.target.value })}
-        />
-        <div className="gate-actions">
-          <Button
-            variant="primary"
-            disabled={pending || !barChanged}
-            onClick={() => apply({ ohboxBar: draft.trim() ? draft.trim() : null })}
-          >
-            {t("screening.save")}
-          </Button>
-          {draft.trim() && (pref.ohboxBar ?? "") !== "" ? (
-            <Button
-              disabled={pending}
-              onClick={() => { setState({ pref, draft: pref.defaultBar }); apply({ ohboxBar: null }); }}
-            >
-              {t("screening.reset")}
-            </Button>
-          ) : null}
-        </div>
-        <p className="set-note-inline">{t("screening.microcopy")}</p>
-        {saved ? <span className="scn-sg-note">{t("screening.saved")}</span> : null}
-        {failed ? <span className="scn-sg-note">{t("screening.failed")}</span> : null}
-      </div>
+      {saved ? <span className="scn-sg-note">{t("screening.saved")}</span> : null}
+      {failed ? <span className="scn-sg-note">{t("screening.failed")}</span> : null}
+
+      <OhboxWords
+        bar={pref.ohboxBar}
+        defaultBar={pref.defaultBar}
+        busy={pending}
+        onSave={async (next) => {
+          const landed = await screeningSettings.set({ ohboxBar: next });
+          if (alive.current) setPref(landed);
+          return landed.ohboxBar;
+        }}
+      />
     </>
   );
 }

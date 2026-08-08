@@ -973,6 +973,71 @@ describe("the UI bundle's build config", () => {
   });
 
   /**
+   * THE OHBOX BAR IS EDITED BY THE SHARED CONTROL, WITH THIS TIER'S TRANSPORT HANDED IN.
+   *
+   * The sentence somebody writes about what deserves their Ohbox has always been READ on this tier: it
+   * travels in the user turn of the screening question a model on this machine is asked, which the
+   * engine's own end-to-end checks assert on the wire. It could not be WRITTEN, because
+   * `GET/PATCH /account/screening` was mounted in the hosted route table alone. It is in the local
+   * engine's table now, and this pane is what addresses it.
+   *
+   * Two claims, and both are structural rather than visual:
+   *
+   *  · ONE EDITOR OVER ONE COLUMN. The control is `OhboxWords` from the shared shell, the same file
+   *    the hosted client renders. A second copy here would be free to drift on the rule that
+   *    actually matters — an emptied box saves `null`, which REVERTS to the product default, where
+   *    a copy that drifted to saving `""` would store an empty bar that silently overrides it.
+   *  · IT GOES DOWN THE BRIDGE, not through the sync client. The engine's route-coverage check
+   *    derives the client's call list from that client's source and holds it against BOTH surfaces
+   *    the engine serves; a settings call routed through it would join the list and land in the
+   *    hosted-mirror half, where this route has no local handler. A preference is not sync traffic.
+   *
+   * The scan marker is asserted from both ends for the reason `ai-gate.ts` taught this repository:
+   * a guard that points at a string nothing contains passes for ever while checking nothing.
+   */
+  it("edits the Ohbox bar with the SHARED control, over the bridge and not through the sync client", () => {
+    const pane = read("src/DesktopSettings.tsx");
+    expect(pane).toMatch(/<DesktopScreeningWords door=/);
+
+    const words = read("src/DesktopScreeningWords.tsx");
+    expect(words).toMatch(/from "\.\.\/\.\.\/webapp\/app\/shell\/OhboxWords"/);
+    // No control of its own: a textarea here is the second editor this asserts does not exist.
+    expect(words).not.toMatch(/<textarea/);
+
+    const wire = read("src/local-screening.ts");
+    expect(wire).toMatch(/bridgeFetch/);
+    expect(wire).toMatch(/"\/account\/screening"/);
+    expect(wire).toMatch(/method: "PATCH"/);
+    // Asserted over what it IMPORTS, not over its prose — the header names both of these modules
+    // to say it is not one of them, and a bare substring check would fail on the explanation.
+    expect(wire).not.toMatch(/from "[^"]*(http-adapter|api-client)[^"]*"/);
+
+    // The shared control names no transport at all, which is what lets a browser tab compile it
+    // and this window compile it too.
+    const shared = fs.readFileSync(
+      path.resolve(APP, "../webapp/app/shell/OhboxWords.tsx"),
+      "utf8",
+    );
+    // Comments say what the code should do; only the code decides what it does — the same
+    // stripping `one-pipeline.test.ts` does, and needed for the same reason: this file's header
+    // names the route and both clients precisely in order to say that it is none of them.
+    const sharedCode = shared
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+    expect(sharedCode).not.toMatch(/bridgeFetch|__TAURI|api-client|account\/screening/);
+    // Not vacuous: the stripper leaves real code alone.
+    expect(sharedCode).toMatch(/useTranslations\("settings"\)/);
+
+    // The artifact scan's marker for this surface must be a sentence this file really contains.
+    // Compared with runs of whitespace collapsed, because the sentence is JSX text wrapped across
+    // source lines and JSX collapses exactly that to single spaces — which is the form the marker
+    // has to match in the emitted bundle, and the form a re-wrap of this paragraph must not break.
+    const marker = "judges them against your sentence";
+    expect(read("scripts/scan-artifact.mjs")).toContain(marker);
+    expect(words.replace(/\s+/g, " ")).toContain(marker);
+  });
+
+  /**
    * THE SCREENER'S SUGGEST CONTROL IS HANDED IN TOO, AND THE OLD ONE IS GATED ON A SERVER.
    *
    * The shared control prices a set of senders on a server before it offers a button, because a

@@ -86,7 +86,19 @@ const hasBridge = text.includes("engine_request");
  * either provider, and one sentence from the control, because copy is the half a reader recognises.
  * Every one of them is absent from the preview today and present in the engine build.
  */
-const MARKERS = ["local/ai", "anthropic", "ollama", "Set up a model"];
+const MARKERS = [
+  "local/ai", "anthropic", "ollama", "Set up a model",
+  /* The Ohbox-bar editor's own sentence.
+   *
+   * It has to be THIS string and cannot be the obvious two. The route path `/account/screening` and
+   * every word of the shared editor's copy are in the PREVIEW bundle already and legitimately so:
+   * the preview compiles the same `AppShell`, which reaches the hosted client's copy of the control
+   * through `api-client` — where `API_BASE` is null, so it refuses and the section never draws. So
+   * a marker taken from the route or from the shared copy would be present in both artifacts and
+   * would prove nothing in either direction. This sentence exists only in
+   * `src/DesktopScreeningWords.tsx`, which is reachable only from the gate. */
+  "judges them against your sentence",
+];
 
 const present = MARKERS.filter((m) => text.toLowerCase().includes(m.toLowerCase()));
 const absent = MARKERS.filter((m) => !present.includes(m));
