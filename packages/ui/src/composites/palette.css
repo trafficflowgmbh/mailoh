@@ -13,4 +13,11 @@
 .pal-list li.sel svg{color:var(--accent-ink)}
 .pal-list li .keys{margin-left:auto;display:flex;gap:4px}
 .pal-list li.none{color:var(--ink3);cursor:default}
+/* Declared but inert — the same treatment, and the same reason, as the `?` sheet's `.ks-cols
+   li.off`: a command that disappears when the cursor is not on a message is a command nobody
+   learns. `cursor:default` so the pointer does not promise a click that does nothing. */
+.pal-list li.off{color:var(--ink3);cursor:default}
+.pal-list li.off svg{color:var(--ink3);opacity:.55}
+.pal-list li.off.sel{background:var(--hair-soft)}
+.pal-list li.off.sel svg{color:var(--ink3)}
 .pal-foot{padding:8px 16px;font-size:10.5px;color:var(--ink3);display:flex;gap:12px}

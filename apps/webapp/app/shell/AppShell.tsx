@@ -2345,12 +2345,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       { id: "compose", label: t("palette.newMessage"), keys: ["c"], run: () => go("compose") },
       { id: "settings", label: t("palette.openSettings"), run: () => go("settings") },
     ];
+    /* THE TWO ROWS THAT ACT ON THE OPEN MESSAGE, and they say so when there is none.
+       Both bodies were already `if (selectedOhbox)`, so with nothing open the row ran and
+       nothing happened — a command that answers a click with silence. The keyboard twins
+       have always declared it (`t` in `OhboxView`, `b` below, both `disabled` on an absent
+       selection); these are the same commands reached the other way, so they carry the same
+       declaration rather than a second opinion about when they work. */
     tags.forEach((tag, i) => {
       list.push({
         id: `tag-${tag.id}`,
         label: t("palette.tagToggle", { name: tag.name }),
         icon: "tag",
         ...(i === 0 ? { keys: ["t"] } : {}),
+        disabled: selectedOhbox == null,
         run: () => {
           if (selectedOhbox) {
             toggleTag(selectedOhbox.id, tag.id, !selectedOhbox.labels.includes(tag.id));
@@ -2371,6 +2378,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       id: "resurface",
       label: t("palette.resurfaceSel"),
       keys: ["b"],
+      disabled: selectedOhbox == null,
       run: () => {
         if (selectedOhbox) onMessageAction("resurface", selectedOhbox);
       },

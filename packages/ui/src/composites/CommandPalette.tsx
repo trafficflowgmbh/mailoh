@@ -9,6 +9,18 @@ export interface Command {
   /** Key sequence hints shown right-aligned. */
   keys?: string[];
   icon?: IconName;
+  /**
+   * THIS COMMAND HAS NOTHING TO ACT ON RIGHT NOW — shown, dimmed, and inert.
+   *
+   * The same word the keyboard registry uses (`keymap.tsx`'s `disabled`), and the same
+   * treatment the `?` sheet gives one: the row stays in the list so the command remains
+   * discoverable, and it says out loud that it cannot act instead of running to no effect.
+   *
+   * Listing rather than hiding, because a palette whose contents change with the cursor is a
+   * palette you cannot learn. Enter and a click both do nothing at all — not even close the
+   * sheet, since closing is the one thing that would read as "that worked".
+   */
+  disabled?: boolean;
   run: () => void;
 }
 
@@ -52,6 +64,9 @@ export function CommandPalette({
   const selIdx = Math.min(sel, Math.max(0, items.length - 1));
 
   const run = (c: Command) => {
+    /* Before `onClose()`, deliberately: a disabled row that closed the palette would look
+       exactly like one that had acted. */
+    if (c.disabled) return;
     onClose();
     c.run();
   };
@@ -92,7 +107,10 @@ export function CommandPalette({
                 key={c.id}
                 role="option"
                 aria-selected={i === selIdx}
-                className={i === selIdx ? "sel" : undefined}
+                aria-disabled={c.disabled ? true : undefined}
+                className={[i === selIdx ? "sel" : "", c.disabled ? "off" : ""]
+                  .filter(Boolean)
+                  .join(" ") || undefined}
                 onMouseEnter={() => setSel(i)}
                 onClick={() => run(c)}
               >
