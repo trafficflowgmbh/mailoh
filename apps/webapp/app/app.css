@@ -873,6 +873,13 @@ body.reading .shell {
 .scn-read .empty {
   padding-top: 96px;
 }
+/* …and the Ohbox's resting reading column, which is the same situation: `.empty` is sized for
+   the TOP of a list, where 52px of padding sits under a header. A reading column has no header,
+   so the same block floats near the ceiling of a full-height panel. The Screener solved this
+   first; this is that rule, aimed at the one other column that now has a resting state. */
+.view-ohbox .read-col .empty {
+  padding-top: 96px;
+}
 
 /* ================= triage ================= */
 .triage-cta {

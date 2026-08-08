@@ -913,8 +913,24 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     () => [...ohbox.newForYou, ...ohbox.previouslySeen],
     [ohbox],
   );
-  const selectedOhbox =
-    allOhbox.find((m) => m.id === ohboxSel) ?? allOhbox[0] ?? null;
+  /**
+   * WHAT IS OPEN IN THE OHBOX — and `null` until somebody opens something.
+   *
+   * There was a `?? allOhbox[0]` on the end of this, so an Ohbox nobody had touched reported the
+   * newest unread message as "the open one". That is not a display detail: this value decides
+   * which body is FETCHED (the hydration effect below), which attachments are held and revoked,
+   * and which message `s`, `e`, `r` and the reader act on. Arriving at the Ohbox therefore
+   * fetched a message from the user's own server and put it in the reading column, and the row
+   * was then one keypress away from a departure that marks it read.
+   *
+   * The dwell already refuses to arm from a selection nobody made (`OhboxView.dwellOn`), which
+   * stopped the runaway; it did not stop the product opening mail on its own. The rule the
+   * runaway fix was written under — "a fallback may decide what is DISPLAYED; it may never
+   * drive seen-machinery" — holds for the piles whose lists do not re-partition on read and
+   * where no leave-commit runs (Tag, History, Reads, Receipts keep theirs). Here the display
+   * IS an open, so there is nothing left for a fallback to be innocent of.
+   */
+  const selectedOhbox = allOhbox.find((m) => m.id === ohboxSel) ?? null;
 
   /**
    * DERIVE-CLOSE the Quick-Look overlay when the message it belongs to stops being the open

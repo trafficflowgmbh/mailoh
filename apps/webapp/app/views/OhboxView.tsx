@@ -162,7 +162,16 @@ export function OhboxView({
     () => [...newForYou, ...previouslySeen],
     [newForYou, previouslySeen],
   );
-  const selected = all.find((m) => m.id === selectedId) ?? all[0] ?? null;
+  /**
+   * THE OPEN MESSAGE, or `null` — never "the first one, then".
+   *
+   * This had `?? all[0]` on it, the twin of the one `AppShell` used to carry, and between them
+   * an untouched Ohbox opened its newest unread message: the reading column rendered it, the
+   * shell fetched its body, and the first `j` or click after that was a departure that marked
+   * it read. A resting column is rendered instead (see {@link ReadColumn} below), which is a
+   * state the product can be in rather than a message it chose for somebody.
+   */
+  const selected = all.find((m) => m.id === selectedId) ?? null;
 
   /* ── multi-select: VIEW-LOCAL, deliberately ──────────────────────────────
      It is a selection, not a document: it means nothing after you leave the
@@ -363,20 +372,23 @@ export function OhboxView({
   /**
    * THE CURSOR THE USER PUT HERE — and the only value in this file that can arm the dwell.
    *
-   * `selectedId` cannot answer this question, and that is what shipped the runaway. It
-   * arrives already resolved through TWO implicit fallbacks — `AppShell`'s
-   * `?? allOhbox[0]` and this view's on line 83 — so before anything has been picked it
-   * means "the newest unread message", and it silently RE-RESOLVES onto a different message
-   * every time the list re-partitions. Since the list is partitioned BY `unread`
-   * (`ohboxView`), marking one message read is itself a re-partition, so a dwell keyed on
-   * `selected` fed itself: commit → the row leaves "New for you" → the fallback lands on the
-   * next unread message → the effect sees a selection it never asked for and arms again.
-   * Two seconds per message, straight through the Ohbox, onto a real IMAP server.
+   * `selectedId` cannot answer this question, and that is what shipped the runaway. It used to
+   * arrive already resolved through TWO implicit fallbacks — `AppShell`'s `?? allOhbox[0]` and
+   * this view's own — so before anything had been picked it meant "the newest unread message",
+   * and it silently RE-RESOLVED onto a different message every time the list re-partitioned.
+   * Since the list is partitioned BY `unread` (`ohboxView`), marking one message read is itself
+   * a re-partition, so a dwell keyed on `selected` fed itself: commit → the row leaves "New for
+   * you" → the fallback lands on the next unread message → the effect sees a selection it never
+   * asked for and arms again. Two seconds per message, straight through the Ohbox, onto a real
+   * IMAP server.
    *
-   * The fix is not a flag consulted inside the effect — it is that the effect's dependencies
-   * can no longer EXPRESS a reorder. `dwellOn` is written in exactly two places:
-   * `selectByUser`, which is reachable only from j, k and a click, and `open`, which clears
-   * it. Nothing derived from the list can produce it.
+   * BOTH FALLBACKS ARE GONE NOW, so `selected` can no longer re-resolve onto anything — and
+   * this state is still the value the dwell keys on rather than `selected`. The reason is
+   * unchanged and is not the fallback: `selected` also moves when a message leaves the pile
+   * underneath the user, which is not a cursor move and must not arm a timer. The guarantee is
+   * still structural rather than a condition in the effect body: `dwellOn` is written in
+   * exactly two places — `selectByUser`, reachable only from j, k and a click, and `open`,
+   * which clears it. Nothing derived from the list can produce it.
    */
   const [dwellOn, setDwellOn] = useState<string | null>(null);
 
@@ -402,13 +414,16 @@ export function OhboxView({
    * reader only where the reading column is hidden; at a split width the column beside this
    * list IS the open, and a sheet over it was the same message rendered twice.
    *
-   * It also PINS the selection, and that is not housekeeping. A click on the top row of a
-   * fresh Ohbox takes the "already selected" branch below, because the implicit fallback had
-   * made it `selected` without anyone choosing it — so the open committed and `ohboxSel`
-   * stayed null. The moment the commit moved that row into "Previously seen", the fallback
-   * re-resolved to the next unread message and the reader sheet, which renders
-   * `selectedOhbox`, swapped to a message the user had not opened — which from the outside
-   * looks like the view deciding to load the latest mail on its own.
+   * It also PINS the selection by calling `onSelect`, and that is not housekeeping. It was
+   * added because a click on the top row of a fresh Ohbox took the "already selected" branch
+   * below — the implicit fallback had made it `selected` with nobody choosing it — so the open
+   * committed while `ohboxSel` stayed null; the moment the commit moved that row into
+   * "Previously seen" the fallback re-resolved to the next unread message and the reader sheet,
+   * which renders `selectedOhbox`, swapped to a message the user had not opened. That entry
+   * point no longer exists: with both fallbacks deleted the first click on a fresh Ohbox is a
+   * plain selection and `open` is only ever reached with a selection already made. The call
+   * stays because it is what makes `open` a complete statement on its own — the mobile tap and
+   * a `↵` arriving from anywhere else both need the cursor to end up where the reader is.
    *
    * And an open SUPERSEDES a dwell: reading is established the moment the message is opened, so
    * the timer armed by whichever click selected this row has nothing left to decide.
@@ -639,6 +654,14 @@ export function OhboxView({
       chord: "Enter",
       group: "message",
       label: t("keyOpen"),
+      /* DECLARED DEAD WHEN THERE IS NOTHING TO OPEN, and this is new with the fallback's
+         removal. `run` has always been guarded, so ↵ on an untouched Ohbox did nothing either
+         way — but the `?` sheet is generated from this table, and a binding with no `disabled`
+         is advertised as available. Before, the fallback meant there was always a message and
+         the question never arose; now the first thing a reader sees is a resting column, and a
+         key sheet promising "open the message" beside it would be documenting a dead key. `j`
+         is the way in, which is what the resting column itself says. */
+      disabled: selected == null,
       // ↵ on a focused button presses the button; that is the browser's and it stays so.
       when: (e) => (e.target as HTMLElement).tagName !== "BUTTON",
       // The `: onEnterReader()` arm is gone with the boolean it depended on. It meant
@@ -813,9 +836,10 @@ export function OhboxView({
         } else if (selected?.id === m.id) {
           // Second click on the already-selected row: an explicit OPEN, so it is read — and
           // at a split width that is all it is, because the pane beside this list is already
-          // showing it. Also the FIRST click on the top row of an untouched
-          // Ohbox, which the implicit fallback had already made `selected` — see `open` for
-          // what that used to do to the reader.
+          // showing it. This branch used to catch the FIRST click on the top row of an
+          // untouched Ohbox as well, because the implicit fallback had already made it
+          // `selected`; with that gone, every row's first click is the `else` below and this
+          // means what it says.
           open(m);
         } else {
           selectByUser(m.id);
@@ -1027,6 +1051,40 @@ export function OhboxView({
             onAction={(a) => onAction(a, selected)}
             onAddTag={onAddTag}
           />
+        ) : all.length > 0 ? (
+          /**
+           * ═══ THE RESTING COLUMN ═══════════════════════════════════════════════════════════
+           *
+           * What the reading column says when nothing is open, which since the two fallbacks
+           * were deleted is what it says on arrival. A blank panel here would read as a pane
+           * that failed to load; this one names the state and says how to leave it.
+           *
+           * It is the `.empty` shape every other pile's empty state already uses — glyph,
+           * title, one line — so an unfamiliar column is answered in a vocabulary the reader
+           * has met in the Screener, in a tag and in Search. Nothing more is put in it:
+           *
+           *   · NO UNREAD COUNT. The list header beside it already states one, and a number
+           *     restated two panels apart is a number that will eventually disagree with
+           *     itself.
+           *   · NO SECOND KEY LEGEND. `ListPane`'s hints row lists j/k, ↵, t, x, u and `?`
+           *     under the list. One `<kbd>j</kbd>` in the sentence is a pointer INTO that
+           *     legend, not a copy of it.
+           *   · NO `role="status"`. This is not an announcement of something that changed; it
+           *     is what the region contains at rest. It becomes a live region the moment a
+           *     screen reader is told it changed, and every `j` would then read out a panel the
+           *     reader is not in.
+           *
+           * AND ONLY WHEN THERE ARE ROWS. An empty Ohbox already says it is empty, in the list
+           * — the Screener's show-once rule. "Nothing open." beside "Nothing in your Ohbox." is
+           * one absence stated twice, so with no rows the column stays empty and the list's own
+           * sentence is the only one. Mobile needs no arm of its own: `app.css` puts
+           * `display:none` on this column under 900px, where a tap IS the open.
+           */
+          <div className="empty">
+            <span className="glyph" aria-hidden="true">✉</span>
+            <b>{t("emptyRestTitle")}</b>
+            {t.rich("emptyRestHint", { kbd: (chunks) => <Kbd>{chunks}</Kbd> })}
+          </div>
         ) : null}
       </ReadColumn>
     </section>

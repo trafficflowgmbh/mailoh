@@ -214,6 +214,8 @@
     "emptyScreenerHint": "{count, plural, one {1 first-time sender is} other {# first-time senders are}} waiting in the Screener. Nothing reaches the Ohbox until you say yes.",
     "emptyFiledTitle": "Nothing in your Ohbox.",
     "emptyFiledHint": "{count, plural, one {1 message} other {# messages}} arrived and none of it belongs here. Try Reads, Receipts or Search.",
+    "emptyRestTitle": "Nothing open.",
+    "emptyRestHint": "Pick a message with <kbd>j</kbd> or a click — it opens here.",
     "picked": "{count, plural, one {1 selected} other {# selected}}",
     "pickedMarkSeen": "Mark read",
     "pickedClear": "Clear",
