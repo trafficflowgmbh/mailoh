@@ -6,11 +6,14 @@ import {
 } from "@trafficflow/core/mail";
 import { ImapAdapter, type ImapConfig, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+// The engine's OWN resolution of the Ohbox posture, never a second reading of it. `rules.ts` owns
+// what an absent or unrecognised value means, and both hosts ask it the same question.
+import { DEFAULT_OHBOX_POLICY, resolveOhboxPolicy } from "@trafficflow/core/mail";
 // After the `@trafficflow/core` block, matching every other file in this package: core first,
 // then the private half. `packages/core` → `@trafficflow/db` is a real edge (`pipeline.ts` imports
 // `classifyLedgerSource`, `drizzle-repo.ts` imports the tables), so this file should not be the
 // module that enters that graph.
-import { mailboxCredentials, mailboxes, type MailboxDisabledReason } from "@trafficflow/db";
+import { accountSettings, mailboxCredentials, mailboxes, type MailboxDisabledReason } from "@trafficflow/db";
 import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
   kbService, tagsService,
@@ -33,7 +36,7 @@ import {
 // It lives in the worker package today because the worker was its only caller. If the loop later
 // moves into a package shared by both hosts, this import moves with it and nothing else here
 // changes. A test in this package fails if a second copy of the loop ever appears beside it.
-import { runSyncCycle } from "@trafficflow/worker/sync";
+import { runSyncCycle, type SyncDeps } from "@trafficflow/worker/sync";
 // The ORGANIZER LEASE, from the same package and for the same reason: two readings of one decision
 // table is how a LOCAL install and the CLOUD service come to disagree about who organizes a
 // mailbox, and disagreement here IS the dual-organizer bug.
@@ -968,9 +971,68 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       return false;
     };
 
+    /**
+     * HOW THIS MAILBOX WANTS ITS OHBOX KEPT — read fresh, once per drain.
+     *
+     * Two columns on `account_settings`, and both of them are inputs to filing rather than to the
+     * settings screen that writes them:
+     *
+     *  · the POSTURE decides whether obvious bulk from a sender this mailbox has admitted is
+     *    demoted out of the Ohbox. It is a RULES-path input — `EvaluateRulesInput.ohboxPolicy` is
+     *    required precisely so that no caller can sit silently on the wrong side of that
+     *    decision — so it is resolved on every drain whether or not a model exists. An install
+     *    with no model at all still files by this posture.
+     *  · the BAR is the mailbox owner's own sentence about what deserves the Ohbox. It reaches the user
+     *    turn of the classifier's question and nothing else; absent, it is omitted from the
+     *    payload rather than sent empty.
+     *
+     * ── READ EVERY DRAIN, WITH NO CACHE, AND THAT IS A DIFFERENCE FROM THE HOSTED WORKER ─────
+     *
+     * The worker holds these behind a short TTL because one process serves many accounts and each
+     * read is a round trip to a network database. Neither is true here: one account, one mailbox,
+     * and a database file in this process. What the cache would buy is nothing, and what it would
+     * cost is real — a hit path no test here would ever exercise, and up to half a minute between
+     * somebody editing their words in Settings and the next message being judged by them. The
+     * editor is in the same window as this loop; the words should be in force on the next poll.
+     *
+     * ── A FAILED READ FILES LENIENTLY, AND DROPS THE BAR ─────────────────────────────────────
+     *
+     * `people_only` is the strict posture, and defaulting to it because a read blipped would
+     * demote a real person's mail. The bar is omitted on the same fault rather than carried over
+     * from a previous drain: a stale sentence in the user turn is a model judging this mailbox by
+     * criteria the database no longer holds, and "no criteria" is the honest input for a drain
+     * that could not read them. The event name is the hosted worker's, so one search covers both.
+     */
+    const screeningNow = async (): Promise<Pick<SyncDeps, "ohboxPolicy" | "ohboxBar">> => {
+      try {
+        const [row] = await db.select({
+          policy: accountSettings.ohboxPolicy, bar: accountSettings.ohboxBar,
+        }).from(accountSettings).where(eq(accountSettings.accountId, world.accountId)).limit(1);
+        return {
+          ohboxPolicy: resolveOhboxPolicy(row?.policy ?? null),
+          ...(row?.bar ? { ohboxBar: row.bar } : {}),
+        };
+      } catch (err) {
+        log("screening_pref_read_failed", {
+          err,
+          reason: "this mailbox's Ohbox posture could not be read, so this pass files on the " +
+            "lenient default and sends no bar to a model; the next pass reads again",
+        });
+        return { ohboxPolicy: DEFAULT_OHBOX_POLICY };
+      }
+    };
+
     /** The drain itself, ALREADY GATED. Never called from outside this closure. */
     const drain = async (maxCycles: number): Promise<number> => {
       let cycles = 0;
+      // ── ONCE PER DRAIN, BESIDE THE LEASE AND FOR THE SAME REASON ───────────────────────────
+      //
+      // A drain is one logical pass over a backlog the adapter hands over in bounded batches, and
+      // the posture it is filed under must be one posture: re-reading between two batches would
+      // let a mailbox change its mind halfway through its own backlog. It is NOT hoisted into
+      // `syncDeps` above, which is built once per process — that would freeze the posture for the
+      // life of the engine, so an edit in Settings would need a relaunch to take effect.
+      const screening = await screeningNow();
       while (!stopped && cycles < maxCycles) {
         // ── THE MODEL IS RESOLVED ONCE PER CYCLE AND NEVER HELD ───────────────────────────
         //
@@ -984,7 +1046,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // would keep calling a model that is not answering, and the pipeline rethrows a
         // classifier fault by design — so the cursor would never advance and the mailbox would
         // stall behind the first message the rules could not settle.
-        const { hasBacklog } = await runSyncCycle({ ...syncDeps, classifier: ai.classifierForCycle() });
+        const { hasBacklog } = await runSyncCycle({
+          ...syncDeps, ...screening, classifier: ai.classifierForCycle(),
+        });
         cycles++;
         if (!hasBacklog) break;
         // Yield, so a backlog drain cannot starve the request handler sharing this event loop.
