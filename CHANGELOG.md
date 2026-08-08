@@ -16,6 +16,64 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.7.2] — 2026-08-08
+
+### The one that matters: the app opens your mail
+
+**Connecting a mailbox left you looking at an empty white window.** The connection itself
+succeeded every time — the account was authenticated and your mail was pulled down onto the
+machine — and then the window went blank, with no message and no way back in. Relaunching showed
+the same nothing, because the mail was already there and the app failed at the same point. It was
+not specific to hosted accounts: connecting your own mail server failed the same way, at the same
+moment.
+
+The cause was in how this repository is assembled rather than in the app. The client talks to the
+mail engine on your machine over the same `/sync` protocol client a hosted account is read with,
+and that module was not published here — a stand-in stood at its path instead, one whose
+constructor throws by design. So every installer built from this source carried a sync client that
+refused to start, and it refused at the first moment a mailbox was ready, which is a few seconds
+after you connect one.
+
+The real module is in this repository now, and the build checks which of the two is in the bundle
+before it ships: an installer whose engine build carries the stand-in fails to build rather than
+reaching you. The artifact you download is also rendered and asserted before it is packaged, which
+it never was before — that check alone would have caught this, and it now runs on all three
+platforms.
+
+**And a window that cannot draw says why.** Whatever the cause, a failure while the app is starting
+puts a message on screen with the reason in it, instead of nothing at all. An empty window is
+indistinguishable from one that is still loading, and there was no way to tell them apart.
+
+### Reading and filing
+
+**Your Ohbox opens nothing until you open something.** Arriving at the Ohbox used to open the
+newest unread message on its own, which fetched it from your mail server and put it one keypress
+away from being marked read. Nothing opens now until you open it; the reading column rests, and
+names the key that gets you in.
+
+**Sharper judgement about junk.** Unsolicited commercial mail is screened out as junk whatever the
+company sending it. The rule used to turn on whether the sender looked respectable, which let cold
+sales approaches through as legitimate business mail; it now turns on whether you have a
+relationship with them — a business you were a customer, guest, client or member of, still sending
+you things you did not ask for, is a different thing from a stranger selling to you.
+
+**"Syncing your mail" stops when the import is over.** The strip read a server stamp as a floor,
+and a mailbox that never reaches a completely idle sync cycle never gets stamped — so the strip
+could announce an import in progress for days over a mirror that was complete and readable. An
+absent stamp now means "not known to be finished" rather than "in progress", and past the first
+day it has to be corroborated by what the app can see for itself.
+
+### Small things
+
+**Two ⌘K commands say when they cannot act.** "Tag it" and "Resurface selection" act on the open
+message, and with nothing open they used to run and do nothing. They are still listed — a command
+that disappears is a command nobody learns — and they now say they are unavailable, the way the
+keys behind them always have.
+
+**A PDF this build cannot show is not a damaged PDF.** The line under a PDF that would not render
+blamed the file. Inline PDF preview is not a capability the desktop app has; the line says so
+instead.
+
 ## [0.7.1] — 2026-08-08
 
 ### Screening got a great deal better

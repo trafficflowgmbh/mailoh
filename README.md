@@ -10,7 +10,7 @@ One app, on macOS, Windows and Linux.
 Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/badge/download-v0.7.1-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.1)
+[![latest release](https://img.shields.io/badge/download-v0.7.2-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.2)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -44,9 +44,9 @@ push. It is a commercial service with a codebase of its own, built by the same
 people, and the desktop app neither asks for it nor needs it.
 [Desktop or Cloud](#desktop-or-cloud) is the full comparison, prices included.
 
-## The current release — v0.7.1
+## The current release — v0.7.2
 
-**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.1)**
+**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.2)**
 `ohmail.dmg` for macOS, an NSIS `-setup.exe` for Windows, an `.AppImage` and a
 `.deb` for Linux. Every file was built by GitHub Actions from the tree this tag
 points at, and the run that made them prints the SHA-256 of each one. Nothing is
@@ -73,14 +73,14 @@ nodejs.org's own published checksums by the run that made your installer — so
 there is nothing to install first and nothing on your `PATH` for the app to
 depend on.
 
-**What is new since v0.7.0:** screening. The question a model is asked about a
-first-time sender is now the one you are actually asking — who wrote this — and
-it answers with a real destination instead of "hold" for almost everyone. You can
-write, in your own words, what belongs in your Ohbox, and those words are what
-the model is given, both as your mail is filed and when you ask about the senders
-waiting in the Screener. A standalone install can bring its own model for that:
-an Anthropic key, or Ollama on your own machine. The app is complete without one.
-See the [changelog](CHANGELOG.md) for the rest.
+**What is new since v0.7.1: the app opens your mail.** Every earlier build of this
+release line went to an empty white window a few seconds after you connected a
+mailbox — the connection itself worked, and the mail was already on your machine,
+and then there was nothing to look at. The cause was in how this repository is
+assembled rather than in the app, and it is fixed and checked for: an installer
+whose bundle carries the stand-in that caused it now fails to build. A window that
+cannot draw for any other reason says so, with the reason, instead of showing you
+nothing. See the [changelog](CHANGELOG.md) for the rest.
 
 **If you are on macOS and already have ohmail installed**, the update is a
 handover: the app you have is a different program — a native client that shared
