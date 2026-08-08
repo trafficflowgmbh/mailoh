@@ -10,8 +10,8 @@
  * What it proves, per run:
  *   1. the bundle parses and executes to completion, with zero console errors
  *      and zero uncaught exceptions;
- *   2. it draws: the rail, the dock, the views' entry points and real mail are
- *      in the DOM, not an empty <div id="root">;
+ *   2. it draws: the rail, its app controls, the views' entry points and real
+ *      mail are in the DOM, not an empty <div id="root">;
  *   3. nothing collapsed: no "N more" style placeholder stands in for mail
  *      (all mail is always rendered, never summarised into a count);
  *   4. it is offline: the document requested nothing but its own two local
@@ -33,7 +33,7 @@
  * two deliberate differences:
  *
  *   · COMMON — sections 1, 2 and 3 below. Both artifacts have to execute
- *     cleanly, draw the rail and the dock, put mail on screen and collapse
+ *     cleanly, draw the rail and its app controls, put mail on screen and collapse
  *     nothing. The two assertions that matter most, "no uncaught exceptions"
  *     and "no console errors", are common and are not relaxed for either.
  *   · PREVIEW ONLY — section 4, the offline audit, and the fixture world it is
@@ -437,7 +437,15 @@ check("#root exists", root != null);
 check("#root is not empty", (root?.children.length ?? 0) > 0);
 check("the rail rendered", doc.querySelector(".rail") != null);
 check("the wordmark rendered", doc.querySelector(".rail .wordmark") != null);
-check("the dock rendered", doc.querySelector(".dock") != null);
+/* THE APP CONTROLS, WHEREVER THEY LIVE — and they moved. They used to be a capsule fixed over
+   the bottom of the window (`.dock`), and they are now rows at the foot of the rail. This check
+   asserted the retired class, so it went red on the runners the moment the move landed and green
+   nowhere: the preview bundle is only ever smoked in CI. What it is FOR is that the palette and
+   the theme control reached the screen, so it asserts the two controls and not merely their
+   container — a `.rail-dock` that rendered empty is exactly the failure a container check misses. */
+check("the rail's app controls rendered", doc.querySelector(".rail .rail-dock") != null);
+check("the command control rendered", doc.querySelector(".rail-dock .dock-cmd") != null);
+check("the theme control rendered", doc.querySelector(".rail-dock .dock-theme") != null);
 check("a list pane rendered", doc.querySelector(".rows") != null);
 /* The floor is per-artifact and the reason is the dataset, not the bundle: the
    preview draws a whole invented mailbox, the engine build draws whatever the
