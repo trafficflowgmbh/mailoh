@@ -16,6 +16,84 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.7.1] — 2026-08-08
+
+### Screening got a great deal better
+
+**The Screener asks who wrote it.** The question a model is asked about a first-time sender used
+to be "which folder does this belong in", and for a sender waiting at the gate the answer to that
+question is, by definition, the gate — so it said "hold" for almost everyone and told you nothing.
+It now asks the question you are actually asking, and the answer is a real destination: your Ohbox,
+Reads, Receipts, screened out, or spam. "The Screener" is not one of the answers any more.
+
+**The criteria changed too, and this is the substantive part.** The old wording admitted anything
+with "a consequence if ignored", which is what every notification any service sends claims about
+itself — an expired card and a "your storage is 70% full" warning both scored as Ohbox mail. The
+criterion is now who wrote it: a person writing to you, or something you are genuinely in the
+middle of. Measured against real mail before shipping, on eighteen senders across every class:
+seven changed pile, and the notifications that had been crowding the Ohbox went to Reads.
+
+**Say what belongs in your Ohbox, in your own words.** Settings now carries a sentence you write
+yourself, and it is given to the model instead of ours whenever it judges a sender for you — both
+as new mail is filed and when you ask about the senders waiting in your Screener. Leave it alone
+and the product default is used. It is available on both doors, and it works with or without a
+model set up: your mail is filed by rules either way.
+
+**A sender the gate is holding nothing for is no longer offered for a suggestion.** Asking about
+one produced an answer built from nothing, which is worse than no answer.
+
+### Your own model, on the standalone install
+
+**Bring a key, or run a model on your own machine.** A standalone install can now be given an
+Anthropic API key, or pointed at Ollama running locally, and it uses that model for Screener
+suggestions. Nothing is sent anywhere until you set one up, and the app is complete without one —
+mail is filed by rules, which is the floor and always has been.
+
+**Nothing is withheld from a model you chose any more.** The app used to refuse to ask about
+certain mail at all, and the effect was that the senders you most wanted an answer for were the
+ones you never got one for. Choosing to use a model is the consent; what protects you is what is
+sent, not whether you are asked. Credentials, one-time codes and sign-in links are stripped out of
+the text before it leaves — the subject matter survives, the secret does not.
+
+### Reading
+
+**Escape closes the menu, not the message underneath it.** Pressing it with the More menu open
+closed both.
+
+**A standalone install has a History pile and a working Screener queue.** The cutline that
+separates senders you might still hear from is a Cloud setting, and an install with no Cloud behind
+it was waiting for a number no server was going to send: there was no History at all, and senders
+you had already decided about were queued up to be asked again. Where there is no such setting, the
+default is the answer.
+
+### Under the app
+
+**The mail engine's build is reproducible, and the update feeds are checked before they are
+published.** Building the engine twice from the same source now produces the same bytes, file for
+file — which is what makes "this was built from the source in front of you" a claim anyone can
+test. Both update feeds are verified against the public keys committed in this repository before
+they are attached to a release, and the script that does it ships with the source, so you can run
+it against a download yourself.
+
+**Two devices can no longer both act on the same approval**, and a request from the window always
+reaches the engine — an addressing bug could leave one hanging.
+
+### Shipped in 0.7.0 and not written down at the time
+
+These were in the 0.7.0 download; the notes for that release missed them.
+
+**The Ohbox remembers your reading order.** Earlier is ordered by when you read things rather than
+when they arrived, and a message is marked read when you leave it, not the instant it flashes past.
+
+**The action bar is always there, and More is a menu.** The actions on a message are docked to the
+message instead of appearing on hover, with the less-used ones gathered behind one control.
+
+**The message viewer.** A dark reading mode that inverts mail written light and leaves mail that is
+already dark alone; wide mail fitted to the column instead of overflowing it; and a body that
+cannot be loaded says so instead of claiming to still be loading, for ever.
+
+Unsigned on every platform: see the install notes in the README before you double-click anything.
+
 ## [0.7.0] — 2026-08-07
 
 **One app, on macOS, Windows and Linux.** macOS shipped a second, separate client written

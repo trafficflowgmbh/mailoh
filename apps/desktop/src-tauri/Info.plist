@@ -13,22 +13,28 @@
   published repository. The releases that exist carry 251 (v0.5.0) through 291 (v0.6.1).
 
   Tauri, left alone, writes CFBundleVersion from the config's `version` — so this app would announce
-  itself as `0.7.0`. Sparkle would compare 0.7.0 against 291, read the handover as a DOWNGRADE, and
+  itself as `0.7.x`. Sparkle would compare `0.7.x` against 291, read the handover as a DOWNGRADE, and
   refuse it. Not loudly: every installed macOS copy would simply keep reporting itself up to date,
   for ever, with no error anywhere and nothing on screen to say why. That is the single worst outcome
   available in this release, because it is silent and it is permanent.
 
   So CFBundleVersion is pinned to an integer far above any build number that was ever published. It
-  is not a version anybody reads: CFBundleShortVersionString stays `0.7.0` and is what the app, the
-  appcast's display title and every download page show.
+  is not a version anybody reads: CFBundleShortVersionString stays the release's own semver and is
+  what the app, the appcast's display title and every download page show.
 
   ── WHY IT NEVER HAS TO CHANGE AGAIN ───────────────────────────────────────────────────────
 
   It is load-bearing for exactly one transition. Once a Mac has taken the handover it is running this
   app, and this app does not use Sparkle at all — it checks `latest.json` and compares its own
-  compiled-in `0.7.0` against the feed's semver, never looking at CFBundleVersion. So the constant
-  can stay where it is release after release; holding it still is what keeps the ONE comparison that
-  matters unambiguous, and bumping it would only invite the mistake of bumping it wrongly.
+  compiled-in semver against the feed's, never looking at CFBundleVersion. So the constant can stay
+  where it is release after release; holding it still is what keeps the ONE comparison that matters
+  unambiguous, and bumping it would only invite the mistake of bumping it wrongly.
+
+  Held still at 0.7.1, deliberately, and the reasoning is worth restating because "bump the build
+  number every release" is the habit this contradicts. The only reader of this key is a Sparkle
+  client that has NOT yet taken the handover, and every such client is numbered at most 291; a
+  client that HAS taken it is running this app and never reads the key again. So there is no
+  install anywhere for which 100000 orders wrongly, and no release at which it starts to.
 
   The floor is asserted where it is used, in `release-feeds.yml`: the appcast job refuses to publish
   an item whose sparkle:version is not an integer above the last Swift build number, so a plist that

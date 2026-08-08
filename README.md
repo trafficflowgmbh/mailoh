@@ -10,7 +10,7 @@ One app, on macOS, Windows and Linux.
 Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/badge/download-v0.7.0-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.0)
+[![latest release](https://img.shields.io/badge/download-v0.7.1-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.1)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -44,9 +44,9 @@ push. It is a commercial service with a codebase of its own, built by the same
 people, and the desktop app neither asks for it nor needs it.
 [Desktop or Cloud](#desktop-or-cloud) is the full comparison, prices included.
 
-## The current release — v0.7.0
+## The current release — v0.7.1
 
-**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.0)**
+**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.1)**
 `ohmail.dmg` for macOS, an NSIS `-setup.exe` for Windows, an `.AppImage` and a
 `.deb` for Linux. Every file was built by GitHub Actions from the tree this tag
 points at, and the run that made them prints the SHA-256 of each one. Nothing is
@@ -73,10 +73,14 @@ nodejs.org's own published checksums by the run that made your installer — so
 there is nothing to install first and nothing on your `PATH` for the app to
 depend on.
 
-**What is new since v0.6.1:** Windows and Linux stop being an interface preview.
-All three platforms now build from one application and ship the same mail engine,
-so the engine's IMAP client, its local mirror and its organising run everywhere
-rather than on macOS alone.
+**What is new since v0.7.0:** screening. The question a model is asked about a
+first-time sender is now the one you are actually asking — who wrote this — and
+it answers with a real destination instead of "hold" for almost everyone. You can
+write, in your own words, what belongs in your Ohbox, and those words are what
+the model is given, both as your mail is filed and when you ask about the senders
+waiting in the Screener. A standalone install can bring its own model for that:
+an Anthropic key, or Ollama on your own machine. The app is complete without one.
+See the [changelog](CHANGELOG.md) for the rest.
 
 **If you are on macOS and already have ohmail installed**, the update is a
 handover: the app you have is a different program — a native client that shared

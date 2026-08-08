@@ -209,7 +209,7 @@ jobs:
           # the INSTALLED app's CFBundleVersion. The Swift client stamped that
           # with a monotonic build number — `git rev-list --count HEAD`, 251 at
           # v0.5.0 and 291 at v0.6.1. Tauri writes CFBundleVersion from the
-          # config version, so an unpinned bundle announces `0.7.0`, which
+          # config version, so an unpinned bundle announces its own semver, which
           # Sparkle reads as a DOWNGRADE from 291 and refuses. Silently, and for
           # ever: every installed Mac would keep reporting itself up to date.
           #
