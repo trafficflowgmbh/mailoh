@@ -93,6 +93,19 @@ run(process.execPath, [join(APP, "scripts", "build-ui.mjs"), "--engine"], APP);
  * mismatched with nothing failing until somebody opens the window. Cheap, and it runs where the
  * artifact is made rather than where somebody remembers to check it. */
 run(process.execPath, [join(APP, "scripts", "scan-artifact.mjs"), "--expect", "engine"], APP);
+/* …and RENDER it. The scan reads the bundle's bytes for the surface that belongs to this
+ * artifact; this executes it. They answer different questions and the second one had no asker
+ * until now: `smoke.mjs` ran only over the interface preview, so the bundle people actually open
+ * their mail in had never been drawn anywhere, on any machine — and a released build spent its
+ * whole life showing a white window the moment a mailbox started serving, because its copy of the
+ * client's HTTP adapter was the preview's throwing stub and the constructor runs inside a React
+ * render. A stub Tauri channel serves one small mailbox and the checks assert the window reached
+ * it over the bridge and drew it.
+ *
+ * FAILS THE BUILD, like every other step here: `run` is `execFileSync` with inherited stdio and no
+ * shell and no pipe, so the status is the smoke's own — a pipeline would report the LAST command's
+ * status, which is how a died check reports success. */
+run(process.execPath, [join(APP, "scripts", "smoke.mjs"), "--expect", "engine"], APP);
 
 say("3/3 · build the app");
 /* `tauri` from this package's own `node_modules/.bin`, resolved through node rather than named as a

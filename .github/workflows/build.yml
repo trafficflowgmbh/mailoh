@@ -6,22 +6,39 @@ name: build
 # client here; it now builds the same Tauri app as Windows and Linux, carrying
 # the same mail engine. Each job does the same five things in the same order:
 #
-#   1. render check   — build the PREVIEW bundle and smoke it. This is the only
-#                       artifact the offline audit can be run against, because
-#                       the engine-bearing bundle is supposed to talk to its
-#                       engine; keeping it means the interface is still proven
-#                       to draw rather than merely to compile.
+#   1. render check   — build the PREVIEW bundle and smoke it. The offline audit
+#                       can only be run against this artifact, because the
+#                       engine-bearing bundle is supposed to talk to its engine;
+#                       keeping it means the interface is still proven to draw
+#                       rather than merely to compile.
 #   2. engine         — build the one-file mail engine from this source, with
 #                       the pinned esbuild.
 #   3. runtime        — download the official Node build for this platform and
 #                       verify it against nodejs.org's own SHASUMS256.txt.
 #   4. package        — stage engine + runtime, rebuild the UI with the bridge,
-#                       and bundle. One script sets all three, because the three
-#                       have to agree and a workflow that spells them out by
-#                       hand is a workflow where a later edit fixes two of them.
+#                       RENDER THAT BUNDLE TOO, and bundle. One script sets all
+#                       three, because the three have to agree and a workflow
+#                       that spells them out by hand is a workflow where a later
+#                       edit fixes two of them.
 #   5. inspect        — open the artifact and assert the engine and the runtime
 #                       are inside it, executable, and that the binary reaches
 #                       nothing but its own update feed.
+#
+# ── BOTH BUNDLES ARE RENDERED, AND ONLY ONE OF THEM HERE ──────────────────
+#
+# Step 1 smokes the preview. The ENGINE-bearing bundle is smoked inside
+# `app:build:engine` (see `apps/desktop/scripts/build-engine-app.mjs`), which is
+# what every one of the three jobs below already calls — so it runs on all three
+# platforms with no step of its own, and there is deliberately not a second
+# invocation here. Two callers of one check is one caller that can drift: the
+# one that matters is the one beside the artifact, where a red smoke stops the
+# build rather than being reported next to it.
+#
+# It went unsmoked for its whole life until then, and the cost was measured: a
+# released build showed a blank white window the moment a mailbox started
+# serving, because its copy of the client's HTTP adapter was the preview's
+# throwing stub and that constructor runs inside a React render. Nothing in this
+# file could have seen it — the preview it smoked was fine.
 #
 # Nothing here is signed: no Apple Developer ID, no Authenticode certificate.
 # See the per-platform "unsigned" notes in the README; the macOS artifact is
@@ -144,7 +161,11 @@ jobs:
         run: node scripts/vendor-node.mjs --platform darwin
 
       # ── 4 · the app ───────────────────────────────────────────────────────
-      - name: Build the engine-bearing app (universal)
+      # `app:build:engine` stages the engine and its runtime, rebuilds the UI
+      # with the bridge, SMOKES that bundle, and only then bundles the app. The
+      # render check is inside the script and not a step here on purpose — see
+      # the header. A red smoke stops this step.
+      - name: Build the engine-bearing app (universal), smoking its bundle
         working-directory: apps/desktop
         run: npm run app:build:engine -- --bundles app,dmg -- --target universal-apple-darwin
 
@@ -367,7 +388,9 @@ jobs:
       - name: Vendor the Node runtime
         run: node scripts/vendor-node.mjs --platform windows
 
-      - name: Build the engine-bearing app
+      # The bundle is smoked inside this script, on this platform, before the app
+      # is packaged — see the header.
+      - name: Build the engine-bearing app, smoking its bundle
         working-directory: apps/desktop
         run: npm run app:build:engine -- --bundles nsis
 
@@ -595,7 +618,9 @@ jobs:
       - name: Vendor the Node runtime
         run: node scripts/vendor-node.mjs --platform linux
 
-      - name: Build the engine-bearing app
+      # The bundle is smoked inside this script, on this platform, before the app
+      # is packaged — see the header.
+      - name: Build the engine-bearing app, smoking its bundle
         # NO_STRIP: linuxdeploy strips the binary again while assembling the
         # AppImage, and on recent glibc that step is a known failure. The Rust
         # release profile already strips (src-tauri/Cargo.toml), so nothing is
