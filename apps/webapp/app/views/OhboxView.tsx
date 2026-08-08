@@ -998,9 +998,33 @@ export function OhboxView({
 
             The no-collapse rule — never an "N more" count standing in for mail — is satisfied
             throughout: every message is a real
-            row, above the line or below it. */}
+            row, above the line or below it.
+
+            ── AND IT WAITS FOR THE MIRROR TO HAVE BEEN READ ────────────────────────────────
+
+            `settled` gates the whole windowed arm, for the reason `SyncState` above it is gated
+            and it is the same defect one block further down the pane. Reported on first open:
+            "Nothing in your Ohbox. This device keeps your recent mail. The rest is on your
+            server. Load older mail", for up to a minute, and then the mail arrived. The first
+            sentence was already withheld; these two were not, because they were gated on the
+            CLIENT SHAPE — "is this mirror a window" — which is a build-time fact and true from
+            the first frame. Being a window is not the claim being made. "This device keeps your
+            recent mail" says where the reader's mail IS, which is exactly the class of statement
+            {@link MailState.settled} exists to hold back: before the first drain the mirror holds
+            nothing, so "recent mail" has no referent and the sentence is false in the ordinary
+            reading of it. And `olderAction` is worse than a false statement, it is a wrong
+            INSTRUCTION — the newest mail is in flight, and the only control on the pane points
+            backwards, past it, at a page the reader has not been shown yet.
+
+            The cost is that a RETURNING tab, whose hydrated mirror is on screen before its drain
+            lands, loses the tail for the length of that drain. That is a control appearing at the
+            bottom of a list a second later, which is the cheap side of this trade: the alternative
+            is stating where somebody's mail is kept before having looked. Nothing about the window
+            is hidden for good — `SyncBar` is saying what is happening the whole time, and the
+            sentence and its control return together the moment there is a drained mirror to
+            describe. */}
         {demo ? <div className="tail-row">{t("tail")}</div> : null}
-        {!demo && older.available ? (
+        {!demo && older.available && settled ? (
           <div className="tail-row" role="status">
             {older.error !== null ? (
               <>
