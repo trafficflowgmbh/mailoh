@@ -1,6 +1,8 @@
 import {
-  CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA, TAXONOMY_PREFIX,
-  classifyUserPayload, coerceClassifierResult, coerceDraftResult, draftUserPayload,
+  CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA,
+  SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
+  classifyUserPayload, coerceClassifierResult, coerceDraftResult, coerceScreeningResult,
+  draftUserPayload,
 } from "@trafficflow/core/mail";
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
@@ -117,6 +119,26 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
       const userPayload = classifyUserPayload(input);
       return coerceClassifierResult(
         await chat(opts.classifyModel, TAXONOMY_PREFIX, userPayload, CLASSIFY_RESULT_SCHEMA, "classifier"),
+      );
+    },
+
+    /**
+     * THE SCREENING QUESTION, on a model running on this machine.
+     *
+     * The same two constants the API-key provider next door sends, from the same module — so the
+     * question a person gets does not depend on where their model happens to run. That is the whole
+     * claim of a shared prompt, and it is the one a per-provider copy would quietly break: each
+     * copy passes its own test while the two hosts answer one sender differently.
+     *
+     * The five-pile schema goes over as Ollama's `format`, which matters more here than it does on
+     * the hosted path: smaller local models drift much further when asked to produce JSON by
+     * instruction alone. `coerceScreeningResult` is still the floor beneath it — an unrecognised
+     * label lands at the gate, where a person decides, and never auto-files.
+     */
+    async screen(input: ClassifierInput): Promise<ClassifierResult> {
+      const userPayload = classifyUserPayload(input);
+      return coerceScreeningResult(
+        await chat(opts.classifyModel, SCREENING_PREFIX, userPayload, SCREENING_RESULT_SCHEMA, "screener"),
       );
     },
 

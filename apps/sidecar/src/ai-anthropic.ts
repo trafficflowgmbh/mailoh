@@ -1,6 +1,8 @@
 import {
-  CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA, TAXONOMY_PREFIX,
-  classifyUserPayload, coerceClassifierResult, coerceDraftResult, draftUserPayload,
+  CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA,
+  SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
+  classifyUserPayload, coerceClassifierResult, coerceDraftResult, coerceScreeningResult,
+  draftUserPayload,
 } from "@trafficflow/core/mail";
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
@@ -161,6 +163,38 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
         output_config: { format: { type: "json_schema", schema: CLASSIFY_RESULT_SCHEMA } },
       }, "classifier");
       return coerceClassifierResult(raw);
+    },
+
+    /**
+     * THE SCREENING QUESTION — the same transport, the same sink, a different question.
+     *
+     * Everything that differs from {@link classify} is a constant imported from
+     * `@trafficflow/core/mail`: the instruction and the answer set. Nothing about the question is
+     * written here, and that is the point rather than a convenience — a hosted deployment and a
+     * standalone install are two ways to reach a model, and a second copy of a question is how the
+     * two come to give one sender two different answers. Each copy would pass its own test.
+     *
+     * `classifyUserPayload` is shared with the routing question above for the same reason it is
+     * shared with the hosted classifier: the outbound sensitivity screen is a property of what
+     * leaves this process, not of which question it is attached to. A second builder here is how
+     * one of the two questions eventually ships without one.
+     *
+     * The CLASSIFY model answers it. The two questions are one call per first-contact sender each,
+     * of the same size and the same difficulty, so a person who chose a model for routing has
+     * chosen it for this — and a second model setting would be a second thing to get wrong for no
+     * decision anybody wants to make.
+     */
+    async screen(input: ClassifierInput): Promise<ClassifierResult> {
+      const userPayload = classifyUserPayload(input);
+      const raw = await call({
+        model: opts.classifyModel,
+        max_tokens: 512,
+        system: [{ type: "text", text: SCREENING_PREFIX, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: JSON.stringify(userPayload) }],
+        output_config: { format: { type: "json_schema", schema: SCREENING_RESULT_SCHEMA } },
+      }, "screener");
+      // A label outside the five piles becomes the gate, where a person decides — never a guess.
+      return coerceScreeningResult(raw);
     },
 
     async draft(input: DraftInput): Promise<DraftResult> {

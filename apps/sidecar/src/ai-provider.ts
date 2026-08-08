@@ -519,14 +519,46 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
     return (await transportFor(store)).classify(input);
   };
 
+  const screenThrough = async (input: ClassifierInput): Promise<ClassifierResult> => {
+    const blocked = blockedBy(store);
+    if (blocked) throw unavailable(blocked);
+    return (await transportFor(store)).screen(input);
+  };
+
   const draftThrough = async (input: DraftInput): Promise<DraftResult> => {
     const blocked = blockedBy(store);
     if (blocked) throw unavailable(blocked);
     return (await transportFor(store)).draft(input);
   };
 
-  /** The request-path ports. A failure here reaches the person who asked for it. */
-  const requestClassifier: ClassifierPort = { classify: classifyThrough };
+  /**
+   * The request-path ports. A failure here reaches the person who asked for it.
+   *
+   * ── `screen` IS PRESENT HERE AND DELIBERATELY ABSENT FROM THE CYCLE PORT BELOW ──────────────
+   *
+   * The Screener's suggestion path prefers `screen` and falls back to `classify` when a port does
+   * not carry it. The fallback is safe — the routing question's answer for a first-contact sender
+   * is the gate, which reads as "hold" — which is exactly why a standalone install could go on
+   * taking it for a whole release without anything failing: the person was told, at high
+   * confidence, that the mail was where it already was. Carrying the method is what ends that.
+   *
+   * ── `satisfies Required<ClassifierPort>` IS THE GUARD, AND THIS IS THE LINE THAT NEEDS ONE ──
+   *
+   * Teaching both transports the second question is not enough on its own: `screen` is OPTIONAL on
+   * `ClassifierPort`, so this object goes on compiling with the method dropped, the Screener goes
+   * on falling back, and every transport-level test stays green while the tautology is back. That
+   * is a capability built, tested and unreachable — the exact failure this change removes,
+   * reintroduced in the one place nothing would look.
+   *
+   * `Required<>` removes the optionality for THIS assignment only, so dropping the method here is a
+   * compile error rather than a silent downgrade. It is worth writing because it actually runs:
+   * almost no test file in this repository is typechecked, but `tsconfig.json` includes `src`, so a
+   * type-level assertion in this file is one of the few that is genuinely checked.
+   */
+  const requestClassifier = {
+    classify: classifyThrough,
+    screen: screenThrough,
+  } satisfies Required<ClassifierPort>;
   const requestDrafter: DraftPort = { draft: draftThrough };
 
   /**
@@ -537,6 +569,18 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
    * failure budget and can get the mailbox marked broken — three unanswered model calls and a
    * perfectly healthy mailbox is quarantined. With it, "a model outage can never mark a mailbox
    * broken" holds whatever either threshold is tuned to.
+   *
+   * ── IT CARRIES NO `screen`, AND THAT IS THE GUARANTEE RATHER THAN AN OMISSION ───────────────
+   *
+   * The screening question exists for senders already waiting at the gate, asked because a person
+   * pressed something. This port files LIVE MAIL, automatically, on a timer, and its answer set
+   * must keep the gate in it: `ohmail/Screener` is removed from the screening answer set precisely
+   * because it is the question being asked there, and a background pass that could not answer
+   * "hold" would have to file every stranger somewhere.
+   *
+   * Absence is a stronger statement than a comment or a flag. `planChange` takes a `ClassifierPort`
+   * and could call either method; there is no argument, no setting and no mistaken boolean that
+   * reaches the screening question from here, because the method is not on the object.
    */
   const cycleClassifier: ClassifierPort = {
     async classify(input: ClassifierInput): Promise<ClassifierResult> {

@@ -5,12 +5,13 @@ import type {
 /**
  * WHAT A PROVIDER HAS TO BE ABLE TO DO, AND NOTHING ELSE.
  *
- * Three methods. The two features, and the question "can you actually do them?" — which is
- * separate on purpose: a capability is offered only once it has been asked, never because a
- * settings form was filled in. Everything about WHAT is asked — the taxonomy, the reply policy,
- * the response schemas and the two sinks that refuse — lives in `@trafficflow/core/mail` and is
- * shared with every other implementation; a provider here decides only how the request travels
- * and how the answer is unwrapped.
+ * Four methods. The two features — and routing is TWO QUESTIONS rather than one, see
+ * {@link AiTransport.screen} — plus the question "can you actually do them?", which is separate on
+ * purpose: a capability is offered only once it has been asked, never because a settings form was
+ * filled in. Everything about WHAT is asked — the taxonomy, the screening question, the reply
+ * policy, the response schemas and the two sinks that refuse — lives in `@trafficflow/core/mail`
+ * and is shared with every other implementation; a provider here decides only how the request
+ * travels and how the answer is unwrapped.
  *
  * ── NO SDK, ON PURPOSE ───────────────────────────────────────────────────────────────────────
  *
@@ -57,7 +58,33 @@ export interface ProbeOutcome {
 }
 
 export interface AiTransport {
+  /** THE ROUTING QUESTION — "which folder does this belong in". Asked of live mail, per message. */
   classify(input: ClassifierInput): Promise<ClassifierResult>;
+  /**
+   * THE SCREENING QUESTION — "what should happen to this first-contact sender".
+   *
+   * A different question over a different answer set, asked only when a person presses a button
+   * about senders already waiting at the gate. Live mail routing never reaches it.
+   *
+   * ── REQUIRED HERE, THOUGH IT IS OPTIONAL ON `ClassifierPort` ────────────────────────────────
+   *
+   * The port in `@trafficflow/core` declares `screen?` optional, and has to: a `ClassifierPort` is
+   * implemented outside the package that declares it, so a required method would have been a
+   * compile break in every implementation for a capability only the Screener uses. Callers
+   * therefore fall back to {@link classify} when it is absent.
+   *
+   * That fallback is what made this method's absence invisible here for a release. It degrades the
+   * advice without endangering anything — the routing question's answer for a first-contact sender
+   * is the gate itself, which every consumer reads as "hold" — so a standalone install went on
+   * answering the wrong question, correctly, and nothing failed. The person just got told, at high
+   * confidence, that the mail was where it already was.
+   *
+   * `AiTransport` is an INTERNAL interface with both of its implementations in this directory, so
+   * there is no compatibility to buy and nothing to be gained by making it optional. Required means
+   * a third provider added here does not compile until it has been taught the second question —
+   * which is the guarantee the optional port cannot offer.
+   */
+  screen(input: ClassifierInput): Promise<ClassifierResult>;
   draft(input: DraftInput): Promise<DraftResult>;
   /** Never throws for anything the endpoint did. A refusal is an outcome, not an exception. */
   probe(): Promise<ProbeOutcome>;
