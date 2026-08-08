@@ -296,6 +296,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   /** Folder → in-flight bounded flag drain. See {@link FlagDrain}. */
   private readonly flagDrain = new Map<string, FlagDrain>();
   /**
+   * How many `changesSince` passes this adapter has run — the ROTATION COUNTER of the flag
+   * schedule. See the scheduling block in {@link ImapAdapter.changesSince}.
+   *
+   * In memory, like {@link flagDrain}, and for the same reason: it decides only WHICH owing folder
+   * leads a cycle, so losing it across a reconnect costs one arbitrary starting position and can
+   * never cost a flag. Deliberately not persisted — a cursor column that exists only to pick a
+   * queue position is a migration and a write per cycle for something a counter answers.
+   */
+  private flagCycle = 0;
+  /**
    * Folder → the arrival dates this drain has already learned, and the EPOCH they belong to.
    * See {@link ImapAdapter.arrivalDatesFor}; the ordering rule itself is {@link arrivalKey}.
    *
@@ -903,7 +913,68 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     };
     let hasBacklog = false;
 
-    for (const folder of scanFolders) {
+    // ── THE FLAG BUDGET IS SHARED, SO IT NEEDS A SCHEDULE — NOT A QUEUE ────────────────────────
+    //
+    // Spending the flag budget the way the creates budget is spent — in `scanFolders` order, each
+    // folder taking all it can — is FIFO, and FIFO on a shared resource starves the tail. Measured
+    // on a real iCloud mailbox: `ohmail/Screener` owed 5 101 known UIDs, roughly sixteen cycles of
+    // the whole budget on its own, and the five folders behind it (Reads 40, Receipts 1, Screened
+    // 238, Quarantine 247, Sent 1 984) were never reached. Every one of them was therefore
+    // `flagsTruncated` on every cycle, every one of their cursors was held, `hasBacklog` was
+    // pinned true, and `initial_import_completed_at` — which the organizer writes only on a cycle
+    // that ends with no backlog — stayed NULL for days on a mailbox that was doing no work.
+    //
+    // This is NOT the rewind the `lastFlagUid` seed fixed. That one LOST progress; this one makes
+    // none, which is why it survived the fix. A folder at the back of the queue keeps its resume
+    // point perfectly and is simply never asked.
+    //
+    // Two rules, and neither of them touches the cursor. Fairness has to come from scheduling:
+    // `FlagDrain.advanceTo` is what makes a multi-pass drain safe, and buying throughput by
+    // advancing a cursor past changes nobody examined would trade a stall for silent flag loss.
+    //
+    //   ROTATION. `flagCycle` picks which OWING folder leads, so the front of the queue moves
+    //   every cycle and no folder is permanently last.
+    //
+    //   OWED SHARE. A folder may take `ceil(remaining / claimants-from-here-on)` — an equal split
+    //   of what is left among the folders that still owe. The divisor shrinks as the walk
+    //   proceeds, so a folder that could not use its share hands it to the ones behind it and the
+    //   cycle still spends the whole budget: at the measured sizes the schedule converges in the
+    //   same 16 cycles the FIFO order needs, while reading every folder from cycle 1.
+    //
+    // The leader is exempt from that cap so leading means something, but only down to `flagFloor`
+    // per folder behind it — a leader can never take the cycle.
+    //
+    // `scanFolders` ORDER IS UNTOUCHED, deliberately. It is the CREATES order (INBOX first, Sent
+    // last) and that ordering is a mail-latency guarantee — see the budget declaration above. Only
+    // the flag ALLOWANCE rotates.
+    const flagTotal = budget.flags;
+    // Eligible: could run a flag pass at all this cycle. A folder without a CONDSTORE baseline
+    // never reaches the fetch, so reserving budget for it would be reserving it for nobody.
+    const flagEligible = scanFolders.filter((f) => {
+      const p = cursor.folders[f];
+      return caps.condstore && !!p && p.highestModseq !== "0";
+    });
+    // Claimants: the folders KNOWN to owe, which before the fetch means "has an in-flight drain".
+    //
+    // ELIGIBILITY IS NOT A CLAIM, and treating it as one is a throttle on the common case. Every
+    // watched folder is eligible on a healthy mailbox, so reserving a share for each of them would
+    // hand INBOX a sixth of the budget on a quiet cycle where the other five owe nothing — the
+    // reserve would be held for folders that never spend it and the whole cycle would go slower
+    // than the FIFO it replaced. Watched: `imap.changes.flagdrain-starvation.test.ts` reported
+    // `['1:*', '6:*', '16:*']` for a drain that must read ten at a time.
+    //
+    // So when NOTHING is in flight there is nothing to be fair about and this degenerates to the
+    // FIFO order exactly. A folder that then turns out to owe more than the budget truncates,
+    // records a drain, and is a claimant from the next cycle on — the transient is one cycle, and
+    // the starving folders are by definition the ones holding a drain.
+    const flagClaimants = new Set(flagEligible.filter((f) => this.flagDrain.has(f)));
+    const rotation = [...flagClaimants];
+    const flagLead = rotation.length > 0 ? rotation[this.flagCycle % rotation.length]! : null;
+    this.flagCycle++;
+    // What every claimant behind a folder keeps whatever that folder does with its turn.
+    const flagFloor = Math.max(1, Math.floor(flagTotal / (2 * Math.max(1, flagClaimants.size))));
+
+    for (const [folderIndex, folder] of scanFolders.entries()) {
       const isSent = folder === sentFolder;
       const serverPath = this.toServerPath(folder);
       const prev = cursor.folders[folder];
@@ -1014,15 +1085,38 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           // writes only on a cycle that ends with no backlog, is therefore never written. A mailbox
           // in that state stays in it: fully drained, motionless, and still described as importing.
           //
-          // RESIDUAL, STATED AND DELIBERATELY NOT CHASED: a folder starved on EVERY cycle still
-          // makes no progress. It no longer LOSES any, so any cycle with budget left over
-          // advances it, and the folder ahead cannot eat the budget for ever — a folder with more
-          // than `budget.flags` changes truncates and is itself the honest backlog, while one
-          // with fewer leaves a remainder. An anti-stall floor here (admit the first candidate of
-          // each folder however spent the budget, which is what `fetchCapped` does for creates)
-          // was written and then dropped: it made this seed unobservable — with the floor in
-          // place, `flagsTruncated` implies something was accepted, so `lastFlagUid` can never
-          // still hold the seed — and a guard that cannot be watched fail is not one.
+          // THE RESIDUAL THAT PARAGRAPH LEFT — "a folder starved on EVERY cycle still makes no
+          // progress" — WAS NOT HYPOTHETICAL, AND IT IS WHAT THE SCHEDULE ABOVE CLOSES. It was
+          // written here as a bound worth stating and not chasing, on the argument that "the
+          // folder ahead cannot eat the budget for ever". A folder ahead with 5 101 owed UIDs eats
+          // it for sixteen consecutive cycles, which is long enough to look exactly like for ever;
+          // measured on a real mailbox four days after this line was written. Progress is now
+          // guaranteed per cycle by `allowance`, not argued from the folder ahead running out.
+          //
+          // The seed below is still the thing THIS test file watches, and it is still observable:
+          // `allowance` can be 0 for a folder whose reserve was consumed by rounding, so
+          // `flagsTruncated` does not imply anything was accepted. That was the objection to the
+          // anti-stall floor written and dropped here (admit the first candidate of every folder
+          // however spent the budget, which is what `fetchCapped` does for creates) — with the
+          // floor in place `lastFlagUid` could never still hold the seed, and a guard that cannot
+          // be watched fail is not one. A share is not a floor: it bounds from above.
+          // ── THIS FOLDER'S SHARE OF THE CYCLE. See the schedule above `for (const [folderIndex…`.
+          //
+          // `after` is the claimants still to come, so the reserve held back is theirs and nobody
+          // else's; everything a visited folder did not use is already inside `budget.flags` and
+          // is offered here. A NON-claimant — a folder with no drain, on a cycle where some other
+          // folder has one — is not owed a share, but new flag changes on it are more urgent than
+          // an old drain, so it may take whatever is not reserved.
+          const after = scanFolders.slice(folderIndex + 1).filter((f) => flagClaimants.has(f)).length;
+          const unreserved = budget.flags - after * flagFloor;
+          const share = flagClaimants.has(folder)
+            ? Math.ceil(budget.flags / (after + 1))
+            : unreserved;
+          const allowance = Math.max(0, Math.min(
+            budget.flags,
+            folder === flagLead ? Math.max(share, unreserved) : share,
+          ));
+          let taken = 0;
           let lastFlagUid = from - 1;
           for await (const m of this.client.fetch(
             `${from}:*`,
@@ -1037,13 +1131,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             // is at or above this UID's modseq, and a flag change on it after the drain ends is
             // re-reported by the ordinary `changedSince` on the next cycle.
             if (!effectiveKnown.has(m.uid)) { lastFlagUid = m.uid; continue; }
-            if (budget.flags <= 0) { flagsTruncated = true; break; }
+            // BOTH bounds. `taken` is this folder's share, `budget.flags` the cycle's hard cap —
+            // the share is derived from the cap, so the second can only bite if a share was
+            // rounded up past what was left.
+            if (taken >= allowance || budget.flags <= 0) { flagsTruncated = true; break; }
             flagChanges.push({
               type: "flag",
               locator: { folder, ref: makeRef(curUidValidity, m.uid) },
               seen: m.flags?.has("\\Seen") ?? false,
             });
             budget.flags--;
+            taken++;
             lastFlagUid = m.uid;
           }
           if (flagsTruncated) {
