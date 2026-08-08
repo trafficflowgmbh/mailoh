@@ -1732,6 +1732,24 @@ fn write_frames(mut stdin: ChildStdin, frames: Receiver<Vec<u8>>) {
     }
 }
 
+/// A root-relative path, against the base the engine announced when it started serving.
+///
+/// **The window may not name a host, so this side has to.** The webview's whole bundle is checked
+/// for the absence of an address — that is what makes "this page can reach nothing but the shell"
+/// something a reader can verify rather than a claim — so its client addresses the engine with
+/// paths alone: `/sync?since=0`, `/mailboxes`, `/local/ai`. The engine parses what arrives with the
+/// platform's `Request`, which takes an absolute URL and rejects a relative one outright. The
+/// `baseUrl` in the ready frame exists for exactly this join.
+///
+/// Anything already absolute is passed through untouched: the shell composes, it never rewrites.
+fn absolute_url(base: &str, url: &str) -> String {
+    if url.starts_with('/') {
+        format!("{}{}", base.trim_end_matches('/'), url)
+    } else {
+        url.to_string()
+    }
+}
+
 /// A `req` frame: preamble, header JSON, body. Mirrors the engine's codec — see the constants at
 /// the top of this file, and the note there about there being no shared artifact to import.
 fn encode_request(id: u64, req: &EngineRequest, token: &str) -> Result<Vec<u8>, String> {
@@ -1789,8 +1807,10 @@ impl Engine {
             // A NAMED REFUSAL PER STATE, because "the request failed" is the one answer that helps
             // nobody. Everything except `Serving` means there is no engine listening, and the
             // reason a surface should render differs in each case.
-            let token = match (&s.state, &s.ready) {
-                (EngineState::Serving { .. }, Some(ready)) => ready.session_token.expose().to_string(),
+            let (token, base) = match (&s.state, &s.ready) {
+                (EngineState::Serving { .. }, Some(ready)) => {
+                    (ready.session_token.expose().to_string(), ready.base_url.clone())
+                }
                 (EngineState::Serving { .. }, None) => {
                     return Err("the engine is serving but announced no session".to_string())
                 }
@@ -1823,6 +1843,8 @@ impl Engine {
 
             let id = s.next_id;
             s.next_id += 1;
+            // COMPOSED HERE, against what the engine announced — see [`absolute_url`].
+            let req = EngineRequest { url: absolute_url(&base, &req.url), ..req };
             let frame = encode_request(id, &req, &token)?;
 
             let (tx, rx) = mpsc::channel();

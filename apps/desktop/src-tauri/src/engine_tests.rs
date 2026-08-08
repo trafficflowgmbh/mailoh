@@ -960,6 +960,43 @@ fn the_shell_adds_the_authorization_and_the_caller_cannot() {
 }
 
 #[test]
+fn a_root_relative_path_is_composed_against_the_engines_own_base() {
+    // THE JOIN NOBODY WAS TESTING, and it was broken.
+    //
+    // The window's client addresses the engine with root-relative paths — `/sync?since=0`,
+    // `/mailboxes` — because naming a host in the webview's bundle is the one thing that bundle
+    // must never do. The engine parses what arrives with the platform's `Request`, which requires
+    // an absolute URL and throws on a relative one; the whole point of the `baseUrl` in the ready
+    // frame is that this side owns the composition.
+    //
+    // Every layer was tested with its own convention and nothing tested the seam: the Rust tests
+    // below compose absolute URLs by hand, and the engine's own end-to-end suite drives a client
+    // that already carries a base. So a root-relative request — the only kind the window actually
+    // sends — reached the engine verbatim and came back as a transport failure.
+    let f = Fixture::new("relative");
+    let engine = Engine::spawn_with(f.launch("echo"), quick());
+    serving(&engine);
+
+    let answer = engine
+        .request(EngineRequest {
+            method: "GET".to_string(),
+            url: "/sync?since=0".to_string(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        })
+        .expect("the engine answered");
+    let said: serde_json::Value = serde_json::from_slice(&answer.body).expect("json");
+    assert_eq!(said["url"], "http://sidecar/sync?since=0");
+
+    // An absolute URL is passed through untouched — the shell composes, it does not rewrite.
+    let answer = engine.request(get("/mailboxes")).expect("the engine answered");
+    let said: serde_json::Value = serde_json::from_slice(&answer.body).expect("json");
+    assert_eq!(said["url"], "http://sidecar/mailboxes");
+
+    engine.stop();
+}
+
+#[test]
 fn a_request_body_reaches_the_engine_intact() {
     let f = Fixture::new("body");
     let engine = Engine::spawn_with(f.launch("echo"), quick());
