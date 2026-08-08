@@ -1,34 +1,58 @@
 /**
- * The Cloud sync client, absent.
+ * The sync client, absent — from the interface preview, and only from there.
  *
- * `@ohmail/client-engine`'s barrel re-exports `HttpAdapter` — the `/sync`
- * protocol client for ohmail Cloud. The desktop tier has no account, no server
- * and no network, so `vite.config.ts` aliases the real module to this file. The
- * consequences are the point:
+ * `@ohmail/client-engine`'s barrel re-exports `HttpAdapter`, the `/sync`
+ * protocol client. This directory builds TWO artifacts from one source, and
+ * they need opposite things from that class:
  *
- *  · the emitted bundle contains no request builder, no CSRF header, no
- *    idempotency key, no cursor protocol — grep it and there is nothing to find;
- *  · `scripts/publish-desktop.mjs` therefore does not publish
- *    `packages/client-engine/src/adapters/http-adapter.ts`, so the public
- *    repository does not contain the Cloud protocol either;
- *  · if a future edit makes the shell reach for it, this throws on construction
- *    instead of quietly opening a socket.
+ *  · the INTERFACE PREVIEW runs on fixture mail. It has no account, no server
+ *    and no engine to speak to, so `vite.config.ts` aliases the real module to
+ *    this file. The emitted bundle then contains no request builder, no CSRF
+ *    header, no idempotency key and no cursor protocol — grep it and there is
+ *    nothing to find — and if an edit makes the shell reach for the class
+ *    anyway, this throws on construction instead of quietly opening a socket.
+ *  · the ENGINE-BEARING build IS a mail client. It runs the real `HttpAdapter`
+ *    against the mail engine on this machine, over the bridge in
+ *    `src/bridge-fetch.ts` rather than over a socket, so the alias is left out
+ *    of that build — `vite.config.ts`, `LOCAL_ENGINE ? [] : [alias]`.
  *
- * ── why this file imports nothing ──
+ * ── ONE PATH NOW, NOT TWO ──────────────────────────────────────────────────
  *
- * It is published to TWO paths in the public mirror: here, because
- * `vite.config.ts` aliases to it, and over the top of
- * `packages/client-engine/src/adapters/http-adapter.ts`, because `tsc` does not
- * read Vite aliases and the barrel's `export … from "./adapters/http-adapter.js"`
- * has to resolve to something. One file, two locations, so any relative import
- * would be wrong in at least one of them.
+ * This file used to be published twice: here, and written over the top of
+ * `packages/client-engine/src/adapters/http-adapter.ts`, on the reasoning that
+ * the only artifact aliased that module away at bundle time, so the repository
+ * never needed the real one. The reasoning was sound while it was true, and it
+ * stopped being true the moment a second artifact began constructing the class.
+ * It then stopped being harmless: a released engine-bearing build resolved the
+ * name to this stub, whose constructor throws, inside a React render — a blank
+ * window as soon as a mailbox served.
  *
- * The types below are therefore declared rather than imported. That costs
- * nothing in safety: `sync` and `mutate` are class methods, whose parameters are
- * bivariant, so `unknown` in and `Promise<never>` out stays assignable to
- * `EngineAdapter` — the shell's `new OhmailEngine({ adapter })` still typechecks
- * against the real interface, and would still fail if that interface changed
- * shape in a way this could not satisfy.
+ * The real adapter is published at its own path now. This file is the preview's
+ * alias target and nothing else.
+ *
+ * The general rule, since it cost something to learn: writing a stub over a
+ * module's path is sound only while nothing in the SHIPPED ARTIFACT constructs
+ * the thing being stood in for. That is a question about the artifact, and its
+ * answer changes silently on the day a second artifact is added — a
+ * substitution that has gone wrong compiles, packages and installs exactly like
+ * one that has not.
+ *
+ * ── WHY IT STILL IMPORTS NOTHING ───────────────────────────────────────────
+ *
+ * The two-path arrangement is what made a relative import wrong: it would have
+ * had to resolve correctly from two different directories. That arrangement is
+ * gone and the constraint stays, because keeping it costs nothing and dropping
+ * it is a one-way door — an import added here would break nothing at all until
+ * somebody restored the substitution, and would then break somewhere other than
+ * where it was written. So the types below are declared rather than imported.
+ *
+ * What that costs in safety is worth stating exactly, rather than reassuringly:
+ * nothing checks this file against `EngineAdapter` any more. `tsc` reads no Vite
+ * aliases, so it resolves the real module wherever the shell mentions the type,
+ * and the preview's bundler cares about exported NAMES rather than shapes. The
+ * method set is therefore compared against the interface's own declaration in
+ * `packages/client-engine/src/adapters/adapter.ts` by `test/desktop-shell.test.ts`,
+ * which is a check that runs, rather than by a claim in this comment.
  */
 
 export type FetchLike = (url: string, init?: unknown) => Promise<unknown>;
@@ -36,17 +60,22 @@ export type FetchLike = (url: string, init?: unknown) => Promise<unknown>;
 /**
  * The server's own message-list vocabulary, and the table that joins it to the client's.
  *
- * BOTH ARE RE-EXPORTED BY THE PACKAGE BARREL, which is the only reason they are here. In the
- * mirror this file IS `adapters/http-adapter.ts`, so `export { SERVER_VIEW_OF, type
- * ServerMessageView } from "./adapters/http-adapter.js"` has to resolve to something — and it
- * resolves to a symbol, not just a module. A missing export is a mirror-only typecheck failure
- * that the private tree cannot see, because `tsc` here reads the real file.
+ * BOTH ARE RE-EXPORTED BY THE PACKAGE BARREL, which is the only reason they are here. The barrel
+ * says `export { HttpAdapter, SERVER_VIEW_OF, … } from "./adapters/http-adapter.js"`, and in the
+ * PREVIEW build that specifier is aliased to this file — so the two VALUE exports it names have
+ * to exist here, or the barrel binds nothing. The three type re-exports beside them are erased
+ * before the bundler sees them; `ServerMessageView` is declared here for this file's own
+ * annotation below, since nothing may be imported.
+ *
+ * `tsc` never checks this, in any checkout: it reads no Vite aliases and resolves the real
+ * module. So the barrel's re-export list is compared against this file's exports by
+ * `test/desktop-shell.test.ts` rather than left to be noticed at build time — the drift it
+ * catches once broke every platform's build at the same moment, on a green local tree.
  *
  * `Record<string, …>` and NOT `Record<OhmailView, …>`: this file imports nothing, deliberately
- * (see the header — it is published to two different paths, so any relative import is wrong at
- * one of them), so the client's view union is not nameable here. The exhaustiveness that type
- * buys is a property of the real table; nothing in this build reads this one, because there is
- * no server to translate a view for.
+ * (see the header), so the client's view union is not nameable here. The exhaustiveness that
+ * type buys is a property of the real table; nothing in this build reads this one, because
+ * there is no server to translate a view for.
  */
 export type ServerMessageView =
   | "imbox" | "feed" | "paper_trail" | "screened" | "quarantine"
@@ -95,21 +124,20 @@ export class HttpAdapter {
 
   /**
    * `GET /messages/:id/body` — the third method the real adapter has, and
-   * therefore the third this must declare.
+   * therefore the third this declares.
    *
-   * It is not optional decoration. `EngineAdapter` requires `fetchBody`, and this file is
-   * published OVER `packages/client-engine/src/adapters/http-adapter.ts` in the desktop
-   * mirror (`scripts/publish-desktop.mjs`'s `DEST_ALIASES`) — so in that repository this IS
-   * `HttpAdapter`, and omitting a required method breaks the mirror's typecheck while the
-   * private tree stays green, because `tsc` here resolves the real file. The header's claim
-   * that a change to the interface "would still fail if this could not satisfy it" is only
-   * true of the mirror, and only if this keeps pace. `desktop-shell.test.ts` now asserts the
-   * method set rather than trusting it.
+   * Nothing compiles this class against `EngineAdapter`: `tsc` resolves the real module, and
+   * the preview's bundler binds names rather than shapes. So the method set is not held in
+   * place by a type — it is held by `test/desktop-shell.test.ts`, which reads the required
+   * methods out of `packages/client-engine/src/adapters/adapter.ts` and fails if one is
+   * missing here. That test exists because the method set was once load-bearing in a way
+   * nothing in this checkout could observe, and the cost of keeping it complete is a line.
    *
-   * The desktop never reaches it: it runs on `FixturesAdapter`, whose rows carry `body`
-   * already, so `hydrateBody` short-circuits before any adapter is consulted. Refusing rather
-   * than answering `null` keeps this file's one rule — a Cloud call in this build is a bug,
-   * not a degraded feature.
+   * The preview never reaches it: it runs on `FixturesAdapter`, whose rows carry `body`
+   * already, so `hydrateBody` short-circuits before any adapter is consulted — and the
+   * constructor above throws, so no instance exists to call this on in the first place.
+   * Refusing rather than answering `null` keeps this file's one rule: in the artifact that
+   * aliases to it, a sync call is a bug and not a degraded feature.
    */
   async fetchBody(_messageId: unknown): Promise<never> {
     throw new Error(REFUSAL);

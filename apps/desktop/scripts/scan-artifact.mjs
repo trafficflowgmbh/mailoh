@@ -103,6 +103,42 @@ const MARKERS = [
 const present = MARKERS.filter((m) => text.toLowerCase().includes(m.toLowerCase()));
 const absent = MARKERS.filter((m) => !present.includes(m));
 
+/**
+ * WHICH SYNC CLIENT IS IN THIS BUNDLE — the check that would have caught the blank window.
+ *
+ * The preview aliases `adapters/http-adapter.js` to a stub whose constructor throws; the engine
+ * build deliberately does not, because the real class is what runs the mail against the engine on
+ * this machine. For a year the public mirror ALSO substituted that stub — it wrote it over the
+ * real module's path — so the engine artifact built over there carried a sync client that threw
+ * the instant the shell reported a serving mailbox. Inside a React render, with nothing above it
+ * to catch: a white window, on a machine that had just signed in successfully. Nothing in the
+ * build noticed, because every check ran against the sources, where the real file has always been
+ * present, or against the preview, where the stub is correct.
+ *
+ * ── IT IS ASSERTED POSITIVELY AS WELL AS NEGATIVELY, AND THAT IS THE WHOLE CARE HERE ────────
+ *
+ * "The refusal sentence is absent" alone is defeated by rewording the stub, which is a one-line
+ * edit somebody makes for readability and which would silently retire this guard. So the engine
+ * build is also required to contain something ONLY the real client can have, and the two markers
+ * come from DIFFERENT parts of the class rather than from one line twice over: `x-csrf-token` is
+ * a header its request builder writes, and `/sync/snapshot` is the cold-start route only its
+ * `snapshot` method names. The stub has neither a request builder nor a route table.
+ *
+ * Measured rather than assumed, because the obvious candidates are wrong. `idempotency-key` is in
+ * BOTH bundles — the engine mints the key and hands it down, so the string belongs to the client
+ * rather than to the adapter — and a marker present in the preview proves nothing in either
+ * direction. Both markers below are 0 in the preview and non-zero in the engine build today.
+ *
+ * The preview is asserted to have the exact inverse, for the reason the whole file is written in
+ * both directions: a guard that only proves absence goes green when the feature is deleted.
+ */
+const STUB_REFUSAL = "there is no Cloud sync client in this build";
+const REAL_CLIENT_MARKERS = ["x-csrf-token", "/sync/snapshot"];
+
+const stubPresent = text.includes(STUB_REFUSAL);
+const realPresent = REAL_CLIENT_MARKERS.filter((m) => text.toLowerCase().includes(m));
+const realMissing = REAL_CLIENT_MARKERS.filter((m) => !realPresent.includes(m));
+
 /* Captured into variables and compared, never piped into a matcher: a producer that dies inside a
    pipe looks exactly like a producer that found nothing, and "found nothing" is the answer half of
    this script is hoping for. */
@@ -118,8 +154,35 @@ if (wantsEngine) {
   if (absent.length > 0) {
     failures.push(`the engine bundle is missing the local-model surface: ${absent.join(", ")}`);
   }
-} else if (present.length > 0) {
-  failures.push(`the interface preview carries the local-model surface: ${present.join(", ")}`);
+  if (stubPresent) {
+    failures.push(
+      "the engine bundle carries the PREVIEW's sync-client stub, whose constructor throws — " +
+        "the window will go blank the moment a mailbox serves. Check that " +
+        "packages/client-engine/src/adapters/http-adapter.ts is the real module in the tree this " +
+        "was built from (the public mirror used to substitute the stub at that path).",
+    );
+  }
+  if (realMissing.length > 0) {
+    failures.push(
+      `the engine bundle has no real sync client in it — absent: ${realMissing.join(", ")}. ` +
+        "Nothing but the protocol client itself puts those strings in a bundle.",
+    );
+  }
+} else {
+  if (present.length > 0) {
+    failures.push(`the interface preview carries the local-model surface: ${present.join(", ")}`);
+  }
+  if (!stubPresent) {
+    failures.push(
+      "the interface preview has lost the sync-client stub — either the alias in vite.config.ts " +
+        "stopped applying, or the stub's refusal was reworded and this guard needs the new words",
+    );
+  }
+  if (realPresent.length > 0) {
+    failures.push(
+      `the interface preview carries a real sync client: ${realPresent.join(", ")} is in the bundle`,
+    );
+  }
 }
 
 const which = wantsEngine ? "engine build" : "interface preview";

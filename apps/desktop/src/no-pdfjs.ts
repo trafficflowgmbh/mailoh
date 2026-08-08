@@ -1,24 +1,53 @@
 /**
- * pdf.js, absent from the desktop runtime.
+ * pdf.js, absent from the desktop runtime — from BOTH artifacts this directory builds.
  *
- * `apps/webapp/app/components/AttachmentPreview.tsx` dynamically imports `pdfjs-dist` to render a PDF
- * attachment in the reader's Quick Look. The Tauri desktop shell is a fixtures-only interface preview:
- * it serves no attachment bytes, and its CSP is `worker-src 'none'`, so pdf.js can neither be reached
- * nor run here. `vite.config.ts` aliases `pdfjs-dist` to this stub so the real library — whose
- * module-initialisation code assumes a worker environment and breaks the bundle's boot under the
- * shell's locked CSP — never enters the runtime bundle. The barrel's dynamic import resolves to these
- * no-ops instead, which cannot break boot and, if a code path ever reached them, fail loudly rather
- * than pretend to render.
+ * `apps/webapp/app/components/AttachmentPreview.tsx` dynamically imports `pdfjs-dist` to render a
+ * PDF attachment in the reader's Quick Look. `vite.config.ts` aliases `pdfjs-dist` to this stub,
+ * and that alias sits OUTSIDE the conditional that separates the two builds — unlike the sync
+ * client's, which the engine-bearing build deliberately does without. The reason is that this one
+ * is a property of the WINDOW rather than of the mail behind it:
  *
- * This is the RUNTIME substitution only. `apps/desktop/tsconfig.json` still points the `pdfjs-dist`
- * path at the real package, so `AttachmentPreview.tsx` typechecks against pdf.js's real types.
- * The same shape the shell already uses for the Cloud `/sync` client (`no-http-adapter.ts`).
+ *  · pdf.js will not render without its worker, and the shell's CSP says `worker-src 'none'` in
+ *    both artifacts. `tauri.conf.json` sets that policy; `src-tauri/tauri.engine.conf.json`
+ *    overrides `bundle` alone and touches no security key, so the engine-bearing build inherits
+ *    it unchanged. Even shipped, the real library's worker could not start here.
+ *  · the real library's module-initialisation code assumes that worker environment and breaks the
+ *    bundle's boot under the locked policy — so keeping it out of the runtime bundle is what
+ *    makes the window open at all, in either artifact.
+ *
+ * The consequence is worth stating rather than leaving to be discovered: **inline PDF preview is
+ * not a capability either desktop artifact has.** The interface preview serves no attachment
+ * bytes at all. The engine-bearing build does serve them — it is a mail client reading a real
+ * mailbox — and a PDF among them still cannot be drawn in the window; it is downloaded and opened
+ * in whatever the operating system uses for PDFs.
+ *
+ * WHICH LINE REFUSES, exactly, because the chain is not the obvious one: the shared surface sets
+ * `GlobalWorkerOptions.workerSrc` and then checks it is non-empty before calling `getDocument`.
+ * That assignment lands on this file's own object, so the check PASSES — `getDocument` below is
+ * what throws. It throws rather than returning something empty so the failure surfaces where it
+ * is called instead of drawing a blank page.
+ *
+ * Keep this module small and free of side effects: the build emits a single chunk
+ * (`inlineDynamicImports`), so `AttachmentPreview.tsx`'s dynamic import is inlined into it rather
+ * than split out, and this stub is what makes that cost nothing.
+ *
+ * This is the RUNTIME substitution only. `apps/desktop/tsconfig.json` still points the
+ * `pdfjs-dist` path at the real package, so `AttachmentPreview.tsx` typechecks against pdf.js's
+ * real types.
  */
 
-/** Sparkle-free stand-in for `GlobalWorkerOptions`; the shell only ever assigns `workerSrc`. */
+/**
+ * Stand-in for `GlobalWorkerOptions`. The reader assigns `workerSrc` and then reads it back as
+ * its own guard, so this has to be a real mutable object rather than a frozen blank — see the
+ * header for why that guard passes here and `getDocument` is what refuses.
+ */
 export const GlobalWorkerOptions: { workerSrc: string } = { workerSrc: "" };
 
-/** The one entry point the preview calls. Unreachable in a fixtures-only build; throws if reached. */
+/**
+ * The one entry point the reader calls, and the line that actually refuses. Unreachable in the
+ * fixtures-only build, which has no attachment bytes to open; REACHED in the engine-bearing one,
+ * every time somebody opens a PDF. The reader catches this and shows its cannot-render state.
+ */
 export function getDocument(): never {
   throw new Error("pdf preview is not available in this build");
 }
