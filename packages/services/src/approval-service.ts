@@ -86,6 +86,9 @@ export class ApprovalService {
     const [appr] = await ctx.db.select().from(approvals)
       .where(and(eq(approvals.id, id), eq(approvals.accountId, ctx.accountId))).limit(1);
     if (!appr) throw new ServiceError("not_found", 404, "approval not found");
+    // A FAST REFUSAL, and only that — it names the status a user sees ("already rejected")
+    // without doing the work. What makes the decision single is the claim in the tx below;
+    // this check is free to be stale, and is.
     if (appr.status !== "pending") {
       throw new ServiceError("unprocessable", 422, `approval already ${appr.status}`);
     }
@@ -112,9 +115,48 @@ export class ApprovalService {
 
     // ── DB tx: flip status, (approve) re-route folder-state, emit change_log, feed learning (step 2) ──
     const dto = await asTx(ctx).transaction(async (tx) => {
-      await tx.update(approvals)
+      /**
+       * THE STATUS FLIP IS A CLAIM, NOT A WRITE — and the read above is only a fast refusal.
+       *
+       * The `pending` check at the top of this method runs OUTSIDE this transaction, and the
+       * write used to assert nothing about the state that check observed:
+       *
+       *     .where(eq(approvals.id, id))     // the primary key, and nothing else
+       *
+       * That is check-then-act. It is not rescued by row locking either: the qual is a primary
+       * key, so a concurrent writer cannot falsify it, and Postgres' EvalPlanQual re-check under
+       * a lock wait re-evaluates a predicate that was never in doubt. BOTH decisions land.
+       *
+       * Measured on two devices answering one card: two `approval/update` rows in the delta
+       * stream — every client told the card resolved twice — and, with the presses swapped, an
+       * approval reading `rejected` over a message the approve had already re-routed to the
+       * Ohbox and queued for a real IMAP move. The reject branch writes no `folder_state`, so
+       * there is nothing for it to undo; the row and the mail disagree about what the user
+       * chose, and the reconciler goes on to perform the move the row denies.
+       *
+       * So the state predicate is repeated IN the UPDATE and the returned row count IS the
+       * decision — the `consumeLoginToken` shape, which is what `claimMessageFailures`,
+       * `bubbleUpPass` and the credits debit all use. Exactly one decider can observe a row
+       * here; the loser throws, which rolls this transaction back with every effect in it
+       * (the re-route, the change rows, the learning signal) and answers the same 422 an
+       * already-decided approval has always answered.
+       *
+       * `accountId` rides along for the reason it is on the read: an id is not an authorisation.
+       */
+      const claimed = await tx.update(approvals)
         .set({ status: approve ? "approved" : "rejected", updatedAt: ctx.now() })
-        .where(eq(approvals.id, id));
+        .where(and(
+          eq(approvals.id, id),
+          eq(approvals.accountId, ctx.accountId),
+          eq(approvals.status, "pending"),
+        ))
+        .returning({ id: approvals.id });
+      if (claimed.length === 0) {
+        // Deliberately NOT re-read to name the winning status. The row is whatever the other
+        // decider just wrote, the 422 is the same either way, and a second read inside this
+        // transaction is one more thing that can be wrong about a decision it did not make.
+        throw new ServiceError("unprocessable", 422, "approval already decided");
+      }
       if (appr.routingDecisionId) {
         await tx.update(routingDecisions)
           .set({ status: approve ? "approved" : "rejected", updatedAt: ctx.now() })
