@@ -510,11 +510,35 @@ export function useScreenerState(
    * list too, and a batch that named one address twice would reserve two of the user's
    * chosen 25 slots for one sender. The endpoint dedupes as well — this is so the COUNT the
    * confirmation shows is the count that gets bought.
+   *
+   * ── AND A SENDER THE GATE HOLDS NOTHING FOR IS NOT BUYABLE ────────────────────────────
+   *
+   * `gatePhysical: false` is a row whose representative is physically in the INBOX, minted
+   * because the cutline PRESENTS that sender at the gate (#116). The row is decidable — its
+   * commit routes past the gate as a rule — but `POST /screener/suggest` resolves senders
+   * through `heldRows`, which requires `desired_folder = 'ohmail/Screener'`, so the server can
+   * only answer `skipped: not_held` for them. `toSkips` then drops `not_held` on the floor,
+   * by design: there is no chip to render for a sender who is not at the gate.
+   *
+   * The consequence was a loop with no exit. Every such sender was in every batch, refused
+   * every time, never acquired an `ai`, and so was still unsuggested on the next pass — which
+   * auto-suggest ran automatically, on a timer, spending the user's quoted slots on senders
+   * the endpoint had already said it cannot speak for. Filtering them here is the whole fix:
+   * they keep their row, they keep the manual decision that works, and they stop being offered
+   * for sale.
+   *
+   * `!== false` and not `=== true`, because a FIXTURE row carries no flag at all and the demo's
+   * rows must keep their existing behaviour. Only a row the projection explicitly marked as
+   * past the gate is excluded.
+   *
+   * The server's `heldRows` is deliberately NOT widened to match. That is a wire contract —
+   * what `POST /screener/:id` and `/suggest` will resolve — and widening it changes what the
+   * gate means for every caller, not just this list.
    */
   const unsuggestedSenders = [
     ...new Set(
       undecided
-        .filter((x) => x.derived === true && x.ai == null)
+        .filter((x) => x.derived === true && x.ai == null && x.gatePhysical !== false)
         .map((x) => senderKey(x.from.address)),
     ),
   ];
